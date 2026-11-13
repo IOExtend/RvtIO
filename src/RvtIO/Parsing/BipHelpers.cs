@@ -5,11 +5,12 @@ namespace RvtIO.Parsing;
 
 internal static class BipHelpers
 {
-    public static Parameter MakeBipParam(int bipId, string bipName, StorageType storageType, object value) => new()
+    public static Parameter MakeBipParam(int bipId, string bipName, StorageType storageType, object value, bool hasNoRevitValue = false) => new()
     {
         Id = bipId,
         StorageType = storageType,
         Value = value,
+        HasNoRevitValue = hasNoRevitValue,
         IsReadOnly = IsBipReadOnly(bipName),
         Definition = new Definition { Id = bipId, BuiltInParameter = bipName, Name = bipName },
     };

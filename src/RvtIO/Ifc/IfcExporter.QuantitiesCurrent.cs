@@ -890,7 +890,8 @@ public partial class IfcExporter
             foreach (Element? owner in new[] { instance, type })
                 if (owner != null)
                     foreach (var parameter in owner.Parameters)
-                        if (parameter.Definition?.Name == name && !parameter.IsApproximate && parameter.Value is double named && named > 0
+                        if (parameter.Definition?.Name == name && !parameter.HasNoRevitValue && !parameter.IsApproximate
+                            && parameter.Value is double named && (!double.IsFinite(named) || Math.Abs(named) < 1e29) && named > 0
                             && owner.BoundingBoxDimensionParamIds?.Contains(parameter.Id) != true)
                             return named;
         foreach (int parameterId in parameterIds)
@@ -898,7 +899,8 @@ public partial class IfcExporter
             {
                 if (owner == null || owner.BoundingBoxDimensionParamIds?.Contains(parameterId) == true) continue;
                 foreach (var parameter in owner.Parameters)
-                    if (parameter.Id == parameterId && !parameter.IsApproximate && parameter.Value is double value
+                    if (parameter.Id == parameterId && !parameter.HasNoRevitValue && !parameter.IsApproximate
+                        && parameter.Value is double value && (!double.IsFinite(value) || Math.Abs(value) < 1e29)
                         && (value > 0 || zeroOfTheTypeCounts && value == 0 && ReferenceEquals(owner, type)))
                         return value;
             }

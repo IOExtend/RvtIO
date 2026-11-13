@@ -12,9 +12,11 @@ namespace RvtIO.Model
         internal Parameter ShallowCopy(object? value)
         {
             var copy = (Parameter)MemberwiseClone();
-            copy.Value = value;
+            copy._value = value;
             return copy;
         }
+
+        private object? _value;
 
         /// <summary>GUID of shared/external parameters (parsed from ForgeId). Null for built-in params.
         /// Invariant per definition id - serialized once in the document's ParameterDefinitions table.</summary>
@@ -42,7 +44,15 @@ namespace RvtIO.Model
         /// Null when the value could not be resolved from the binary data.
         /// This is the only per-element-instance field of a parameter.
         /// </summary>
-        public object? Value { get; set; }
+        public object? Value
+        {
+            get => _value;
+            set
+            {
+                _value = value;
+                HasNoRevitValue = false;
+            }
+        }
 
         /// <summary>True if the parameter is read-only (computed, system-generated, etc.).
         /// Invariant per definition id - lives in ParameterDefinitions.</summary>
@@ -80,6 +90,35 @@ namespace RvtIO.Model
         /// <summary>The value was set by <c>ApplyNativeParams</c>: a parameter store of the element or a rule over decoded fields.</summary>
         [System.Text.Json.Serialization.JsonIgnore]
         internal bool FromNativeFields { get; set; }
+
+        /// <summary>True when the parameter slot exists on the element with a synthesized default or
+        /// unset sentinel, rather than a value stored or computed in Revit.</summary>
+        [JsonIgnore]
+        internal bool HasNoRevitValue { get; set; }
+
+        /// <summary>True when <paramref name="elementId"/> is a resolved element reference or a non-invalid
+        /// <see cref="BuiltIns.BuiltInCategory"/> identifier (<see cref="BuiltIns.BuiltInCategory.INVALID"/> is -1).</summary>
+        internal static bool IsSetElementId(int elementId) =>
+            elementId > 0 || (elementId < -1 && Enum.IsDefined(typeof(BuiltIns.BuiltInCategory), elementId));
+
+        /// <summary>True when the parameter carries a value in Revit rather than an unset sentinel,
+        /// synthesized placeholder, or approximate fallback.</summary>
+        internal bool CarriesRevitValue()
+        {
+            if (HasNoRevitValue || IsApproximate || _value == null || StorageType == StorageType.None)
+                return false;
+            return StorageType switch
+            {
+                StorageType.Double => _value is double d && double.IsFinite(d) && Math.Abs(d) < 1e29,
+                StorageType.ElementId => _value is int eid && IsSetElementId(eid),
+                StorageType.Integer => _value is int iv
+                    ? !(iv == -1 && (Id is >= -1019017 and <= -1019012
+                        || (Id < 0 && Parsing.ApiParameterDefinitions.TryGetStorage(Id, out var apiSt) && apiSt != StorageType.Integer)))
+                    : _value is bool,
+                StorageType.String => _value is string,
+                _ => false,
+            };
+        }
 
         /// <summary>Whether this parameter has a non-null value.</summary>
         [JsonIgnore]

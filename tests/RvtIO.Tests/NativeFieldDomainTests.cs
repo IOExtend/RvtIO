@@ -16,15 +16,15 @@ public class NativeFieldDomainTests
     {
         var inside = new Element { Id = 1, CategoryId = -2000011 };
         inside.Parameters.Add(P(-1006000, StorageType.Integer, 5));
-        inside.NativeTableAddedParams = [(-1006000, ["10/-2000011"], StorageType.Integer, 5)];
+        inside.NativeTableAddedParams = [(-1006000, ["10/-2000011"], StorageType.Integer, 5, false)];
         inside.NativeTableCreatedParams = [-1006000];
         var wrongCategory = new Element { Id = 2, CategoryId = -2000023 };
         wrongCategory.Parameters.Add(P(-1006000, StorageType.Integer, 5));
-        wrongCategory.NativeTableAddedParams = [(-1006000, ["10/-2000011"], StorageType.Integer, 5)];
+        wrongCategory.NativeTableAddedParams = [(-1006000, ["10/-2000011"], StorageType.Integer, 5, false)];
         wrongCategory.NativeTableCreatedParams = [-1006000];
         var classWide = new Element { Id = 3, CategoryId = -2000023 };
         classWide.Parameters.Add(P(-1006000, StorageType.Integer, 5));
-        classWide.NativeTableAddedParams = [(-1006000, ["10"], StorageType.Integer, 5)];
+        classWide.NativeTableAddedParams = [(-1006000, ["10"], StorageType.Integer, 5, false)];
         classWide.NativeTableCreatedParams = [-1006000];
         var info = new RevitFileInfo { Elements = [inside, wrongCategory, classWide] };
 
@@ -41,8 +41,8 @@ public class NativeFieldDomainTests
     {
         var element = new Element { Id = 1, CategoryId = -2000023 };
         element.Parameters.Add(P(-1006001, StorageType.String, "wrong"));
-        element.NativeTableAddedParams = [(-1006001, ["10/-2000011"], StorageType.String, "wrong")];
-        element.NativeTablePrevious = new() { [-1006001] = ("original", StorageType.String) };
+        element.NativeTableAddedParams = [(-1006001, ["10/-2000011"], StorageType.String, "wrong", false)];
+        element.NativeTablePrevious = new() { [-1006001] = ("original", StorageType.String, false) };
 
         ElementBuilder.PruneNativeFieldTableOutsideDomains(new RevitFileInfo { Elements = [element] }, Classes((1, 10)));
 
@@ -54,8 +54,8 @@ public class NativeFieldDomainTests
     {
         var element = new Element { Id = 1, CategoryId = -2000023 };
         element.Parameters.Add(P(-1006001, StorageType.String, "decided later"));
-        element.NativeTableAddedParams = [(-1006001, ["10/-2000011"], StorageType.String, "table")];
-        element.NativeTablePrevious = new() { [-1006001] = ("original", StorageType.String) };
+        element.NativeTableAddedParams = [(-1006001, ["10/-2000011"], StorageType.String, "table", false)];
+        element.NativeTablePrevious = new() { [-1006001] = ("original", StorageType.String, false) };
 
         ElementBuilder.PruneNativeFieldTableOutsideDomains(new RevitFileInfo { Elements = [element] }, Classes((1, 10)));
 
@@ -69,8 +69,8 @@ public class NativeFieldDomainTests
         element.Parameters.Add(P(-1006002, StorageType.String, ""));
         element.NativeTableAddedParams =
         [
-            (-1006002, ["10/-2000011"], StorageType.String, "450x200"),
-            (-1006002, ["10/-2000016"], StorageType.String, ""),
+            (-1006002, ["10/-2000011"], StorageType.String, "450x200", false),
+            (-1006002, ["10/-2000016"], StorageType.String, "", false),
         ];
 
         ElementBuilder.PruneNativeFieldTableOutsideDomains(new RevitFileInfo { Elements = [element] }, Classes((1, 10)));
