@@ -29,6 +29,8 @@ internal static partial class Program
                                             --ifc-room-phase says otherwise, rooms of other phases are left out. Default: the last phase for the
                                             current profile, every phase for the legacy profile (IFC only)
           --ifc-room-phase <last|all|id>    rooms to export: the last phase, every phase or one native phase id (IFC only)
+          --ifc-length-unit <mm|m|ft>       length unit family written to the IFC file: mm (millimetre), m (metre) or ft (foot); default: the
+                                            unit stored in the project for the current profile, mm for the legacy profile (IFC only)
           --ifc-timestamp <timestamp>       UTC timestamp for the STEP FILE_NAME header (ISO-8601 or Unix epoch seconds; IFC only)
           --revit-localization <dir>        deprecated, ignored: the system family names are built in
           --r22-layout                      read the Revit 2022 layout for a JSON export too (an IFC export does it by default)
@@ -95,7 +97,7 @@ internal static partial class Program
     // Options that take one value, and options that take two; every other option starting with "--" is a switch.
     private static readonly HashSet<string> OneValueOptions =
     [
-        "--ifc-profile", "--ifc-phase", "--ifc-room-phase", RvtIO.Cli.IfcTimestampOption.Name, "--json-class-prefix", "--revit-localization", "--inspect", "--diag-dump", "--find-str",
+        "--ifc-profile", "--ifc-phase", "--ifc-room-phase", RvtIO.Cli.IfcLengthUnitOption.Name, RvtIO.Cli.IfcTimestampOption.Name, "--json-class-prefix", "--revit-localization", "--inspect", "--diag-dump", "--find-str",
         "--sketch-owner-dump", "--dev-external-dump", "--dev-external-dump-prefix", "--dev-candidates", "--dev-trace", "--dev-facts",
         "--dev-fact-names", "--dev-user-params", "--dev-collisions", "--dev-solids", "--dev-native", "--class-census", "--episode-check",
         "--test-decoders", "--dump-chunks", "--block-dump", "--search-global", "--hex-search", "--chunk-dump", "--block-scan", "--rec-dump",
@@ -207,6 +209,11 @@ internal static partial class Program
             Console.Error.WriteLine(ifcTimestampError);
             return 1;
         }
+        if (!RvtIO.Cli.IfcLengthUnitOption.TryParse(args, out IfcUnitFamily? ifcLengthUnit, out string? ifcLengthUnitError))
+        {
+            Console.Error.WriteLine(ifcLengthUnitError);
+            return 1;
+        }
         // A JSON output is the compact data export (the properties collection); --json-full writes the full legacy dump
         // (every parameter, geometry, all fields). --compact-json is kept as the explicit spelling of the default.
         bool jsonFull = args.Contains("--json-full");
@@ -235,6 +242,11 @@ internal static partial class Program
         if (ifcTimestamp != null && !isIfcOutput)
         {
             Console.Error.WriteLine("--ifc-timestamp requires IFC output.");
+            return 1;
+        }
+        if (ifcLengthUnit != null && !isIfcOutput)
+        {
+            Console.Error.WriteLine("--ifc-length-unit requires IFC output.");
             return 1;
         }
         for (int i = 0; i < args.Length - 1; i++)
@@ -303,7 +315,7 @@ internal static partial class Program
         if (listCategoryOutPath != null) return ListCategory(rvtPath, listCategoryId, listCategoryOutPath);
 
         return Export(new ExportArguments(args, rvtPath, outputPath, externalDumpPath, externalDumpClassPrefix, profile, isIfcOutput,
-            exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, compactJson, openingLegacyAxes, ifcTimestamp));
+            exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, compactJson, openingLegacyAxes, ifcTimestamp, ifcLengthUnit));
     }
 
     /// <summary>The value after the last occurrence of <paramref name="option"/>, null when the option is absent or ends the arguments.</summary>
