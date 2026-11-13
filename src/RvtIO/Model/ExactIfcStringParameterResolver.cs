@@ -49,9 +49,7 @@ internal static class ExactIfcStringParameterResolver
         bool hasEmptyOrUnsetCandidate = false;
         foreach (Parameter parameter in candidates)
         {
-            if (parameter.Value == null
-                || (parameter.StorageType == StorageType.ElementId
-                    && parameter.Value is int elementId && elementId == -1))
+            if (!parameter.CarriesRevitValue())
             {
                 hasEmptyOrUnsetCandidate = true;
                 continue;

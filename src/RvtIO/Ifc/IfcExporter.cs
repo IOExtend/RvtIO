@@ -64032,11 +64032,16 @@ public partial class IfcExporter
         List<Parameter> matches = element.Parameters
             .Where(parameter => ParameterNameEquals(parameter, name)).ToList();
         if (matches.Count == 0) return (false, null);
-        if (matches.Any(parameter => parameter.IsApproximate
+        List<Parameter> valued = matches
+            .Where(parameter => !parameter.HasNoRevitValue && parameter.Value != null)
+            .ToList();
+        if (valued.Count == 0) return (false, null);
+        if (valued.Count != matches.Count
+            || valued.Any(parameter => parameter.IsApproximate
                 || parameter.StorageType != StorageType.String
                 || parameter.Value is not string))
             return (true, null);
-        var values = matches.Select(parameter => (string)parameter.Value!).Distinct().ToList();
+        var values = valued.Select(parameter => (string)parameter.Value!).Distinct().ToList();
         return values.Count == 1 ? (false, values[0]) : (true, null);
     }
 
@@ -65927,7 +65932,11 @@ public partial class IfcExporter
         var candidates = new List<ExactIsExternalParameterResult>(matches.Count);
         foreach (Parameter parameter in matches)
         {
-            if (parameter.IsApproximate
+            if (parameter.HasNoRevitValue)
+            {
+                candidates.Add(new(ExactIsExternalParameterState.Absent));
+            }
+            else if (parameter.IsApproximate
                 || parameter.StorageType != StorageType.Integer
                 || parameter.Value is not int integerValue)
             {
@@ -65945,6 +65954,8 @@ public partial class IfcExporter
     private static ExactIsExternalParameterResult ClassifyExactNamedIntParameter(
         Parameter parameter)
     {
+        if (parameter.HasNoRevitValue)
+            return new(ExactIsExternalParameterState.Absent);
         if (parameter.IsApproximate)
             return new(ExactIsExternalParameterState.Blocked);
         if (parameter.Value == null)
@@ -65960,6 +65971,8 @@ public partial class IfcExporter
                 if (parameter.Value is not double doubleValue
                     || !double.IsFinite(doubleValue))
                     return new(ExactIsExternalParameterState.Blocked);
+                if (Math.Abs(doubleValue) >= 1e29)
+                    return new(ExactIsExternalParameterState.Absent);
                 double truncatedValue = Math.Truncate(doubleValue);
                 if (truncatedValue < int.MinValue || truncatedValue > int.MaxValue)
                     return new(ExactIsExternalParameterState.Blocked);
@@ -66262,6 +66275,8 @@ public partial class IfcExporter
             return new ExactSpanParameterResult(ExactSpanParameterState.Blocked);
 
         Parameter parameter = candidates[0];
+        if (parameter.HasNoRevitValue)
+            return new ExactSpanParameterResult(ExactSpanParameterState.Absent);
         if (parameter.IsApproximate)
             return new ExactSpanParameterResult(ExactSpanParameterState.Blocked);
         if (parameter.Value == null)
@@ -66277,10 +66292,12 @@ public partial class IfcExporter
         else
             return new ExactSpanParameterResult(ExactSpanParameterState.Blocked);
 
-        return double.IsFinite(value)
-            ? new ExactSpanParameterResult(
-                ExactSpanParameterState.Value, parameter, value)
-            : new ExactSpanParameterResult(ExactSpanParameterState.Blocked);
+        if (!double.IsFinite(value))
+            return new ExactSpanParameterResult(ExactSpanParameterState.Blocked);
+        if (Math.Abs(value) >= 1e29)
+            return new ExactSpanParameterResult(ExactSpanParameterState.Absent);
+        return new ExactSpanParameterResult(
+            ExactSpanParameterState.Value, parameter, value);
     }
 
     private static bool TryGetSyntheticRuntimeInstanceLengthMarker(
@@ -66672,7 +66689,7 @@ public partial class IfcExporter
         switch (p.Id)
         {
             case elemCategoryParam or elemCategoryParamMt when p.Value is int categoryId
-                && Enum.IsDefined(typeof(BuiltIns.BuiltInCategory), categoryId):
+                && categoryId != -1 && Enum.IsDefined(typeof(BuiltIns.BuiltInCategory), categoryId):
                 return $"IFCLABEL({S(((BuiltIns.BuiltInCategory)categoryId).ToString())})";
             case symbolIdParam when typeOf(elem) is { } symbol:
                 return $"IFCLABEL({S(symbol.Id.ToString(System.Globalization.CultureInfo.InvariantCulture))})";
@@ -66705,6 +66722,8 @@ public partial class IfcExporter
                 };
             case StorageType.Integer when dataType == "autodesk.spec:spec.bool" && p.Value is int b:
                 return b == 0 ? "IFCBOOLEAN(.F.)" : "IFCBOOLEAN(.T.)";
+            case StorageType.Integer when dataType == "autodesk.spec:spec.bool" && p.Value is bool bb:
+                return bb ? "IFCBOOLEAN(.T.)" : "IFCBOOLEAN(.F.)";
             case StorageType.String:
                 return $"IFCTEXT({S(p.Value?.ToString() ?? "")})";
             default:
@@ -66721,7 +66740,7 @@ public partial class IfcExporter
 
         foreach (var p in elem.Parameters)
         {
-            if (p.Value == null) continue;
+            if (!p.CarriesRevitValue()) continue;
 
             string propValue;
 
@@ -66735,10 +66754,12 @@ public partial class IfcExporter
                     else continue;
                     break;
                 case StorageType.String:
-                    propValue = $"IFCLABEL({S(p.Value.ToString() ?? "")})";
+                    propValue = $"IFCLABEL({S(p.Value?.ToString() ?? "")})";
                     break;
                 case StorageType.Integer:
-                    propValue = $"IFCINTEGER({p.Value})";
+                    propValue = p.Value is bool bv
+                        ? $"IFCINTEGER({(bv ? 1 : 0)})"
+                        : $"IFCINTEGER({p.Value})";
                     break;
                 case StorageType.ElementId:
                     propValue = $"IFCINTEGER({p.Value})";
@@ -68409,9 +68430,9 @@ public partial class IfcExporter
             // PropertySetDescription maps ThermalTransmittance to
             // ANALYTICAL_HEAT_TRANSFER_COEFFICIENT; the stored value is written unchanged.
             const int heatTransferCoefficientParamId = -1005430;
-            if (typeElem.Parameters.FirstOrDefault(parameter => parameter.Id == heatTransferCoefficientParamId)?.Value
+            if (typeElem.Parameters.FirstOrDefault(parameter => parameter.Id == heatTransferCoefficientParamId && parameter.CarriesRevitValue())?.Value
                     is double thermalTransmittance
-                && double.IsFinite(thermalTransmittance) && thermalTransmittance > 0)
+                && thermalTransmittance > 0)
                 propertyIds.Add(w.Add("IFCPROPERTYSINGLEVALUE",
                     $"{S("ThermalTransmittance")},$,IFCTHERMALTRANSMITTANCEMEASURE({D17(thermalTransmittance)}),$"));
         }

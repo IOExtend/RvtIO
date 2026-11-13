@@ -245,8 +245,8 @@ public static class RvtSceneReader
         var properties = new List<SceneProperty>();
         foreach (var parameter in parameters)
         {
-            // An approximate value is the reader's estimate, not a value of the file: the scene never carries a guess.
-            if (parameter.IsApproximate) continue;
+            // An approximate or unset parameter is a reader estimate or placeholder, not a value stored in Revit.
+            if (!parameter.CarriesRevitValue()) continue;
             if (DisplayText(parameter) is not { } text) continue;
             properties.Add(new SceneProperty
             {

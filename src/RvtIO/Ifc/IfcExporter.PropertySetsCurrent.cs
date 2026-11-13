@@ -559,8 +559,8 @@ public partial class IfcExporter
                 GetOrAddPropertySingleValue(w, pool, "Manufacturer", $"IFCLABEL({S(manufacturer)})"));
 
         if (ifcType == "IFCFLOWSEGMENT"
-            && elem.Parameters.FirstOrDefault(parameter => parameter.Id == CurveElemLengthParamId)?.Value
-                is double lengthFeet && double.IsFinite(lengthFeet) && lengthFeet > 0)
+            && elem.Parameters.FirstOrDefault(parameter => parameter.Id == CurveElemLengthParamId && parameter.CarriesRevitValue())?.Value
+                is double lengthFeet && lengthFeet > 0)
         {
             int lengthId = GetOrAddPropertySingleValue(
                 w, pool, "Length", $"IFCPOSITIVELENGTHMEASURE({D17(lengthFeet * 304.8)})");

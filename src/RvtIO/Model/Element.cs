@@ -76,7 +76,7 @@ namespace RvtIO.Model
         /// <summary>Parameters set by the NativeFieldParameters table with their validated presence domains, the
         /// parameter's state before the table set it (null: it did not exist) and the value the table left.</summary>
         [JsonIgnore]
-        internal List<(int ParamId, string[] Domains, StorageType Storage, object Value)>? NativeTableAddedParams { get; set; }
+        internal List<(int ParamId, string[] Domains, StorageType Storage, object Value, bool HasNoRevitValue)>? NativeTableAddedParams { get; set; }
 
         /// <summary>Parameter ids the NativeFieldParameters table created (they did not exist before it).</summary>
         [JsonIgnore]
@@ -84,7 +84,7 @@ namespace RvtIO.Model
 
         /// <summary>Values the table's domain rows replaced (first touch per parameter id).</summary>
         [JsonIgnore]
-        internal Dictionary<int, (object? Value, StorageType Storage)>? NativeTablePrevious { get; set; }
+        internal Dictionary<int, (object? Value, StorageType Storage, bool HasNoRevitValue)>? NativeTablePrevious { get; set; }
 
         /// <summary>StructCurveDriverBase.m_rotation as stored.</summary>
         [JsonIgnore]
