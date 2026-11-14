@@ -163,6 +163,79 @@ public class SpatialPhaseTests
         Assert.Empty(room.Parameters);
     }
 
+    [Fact]
+    public void RunTfStreamWalk_InFramedFileIgnoresFamilyPhaseOrderBlocks()
+    {
+        byte[] project = Block([10, 20]);
+        byte[] family = Block([99]);
+        BitConverter.GetBytes(2u).CopyTo(family, 0);
+        byte[] partition = [.. project, .. family];
+        var state = new ParsingState
+        {
+            AllKnownIds = [1],
+            Chunks = [partition],
+            PartitionChunkCount = 1,
+            FramedPartitions = [new PartitionFraming.Framed([partition], [new(102, 1, 0, project.Length)], 4, Partition: 0)],
+        };
+
+        RvtFileReader.RunTfStreamWalk(state);
+
+        Assert.Equal(1, state.ProjectPhaseOrderSource.BlockCount);
+        Assert.Equal([10, 20], state.ProjectPhaseOrderSource.PhaseIds);
+    }
+
+    [Fact]
+    public void RecordFramedRoots_RoutesDuplicatePhaseOrderBlocksViaIncrementRoutedPartitions()
+    {
+        byte[] stale = Block([10]);
+        byte[] current = Block([10, 20]);
+        var state = new ParsingState
+        {
+            AllKnownIds = [1],
+            IncrementRoutedPartitions = new Dictionary<ulong, int> { [1] = 1 },
+            FramedPartitions =
+            [
+                new PartitionFraming.Framed([stale], [new(102, 1, 0, stale.Length)], 4, Partition: 0),
+                new PartitionFraming.Framed([current], [new(102, 1, 0, current.Length)], 4, Partition: 1),
+            ],
+        };
+
+        RvtFileReader.RecordFramedRoots(state);
+
+        Assert.Equal(1, state.ProjectPhaseOrderSource.BlockCount);
+        Assert.Equal([10, 20], state.ProjectPhaseOrderSource.PhaseIds);
+    }
+
+    [Fact]
+    public void Builder_ResolvesThirtyTwoBitProjectPhaseWithIdZeroAndExplicitFilter()
+    {
+        byte[] phases = Block([2, 0]);
+        var state = new ParsingState { AllKnownIds = [1, 2, 0] };
+        state.ElemClassIdx[1] = 187;
+        state.ElemClassIdx[2] = 3065;
+        state.ElemClassIdx[0] = 3065;
+        RvtFileReader.RecordProjectPhaseOrderSource(state, phases, 0, Size(phases), 187, 1);
+
+        var phaseZero = new Element { Id = 0, CategoryId = -2000112, Category = "OST_Phases", Name = "New Construction" };
+        var phaseExisting = new Element { Id = 2, CategoryId = -2000112, Category = "OST_Phases", Name = "Existing" };
+        var wallCreatedInZero = new Element { Id = 10, CategoryId = -2000011, SerializedCreatedPhaseId = 0 };
+        var wallDemolishedInTwo = new Element { Id = 11, CategoryId = -2000011, SerializedCreatedPhaseId = 2, SerializedDemolishedPhaseId = 2 };
+        var info = new RevitFileInfo { Elements = [phaseZero, phaseExisting, wallCreatedInZero, wallDemolishedInTwo] };
+
+        ElementBuilder.ApplySerializedSpatialPhases(info, state);
+
+        Assert.Equal([2, 0], info.SerializedProjectPhaseIds);
+        Assert.Equal(0, info.SerializedDefaultExportPhaseId);
+        Assert.Equal(0, ProductRules.LastProjectPhase(info));
+
+        var phaseZeroFilter = ProductRules.BuildExportPhaseFilter(info, exportPhaseId: 0, lastPhaseByDefault: false)!;
+        Assert.False(phaseZeroFilter.Excludes(wallCreatedInZero));
+        Assert.True(phaseZeroFilter.Excludes(wallDemolishedInTwo));
+
+        var phaseTwoFilter = ProductRules.BuildExportPhaseFilter(info, exportPhaseId: 2, lastPhaseByDefault: false)!;
+        Assert.True(phaseTwoFilter.Excludes(wallCreatedInZero));
+    }
+
     private static uint Size(byte[] block) => BitConverter.ToUInt32(block, 8);
 
     private static byte[] Block(int[] phases, string? mutation = null)

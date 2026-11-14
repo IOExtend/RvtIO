@@ -2592,7 +2592,7 @@ internal static partial class ElementBuilder
         bool wide = state.WideSchema != null;
         info.SerializedProjectPhaseIds = source.BlockCount == 1
             && source.PhaseIds is { Length: > 0 } phases
-            && phases.All(id => (wide ? id >= 0 : id > 0) && state.ElemClassIdx.GetValueOrDefault((uint)id) == 3065)
+            && phases.All(id => id >= 0 && state.ElemClassIdx.GetValueOrDefault((uint)id) == 3065)
             && phases.Distinct().Count() == phases.Length ? phases.ToArray() : null;
         info.SerializedDefaultExportPhaseId = info.SerializedProjectPhaseIds?[^1];
         foreach (var element in info.Elements)
@@ -2600,7 +2600,8 @@ internal static partial class ElementBuilder
             element.SerializedRoomPhaseId = (element.CategoryId == -2000160 || wide && element.CategoryId == -2003600) && element.Id > 0
                 && (wide || state.RoomNameSource.TryGetValue((uint)element.Id, out var root)
                     && root.BlockCount == 1 && !string.IsNullOrEmpty(root.Name))
-                && state.ExactRoomPhaseIds.TryGetValue((uint)element.Id, out int phase) && (wide ? phase >= 0 : phase > 0)
+                && state.ExactRoomPhaseIds.TryGetValue((uint)element.Id, out int phase)
+                && (phase > 0 || phase == 0 && (wide || info.SerializedProjectPhaseIds?.Contains(0) == true))
                     ? phase : null;
             if (element.CategoryId == -2000160 && element.Id > 0
                 && state.RoomNameSource.TryGetValue((uint)element.Id, out var validation)

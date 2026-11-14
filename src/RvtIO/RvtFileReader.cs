@@ -56,7 +56,7 @@ public partial class RvtFileReader
 
         Dictionary<string, TfClassRegistry.TfClassDef>? tfSchemas = null;
         LogPhase("Decompressing partitions...");
-        var chunks = DecompressPartitions(root, diag, out var ownPartitionWallParts, out var partitionStreams, out var framedStreams, out bool staleCopiesRemoved);
+        var chunks = DecompressPartitions(root, diag, out var ownPartitionWallParts, out var partitionStreams, out var framedStreams, out bool staleCopiesRemoved, out var incrementRoutedPartitions);
         var fmtChunks = DecompressStorage(root, "Formats", diag);
         if (fmtChunks.Count > 0)
         {
@@ -108,6 +108,7 @@ public partial class RvtFileReader
             R22View = r22View,
             StaleCopiesRemoved = staleCopiesRemoved,
             FramedPartitions = readFrames,
+            IncrementRoutedPartitions = incrementRoutedPartitions,
             PartitionChunkCount = partitionChunkCount,
         };
         ReadWideElementIndex(root, state, partitionStreams, framedStreams, wideSchema, diag);
@@ -850,7 +851,7 @@ public partial class RvtFileReader
         var (previewBase64, previewMime) = PreviewImageReader.Read(root);
 
         LogPhase("Decompressing partitions...");
-        var chunks = DecompressPartitions(root, diag, out var ownPartitionWallParts, out var partitionStreams, out var framedStreams, out bool staleCopiesRemoved);
+        var chunks = DecompressPartitions(root, diag, out var ownPartitionWallParts, out var partitionStreams, out var framedStreams, out bool staleCopiesRemoved, out var incrementRoutedPartitions);
 
         // Episode GUID table: nested stream Global/History (see Read() above).
         var (elemRecHistories, elemRecOwners, wideSchema) = ReadElemRecs(root);
@@ -882,6 +883,7 @@ public partial class RvtFileReader
             R22View = r22View,
             StaleCopiesRemoved = staleCopiesRemoved,
             FramedPartitions = readFrames,
+            IncrementRoutedPartitions = incrementRoutedPartitions,
             PartitionChunkCount = partitionChunkCount,
         };
         ReadWideElementIndex(root, state, partitionStreams, framedStreams, wideSchema, diag);
@@ -981,14 +983,14 @@ public partial class RvtFileReader
             }
             catch (FormatException) { diag?.WriteLine("Wide element records: Formats/Latest does not parse for the field walk"); }
         }
-        var walks = new Dictionary<uint, List<(WideBlockWalker.Walk Walk, int Class)>>();
+        var walks = new Dictionary<uint, List<(WideBlockWalker.Walk Walk, int Class, int? Partition)>>();
         var drivers = new Dictionary<uint, List<CurveDriverData>>();
         var wallShim = new Dictionary<uint, ElementRecord>();
-        var index = WideElementRecords.BuildIndex(partitionStreams, schema, state.AllKnownIds,
-            fields == null ? null : (id, data, offset, size, cls) =>
+        var index = WideElementRecords.BuildIndexWithPartitions(partitionStreams, schema, state.AllKnownIds,
+            fields == null ? null : (id, data, offset, size, cls, partition) =>
             {
                 if (!walks.TryGetValue(id, out var list)) walks[id] = list = [];
-                list.Add((fields.Walker.Run(data, offset, size, cls), cls));
+                list.Add((fields.Walker.Run(data, offset, size, cls), cls, partition));
                 // the roots of a straight or an arc wall: the block of the drive curve (the classes the Revit 2022 reader names)
                 if (state.StaleCopiesRemoved && fields.R22Id(cls) is 3524 or 361)
                 {
@@ -1011,6 +1013,18 @@ public partial class RvtFileReader
         if (fields != null)
             foreach (var (id, list) in walks)
             {
+                if (list.Count > 1
+                    && index.RootClasses.TryGetValue(id, out int multiRootClass)
+                    && state.IncrementRoutedPartitions != null
+                    && state.IncrementRoutedPartitions.TryGetValue(id, out int routedPartition)
+                    && list.Where(w => w.Partition == routedPartition).ToList() is [{ } routed]
+                    && routed.Class == multiRootClass
+                    && fields.ProjectPhaseOrder(routed.Walk, multiRootClass) is { } routedPhaseOrder)
+                {
+                    var priorOrder = state.ProjectPhaseOrderSource;
+                    state.ProjectPhaseOrderSource = (priorOrder.BlockCount + 1, priorOrder.BlockCount == 0 ? routedPhaseOrder : null);
+                    continue;
+                }
                 // a copy of the element in two streams is decoded only when it is one record
                 if (list.Count != 1 || !index.RootClasses.TryGetValue(id, out int rootClass) || list[0].Class != rootClass) continue;
                 if (drivers.TryGetValue(id, out var exactDrivers) && exactDrivers.Count > 0) state.ExactCurveDrivers[id] = exactDrivers;
@@ -1023,7 +1037,10 @@ public partial class RvtFileReader
                 }
                 if (fields.OwnName(list[0].Walk, rootClass) is { } ownName) state.WideNames[id] = ownName;
                 if (fields.ProjectPhaseOrder(list[0].Walk, rootClass) is { } phaseOrder)
-                    state.ProjectPhaseOrderSource = (state.ProjectPhaseOrderSource.BlockCount + 1, phaseOrder);
+                {
+                    var priorOrder = state.ProjectPhaseOrderSource;
+                    state.ProjectPhaseOrderSource = (priorOrder.BlockCount + 1, priorOrder.BlockCount == 0 ? phaseOrder : null);
+                }
                 if (fields.RoomPhase(list[0].Walk, rootClass) is int roomPhase) state.ExactRoomPhaseIds[id] = roomPhase;
                 walked++;
                 if (list[0].Walk.Exact) exact++;
@@ -1068,7 +1085,7 @@ public partial class RvtFileReader
     /// persisted schema maps (see <see cref="WideDocument"/>), recorded where the Revit 2022 reader records the same facts. A file of the
     /// Revit 2020 layout has no schema maps; its Length option is the first display unit of the units element.</summary>
     private static void ReadWideDocumentUnits(RootStorage root, ParsingState state, SchemaDocument schemaDocument, WideNativeParams fields,
-        Dictionary<uint, List<(WideBlockWalker.Walk Walk, int Class)>> walks, TextWriter? diag)
+        Dictionary<uint, List<(WideBlockWalker.Walk Walk, int Class, int? Partition)>> walks, TextWriter? diag)
     {
         void Fail(string reason)
         {
@@ -1120,7 +1137,8 @@ public partial class RvtFileReader
 
     private List<byte[]> DecompressPartitions(RootStorage root, TextWriter? diag,
         out Dictionary<uint, OwnPartitionParts.WallParts>? ownPartitionWallParts,
-        out List<IReadOnlyList<byte[]>> partitionStreams, out List<PartitionFraming.Framed?> framedStreams, out bool staleCopiesRemoved)
+        out List<IReadOnlyList<byte[]>> partitionStreams, out List<PartitionFraming.Framed?> framedStreams,
+        out bool staleCopiesRemoved, out IReadOnlyDictionary<ulong, int>? incrementRoutedPartitions)
     {
         staleCopiesRemoved = false;
         var partStor = root.OpenStorage("Partitions");
@@ -1135,7 +1153,10 @@ public partial class RvtFileReader
         partitionStreams = new List<IReadOnlyList<byte[]>>();
         framedStreams = [];
         ownPartitionWallParts = null;
-        var routing = _options.ResolveCurrentCopies && partEntries.Count > 1 ? PlanRecordRouting(root, partStor, partEntries.Select(e => e.Name).ToList(), diag) : null;
+        var routing = partEntries.Count > 1
+            ? PlanRecordRouting(root, partStor, partEntries.Select(e => e.Name).ToList(), _options.ResolveCurrentCopies ? diag : null)
+            : null;
+        incrementRoutedPartitions = routing?.Current;
         // the exact framing of the partition streams (PartitionFraming), when the class table names its marker classes and the id width is known
         var framing = FormatsSchema.TryRead(root) is { } formats && PartitionFraming.TagsOf(formats) is { } framingTags
             && SchemaRelease.IdWidth(SchemaRelease.Effective(SchemaRelease.Saved(BasicFileInfoReader.Read(root).GetValueOrDefault("RevitVersion")),
@@ -1161,13 +1182,16 @@ public partial class RvtFileReader
             }
 
             var chunks = CutPartition(raw, framing, decompressor, out var stats, out string? framingFailure, out var framed);
+            int? partitionNumber = int.TryParse(partEntry.Name, out int parsedPartition) ? parsedPartition : null;
+            if (framed != null && partitionNumber is int partNum)
+                framed = framed with { Partition = partNum };
             RecordStream("Partitions/" + partEntry.Name, raw.Length, stats.Members, stats.Decoded, stats.Failed, stats.Recovered, stats.Unverified);
             diag?.WriteLine(framingFailure == null ? $"  Chunks: {chunks.Count} segments of the exact framing"
                 : $"  Chunks: {chunks.Count} decompressed by a search for gzip members (framing: {framingFailure})");
-            if (routing != null && int.TryParse(partEntry.Name, out int partitionNumber)
-                && RecordRouting.Stale(routing.Census, routing.Current, partitionNumber) is { Count: > 0 } stale)
+            if (_options.ResolveCurrentCopies && routing != null && partitionNumber is int pruningPartition
+                && RecordRouting.Stale(routing.Census, routing.Current, pruningPartition) is { Count: > 0 } stale)
             {
-                if (RecordRouting.Prune(chunks, routing.Census.SegmentLengths[partitionNumber], stale) is { } pruned)
+                if (RecordRouting.Prune(chunks, routing.Census.SegmentLengths[pruningPartition], stale) is { } pruned)
                 {
                     chunks = pruned;
                     staleCopiesRemoved = true;
@@ -2021,7 +2045,7 @@ public partial class RvtFileReader
         // A project phase can have id 0 when the file's layout is read from its own schema; the
         // Revit 2022 layout numbers phases from 1.
         if (state.RoomNameSource[owner].BlockCount == 1 && name != null
-            && (phase is > 0 || state.WideSchema != null && phase is >= 0))
+            && (phase is > 0 || phase == 0 && (state.WideSchema != null || state.ElemClassIdx.GetValueOrDefault(0u) == 3065)))
             state.ExactRoomPhaseIds[owner] = phase.Value;
         if (state.RoomNameSource[owner].BlockCount == 1 && name != null && locationless is { } flag)
             state.ExactRoomLocationless[owner] = flag;
@@ -2149,22 +2173,35 @@ public partial class RvtFileReader
     /// wall (<see cref="RecordWallLocationLine"/>) is read from its root record once every root is counted.</summary>
     internal static void RecordFramedRoots(ParsingState state)
     {
-        var roots = new List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner)>();
+        var roots = new List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner, int? Partition)>();
         foreach (var frame in state.FramedPartitions!)
             foreach (var record in frame!.Items)
             {
                 if (record.Channel != 102 || record.Length < 18 || record.Owner > uint.MaxValue) continue;
+                uint owner = (uint)record.Owner;
+                if (owner == 0 && !state.AllKnownIds.Contains(0)) continue;
                 // the item [owner:4][checksum:4][size:4][class:2 ...][size:4] is the block layout the walk hands over
                 var (data, start, _) = frame.Bytes(record);
-                roots.Add((data, start, (uint)(record.Length - 16), BitConverter.ToUInt16(data, start + 12), (uint)record.Owner));
+                ushort classId = BitConverter.ToUInt16(data, start + 12);
+                if (!state.ElemClassIdx.ContainsKey(owner)) state.ElemClassIdx[owner] = classId;
+                roots.Add((data, start, (uint)(record.Length - 16), classId, owner, frame.Partition));
             }
         // a file with its own class schema has the roots of its element index seeded already (ReadWideElementIndex): the record replaces
         // the seed where it is counted; a root the count leaves out, such as one whose rewrite failed (unknown tag), keeps it
         if (state.WideSchema != null)
-            foreach (var (_, _, _, classId, owner) in roots)
+            foreach (var (_, _, _, classId, owner, _) in roots)
                 if (StairComponentSource.CountsClassRoot(state, classId, owner)) state.OwnedElementClassRoots.Remove(owner);
-        foreach (var (data, start, size, classId, owner) in roots) StairComponentSource.Record(state, data, start, size, classId, owner);
-        foreach (var (data, start, size, classId, owner) in roots)
+        foreach (var (data, start, size, classId, owner, partition) in roots)
+        {
+            StairComponentSource.Record(state, data, start, size, classId, owner);
+            if (state.WideSchema == null && classId == 187
+                && (state.IncrementRoutedPartitions == null
+                    || partition is not int part
+                    || !state.IncrementRoutedPartitions.TryGetValue(owner, out int currentPartition)
+                    || part == currentPartition))
+                RecordProjectPhaseOrderSource(state, data, start, size, classId, owner);
+        }
+        foreach (var (data, start, size, classId, owner, _) in roots)
             if (classId is 3524 or 361) RecordWallLocationLine(state, data, start, size, classId, owner);
     }
 
@@ -2177,7 +2214,7 @@ public partial class RvtFileReader
         foreach (var frame in state.FramedPartitions!)
             foreach (var record in frame!.Items)
             {
-                if (record.Channel == 101 || record.Length < 18 || record.Owner is 0 or > uint.MaxValue) continue;
+                if (record.Channel == 101 || record.Length < 18 || record.Owner > uint.MaxValue || record.Owner == 0 && !state.AllKnownIds.Contains(0)) continue;
                 var (data, start, copied) = frame.Bytes(record);
                 uint eid = (uint)record.Owner;
                 int queued = pending.Count;
@@ -2192,7 +2229,7 @@ public partial class RvtFileReader
     /// <summary>Continuous-stream anchored block walk (see TfStreamWalker): native param
     /// stores + full-coverage re-run of block-driven signals (curve owners, node owners,
     /// registry categories, sketch/detail curves).</summary>
-    private static void RunTfStreamWalk(ParsingState state)
+    internal static void RunTfStreamWalk(ParsingState state)
     {
         // The walk reads 4-byte ids and Revit 2022 class numbers; a 64-bit-id file is decoded by WideElementRecords.
         if (state.WideSchema != null && !state.R22View) return;
@@ -2250,7 +2287,7 @@ public partial class RvtFileReader
                 RecordRoomNameSource(state, seg, bs, ds, cls, eid);
             if (cls == 2306)
                 RecordRoomPlanSource(state, seg, bs, ds, cls, eid);
-            if (cls == 187)
+            if (!framedRoots && cls == 187)
                 RecordProjectPhaseOrderSource(state, seg, bs, ds, cls, eid);
             RecordProjectLocation(state, seg, bs, (uint)ds, cls, eid);
             RecordNewCurtainWallTypeFunction(state, seg, bs, (uint)ds, cls, eid);

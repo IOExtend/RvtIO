@@ -140,7 +140,7 @@ internal sealed class R22Transcoder
             if (output.Length >= 1 << 20) { flushed += output.Length; segments.Add(output.ToArray()); output.SetLength(0); }
         }
         if (output.Length > 0) segments.Add(output.ToArray());
-        return new(segments, items, 4);
+        return new(segments, items, 4, source.Partition);
     }
 
     internal sealed class Stats

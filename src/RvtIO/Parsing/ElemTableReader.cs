@@ -68,8 +68,8 @@ internal static class ElemTableReader
                 {
                     foreach (var row in rows)
                     {
-                        // Id 0 is a real row (ProjectPhase / DimensionStyle) in the 64-bit layout.
-                        if (row.Id > uint.MaxValue || !(ElementIdEncoding.IsSupported((uint)row.Id) || row.Id == 0 && ElemTableLayout.IdWidth(schema) == 8)) continue;
+                        // Id 0 is a real row (ProjectPhase / DimensionStyle) in ElemTable across wide and 32-bit schemas.
+                        if (row.Id > uint.MaxValue || !(ElementIdEncoding.IsSupported((uint)row.Id) || row.Id == 0)) continue;
                         result[(uint)row.Id] = 0;
                         creationDates[(uint)row.Id] = row.CreationDate;
                         if (row.PartitionId >= 0) worksets[(uint)row.Id] = (uint)row.PartitionId;
