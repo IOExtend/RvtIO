@@ -70,8 +70,8 @@ public static class ElementMeshes
                 bool ghosts = geometry.GhostNodes is { Count: > 0 };
                 var (meshes, failed) = Triangulate(geometry.Faces, MaterialOf, ghosts);
                 if (meshes.Count > 0)
-                    symbol = new SymbolMeshes(meshes, failed, DropsUntakenNodes(geometry.Faces, ghosts),
-                        geometry.Faces.Any(face => face.GeometryNode < 0), ghosts);
+                    symbol = new SymbolMeshes(meshes, failed + geometry.UntriangulatedFaces,
+                        DropsUntakenNodes(geometry.Faces, ghosts), geometry.Faces.Any(face => face.GeometryNode < 0), ghosts);
             }
             symbolCache[symbolId] = symbol;
             return symbol;
@@ -124,6 +124,8 @@ public static class ElementMeshes
                 continue;
             }
             var (meshes, failed) = Triangulate(body.Faces, MaterialOf, body.GhostNodes is { Count: > 0 });
+            // A face left out of the reader's triangulation of its trim loops (see GeometryData.UntriangulatedFaces).
+            failed += body.UntriangulatedFaces;
             elements.Add(new ElementMesh
             {
                 ElementId = element.Id,

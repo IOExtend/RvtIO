@@ -548,12 +548,58 @@ public class GRepParserV2Tests
     }
 
     [Fact]
-    public void TrimTriangulation_FailsInsteadOfExceedingItsWorkBudget()
+    public void TrimTriangulation_TellsARunOutBudgetApartFromLoopsThatDoNotTriangulate()
     {
         var rings = PerforatedTrimRings();
 
-        Assert.Null(GRepParserV2.TriangulateTrimRings(rings, new GRepParserV2.TrimWorkBudget(100_000)));
-        Assert.NotNull(GRepParserV2.TriangulateTrimRings(rings));
+        Assert.Null(GRepParserV2.TriangulateTrimRegions(rings, out bool outOfBudget, new GRepParserV2.TrimWorkBudget(100_000)));
+        Assert.True(outOfBudget);
+        Assert.NotNull(GRepParserV2.TriangulateTrimRegions(rings, out outOfBudget));
+        Assert.False(outOfBudget);
+        // A hole that crosses its outer loop does not triangulate, whatever the budget.
+        Assert.Null(GRepParserV2.TriangulateTrimRegions(
+        [
+            [[0, 0], [4, 0], [4, 4], [0, 4]],
+            [[3, 1], [5, 1], [5, 3], [3, 3]],
+        ], out outOfBudget));
+        Assert.False(outOfBudget);
+    }
+
+    [Fact]
+    public async Task TrimTriangulation_KeepsTheBoundaryAndHolesOfADenseComb()
+    {
+        // A comb of 2,400 tall notches around one small hole, 9,608 vertices: every tooth crosses the winding test of every
+        // ear, and the ears fan out from the base. Before the indexes the default budget ran out on it.
+        const int teeth = 2400;
+        List<double[]> outer = [[0, 0], [2 * teeth, 0], [2 * teeth, 10]];
+        for (int tooth = teeth - 1; tooth >= 0; tooth--)
+        {
+            outer.Add([2 * tooth + 1.5, 10]);
+            outer.Add([2 * tooth + 1.5, 2]);
+            outer.Add([2 * tooth + 0.5, 2]);
+            outer.Add([2 * tooth + 0.5, 10]);
+        }
+        outer.Add([0, 10]);
+        List<List<double[]>> rings = [outer, [[0.1, 0.1], [0.2, 0.1], [0.2, 0.2], [0.1, 0.2]]];
+
+        bool outOfBudget = false;
+        var triangulation = Task.Run(() => GRepParserV2.TriangulateTrimRegions(rings, out outOfBudget));
+        Assert.True(await Task.WhenAny(triangulation, Task.Delay(TimeSpan.FromSeconds(60))) == triangulation,
+            "the trim triangulation did not finish in 60 s");
+        var polygons = await triangulation;
+
+        Assert.False(outOfBudget);
+        Assert.NotNull(polygons);
+        Assert.Equal(PolygonArea(outer) - PolygonArea(rings[1]), polygons.Sum(PolygonArea), 6);
+        // The edges no two polygons share are the boundary: exactly the edges of the outer loop and of the hole.
+        static ((double, double), (double, double)) Key(double[] first, double[] second) =>
+            first[0] < second[0] || first[0] == second[0] && first[1] < second[1]
+                ? ((first[0], first[1]), (second[0], second[1])) : ((second[0], second[1]), (first[0], first[1]));
+        static IEnumerable<((double, double), (double, double))> Edges(List<double[]> ring) =>
+            ring.Select((point, index) => Key(point, ring[(index + 1) % ring.Count]));
+        var boundary = polygons.SelectMany(Edges).GroupBy(edge => edge).Where(group => group.Count() == 1)
+            .Select(group => group.Key).ToHashSet();
+        Assert.True(boundary.SetEquals(rings.SelectMany(Edges)), "the boundary differs from the outer loop and the hole");
     }
 
     [Fact]

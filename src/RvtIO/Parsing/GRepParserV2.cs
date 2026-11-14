@@ -20,6 +20,9 @@ internal static partial class GRepParserV2
 
     [ThreadStatic] private static bool t_coarseTessellation;
 
+    /// <summary>Faces of the geometry being built that were left out because their trim triangulation ran out of its budget.</summary>
+    [ThreadStatic] private static int t_untriangulatedFaces;
+
     private static double ChordTolerance => TessellationChordToleranceFeet * (t_coarseTessellation ? 16 : 1);
 
     private sealed class DecodeStop : Exception { }
@@ -2362,8 +2365,19 @@ internal static partial class GRepParserV2
     private static GRepData? BuildGeometry(Cur c)
     {
         t_coarseTessellation = false;
-        try { return BuildGeometryCore(c); }
-        finally { t_coarseTessellation = false; }
+        int enclosingUntriangulated = t_untriangulatedFaces;
+        t_untriangulatedFaces = 0;
+        try
+        {
+            var geometry = BuildGeometryCore(c);
+            if (geometry != null) geometry.UntriangulatedFaces = t_untriangulatedFaces;
+            return geometry;
+        }
+        finally
+        {
+            t_coarseTessellation = false;
+            t_untriangulatedFaces = enclosingUntriangulated;
+        }
     }
 
     private static GRepData? BuildGeometryCore(Cur c)
@@ -4830,7 +4844,7 @@ internal static partial class GRepParserV2
             previousOf[index] = (index - 1 + count) % count;
         }
         int start = 0;
-        var remaining = new TrimPointGrid(polygon, budget);
+        var remaining = new TrimPointTree(polygon, budget);
         var gone = new bool[count];
         var tests = new int[count];
         var waiting = new List<(int Vertex, int Test)>?[count];
@@ -4915,7 +4929,7 @@ internal static partial class GRepParserV2
         var boundaryChains = new Dictionary<(double, double, double, double), List<double[]>>();
         foreach (var ring in new[] { outerData }.Concat(holeData))
         {
-            var samples = new TrimPointGrid(ring.Original, budget);
+            var samples = new TrimPointTree(ring.Original, budget);
             for (int index = 0; index < ring.Simplified.Count; index++)
             {
                 var first = ring.Simplified[index];
@@ -4963,9 +4977,18 @@ internal static partial class GRepParserV2
     /// Partitions a Face's exact UV loops into independent trim regions before triangulation. Null when a region does not
     /// triangulate, or when the triangulation of the regions would spend more than a budget near-linear in the vertices.
     /// </summary>
+    internal static List<List<double[]>>? TriangulateTrimRegions(IReadOnlyList<List<double[]>> sourceRings) =>
+        TriangulateTrimRegions(sourceRings, out _);
+
+    /// <summary>
+    /// Partitions a Face's exact UV loops into independent trim regions before triangulation. Null when a region does not
+    /// triangulate, or when the triangulation ran out of <paramref name="budget"/> (by default one near-linear in the vertices),
+    /// which <paramref name="outOfBudget"/> tells apart.
+    /// </summary>
     internal static List<List<double[]>>? TriangulateTrimRegions(
-        IReadOnlyList<List<double[]>> sourceRings)
+        IReadOnlyList<List<double[]>> sourceRings, out bool outOfBudget, TrimWorkBudget? budget = null)
     {
+        outOfBudget = false;
         static bool Same(double[] first, double[] second) =>
             first[0] == second[0] && first[1] == second[1];
         static decimal SignedArea(IReadOnlyList<double[]> ring)
@@ -4997,7 +5020,7 @@ internal static partial class GRepParserV2
             .ToList();
         if (rings.Count == 0) return null;
 
-        var budget = TrimWorkBudget.ForVertices(rings.Sum(ring => ring.Count));
+        budget ??= TrimWorkBudget.ForVertices(rings.Sum(ring => ring.Count));
         decimal Orientation(double[] first, double[] second, double[] point)
         {
             budget.Spend();
@@ -5058,13 +5081,18 @@ internal static partial class GRepParserV2
                     .Where(index => parent[index] == outer)
                     .Select(index => rings[index]));
                 var triangles = TriangulateTrimRings(region, budget);
-                if (triangles == null) return null;
+                if (triangles == null)
+                {
+                    outOfBudget = budget.Exhausted;
+                    return null;
+                }
                 result.AddRange(triangles);
             }
             return result.Count > 0 ? result : null;
         }
         catch (TrimWorkExceeded)
         {
+            outOfBudget = true;
             return null;
         }
     }
@@ -5072,7 +5100,8 @@ internal static partial class GRepParserV2
     /// <summary>
     /// Tessellates the exact UV trim region while retaining the Edge-authored boundary.
     /// Surface.Envelope describes the underlying analytic surface and may include regions outside a
-    /// Face; the EdgeLoop is authoritative.
+    /// Face; the EdgeLoop is authoritative. Null when the loops do not triangulate (the caller then draws the untrimmed grid);
+    /// empty, with the face counted as untriangulated, when their triangulation ran out of its work budget.
     /// </summary>
     private static List<List<double[]>>? TessellateTrimmedGrid(
         List<(double U1, double V1, double U2, double V2)> edges,
@@ -5108,7 +5137,16 @@ internal static partial class GRepParserV2
         {
             var trimRings = rings.Select(ring => ring.Select(point =>
                 new[] { point[0], point[1] }).ToList()).ToList();
-            sourcePolygons = TriangulateTrimRegions(trimRings);
+            sourcePolygons = TriangulateTrimRegions(trimRings, out bool outOfBudget);
+            if (outOfBudget)
+            {
+                // Valid loops can be adversarial for the triangulation; the face is left out and counted rather than drawn
+                // as its untrimmed surface grid, which would fill its holes and pass its outer trim.
+                t_untriangulatedFaces++;
+                DiagnosticSink.WriteLine($"trim triangulation: a face of {trimRings.Count} loops and "
+                    + $"{trimRings.Sum(ring => ring.Count)} vertices ran out of its work budget and is left out");
+                return [];
+            }
         }
         if (sourcePolygons == null || sourcePolygons.Count == 0) return null;
 

@@ -491,6 +491,7 @@ internal static partial class ElementBuilder
         }
         if (outGeo.Faces.Count > 0)
             outGeo.BoundingBox = new[] { minx, miny, minz, maxx, maxy, maxz };
+        outGeo.UntriangulatedFaces = sym.UntriangulatedFaces;
         return outGeo;
     }
 
@@ -578,6 +579,7 @@ internal static partial class ElementBuilder
             ExactMappedInstances = source.ExactMappedInstances,
             Solids = source.Solids,
             MeshNodes = source.MeshNodes,
+            UntriangulatedFaces = source.UntriangulatedFaces,
         };
         var oldToNew = new Dictionary<int, int>();
         var clippedFaces = new HashSet<int>();
@@ -689,6 +691,7 @@ internal static partial class ElementBuilder
                 Normal = face.XVector, CurvedSurface = face.CurvedSurface,
             }).ToList(),
             MeshNodes = grep.MeshNodes,
+            UntriangulatedFaces = grep.UntriangulatedFaces,
             NodeMeasures = grep.NodeMeasures,
             Transform = grep.Transform,
             Instances = grep.Instances.Count > 0
@@ -6518,6 +6521,7 @@ internal static partial class ElementBuilder
     {
         int faceOffset = target.Faces.Count;
         int edgeOffset = target.Edges?.Count ?? 0;
+        target.UntriangulatedFaces += source.UntriangulatedFaces;
         // Geometry node ids are unique within one GeometryData: the appended nodes follow the
         // existing ones. (a negative id marks a node that Revit does not take, see
         // GRepParserV2).
