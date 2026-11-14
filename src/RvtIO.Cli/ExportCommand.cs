@@ -9,24 +9,26 @@ using RvtIO.Model;
 internal static partial class Program
 {
     /// <summary>The values of the command line that decide the export.</summary>
-    private sealed record ExportArguments(string[] Args, string RvtPath, string OutputPath, string? ExternalDumpPath, string? ExternalDumpClassPrefix,
-        IfcProfile Profile, bool IsIfcOutput, string? ExportPhaseOption, string? RoomPhaseOption, bool IncludeIfcRevitParameters, bool RevitParameterGroups, bool BaseQuantities,
-        string JsonClassPrefix, bool CompactJson, bool OpeningLegacyAxes, DateTimeOffset? IfcTimestamp);
+    private sealed record ExportArguments(string[] Args, string RvtPath, string? IfcPath, string? CompactJsonPath, string? FullJsonPath, string? ScenePath,
+        string? ExternalDumpPath, string? ExternalDumpClassPrefix,
+        IfcProfile Profile, string? ExportPhaseOption, string? RoomPhaseOption, bool IncludeIfcRevitParameters, bool RevitParameterGroups, bool BaseQuantities,
+        string JsonClassPrefix, bool OpeningLegacyAxes, DateTimeOffset? IfcTimestamp);
 
     // The export: reads the file and writes the IFC, the compact JSON or the full JSON dump.
     private static int Export(ExportArguments arguments)
     {
-        var (args, rvtPath, outputPath, externalDumpPath, externalDumpClassPrefix, profile, isIfcOutput, exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, compactJson, openingLegacyAxes, ifcTimestamp) = arguments;
+        var (args, rvtPath, ifcPath, compactJsonPath, fullJsonPath, scenePath, externalDumpPath, externalDumpClassPrefix, profile, exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, openingLegacyAxes, ifcTimestamp) = arguments;
         WarnIfRevitLocalization(args);
+        bool needIfcLayout = ifcPath != null || scenePath != null;
         var options = new RvtReaderOptions
         {
             DiagnosticOutput = Console.Error,
             ExternalDumpPath = externalDumpPath,
             ExternalDumpClassPrefix = externalDumpClassPrefix,
-            SystemFamilyNameLocale = profile == RvtIO.Ifc.IfcProfile.Current ? "ENU" : null,
-            SeparateFacesWithDistinctOpenings = profile == RvtIO.Ifc.IfcProfile.Current,
-            // IFC export reads the geometry with the Revit 2022 readers; --no-r22-layout keeps the 64-bit schema path alone
-            R22Layout = isIfcOutput && !args.Contains("--no-r22-layout") || args.Contains("--r22-layout"),
+            SystemFamilyNameLocale = (needIfcLayout && profile == RvtIO.Ifc.IfcProfile.Current) ? "ENU" : null,
+            SeparateFacesWithDistinctOpenings = needIfcLayout && profile == RvtIO.Ifc.IfcProfile.Current,
+            // IFC and Scene export read the geometry with the Revit 2022 readers; --no-r22-layout keeps the 64-bit schema path alone
+            R22Layout = (needIfcLayout && !args.Contains("--no-r22-layout")) || args.Contains("--r22-layout"),
             ResolveCurrentCopies = RvtIO.Cli.CurrentCopiesOption.Resolve(args),
         };
 
@@ -47,7 +49,7 @@ internal static partial class Program
             Console.Error.WriteLine("--report requires one value: the path of the JSON report.");
             return 1;
         }
-        if (reportPath != null && RvtIO.Cli.ReportPathOption.OutputPaths(args, rvtPath, outputPath, externalDumpPath).Any(path => ExportReport.SameFile(reportPath, path)))
+        if (reportPath != null && RvtIO.Cli.ReportPathOption.OutputPaths(args, rvtPath, ifcPath ?? compactJsonPath ?? fullJsonPath ?? scenePath, externalDumpPath).Any(path => ExportReport.SameFile(reportPath, path)))
         {
             Console.Error.WriteLine("--report must not name the input file or an output of the run; nothing was read or written.");
             return 1;
@@ -99,7 +101,7 @@ internal static partial class Program
                 $"error: the read of '{inputName}' was partial ({reasons}). Nothing was exported (exit code {report.ExitCode}). Omit --strict to export what was read.");
         }
 
-        if (outputPath.EndsWith(".ifc", StringComparison.OrdinalIgnoreCase))
+        if (ifcPath != null)
         {
             // Without the option the current profile exports the rooms of the last project phase that exists as a phase element (the
             // exporter resolves it); the legacy profile target exports every room. "all" keeps every room, "last" and an ID are explicit.
@@ -131,12 +133,13 @@ internal static partial class Program
             var skipLog = new SkipLog();
             var exporter = new IfcExporter(Console.Error, includeIfcRevitParameters) { SkipLog = skipLog, ExportPhaseId = exportPhase, ExportAllPhases = exportPhaseOption == "all", RoomExportPhaseId = roomPhase, ExportRoomsOfAllPhases = roomPhaseOption == "all", RevitParameterGroups = revitParameterGroups, Profile = profile, BaseQuantities = baseQuantities, OpeningQuantitiesSwapped = openingLegacyAxes, Timestamp = ifcTimestamp };
             var swExport = System.Diagnostics.Stopwatch.StartNew();
-            exporter.Export(rvtInfo, outputPath);
+            exporter.Export(rvtInfo, ifcPath);
             Console.Error.WriteLine($"Timing: export {swExport.Elapsed.TotalSeconds:F1}s");
-            Console.Error.WriteLine($"IFC written to {outputPath}");
+            Console.Error.WriteLine($"IFC written to {ifcPath}");
             report.SetExport("ifc", exporter.ExportedProducts, skipLog);
         }
-        else if (compactJson)
+
+        if (compactJsonPath != null)
         {
             // The compact export reads Element.Name only where it is validated (the IFC branch above keeps the fallback names).
             RvtIO.Parsing.ValidatedElementNames.Apply(rvtInfo,
@@ -220,12 +223,14 @@ internal static partial class Program
                     foreach (var (pid, value) in native.ElementIds) Console.Error.WriteLine($"  E {pid} = {value}");
                 }
             }
-            CompactJsonExporter.Export(rvtInfo, outputPath, compactSource, Console.Error, compactIdentity,
+            CompactJsonExporter.Export(rvtInfo, compactJsonPath, compactSource, Console.Error, compactIdentity,
                 new CompactJsonExportOptions { JsonClassNamePrefix = jsonClassPrefix });
             compactSource.Builtin.WriteReport(Console.Error);
-            report.SetJsonExport(rvtInfo, full: false);
+            if (ifcPath == null)
+                report.SetJsonExport(rvtInfo, full: false);
         }
-        else
+
+        if (fullJsonPath != null)
         {
             var jsonOpts = new JsonSerializerOptions
             {
@@ -250,11 +255,27 @@ internal static partial class Program
             rvtInfo.BuildParameterDefinitionTable();
 
             // Stream directly to the file (avoids building one ~GB string in memory, which runs out of memory on large files).
-            using (var fs = File.Create(outputPath))
+            using (var fs = File.Create(fullJsonPath))
                 JsonSerializer.Serialize(fs, rvtInfo, jsonOpts);
-            Console.Error.WriteLine($"JSON written to {outputPath} ({rvtInfo.Elements.Count} elements, " +
+            Console.Error.WriteLine($"JSON written to {fullJsonPath} ({rvtInfo.Elements.Count} elements, " +
                 $"{rvtInfo.ParameterDefinitions?.Count ?? 0} param defs)");
-            report.SetJsonExport(rvtInfo, full: true);
+            if (ifcPath == null && compactJsonPath == null)
+                report.SetJsonExport(rvtInfo, full: true);
+        }
+
+        if (scenePath != null)
+        {
+            var swScene = System.Diagnostics.Stopwatch.StartNew();
+            var doc = RvtDocument.FromInfo(rvtInfo);
+            var sceneResult = RvtIO.Scene.RvtSceneReader.Read(doc, new RvtIO.Scene.RvtSceneOptions
+            {
+                ModelKey = Path.GetFileName(rvtPath)
+            });
+            foreach (var diag in sceneResult.Diagnostics)
+                Console.Error.WriteLine($"{diag.Severity} {diag.Code}: {diag.Message}");
+            IOScene.SceneJson.Save(sceneResult.Document, scenePath);
+            Console.Error.WriteLine($"Timing: scene {swScene.Elapsed.TotalSeconds:F1}s");
+            Console.Error.WriteLine($"Scene written to {scenePath}");
         }
         return EndRun(reportPath, report, null);
     }

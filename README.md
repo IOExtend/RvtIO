@@ -61,7 +61,13 @@ Export IFC with Revit parameters as property sets:
 rvtio project.rvt project.parameters.ifc --ifc-revit-parameters
 ```
 
-A `.ifc` output path selects IFC. Any other output path selects JSON, which is compact by default. If the output path is omitted, the tool writes `output.json`. Diagnostics go to standard error.
+Export multiple formats in a single read:
+
+```sh
+rvtio project.rvt --ifc project.ifc --compact-json project.compact.json --scene project.scene.json
+```
+
+A `.ifc` output path selects IFC. Any other output path selects JSON, which is compact by default. When `--ifc`, `--compact-json`, `--full-json`, or `--scene` are specified, the model is read once and each requested format is exported sequentially. If no output path is given, the tool writes `output.json`. Diagnostics go to standard error.
 
 Export the state of one project phase:
 

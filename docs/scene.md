@@ -33,6 +33,20 @@ Only `Read(path)` reports the diagnostics of the read (`read-cut`, `failed-membe
 `RvtSceneResult` holds the `Document`, the `Diagnostics` and counts: elements, elements with geometry, elements by
 coverage, geometries, instances and symbol placements.
 
+### Command Line
+
+You can also export a scene document directly using `rvtio` via `--scene <path>`:
+
+```sh
+rvtio project.rvt --scene project.scene.json
+```
+
+It can be combined with other outputs to export IFC, JSON, and scene JSON from a single read of the RVT file:
+
+```sh
+rvtio project.rvt --ifc project.ifc --compact-json project.compact.json --scene project.scene.json
+```
+
 ## What the scene holds
 
 | Scene | From |
