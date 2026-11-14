@@ -5,6 +5,8 @@
   items:
     - name: Public API
       href: public-api.md
+    - name: Sheets and viewports
+      href: sheets.md
     - name: Scene adapter
       href: scene.md
     - name: Writing and save-as

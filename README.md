@@ -11,6 +11,7 @@ RvtIO is a .NET library and command line tool that reads Autodesk Revit projects
 - Exports IFC2X3 coordination view, with optional Revit parameters as property sets.
 - Writes compact JSON or a full JSON dump with every parameter and geometry.
 - Returns the triangle meshes of the model elements, with one shared mesh per family symbol for repeated instances (`ElementMeshes`).
+- Lists the sheets of a file and the viewports placed on them (`SheetCatalog`), with the sheet number, name, issue date, by-lines, the viewports of each sheet and the elements each sheet owns. Page size, view placement and 2D content are not decoded yet; the catalog reports each limit.
 
 ## Install
 
@@ -62,6 +63,14 @@ rvtio project.rvt project.parameters.ifc --ifc-revit-parameters
 ```
 
 A `.ifc` output path selects IFC. Any other output path selects JSON, which is compact by default. If the output path is omitted, the tool writes `output.json`. Diagnostics go to standard error.
+
+List the sheets and the viewports placed on them:
+
+```sh
+rvtio sheets project.rvt sheets.json
+```
+
+The catalog has the sheet number, name, issue date, by-lines and scale, the viewports of each sheet and the elements each sheet owns. Page size, view placement, the displayed view and 2D content are not decoded; every limit is reported in the catalog itself. See [sheets and viewports](docs/sheets.md).
 
 Export the state of one project phase:
 

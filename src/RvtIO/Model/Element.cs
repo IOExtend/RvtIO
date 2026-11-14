@@ -222,6 +222,17 @@ namespace RvtIO.Model
         [JsonIgnore]
         internal int? SerializedOwnerDbViewId { get; set; }
 
+        /// <summary>
+        /// The id of the view that owns this element, as stored in the element's <c>m_ownerDBViewId</c>: the sheet or
+        /// drawing view whose annotations and view-specific graphics hold it (a text note placed on a sheet names the
+        /// sheet, a detail line of a plan names the plan). Null when the reader decoded no owner, when the stored owner
+        /// is not a view (the project, -1) or when it is the element itself. A stored owner id is returned as stored
+        /// even when no element of the document has that id, so a caller can tell a dangling link from an absent one.
+        /// </summary>
+        [JsonIgnore]
+        public int? OwnerViewId =>
+            SerializedOwnerDbViewId is int id && id > 0 && id != Id ? id : null;
+
         /// <summary>Exact BaseRailing.m_baseRailingSymbolId stored by this occurrence.</summary>
         [JsonIgnore]
         internal int? SerializedBaseRailingSymbolId { get; set; }

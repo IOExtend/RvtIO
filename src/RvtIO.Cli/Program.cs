@@ -54,6 +54,8 @@ internal static partial class Program
           --sketch-owner-dump <path.csv>    write the closed sketch loops of every sketch-owning element
           --inspect-batch <ids-file> <out.csv>    inspect many ids in one pass (ids: one per line or comma separated)
           --list-category <categoryId> <out.csv>  list the elements of one category
+          sheets <file.rvt|file.rfa> [output.json] [--r22-layout]
+                                            write the sheet catalog (sheets, viewports, limits not decoded) as JSON
 
         Developer options (measurement and comparison dumps, not a stable interface):
           --dev-external-dump <path>        text dump of the model for CompoundStructure layers
@@ -140,6 +142,7 @@ internal static partial class Program
         if (args[0] == "downgrade") return RvtIO.Cli.DowngradeCommand.Run(args[1..], Console.Out, Console.Error);
         if (args[0] == "save-as") return RvtIO.Cli.SaveAsCommand.Run(args[1..], Console.Out, Console.Error);
         if (args[0] == "coverage") return RvtIO.Cli.CoverageCommand.Run(args[1..], Console.Out, Console.Error);
+        if (args[0] == "sheets") return RvtIO.Cli.SheetsCommand.Run(args[1..], Console.Out, Console.Error);
         if (args[0] == "--rebar-dump") return RvtIO.RebarDump.Run(args[1..]);
         if (args[0] == "--parse-block") return ParseBlock(args);
 
