@@ -8,6 +8,7 @@ API between minor releases.
 
 ### Added
 
+- Adds `--ifc-length-unit <mm|m|ft>` (`IfcExporter.LengthUnit` in the library) to override the length unit family declared in the IFC file (`Millimetre`, `Metre` or `Foot`) and scale all coordinates, areas, volumes and base quantities consistently; omitting the setting keeps the project's stored length unit (or millimetres in the legacy profile) byte-for-byte unchanged, and unsupported unit names exit with code 1. Compact JSON keeps the project's formatted display units and full JSON keeps Revit's internal units. (Refs #51)
 - Adds `--ifc-timestamp <timestamp>` (an ISO-8601 timestamp or Unix epoch seconds; `IfcExporter.Timestamp` in the library) to write a fixed UTC timestamp into the STEP `FILE_NAME` header so repeated IFC exports of the same input are byte-for-byte identical, and adds CI-runnable corruption and fuzz tests over synthetic `.rvt` containers and inner streams with execution-time and memory-allocation bounds alongside full Windows, Linux and macOS CI test matrices. (Closes #39)
 
 ### Changed

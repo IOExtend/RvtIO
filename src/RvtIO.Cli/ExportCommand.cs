@@ -11,12 +11,12 @@ internal static partial class Program
     /// <summary>The values of the command line that decide the export.</summary>
     private sealed record ExportArguments(string[] Args, string RvtPath, string OutputPath, string? ExternalDumpPath, string? ExternalDumpClassPrefix,
         IfcProfile Profile, bool IsIfcOutput, string? ExportPhaseOption, string? RoomPhaseOption, bool IncludeIfcRevitParameters, bool RevitParameterGroups, bool BaseQuantities,
-        string JsonClassPrefix, bool CompactJson, bool OpeningLegacyAxes, DateTimeOffset? IfcTimestamp);
+        string JsonClassPrefix, bool CompactJson, bool OpeningLegacyAxes, DateTimeOffset? IfcTimestamp, IfcUnitFamily? IfcLengthUnit);
 
     // The export: reads the file and writes the IFC, the compact JSON or the full JSON dump.
     private static int Export(ExportArguments arguments)
     {
-        var (args, rvtPath, outputPath, externalDumpPath, externalDumpClassPrefix, profile, isIfcOutput, exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, compactJson, openingLegacyAxes, ifcTimestamp) = arguments;
+        var (args, rvtPath, outputPath, externalDumpPath, externalDumpClassPrefix, profile, isIfcOutput, exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, compactJson, openingLegacyAxes, ifcTimestamp, ifcLengthUnit) = arguments;
         WarnIfRevitLocalization(args);
         var options = new RvtReaderOptions
         {
@@ -129,7 +129,7 @@ internal static partial class Program
                 RvtIO.Parsing.ValidatedElementNames.Apply(rvtInfo,
                     reader.LastParsingState ?? throw new InvalidOperationException("The reader kept no parsing state."));
             var skipLog = new SkipLog();
-            var exporter = new IfcExporter(Console.Error, includeIfcRevitParameters) { SkipLog = skipLog, ExportPhaseId = exportPhase, ExportAllPhases = exportPhaseOption == "all", RoomExportPhaseId = roomPhase, ExportRoomsOfAllPhases = roomPhaseOption == "all", RevitParameterGroups = revitParameterGroups, Profile = profile, BaseQuantities = baseQuantities, OpeningQuantitiesSwapped = openingLegacyAxes, Timestamp = ifcTimestamp };
+            var exporter = new IfcExporter(Console.Error, includeIfcRevitParameters) { SkipLog = skipLog, ExportPhaseId = exportPhase, ExportAllPhases = exportPhaseOption == "all", RoomExportPhaseId = roomPhase, ExportRoomsOfAllPhases = roomPhaseOption == "all", RevitParameterGroups = revitParameterGroups, Profile = profile, BaseQuantities = baseQuantities, OpeningQuantitiesSwapped = openingLegacyAxes, Timestamp = ifcTimestamp, LengthUnit = ifcLengthUnit };
             var swExport = System.Diagnostics.Stopwatch.StartNew();
             exporter.Export(rvtInfo, outputPath);
             Console.Error.WriteLine($"Timing: export {swExport.Elapsed.TotalSeconds:F1}s");
