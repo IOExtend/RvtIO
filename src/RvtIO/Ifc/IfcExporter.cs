@@ -7249,7 +7249,7 @@ public partial class IfcExporter
             return element.ValidatedProxyTypeReferenceName;
         }
 
-        if (ifcType != "IFCSLAB" || element.CategoryId is not (-2000032 or -2001300))
+        if (ifcType != "IFCSLAB" || element.CategoryId != -2000032)
             return baselineReferenceValue;
 
         if (element.ValidatedFloorTypeReferenceIsBlocked)

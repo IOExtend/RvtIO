@@ -319,9 +319,11 @@ public class ElementBuilderFloorTypeNameSourceTests
         Assert.Equal("Authored foundation slab type", IfcExporter.FloorTypeReferenceName(instance, currentProfile: true));
         Assert.Equal("Terminal foundation string", IfcExporter.FloorTypeReferenceName(instance, currentProfile: false));
 
-        Assert.Equal("Authored foundation slab type",
+        string expectedQtoCurrent = instanceCategory == -2000032 ? "Authored foundation slab type" : "Competing string";
+        string expectedQtoNonCurrent = instanceCategory == -2000032 ? "Terminal foundation string" : "Competing string";
+        Assert.Equal(expectedQtoCurrent,
             IfcExporter.ResolveQuantityTakeOffReferenceValue(instance, "IFCSLAB", "Competing string", currentProfile: true));
-        Assert.Equal("Terminal foundation string",
+        Assert.Equal(expectedQtoNonCurrent,
             IfcExporter.ResolveQuantityTakeOffReferenceValue(instance, "IFCSLAB", "Competing string", currentProfile: false));
     }
 
