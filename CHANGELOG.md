@@ -8,6 +8,7 @@ API between minor releases.
 
 ### Added
 
+- Tests: adds `IndependentInflaterCrossCheckTests` to cross-check every compressed `Formats/*`, `Global/*` and `Partitions/*` stream and gzip member (checked-in fixtures and synthetic multi-page `.rvt` containers in CI, plus public `.rvt` and `.rfa` samples when `RVTIO_TEST_FILES` is set) against `System.IO.Compression.DeflateStream`, asserting equal byte length, SHA-256 digest, CRC-32, gzip `ISIZE` trailer and format-9 segment `unc` and record counts while reporting compared and dictionary-chained or Deflate64 skipped counts with reasons. (Closes #95)
 - Adds `--ifc-timestamp <timestamp>` (an ISO-8601 timestamp or Unix epoch seconds; `IfcExporter.Timestamp` in the library) to write a fixed UTC timestamp into the STEP `FILE_NAME` header so repeated IFC exports of the same input are byte-for-byte identical, and adds CI-runnable corruption and fuzz tests over synthetic `.rvt` containers and inner streams with execution-time and memory-allocation bounds alongside full Windows, Linux and macOS CI test matrices. (Closes #39)
 
 ### Changed
