@@ -8,7 +8,7 @@ namespace RvtIO.Tests;
 /// Regression coverage for mixed provenance: <c>RvtFileReader.Read()</c> fills <c>ParsingState.EpisodeGuids</c> from the
 /// RVT's own history stream before <c>ExternalDumpParser.Parse</c> runs. A dump with element bodies but no episode
 /// list of its own must not leave its element indices paired with that GUID table (the indexings differ); otherwise
-/// <c>BuildUniqueId</c> would produce a wrong <c>UniqueId</c> instead of the DocGuid fallback.
+/// <c>BuildUniqueId</c> would produce a wrong <c>UniqueId</c> instead of none.
 /// </summary>
 public class ExternalDumpParserEpisodeTests
 {

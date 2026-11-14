@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using OpenMcdf;
 using RvtIO.Internal;
 using RvtIO.Model;
@@ -147,7 +146,7 @@ public partial class RvtFileReader
             ExternalDumpParser.Parse(_options.ExternalDumpPath, state, diag, _options.ExternalDumpClassPrefix);
 
         ExtractForgeParamDefs(state);
-        diag?.WriteLine($"Forge param defs: {state.ForgeParamDefs.Count}, docGuid: {state.DocGuid ?? "not found"}");
+        diag?.WriteLine($"Forge param defs: {state.ForgeParamDefs.Count}");
 
         int paramDefsWithName = state.ForgeParamDefs.Values.Count(d => d.DisplayName != null);
 
@@ -2591,10 +2590,6 @@ public partial class RvtFileReader
 
     private static void ExtractForgeParamDefs(ParsingState state)
     {
-        var uidRe = new Regex(
-            @"^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-[0-9a-f]{8}$",
-            RegexOptions.IgnoreCase);
-
         foreach (var (eid, strs) in state.ElemStrings)
         {
             var forgeStr = strs.FirstOrDefault(s => s.StartsWith("autodesk.parameter."));
@@ -2605,14 +2600,6 @@ public partial class RvtFileReader
                     ?? strs.FirstOrDefault(s => StringScanner.IsValidParamName(s) && s.Contains(" - ") && s.Length <= 80)
                     ?? strs.FirstOrDefault(s => StringScanner.IsValidParamName(s));
                 state.ForgeParamDefs[eid] = (forgeStr, StringScanner.NormalizeParamName(displayName));
-            }
-            if (state.DocGuid == null)
-            {
-                foreach (var s in strs)
-                {
-                    var m = uidRe.Match(s);
-                    if (m.Success) { state.DocGuid = m.Groups[1].Value.ToLowerInvariant(); break; }
-                }
             }
         }
 
