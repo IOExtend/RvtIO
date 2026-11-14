@@ -8,6 +8,7 @@ API between minor releases.
 
 ### Added
 
+- Export report and diagnostics: `streams[].unpackedBytes` (`StreamRecord.UnpackedBytes`) records the inflated byte size of every decoded stream alongside `rawBytes`, and `export.geometry` (`exact`, `approximated`, `boxOnly`, `none`) and `export.elements[]` (`GeometryQualityClass`, `ElementGeometryQuality`, `IfcExporter.ExportedElementQualities`) report the geometry quality class of each exported element in IFC, compact JSON and full JSON exports with totals that sum to `export.exported`. (Closes #96)
 - Adds `--ifc-timestamp <timestamp>` (an ISO-8601 timestamp or Unix epoch seconds; `IfcExporter.Timestamp` in the library) to write a fixed UTC timestamp into the STEP `FILE_NAME` header so repeated IFC exports of the same input are byte-for-byte identical, and adds CI-runnable corruption and fuzz tests over synthetic `.rvt` containers and inner streams with execution-time and memory-allocation bounds alongside full Windows, Linux and macOS CI test matrices. (Closes #39)
 
 ### Changed

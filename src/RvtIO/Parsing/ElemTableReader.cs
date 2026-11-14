@@ -57,7 +57,7 @@ internal static class ElemTableReader
 
             if (PagedGzipStream.Decompress(data) is { } exactTable)
             {
-                RecordStream(diagnostics, "Global/ElemTable", data.Length, 1, 1, 0, 0, 0);
+                RecordStream(diagnostics, "Global/ElemTable", data.Length, 1, 1, 0, 0, 0, exactTable.Length);
                 // Every version but R22: the layout comes from the file's own schema, not from a constant. The shipped R22 layout
                 // is used only for a file whose release in force (the older of the saved and the schema release) is 2022 or unknown.
                 var formats = FormatsSchema.TryRead(root);
@@ -184,7 +184,7 @@ internal static class ElemTableReader
             }
             int rec = recovered != null && outcome.DesyncCount > 0 ? 1 : 0;
             int unverified = recovered == null ? 1 : 0;
-            RecordStream(diagnostics, "Global/ElemTable", data.Length, 1, 1, 0, rec, unverified);
+            RecordStream(diagnostics, "Global/ElemTable", data.Length, 1, 1, 0, rec, unverified, decompressed.Length);
             ParseRows(decompressed, result, out worksets, out creationDates);
 
         }
@@ -367,10 +367,10 @@ internal static class ElemTableReader
         return result.Count > 0;
     }
 
-    private static void RecordStream(RvtReadDiagnostics? diagnostics, string name, long rawBytes, int members, int decoded, int failed, int recovered, int unverified)
+    private static void RecordStream(RvtReadDiagnostics? diagnostics, string name, long rawBytes, int members, int decoded, int failed, int recovered, int unverified, long unpackedBytes = 0)
     {
         if (diagnostics == null) return;
         if (diagnostics.Streams.Any(s => s.Name == name)) return;
-        diagnostics.Streams.Add(new StreamRecord(name, rawBytes, members, decoded, failed, recovered, unverified));
+        diagnostics.Streams.Add(new StreamRecord(name, rawBytes, members, decoded, failed, recovered, unverified, unpackedBytes));
     }
 }

@@ -1161,7 +1161,8 @@ public partial class RvtFileReader
             }
 
             var chunks = CutPartition(raw, framing, decompressor, out var stats, out string? framingFailure, out var framed);
-            RecordStream("Partitions/" + partEntry.Name, raw.Length, stats.Members, stats.Decoded, stats.Failed, stats.Recovered, stats.Unverified);
+            RecordStream("Partitions/" + partEntry.Name, raw.Length, stats.Members, stats.Decoded, stats.Failed, stats.Recovered, stats.Unverified,
+                chunks.Sum(chunk => (long)chunk.Length));
             diag?.WriteLine(framingFailure == null ? $"  Chunks: {chunks.Count} segments of the exact framing"
                 : $"  Chunks: {chunks.Count} decompressed by a search for gzip members (framing: {framingFailure})");
             if (routing != null && int.TryParse(partEntry.Name, out int partitionNumber)
@@ -1241,11 +1242,11 @@ public partial class RvtFileReader
         return new RoutingPlan(census, current);
     }
 
-    private void RecordStream(string name, long rawBytes, int members, int decoded, int failed, int recovered, int unverified)
+    private void RecordStream(string name, long rawBytes, int members, int decoded, int failed, int recovered, int unverified, long unpackedBytes = 0)
     {
         if (_options.Diagnostics == null) return;
         if (_options.Diagnostics.Streams.Any(s => s.Name == name)) return;
-        _options.Diagnostics.Streams.Add(new StreamRecord(name, rawBytes, members, decoded, failed, recovered, unverified));
+        _options.Diagnostics.Streams.Add(new StreamRecord(name, rawBytes, members, decoded, failed, recovered, unverified, unpackedBytes));
     }
 
     private List<byte[]> DecompressStorage(RootStorage root, string storageName, TextWriter? diag)
@@ -1268,13 +1269,14 @@ public partial class RvtFileReader
                     if (PagedGzipStream.Decompress(raw) is { } exact)
                     {
                         diag?.WriteLine($"{storageName}/{entry.Name}: exact paged decode ({exact.Length:N0} bytes)");
-                        RecordStream($"{storageName}/{entry.Name}", raw.Length, 1, 1, 0, 0, 0);
+                        RecordStream($"{storageName}/{entry.Name}", raw.Length, 1, 1, 0, 0, 0, exact.Length);
                         allChunks.Add(exact);
                         continue;
                     }
                     var chunks = decompressor.DecompressAll(raw);
                     var (members, decodedMembers, failedMembers, recoveredMembers, unverifiedMembers) = decompressor.LastStats;
-                    RecordStream($"{storageName}/{entry.Name}", raw.Length, members, decodedMembers, failedMembers, recoveredMembers, unverifiedMembers);
+                    RecordStream($"{storageName}/{entry.Name}", raw.Length, members, decodedMembers, failedMembers, recoveredMembers, unverifiedMembers,
+                        chunks.Sum(chunk => (long)chunk.Length));
                     if (chunks.Count > 0)
                     {
                         diag?.WriteLine($"{storageName}/{entry.Name}: {chunks.Count} chunks ({raw.Length:N0} bytes)");
@@ -1305,7 +1307,7 @@ public partial class RvtFileReader
         if (PagedGzipStream.Read(root, "Global", "History", out long rawLength) is { } exact)
         {
             diag?.WriteLine($"Global/History: exact paged decode ({exact.Length:N0} bytes)");
-            RecordStream("Global/History", rawLength, 1, 1, 0, 0, 0);
+            RecordStream("Global/History", rawLength, 1, 1, 0, 0, 0, exact.Length);
             return ParseEpisodeGuids(new List<byte[]> { exact }, diag, wideSchema);
         }
         return ParseEpisodeGuids(DecompressNamedStream(root, "Global", "History", diag), diag, wideSchema);
@@ -1327,7 +1329,8 @@ public partial class RvtFileReader
             var decompressor = new ChunkDecompressor();
             var chunks = decompressor.DecompressAll(raw);
             var (members, decodedMembers, failedMembers, recoveredMembers, unverifiedMembers) = decompressor.LastStats;
-            RecordStream($"{storageName}/{streamName}", raw.Length, members, decodedMembers, failedMembers, recoveredMembers, unverifiedMembers);
+            RecordStream($"{storageName}/{streamName}", raw.Length, members, decodedMembers, failedMembers, recoveredMembers, unverifiedMembers,
+                chunks.Sum(chunk => (long)chunk.Length));
             diag?.WriteLine($"{storageName}/{streamName}: {chunks.Count} chunks ({raw.Length:N0} bytes)");
             return chunks;
         }

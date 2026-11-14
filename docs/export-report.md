@@ -48,13 +48,17 @@ The report is one JSON object, UTF-8, property names in camelCase. `schema` name
   "input": { "file": "project.rvt", "bytes": 9293824 },
   "limits": { "raised": false, "partialAllowed": false, "strict": false, "hit": [] },
   "streams": [
-    { "name": "Partitions/0", "rawBytes": 8187086, "members": 695, "decoded": 695,
+    { "name": "Partitions/0", "rawBytes": 8187086, "unpackedBytes": 34219008, "members": 695, "decoded": 695,
       "failed": 0, "recovered": 0, "unverified": 0, "decodedFraction": 1 }
   ],
   "elements": { "inTable": 8135, "decoded": 8135, "decodedFraction": 1, "undecoded": [] },
   "issues": [],
   "export": {
     "format": "ifc", "considered": 59149, "exported": 28, "skipped": 59121, "exportedFraction": 0.000473,
+    "geometry": { "exact": 24, "approximated": 2, "boxOnly": 1, "none": 1 },
+    "elements": [
+      { "id": 1001, "class": "OST_Walls", "quality": "exact" }
+    ],
     "skippedByClass": [
       { "class": "OST_Sheets", "reason": "record-outside-exact-element-table", "count": 17580, "examples": [173028, 173029] }
     ]
@@ -70,12 +74,14 @@ The report is one JSON object, UTF-8, property names in camelCase. `schema` name
 | `error` | Only when `status` is `failed`: `kind` (`cannot-open`, `empty-file`, `not-a-compound-file`, `truncated-or-damaged`, `limit-exceeded`, `decode-failure`), `message`, and for `decode-failure` the `detail` with the stack trace. |
 | `limits.raised`, `limits.partialAllowed`, `limits.strict` | Whether `--raise-limits`, `--allow-partial` and `--strict` were given. |
 | `limits.hit[]` | Every stream cut by a limit: `stream`, `limit` (code from the table above), `value` (the limit in force), `raisable`, `detail`. |
-| `streams[]` | The partition, Global, Formats and element table streams. `members` are the gzip members the stream is cut into; `decoded` produced output; `failed` produced none and their data is missing (a stream that holds bytes but not one gzip member is one failed member); `recovered` were rescued by a structural relock; `unverified` were kept although their checksum did not match or was never checked, which includes every rescued member. `decodedFraction` is `decoded / members`. |
+| `streams[]` | The partition, Global, Formats and element table streams. `rawBytes` is the stored length of the stream in the compound file and `unpackedBytes` is the inflated byte count of its decoded members (0 when nothing decoded). `members` are the gzip members the stream is cut into; `decoded` produced output; `failed` produced none and their data is missing (a stream that holds bytes but not one gzip member is one failed member); `recovered` were rescued by a structural relock; `unverified` were kept although their checksum did not match or was never checked, which includes every rescued member. `decodedFraction` is `decoded / members`. |
 | `elements.inTable`, `elements.decoded` | Rows of the element table, and those with a parsed record. `decodedFraction` is their quotient (1 for an empty table). |
 | `issues[]` | Findings that make a read `partial`, as `stream`, `code`, `detail`: `failed-members` (one or more gzip members of the stream produced no output), `recovered-members` (one or more members were rebuilt by structural recovery), `unverified-members` (one or more members decoded without a matching checksum), and `no-rows` (`Global/ElemTable` decoded no row; a project always has elements, so the table did not decode). |
 | `elements.undecoded[]` | Rows of the element table without a parsed record, as `class`, `reason`, `count`, `examples`. The class of an element that never decoded is `unknown`. |
 | `export.format` | `ifc`, `json` (the compact export) or `json-full`. |
 | `export.considered`, `exported`, `skipped` | Parsed elements the export looked at, wrote, and left out, counted as the exporter counts them (`exported` counts elements, not product entities: for example, a roof element that writes two product entities, an `IfcRoof` and an `IfcSlab` with the same tag, counts once in `exported`, so the exported total can be below the number of product entities). `exportedFraction` is `exported / considered`. |
+| `export.geometry` | Totals of exported elements per geometry quality class: `exact` (decoded without fallback), `approximated` (approximated from a fallback, such as a wall extruded from its axis and width without complete side profiles, a clipped or unresolved placed symbol, or a ghost Geometry node without decoded polygons), `boxOnly` (represented only by a bounding box or rescaled symbol box) and `none` (exported without body geometry, such as an aggregate container, a pure wall-cut door or window, or an undecoded record). `exact + approximated + boxOnly + none` equals `export.exported`. |
+| `export.elements[]` | One entry per exported element, in export order, as `id`, `class` and `quality` (`exact`, `approximated`, `box-only` or `none`). Its length equals `export.exported` and its per-quality counts equal `export.geometry`. |
 | `export.skippedByClass[]` | Every skipped element class with its reason, count and up to five element ids (`examples`), largest first. The counts add up to `export.skipped`. |
 
 A complete input also has skipped elements: the exporters leave out element types, annotations, records that only live inside other records and similar. `exportedFraction` is therefore not a measure of lost data; `status`, `streams` and `elements` are. The reasons below name the rule that left the element out.

@@ -134,7 +134,7 @@ internal static partial class Program
             exporter.Export(rvtInfo, outputPath);
             Console.Error.WriteLine($"Timing: export {swExport.Elapsed.TotalSeconds:F1}s");
             Console.Error.WriteLine($"IFC written to {outputPath}");
-            report.SetExport("ifc", exporter.ExportedProducts, skipLog);
+            report.SetExport("ifc", exporter.ExportedProducts, skipLog, exporter.ExportedElementQualities);
         }
         else if (compactJson)
         {

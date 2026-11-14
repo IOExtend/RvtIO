@@ -66,8 +66,28 @@ public sealed class RvtLimitException : Exception
 /// <param name="Raisable">True when <see cref="RvtReaderOptions.RaiseLimits"/> raises this limit.</param>
 public sealed record ReaderLimitHit(string Stream, string Limit, long Value, bool Raisable, string Detail);
 
-/// <summary>How much of one partition stream decoded. Members are the gzip members the stream is cut into.</summary>
-public sealed record StreamRecord(string Name, long RawBytes, int Members, int Decoded, int Failed, int Recovered, int Unverified);
+/// <summary>How much of one partition stream decoded. Members are the gzip members the stream is cut into;
+/// <paramref name="UnpackedBytes"/> is the inflated byte length of the decoded members.</summary>
+public sealed record StreamRecord(string Name, long RawBytes, int Members, int Decoded, int Failed, int Recovered, int Unverified, long UnpackedBytes = 0);
+
+/// <summary>How the geometry of one exported element was obtained (<see cref="ExportReport"/>).</summary>
+public enum GeometryQualityClass
+{
+    /// <summary>Decoded directly without fallback.</summary>
+    Exact,
+    /// <summary>Approximated from a fallback when the decoded geometry was incomplete.</summary>
+    Approximated,
+    /// <summary>Represented only by a bounding box.</summary>
+    BoxOnly,
+    /// <summary>Exported without body geometry.</summary>
+    None,
+}
+
+/// <summary>The geometry quality class recorded for one exported element.</summary>
+/// <param name="Id">The Revit element id.</param>
+/// <param name="Class">The category of the element, else its root class, else <c>unknown</c>.</param>
+/// <param name="Quality">How its geometry was obtained.</param>
+public sealed record ElementGeometryQuality(int Id, string Class, GeometryQualityClass Quality);
 
 /// <summary>What the reader collects while it reads a file, for the report (<see cref="RvtReaderOptions.Diagnostics"/>).</summary>
 public sealed class RvtReadDiagnostics
@@ -157,6 +177,9 @@ public sealed class ExportReport
         /// <summary>Size of the stream in the file.</summary>
         public long RawBytes { get; set; }
 
+        /// <summary>Inflated size of the decoded members in bytes (0 when nothing decoded).</summary>
+        public long UnpackedBytes { get; set; }
+
         /// <summary>Gzip members the stream is cut into.</summary>
         public int Members { get; set; }
 
@@ -215,8 +238,36 @@ public sealed class ExportReport
         public int Skipped { get; set; }
         /// <summary>Exported / considered; 1 when nothing was considered.</summary>
         public double ExportedFraction { get; set; }
+        /// <summary>Totals of exported elements by geometry quality class; their sum equals <see cref="Exported"/>.</summary>
+        public ReportGeometryTotals Geometry { get; set; } = new();
+        /// <summary>Geometry quality class of each exported element.</summary>
+        public List<ReportElementGeometry> Elements { get; set; } = new();
         /// <summary>Every skipped element class with its reason.</summary>
         public List<ReportSkipped> SkippedByClass { get; set; } = new();
+    }
+
+    /// <summary>Totals of exported elements per geometry quality class (sum equals <see cref="ReportExport.Exported"/>).</summary>
+    public sealed class ReportGeometryTotals
+    {
+        /// <summary>Elements whose geometry decoded without fallback.</summary>
+        public int Exact { get; set; }
+        /// <summary>Elements whose geometry was approximated from a fallback.</summary>
+        public int Approximated { get; set; }
+        /// <summary>Elements represented only by a bounding box.</summary>
+        public int BoxOnly { get; set; }
+        /// <summary>Elements exported without body geometry.</summary>
+        public int None { get; set; }
+    }
+
+    /// <summary>The geometry quality class of one exported element.</summary>
+    public sealed class ReportElementGeometry
+    {
+        /// <summary>The Revit element id.</summary>
+        public int Id { get; set; }
+        /// <summary>The category of the element, else its root class, else <c>unknown</c>.</summary>
+        public string Class { get; set; } = "";
+        /// <summary>Stable quality code: <c>exact</c>, <c>approximated</c>, <c>box-only</c> or <c>none</c>.</summary>
+        public string Quality { get; set; } = "";
     }
 
     /// <summary>Elements of one class left out for one reason.</summary>
@@ -366,20 +417,60 @@ public sealed class ExportReport
         Limits.Hit = diagnostics.LimitHits.ToList();
         Streams = diagnostics.Streams.Select(stream => new ReportStream
         {
-            Name = stream.Name, RawBytes = stream.RawBytes, Members = stream.Members, Decoded = stream.Decoded,
+            Name = stream.Name, RawBytes = stream.RawBytes, UnpackedBytes = stream.UnpackedBytes,
+            Members = stream.Members, Decoded = stream.Decoded,
             Failed = stream.Failed, Recovered = stream.Recovered, Unverified = stream.Unverified,
             DecodedFraction = Fraction(stream.Decoded, stream.Members),
         }).ToList();
     }
 
-    /// <summary>Adds the export part. <paramref name="skipped"/> holds the elements the export left out.</summary>
-    public void SetExport(string format, int exported, SkipLog skipped)
+    /// <summary>Stable code of <paramref name="quality"/> in the JSON report.</summary>
+    public static string CodeOf(GeometryQualityClass quality) => quality switch
     {
+        GeometryQualityClass.Exact => "exact",
+        GeometryQualityClass.Approximated => "approximated",
+        GeometryQualityClass.BoxOnly => "box-only",
+        _ => "none",
+    };
+
+    /// <summary>Adds the export part. <paramref name="skipped"/> holds the elements the export left out.</summary>
+    public void SetExport(string format, int exported, SkipLog skipped) =>
+        SetExport(format, exported, skipped, elementQualities: null);
+
+    /// <summary>Adds the export part, including the per-element geometry quality classes when provided.</summary>
+    public void SetExport(string format, int exported, SkipLog skipped, IReadOnlyList<ElementGeometryQuality>? elementQualities)
+    {
+        if (elementQualities != null && elementQualities.Count != exported)
+            throw new ArgumentException($"Element geometry quality count ({elementQualities.Count}) must equal exported element count ({exported}).", nameof(elementQualities));
+
+        var totals = new ReportGeometryTotals();
+        var elements = new List<ReportElementGeometry>(elementQualities?.Count ?? 0);
+        if (elementQualities == null)
+        {
+            totals.None = exported;
+        }
+        else
+        {
+            foreach (var entry in elementQualities)
+            {
+                switch (entry.Quality)
+                {
+                    case GeometryQualityClass.Exact: totals.Exact++; break;
+                    case GeometryQualityClass.Approximated: totals.Approximated++; break;
+                    case GeometryQualityClass.BoxOnly: totals.BoxOnly++; break;
+                    default: totals.None++; break;
+                }
+                elements.Add(new ReportElementGeometry { Id = entry.Id, Class = entry.Class, Quality = CodeOf(entry.Quality) });
+            }
+        }
+
         int considered = exported + skipped.Total;
         Export = new ReportExport
         {
             Format = format, Considered = considered, Exported = exported, Skipped = skipped.Total,
-            ExportedFraction = Fraction(exported, considered), SkippedByClass = skipped.Groups(),
+            ExportedFraction = Fraction(exported, considered),
+            Geometry = totals, Elements = elements,
+            SkippedByClass = skipped.Groups(),
         };
     }
 
@@ -388,13 +479,38 @@ public sealed class ExportReport
     internal void SetJsonExport(RevitFileInfo info, bool full)
     {
         var skipped = new SkipLog();
-        int exported = 0;
+        var qualities = new List<ElementGeometryQuality>();
         foreach (var element in info.Elements)
         {
-            if (full || Compact.CompactUniverse.IsTableRow(element, info.ElemTableIsExact)) exported++;
-            else skipped.Add(element.Id, SkipLog.ClassOf(element), element.IsBlockOnly ? "block-only-record" : "record-outside-exact-element-table");
+            string cls = SkipLog.ClassOf(element);
+            if (full || Compact.CompactUniverse.IsTableRow(element, info.ElemTableIsExact))
+                qualities.Add(new ElementGeometryQuality(element.Id, cls, ClassifyJsonElementGeometry(element, info.GeometryUndecoded)));
+            else
+                skipped.Add(element.Id, cls, element.IsBlockOnly ? "block-only-record" : "record-outside-exact-element-table");
         }
-        SetExport(full ? "json-full" : "json", exported, skipped);
+        SetExport(full ? "json-full" : "json", qualities.Count, skipped, qualities);
+    }
+
+    internal static GeometryQualityClass ClassifyJsonElementGeometry(Element element, bool geometryUndecoded)
+    {
+        if (!geometryUndecoded && element.Geometry is { } geo)
+        {
+            bool hasBody = geo.Faces.Any(face => face.OuterVertices is { Count: >= 3 })
+                || geo.Solids is { Count: > 0 }
+                || geo.BrepSolids is { Count: > 0 };
+            if (hasBody)
+            {
+                if (geo.PlacedSymbolBox) return GeometryQualityClass.BoxOnly;
+                if (geo.PlacedSymbolClipped || geo.UnresolvedSymbol || geo.GhostNodes is { Count: > 0 }) return GeometryQualityClass.Approximated;
+                return GeometryQualityClass.Exact;
+            }
+            if (geo.BoundingBox is { Length: >= 6 }) return GeometryQualityClass.BoxOnly;
+        }
+        if (element.RebarBars is { } rebar && (rebar.Bars.Count > 0 || rebar.Items is { Count: > 0 }))
+            return GeometryQualityClass.Exact;
+        if (!geometryUndecoded && element.DecodedBox is { Length: >= 6 })
+            return GeometryQualityClass.BoxOnly;
+        return GeometryQualityClass.None;
     }
 
     private static double Fraction(int part, int whole) => whole == 0 ? 1.0 : Math.Round((double)part / whole, 6);
