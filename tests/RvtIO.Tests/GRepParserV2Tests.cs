@@ -465,6 +465,97 @@ public class GRepParserV2Tests
     }
 
     [Fact]
+    public void TrimTriangulation_KeepsTheTrianglesAndOrderOfTheExhaustiveSearch()
+    {
+        // Integer samples tie bridge distances and put collinear samples on every outer edge; the expected polygons are those
+        // of the earlier triangulation, which tested every candidate and rescanned the ring for every ear.
+        var outer = new List<double[]>();
+        for (int x = 0; x < 4; x++) outer.Add([x, 0]);
+        for (int y = 0; y < 4; y++) outer.Add([4, y]);
+        for (int x = 4; x > 0; x--) outer.Add([x, 4]);
+        for (int y = 4; y > 0; y--) outer.Add([0, y]);
+
+        var polygons = GRepParserV2.TriangulateTrimRings(
+        [
+            outer,
+            [[1, 1], [1, 2], [2, 2], [2, 1]],
+            [[2.5, 2.5], [2.5, 3], [3, 3], [3, 2.5]],
+        ]);
+
+        Assert.NotNull(polygons);
+        string[] expected =
+        [
+            "(4, 0) (4, 1) (4, 2) (4, 3) (4, 4) (3, 2.5)",
+            "(4, 0) (3, 2.5) (2.5, 2.5)",
+            "(4, 0) (2.5, 2.5) (2, 1)",
+            "(0, 0) (1, 0) (2, 0) (3, 0) (4, 0) (2, 1)",
+            "(0, 0) (2, 1) (1, 1)",
+            "(0, 4) (0, 3) (0, 2) (0, 1) (0, 0) (1, 1)",
+            "(0, 4) (1, 1) (1, 2)",
+            "(0, 4) (1, 2) (2, 2)",
+            "(2, 2) (2, 1) (2.5, 2.5)",
+            "(0, 4) (2, 2) (2.5, 2.5)",
+            "(0, 4) (2.5, 2.5) (2.5, 3)",
+            "(0, 4) (2.5, 3) (3, 3)",
+            "(3, 3) (3, 2.5) (4, 4)",
+            "(3, 3) (4, 4) (3, 4) (2, 4) (1, 4) (0, 4)",
+        ];
+        Assert.Equal(expected, polygons.Select(polygon => string.Join(" ", polygon.Select(point =>
+            string.Create(System.Globalization.CultureInfo.InvariantCulture, $"({point[0]}, {point[1]})")))).ToArray());
+    }
+
+    // The pattern of a curved face of a private model whose triangulation ran for many minutes: a densely sampled curved
+    // outer loop of 1,930 vertices around 20 circular holes of 210 to 258 vertices. The bridges to the holes tested every
+    // polygon vertex against every edge, and ear clipping every vertex for every ear.
+    private static List<List<double[]>> PerforatedTrimRings()
+    {
+        const int side = 965;
+        var outer = new List<double[]>();
+        for (int index = 0; index < side; index++)
+            outer.Add([20.0 * index / side, 0.3 * Math.Sin(2.0 * index / side)]);
+        for (int index = side; index > 0; index--)
+            outer.Add([20.0 * index / side, 4 + 0.3 * Math.Cos(3.0 * index / side)]);
+        var rings = new List<List<double[]>> { outer };
+        for (int hole = 0; hole < 20; hole++)
+        {
+            int count = 210 + 2 * hole;
+            rings.Add(Enumerable.Range(0, count).Select(index =>
+            {
+                double angle = -2 * Math.PI * index / count;
+                return new[] { 0.5 + hole + 0.4 * Math.Cos(angle), 2 + 0.4 * Math.Sin(angle) };
+            }).ToList());
+        }
+        return rings;
+    }
+
+    [Fact]
+    public void TrimTriangulation_TriangulatesManyFinelySampledHolesInNearLinearWork()
+    {
+        var rings = PerforatedTrimRings();
+
+        // A regression runs for minutes: fail instead of hanging the test run.
+        var triangulation = Task.Run(() => GRepParserV2.TriangulateTrimRegions(rings));
+        Assert.True(triangulation.Wait(TimeSpan.FromSeconds(60)), "the trim triangulation did not finish in 60 s");
+        var polygons = triangulation.Result;
+
+        // Not null: the triangulation stayed within the default near-linear work budget.
+        Assert.NotNull(polygons);
+        double expected = PolygonArea(rings[0]) - rings.Skip(1).Sum(PolygonArea);
+        Assert.Equal(expected, polygons.Sum(PolygonArea), 9);
+        var vertices = polygons.SelectMany(polygon => polygon).Select(point => (point[0], point[1])).ToHashSet();
+        Assert.All(rings.SelectMany(ring => ring), point => Assert.Contains((point[0], point[1]), vertices));
+    }
+
+    [Fact]
+    public void TrimTriangulation_FailsInsteadOfExceedingItsWorkBudget()
+    {
+        var rings = PerforatedTrimRings();
+
+        Assert.Null(GRepParserV2.TriangulateTrimRings(rings, new GRepParserV2.TrimWorkBudget(100_000)));
+        Assert.NotNull(GRepParserV2.TriangulateTrimRings(rings));
+    }
+
+    [Fact]
     public void CoplanarRingClassification_SeparatesDisjointRegionsFromHoles()
     {
         var outer = new List<double[]>
