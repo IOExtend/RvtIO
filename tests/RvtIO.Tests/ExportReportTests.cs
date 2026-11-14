@@ -139,27 +139,61 @@ public class ExportReportTests
         finally { Cleanup(folder); }
     }
 
-    [SkippableFact]
-    public void SameFileSeesAHardLinkOnWindows()
+    [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "link", SetLastError = true)]
+    private static extern int LinuxLink(string existing, string link);
+
+    [System.Runtime.InteropServices.DllImport("libSystem.dylib", EntryPoint = "link", SetLastError = true)]
+    private static extern int DarwinLink(string existing, string link);
+
+    private static void CreateHardLink(string link, string target)
     {
-        if (!OperatingSystem.IsWindows()) throw new SkipException("hard links are compared by file identity on Windows only");
+        if (OperatingSystem.IsWindows())
+        {
+            var start = new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c mklink /H \"{link}\" \"{target}\"")
+            {
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            using var process = System.Diagnostics.Process.Start(start)!;
+            process.StandardOutput.ReadToEnd();
+            process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            if (process.ExitCode != 0 || !File.Exists(link))
+                throw new SkipException("hard links cannot be created here");
+            return;
+        }
+
+        int rc = OperatingSystem.IsMacOS() ? DarwinLink(target, link) : LinuxLink(target, link);
+        if (rc != 0 || !File.Exists(link))
+            throw new SkipException("hard links cannot be created here");
+    }
+
+    [SkippableFact]
+    public void SameFileSeesAHardLinkAndRefusesReportPath()
+    {
         string folder = NewFolder();
         try
         {
             string input = Path.Combine(folder, "model.rvt"), hard = Path.Combine(folder, "hard.rvt"), copy = Path.Combine(folder, "copy.rvt");
             File.WriteAllText(input, "x");
             File.Copy(input, copy);
-            var start = new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c mklink /H \"{hard}\" \"{input}\"") { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-            using (var process = System.Diagnostics.Process.Start(start)!)
-            {
-                process.StandardOutput.ReadToEnd();
-                process.StandardError.ReadToEnd();
-                process.WaitForExit();
-                if (process.ExitCode != 0 || !File.Exists(hard)) throw new SkipException("hard links cannot be created here");
-            }
+            CreateHardLink(hard, input);
 
             Assert.True(ExportReport.SameFile(hard, input));
+            Assert.True(ExportReport.SameFile(input, hard));
             Assert.False(ExportReport.SameFile(copy, input));
+
+            var coverageError = new StringWriter();
+            Assert.Equal(RvtExitCodes.Usage, RvtIO.Cli.CoverageCommand.Run([input, "--report", hard], TextWriter.Null, coverageError));
+            Assert.Contains("--report must not name the input file.", coverageError.ToString());
+
+            string dest = Path.Combine(folder, "saved.rvt");
+            var saveError = new StringWriter();
+            Assert.Equal(RvtExitCodes.Usage, RvtIO.Cli.SaveAsCommand.Run([input, dest, "--report", hard], TextWriter.Null, saveError));
+            Assert.Contains("--report must not name the source or output file.", saveError.ToString());
+            Assert.Equal("x", File.ReadAllText(input));
         }
         finally { Cleanup(folder); }
     }
