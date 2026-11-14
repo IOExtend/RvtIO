@@ -1,4 +1,7 @@
 using System.Text;
+using RvtIO.BuiltIns;
+using RvtIO.Internal;
+using RvtIO.Lookup;
 using RvtIO.Model;
 using RvtIO.Parsing;
 using Xunit;
@@ -861,5 +864,51 @@ public class WideElementRecordsTests
         Assert.All(elements, e => Assert.True(e.SerializedOwnElementClassId is not ushort tag
             ? !TfBlockDeserializer.Schemas.Values.Any(c => c.Name == e.NativeRootClassName)
             : TfBlockDeserializer.Schemas[tag].Name == e.NativeRootClassName));
+    }
+
+    [Theory]
+    [InlineData(false, -2000112)]
+    [InlineData(false, -1)]
+    [InlineData(true, -2000112)]
+    [InlineData(true, -1)]
+    public void BuildElemTableElement_ResolvesZeroIdProjectPhaseInBothModesAndWithMinusOneHeader(bool r22View, int headerCategory)
+    {
+        var state = new ParsingState
+        {
+            WideSchema = new FileSchema(new SchemaDocument()),
+            R22View = r22View,
+            ElemTable = new Dictionary<uint, uint> { [0] = uint.MaxValue },
+            ElemRecOwningElementIds = new Dictionary<uint, int> { [0] = -1 },
+        };
+        state.HeaderCategories[0] = headerCategory;
+        state.NativeRootClassNames[0] = "ProjectPhase";
+        state.WideNames[0] = "Existing";
+        state.OwnedElementClassRoots[0] = new(1, 0x0BF9);
+        state.WalkedElementClassRoots[0] = new(1, 0x0BF9);
+        state.ElemClassIdx[0] = 0x0BF9;
+        state.ProjectPhaseOrderSource = (1, [0]);
+
+        var info = new RevitFileInfo();
+        ElementBuilder.BuildElemTableElement(0, uint.MaxValue, state, info);
+        ElementBuilder.PostProcess(info, state);
+        ElementBuilder.ApplySerializedSpatialPhases(info, state);
+        StairComponentSource.Apply(info.Elements, state);
+
+        var phase = Assert.Single(info.Elements);
+        Assert.Equal(0, phase.Id);
+        Assert.Equal("ProjectPhase", phase.RootClassName);
+        Assert.Equal(-2000112, phase.CategoryId);
+        Assert.Equal(BuiltInCategoryNames.Lookup[-2000112], phase.Category);
+        Assert.Equal("Existing", phase.Name);
+        Assert.Equal(-2000112, phase.Parameters.FirstOrDefault(p => p.Id == -1140362)?.Value);
+        Assert.Equal(-2000112, phase.Parameters.FirstOrDefault(p => p.Id == -1140363)?.Value);
+        Assert.Equal((ushort)0x0BF9, phase.SerializedOwnElementClassId);
+        Assert.True(phase.OwnClassRootSeededOnce);
+        Assert.Equal(0, ProductRules.LastProjectPhase(info));
+        Assert.Single(new FilteredElementCollector(info.Elements).OfCategory(BuiltInCategory.OST_Phases));
+
+        int named = ValidatedElementNames.Apply(info, state);
+        Assert.Equal(1, named);
+        Assert.Equal("Existing", phase.Name);
     }
 }

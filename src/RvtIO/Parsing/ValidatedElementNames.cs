@@ -75,14 +75,14 @@ internal static class ValidatedElementNames
     internal static IEnumerable<Validation> Candidates(
         Element element, IReadOnlyDictionary<int, Element> byId, IReadOnlyDictionary<int, int> counts, ParsingState state)
     {
-        if (element.Id <= 0) yield break;
+        if (element.Id < 0 || element.Id == 0 && state.WideSchema == null && !state.ElemClassIdx.ContainsKey(0)) yield break;
         bool named = false;
         foreach (Validation validation in OwnNames(element, state))
         {
             named = true;
             yield return validation;
         }
-        if (named || state.SystemTypeRoots.ContainsKey((uint)element.Id)) yield break;
+        if (named || element.Id == 0 || state.SystemTypeRoots.ContainsKey((uint)element.Id)) yield break;
         foreach (Validation validation in TypeNames(element, byId, counts, state))
             yield return validation;
     }

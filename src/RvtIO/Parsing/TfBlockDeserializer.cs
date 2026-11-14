@@ -1152,7 +1152,7 @@ internal static partial class TfBlockDeserializer
             return false;
         uint headerOwner = BitConverter.ToUInt32(data, start);
         var fields = SerializationFields(37);
-        if (headerOwner == 0 || headerOwner > int.MaxValue || fields == null
+        if (headerOwner == 0 && classId != 3065 || headerOwner > int.MaxValue || fields == null
             || !HasExactSchemaField(fields, 37, "m_id", 14, 0, 20)
             || !HasExactSchemaField(fields, 37, "m_docAccess", 14, 0, null))
             return false;

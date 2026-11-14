@@ -1156,6 +1156,8 @@ internal static partial class ElementBuilder
             return tableName;
         if (state.NativeElementNames.TryGetValue(eid, out var nativeName))
             return nativeName;
+        if (state.WideNames.TryGetValue(eid, out var wideName) && !string.IsNullOrWhiteSpace(wideName))
+            return wideName;
         string? foundName = null;
         if (state.ElemStrings.TryGetValue(eid, out var blkStrs))
             foundName = blkStrs.FirstOrDefault(StringScanner.IsValidElementName);
@@ -1180,15 +1182,29 @@ internal static partial class ElementBuilder
 
         elem.UniqueId = BuildUniqueId(elemId, state);
 
+        int? wideHeaderCategory = elem.NativeHeaderCategoryId is int header && header != -1
+            ? header
+            : elem.NativeRootClassName == "ProjectPhase" || state.ElemClassIdx.GetValueOrDefault(elemId) == 0x0BF9
+                ? -2000112
+                : null;
         if (state.WideSchema != null && !state.R22View)
         {
             // a file with 64-bit ids: the rest of this method is the Revit 2022 record and stream
             // heuristics. The element is what the file's own tables and the schema-driven block
             // walk give: the header category is exact.
-            if (elem.NativeHeaderCategoryId is int header && header != -1)
+            if (wideHeaderCategory is int resolvedHeader)
             {
-                elem.CategoryId = header;
-                if (BuiltInCategoryNames.Lookup.TryGetValue(header, out var headerName)) elem.Category = headerName;
+                elem.CategoryId = resolvedHeader;
+                if (BuiltInCategoryNames.Lookup.TryGetValue(resolvedHeader, out var headerName)) elem.Category = headerName;
+                if (resolvedHeader == -2000112 && state.WideNames.TryGetValue(elemId, out var widePhaseName) && !string.IsNullOrWhiteSpace(widePhaseName))
+                    elem.Name = widePhaseName;
+                if (elemId == 0 && resolvedHeader == -2000112)
+                {
+                    if (!elem.Parameters.Any(p => p.Id == -1140362))
+                        elem.Parameters.Add(BipHelpers.MakeBipParam(-1140362, "ELEM_CATEGORY_PARAM", StorageType.ElementId, resolvedHeader));
+                    if (!elem.Parameters.Any(p => p.Id == -1140363))
+                        elem.Parameters.Add(BipHelpers.MakeBipParam(-1140363, "ELEM_CATEGORY_PARAM_MT", StorageType.ElementId, resolvedHeader));
+                }
             }
             rvtInfo.Elements.Add(elem);
             return;
@@ -1227,6 +1243,13 @@ internal static partial class ElementBuilder
 
             AddBodyBipParams(elem, rec, elemId, state);
             AddUserParams(elem, rec, elemId, state);
+        }
+
+        if (!elem.CategoryId.HasValue && wideHeaderCategory is int wideCat)
+        {
+            elem.CategoryId = wideCat;
+            if (BuiltInCategoryNames.Lookup.TryGetValue(wideCat, out var catName))
+                elem.Category = catName;
         }
 
         if (state.GrepBlocks.TryGetValue(elemId, out grepDataForElem))
@@ -6664,11 +6687,11 @@ internal static partial class ElementBuilder
 
         foreach (var e in info.Elements)
         {
-            if (e.Id <= 0 || !state.ElemClassIdx.TryGetValue((uint)e.Id, out var cls)) continue;
+            if (e.Id < 0 || !state.ElemClassIdx.TryGetValue((uint)e.Id, out var cls)) continue;
             if (!TfClassRegistry.HighPurityClassCategory.TryGetValue(cls, out int cat)) continue;
-            if (e.CategoryId == cat) continue;
+            if (e.CategoryId == cat && (e.Id != 0 || e.Parameters.Any(p => p.Id == -1140362))) continue;
             e.CategoryId = cat;
-            if (nameByCat.TryGetValue(cat, out var nm)) e.Category = nm;
+            if (nameByCat.TryGetValue(cat, out var nm) || BuiltInCategoryNames.Lookup.TryGetValue(cat, out nm)) e.Category = nm;
             var cp = e.Parameters.FirstOrDefault(p => p.Id == -1140362);
             if (cp != null) { cp.Value = cat; cp.StorageType = StorageType.ElementId; }
             else e.Parameters.Add(BipHelpers.MakeBipParam(-1140362, "ELEM_CATEGORY_PARAM", StorageType.ElementId, cat));
