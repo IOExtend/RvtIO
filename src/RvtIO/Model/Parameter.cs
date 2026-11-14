@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json.Serialization;
 
 namespace RvtIO.Model
@@ -132,21 +133,25 @@ namespace RvtIO.Model
                     return $"{displayed:G6} {UnitSymbol}";
                 }
 
-                // Fallback: heuristic based on parameter name
+                // Fallback: heuristic based on parameter or BIP name
                 string? name = Definition?.Name;
-                if (name != null && (name.Contains("WIDTH") || name.Contains("HEIGHT")
-                    || name.Contains("LENGTH") || name.Contains("OFFSET")
-                    || name.Contains("THICKNESS") || name.Contains("DEPTH")))
+                string? bip = Definition?.BuiltInParameter;
+                bool Matches(string token) =>
+                    (name != null && name.Contains(token, StringComparison.OrdinalIgnoreCase))
+                    || (bip != null && bip.Contains(token, StringComparison.OrdinalIgnoreCase));
+
+                if (Matches("WIDTH") || Matches("HEIGHT") || Matches("LENGTH") || Matches("OFFSET")
+                    || Matches("THICKNESS") || Matches("DEPTH"))
                 {
                     return $"{d * 304.8:F1} mm";
                 }
-                if (name != null && name.Contains("AREA"))
+                if (Matches("AREA"))
                     return $"{d * 0.09290304:F3} m²";
-                if (name != null && name.Contains("VOLUME"))
+                if (Matches("VOLUME"))
                     return $"{d * 0.0283168466:F4} m³";
-                if (name != null && name.Contains("ANGLE"))
+                if (Matches("ANGLE"))
                     return $"{d * 180 / Math.PI:F2}°";
-                return d.ToString("G");
+                return d.ToString("G", CultureInfo.InvariantCulture);
             }
             return Value.ToString();
         }
