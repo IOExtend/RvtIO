@@ -6,13 +6,7 @@ using Xunit;
 
 namespace RvtIO.Tests;
 
-/// <summary>The reader keeps the SeparateFacesWithDistinctOpenings option in a static field for the file it
-/// reads, so a sample-backed test of another class flips it while these tests run.</summary>
-[CollectionDefinition("ElementBuilderSeparateFaces", DisableParallelization = true)]
-public sealed class ElementBuilderSeparateFacesCollection;
-
 /// <summary>Representation decisions of the current profile for bodies whose faces are shared or whose Edge topology is incomplete.</summary>
-[Collection("ElementBuilderSeparateFaces")]
 public class IfcExporterDecisionsCurrentTests
 {
     private static uint handle = 5000;
@@ -83,22 +77,15 @@ public class IfcExporterDecisionsCurrentTests
         };
         List<List<double[]>> Hole(double size) => [[[1, 1, 0], [1 + size, 1, 0], [1 + size, 1 + size, 0], [1, 1 + size, 0]]];
 
-        GeometryData Build() => ElementBuilder.BuildGeometryData(new GRepData
+        GeometryData Build(bool separate) => ElementBuilder.BuildGeometryData(new GRepData
         {
             BoundingBox = [0, 0, 0, 4, 3, 0],
             Faces = [Face(Hole(1)), Face(Hole(0.5)), Face(Hole(1)), Face(null)],
-        })!;
+        }, separate)!;
 
         // The legacy profile export keeps the geometry it was built on (the outline alone is the key): one face.
-        // The static carries the option of the most recent read, so the test sets both states itself.
         Assert.False(new RvtReaderOptions().SeparateFacesWithDistinctOpenings);
-        ElementBuilder.SeparateFacesWithDistinctOpenings = false;
-        try
-        {
-            Assert.Single(Build().Faces);
-            ElementBuilder.SeparateFacesWithDistinctOpenings = true;
-            Assert.Equal(3, Build().Faces.Count);
-        }
-        finally { ElementBuilder.SeparateFacesWithDistinctOpenings = false; }
+        Assert.Single(Build(separate: false).Faces);
+        Assert.Equal(3, Build(separate: true).Faces.Count);
     }
 }

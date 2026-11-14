@@ -250,7 +250,7 @@ internal static partial class ElementBuilder
             }
             var result = new GeometryData();
 
-            var own = BuildGeometryData(symbol);
+            var own = BuildGeometryData(symbol, state.SeparateFacesWithDistinctOpenings);
             if (own?.Faces is { Count: > 0 })
             {
                 own.Instances = null;
@@ -661,12 +661,6 @@ internal static partial class ElementBuilder
     /// </summary>
     private static readonly bool GhostTriangleNodes = Environment.GetEnvironmentVariable("RVTIO_X_GHOSTNODE") != "0";
 
-    /// <summary>
-    /// See <see cref="RvtReaderOptions.SeparateFacesWithDistinctOpenings"/>; set by the reader for
-    /// the file it reads.
-    /// </summary>
-    internal static bool SeparateFacesWithDistinctOpenings;
-
     /// <summary>Key of a face by its quantized corners, independent of corner order. Used for equality only, so the parts are sorted ordinally
     /// (the culture sort of strings costs far more and a key is never read for its order).</summary>
     internal static string FaceCornerKey(List<double[]> cs)
@@ -678,7 +672,7 @@ internal static partial class ElementBuilder
         return string.Join(";", parts);
     }
 
-    public static GeometryData? BuildGeometryData(GRepData grep)
+    public static GeometryData? BuildGeometryData(GRepData grep, bool separateFacesWithDistinctOpenings = false)
     {
         // Skip empty GRep records - no faces and no bounding box = no actual geometry to report.
         if (grep.Faces.Count == 0 && grep.BoundingBox == null && grep.Instances.Count == 0) return null;
@@ -766,7 +760,7 @@ internal static partial class ElementBuilder
                 // Two faces that share their outline but not their holes are two faces (the cap of
                 // a window frame and the cap of the glazing bar behind it are the same rectangle
                 // with different openings).
-                var ck2 = CornerKey(poly) + (SeparateFacesWithDistinctOpenings && fp.InnerVertices is { Count: > 0 } innerRings
+                var ck2 = CornerKey(poly) + (separateFacesWithDistinctOpenings && fp.InnerVertices is { Count: > 0 } innerRings
                     ? "#" + string.Join("|", innerRings.Select(CornerKey).Order(StringComparer.Ordinal)) : "");
                 if (!grep.PreserveSourceFaceIdentity && seenFaces.TryGetValue(ck2, out int existing))
                 {
@@ -1156,6 +1150,8 @@ internal static partial class ElementBuilder
             return tableName;
         if (state.NativeElementNames.TryGetValue(eid, out var nativeName))
             return nativeName;
+        if (state.WideNames.TryGetValue(eid, out var wideName) && !string.IsNullOrWhiteSpace(wideName))
+            return wideName;
         string? foundName = null;
         if (state.ElemStrings.TryGetValue(eid, out var blkStrs))
             foundName = blkStrs.FirstOrDefault(StringScanner.IsValidElementName);
@@ -1180,15 +1176,29 @@ internal static partial class ElementBuilder
 
         elem.UniqueId = BuildUniqueId(elemId, state);
 
+        int? wideHeaderCategory = elem.NativeHeaderCategoryId is int header && header != -1
+            ? header
+            : elem.NativeRootClassName == "ProjectPhase" || state.ElemClassIdx.GetValueOrDefault(elemId) == 0x0BF9
+                ? -2000112
+                : null;
         if (state.WideSchema != null && !state.R22View)
         {
             // a file with 64-bit ids: the rest of this method is the Revit 2022 record and stream
             // heuristics. The element is what the file's own tables and the schema-driven block
             // walk give: the header category is exact.
-            if (elem.NativeHeaderCategoryId is int header && header != -1)
+            if (wideHeaderCategory is int resolvedHeader)
             {
-                elem.CategoryId = header;
-                if (BuiltInCategoryNames.Lookup.TryGetValue(header, out var headerName)) elem.Category = headerName;
+                elem.CategoryId = resolvedHeader;
+                if (BuiltInCategoryNames.Lookup.TryGetValue(resolvedHeader, out var headerName)) elem.Category = headerName;
+                if (resolvedHeader == -2000112 && state.WideNames.TryGetValue(elemId, out var widePhaseName) && !string.IsNullOrWhiteSpace(widePhaseName))
+                    elem.Name = widePhaseName;
+                if (elemId == 0 && resolvedHeader == -2000112)
+                {
+                    if (!elem.Parameters.Any(p => p.Id == -1140362))
+                        elem.Parameters.Add(BipHelpers.MakeBipParam(-1140362, "ELEM_CATEGORY_PARAM", StorageType.ElementId, resolvedHeader));
+                    if (!elem.Parameters.Any(p => p.Id == -1140363))
+                        elem.Parameters.Add(BipHelpers.MakeBipParam(-1140363, "ELEM_CATEGORY_PARAM_MT", StorageType.ElementId, resolvedHeader));
+                }
             }
             rvtInfo.Elements.Add(elem);
             return;
@@ -1229,11 +1239,18 @@ internal static partial class ElementBuilder
             AddUserParams(elem, rec, elemId, state);
         }
 
+        if (!elem.CategoryId.HasValue && wideHeaderCategory is int wideCat)
+        {
+            elem.CategoryId = wideCat;
+            if (BuiltInCategoryNames.Lookup.TryGetValue(wideCat, out var catName))
+                elem.Category = catName;
+        }
+
         if (state.GrepBlocks.TryGetValue(elemId, out grepDataForElem))
         {
             // The tight box of the record stays on the geometry; the element box comes from the
             // header outline (ApplyHeaderBoundingBoxes).
-            elem.Geometry = BuildGeometryData(grepDataForElem);
+            elem.Geometry = BuildGeometryData(grepDataForElem, state.SeparateFacesWithDistinctOpenings);
             ExpandInstanceGeometry(elem, grepDataForElem, (int)typeId, state);
         }
 
@@ -2562,7 +2579,8 @@ internal static partial class ElementBuilder
         IEnumerable<Element> elements,
         IReadOnlyDictionary<uint, (int BlockCount, string? Name)> roots,
         IReadOnlyDictionary<uint, (int BlockCount, GRepData? Boundary)> boundaries,
-        IReadOnlyDictionary<uint, GRepData>? literalBoundaries = null)
+        IReadOnlyDictionary<uint, GRepData>? literalBoundaries = null,
+        bool separateFacesWithDistinctOpenings = false)
     {
         foreach (var element in elements)
         {
@@ -2576,10 +2594,10 @@ internal static partial class ElementBuilder
                 || source.BlockCount != 1)
                 continue;
             if (literalBoundaries != null && literalBoundaries.TryGetValue((uint)element.Id, out var literal)
-                && BuildGeometryData(literal) is { } literalGeometry && literalGeometry.Faces.Count == literal.Faces.Count)
+                && BuildGeometryData(literal, separateFacesWithDistinctOpenings) is { } literalGeometry && literalGeometry.Faces.Count == literal.Faces.Count)
                 element.SerializedLiteralSpaceBoundary = literalGeometry;
             if (source.Boundary is not { } boundary) continue;
-            var geometry = BuildGeometryData(boundary);
+            var geometry = BuildGeometryData(boundary, separateFacesWithDistinctOpenings);
             if (geometry?.Faces.Count != boundary.Faces.Count) continue;
             if (boundary.CurvedSpaceBoundary) element.SerializedCurvedSpaceBoundary = geometry;
             else element.SerializedSpaceBoundary = geometry;
@@ -4137,7 +4155,7 @@ internal static partial class ElementBuilder
         {
             // The tight box of the record stays on the geometry; the element box comes from the
             // header outline (ApplyHeaderBoundingBoxes).
-            elem.Geometry = BuildGeometryData(grepData);
+            elem.Geometry = BuildGeometryData(grepData, state.SeparateFacesWithDistinctOpenings);
             ExpandInstanceGeometry(elem, grepData, elem.TypeId, state);
         }
 
@@ -4198,7 +4216,7 @@ internal static partial class ElementBuilder
         {
             // The tight box of the record stays on the geometry; the element box comes from the
             // header outline (ApplyHeaderBoundingBoxes).
-            elem.Geometry = BuildGeometryData(grepData);
+            elem.Geometry = BuildGeometryData(grepData, state.SeparateFacesWithDistinctOpenings);
             ExpandInstanceGeometry(elem, grepData, elem.TypeId, state);
         }
 
@@ -4225,7 +4243,7 @@ internal static partial class ElementBuilder
     {
         if (state.FamilyCutGreps.TryGetValue(elementId, out var familyCut))
         {
-            elem.FamilyCutGeometry = BuildGeometryData(familyCut);
+            elem.FamilyCutGeometry = BuildGeometryData(familyCut, state.SeparateFacesWithDistinctOpenings);
             elem.FamilyCutClosurePlaneOrigin = familyCut.FamilyClosurePlaneOrigin;
             elem.FamilyCutClosurePlaneNormal = familyCut.FamilyClosurePlaneNormal;
         }
@@ -6324,7 +6342,8 @@ internal static partial class ElementBuilder
         if (state != null) ApplySerializedRoomPlanAreas(rvtInfo, state);
         if (state != null) ApplySerializedPlanBoundaries(rvtInfo, state);
         if (state != null) ApplySerializedSpaceBoundaries(
-            rvtInfo.Elements, state.RoomNameSource, state.SpaceBoundarySource, state.SpaceLiteralBoundaries);
+            rvtInfo.Elements, state.RoomNameSource, state.SpaceBoundarySource, state.SpaceLiteralBoundaries,
+            state.SeparateFacesWithDistinctOpenings);
         ApplyRoomParams(rvtInfo);
         ApplySheetParams(rvtInfo, state);
         AddViewAndDatumDefaults(rvtInfo);
@@ -6664,11 +6683,11 @@ internal static partial class ElementBuilder
 
         foreach (var e in info.Elements)
         {
-            if (e.Id <= 0 || !state.ElemClassIdx.TryGetValue((uint)e.Id, out var cls)) continue;
+            if (e.Id < 0 || !state.ElemClassIdx.TryGetValue((uint)e.Id, out var cls)) continue;
             if (!TfClassRegistry.HighPurityClassCategory.TryGetValue(cls, out int cat)) continue;
-            if (e.CategoryId == cat) continue;
+            if (e.CategoryId == cat && (e.Id != 0 || e.Parameters.Any(p => p.Id == -1140362))) continue;
             e.CategoryId = cat;
-            if (nameByCat.TryGetValue(cat, out var nm)) e.Category = nm;
+            if (nameByCat.TryGetValue(cat, out var nm) || BuiltInCategoryNames.Lookup.TryGetValue(cat, out nm)) e.Category = nm;
             var cp = e.Parameters.FirstOrDefault(p => p.Id == -1140362);
             if (cp != null) { cp.Value = cat; cp.StorageType = StorageType.ElementId; }
             else e.Parameters.Add(BipHelpers.MakeBipParam(-1140362, "ELEM_CATEGORY_PARAM", StorageType.ElementId, cat));

@@ -74,8 +74,8 @@ public partial class RvtFileReader
             && body.Faces.All(face => face.MeshEdgeBounds is { Length: 6 })
             && body.Faces.Any(face => face.AnalyticCylinderRadius > 0))) return null;
         if (!state.GrepBlocks.TryGetValue(owner, out var original)) return null;
-        var nativeGeometry = ElementBuilder.BuildGeometryData(body);
-        var originalGeometry = ElementBuilder.BuildGeometryData(original);
+        var nativeGeometry = ElementBuilder.BuildGeometryData(body, state.SeparateFacesWithDistinctOpenings);
+        var originalGeometry = ElementBuilder.BuildGeometryData(original, state.SeparateFacesWithDistinctOpenings);
         var helper = state.OwnWallHelpers.TryGetValue(owner, out var source) && source.BlockCount == 1
             ? source.Input : null;
         // shortcut: only correct the StandardCase-to-Wall bounds defect; extend after other native boundaries are confirmed.

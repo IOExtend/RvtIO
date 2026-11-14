@@ -13,6 +13,9 @@ internal class ParsingState
     /// <see cref="TfBlockDeserializer.SelectOwnWallTrimmedRange"/>), on the line of its curve driver.</summary>
     public Dictionary<uint, (double Lo, double Hi)> OwnWallTrimmedRanges { get; } = new();
     public Dictionary<uint, (uint SourceFace, double[] Normal)> OwnWallSide0Normals { get; } = new();
+    /// <summary>The <see cref="RvtReaderOptions.SeparateFacesWithDistinctOpenings"/> of the read this state belongs to; a value of the read, so
+    /// reads with different options, even at the same time, do not affect each other.</summary>
+    internal bool SeparateFacesWithDistinctOpenings { get; init; }
     public HashSet<uint> OwnCurrentWallRoots { get; } = new();
     public Dictionary<uint, IReadOnlyDictionary<uint, uint>> OwnCurrentWallFaceGroups { get; } = new();
     /// <summary>Element-table membership. Values are zero: ElemRec has no type/class column.</summary>

@@ -29,7 +29,6 @@ public partial class RvtFileReader
     public RevitFileInfo Read(string rvtPath)
     {
         RvtContainerCheck.Verify(rvtPath);
-        Parsing.ElementBuilder.SeparateFacesWithDistinctOpenings = _options.SeparateFacesWithDistinctOpenings;
         var diag = _options.DiagnosticOutput;
         using var diagnosticScope = DiagnosticSink.Use(diag);
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -92,6 +91,7 @@ public partial class RvtFileReader
         LogPhase("Decompression done");
         var state = new ParsingState
         {
+            SeparateFacesWithDistinctOpenings = _options.SeparateFacesWithDistinctOpenings,
             ElemTable = elemTable,
             ElemWorksets = elemWorksets,
             AllKnownIds = new HashSet<uint>(elemTable.Keys),
@@ -868,6 +868,7 @@ public partial class RvtFileReader
 
         var state = new ParsingState
         {
+            SeparateFacesWithDistinctOpenings = _options.SeparateFacesWithDistinctOpenings,
             ElemTable = elemTable,
             ElemWorksets = elemWorksets,
             AllKnownIds = new HashSet<uint>(elemTable.Keys),

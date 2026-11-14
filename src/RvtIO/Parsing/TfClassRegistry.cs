@@ -223,5 +223,6 @@ internal static class TfClassRegistry
         [0x0B9D] = -2000191, // PlanRegion
         [0x0B38] = -2008148, // ParamElemElectricalLoadClassification
         [0x0857] = -2008120, // HVACLoadBuildingTypeElem
+        [0x0BF9] = -2000112, // ProjectPhase
     };
 }

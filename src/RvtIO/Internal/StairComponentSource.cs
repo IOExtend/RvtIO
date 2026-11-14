@@ -83,13 +83,14 @@ internal static class StairComponentSource
             .Where(group => group.Count() == 1).ToDictionary(group => group.Key, group => group.Single());
         foreach (var element in unique.Values)
         {
-            if (element.Id <= 0 || element.IsBlockOnly) continue;
+            if (element.Id < 0 || element.IsBlockOnly) continue;
             if (state.ElemRecOwningElementIds.TryGetValue((uint)element.Id, out int owner))
                 element.SerializedOwningElementId = owner;
             if (state.StairClassRoot((uint)element.Id) is { BlockCount: 1 } root)
                 element.SerializedOwnElementClassId = root.ClassId;
             element.OwnClassRootSeededOnce = state.OwnedElementClassRoots.TryGetValue((uint)element.Id, out var seeded)
                 && seeded is { BlockCount: 1, ClassId: not null };
+            if (element.Id == 0) continue;
             if (state.RailingStairHostRoots.TryGetValue((uint)element.Id, out var railing)
                 && railing is { BlockCount: 1, StairId: > 0 }
                 && element.SerializedOwnElementClassId == 485 && element.SerializedOwningElementId != null
