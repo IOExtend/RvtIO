@@ -79,6 +79,16 @@ internal sealed class R22Transcoder
             p += length;
         }
         bool IsSeparator(int at) => at + w <= n && buf.AsSpan(at, w).IndexOfAnyExcept((byte)0xFF) < 0;
+        bool HasRecordlessSectionAhead(int at)
+        {
+            if (at + w + 8 > n || !IsSeparator(at) || buf.AsSpan(at + w, 8).IndexOfAnyExcept((byte)0) >= 0) return false;
+            int q = at + w + 8;
+            while (q + w + 12 <= n && !IsSeparator(q) && TryBlock(buf, q, w, out int len)) q += len;
+            if (q + w + 12 > n || !IsSeparator(q) || buf.AsSpan(q + w + 4, 8).IndexOfAnyExcept((byte)0) >= 0) return false;
+            q += w + 12;
+            while (q + w + 12 <= n && !IsSeparator(q) && TryBlock(buf, q, w, out int len)) q += len;
+            return q + w + 12 <= n && IsSeparator(q) && buf.AsSpan(q + w + 4, 8).IndexOfAnyExcept((byte)0) < 0;
+        }
         while (p < n)
         {
             // section: records
@@ -89,7 +99,7 @@ internal sealed class R22Transcoder
                 p += length;
                 Flush(false);
             }
-            if (p == recordsAt || !IsSeparator(p) || p + w + 8 > n) break;
+            if (!IsSeparator(p) || p + w + 8 > n || (p == recordsAt && !HasRecordlessSectionAhead(p))) break;
             Separator(w + 8, false);
             // root blocks
             while (p + w + 12 <= n && !IsSeparator(p) && TryBlock(buf, p, w, out int length))
@@ -186,7 +196,11 @@ internal sealed class R22Transcoder
         stats.Records++;
         var payload = Payload(b, p + w + 4, size, out var failure);
         if (payload != null) stats.RecordsRewritten++;
-        else stats.Failures["record " + failure] = stats.Failures.GetValueOrDefault("record " + failure) + 1;
+        else
+        {
+            string reason = "record " + (failure ?? "unknown");
+            stats.Failures[reason] = stats.Failures.GetValueOrDefault(reason) + 1;
+        }
         payload ??= Unknown(b, p + w + 4, size);
         WriteId(b, p, output);
         WriteFramed(output, payload, adler: false);
@@ -197,7 +211,11 @@ internal sealed class R22Transcoder
         int w = _sourceWidth;
         int size = (int)BitConverter.ToUInt32(b, p + w + 4);
         var payload = Payload(b, p + w + 8, size, out var failure);
-        if (payload == null) stats.Failures[failure!] = stats.Failures.GetValueOrDefault(failure!) + 1;
+        if (payload == null)
+        {
+            string reason = failure ?? "unknown";
+            stats.Failures[reason] = stats.Failures.GetValueOrDefault(reason) + 1;
+        }
         if (root) { stats.RootBlocks++; if (payload != null) stats.RootBlocksRewritten++; }
         else { stats.OtherBlocks++; if (payload != null) stats.OtherBlocksRewritten++; }
         payload ??= Unknown(b, p + w + 8, size);

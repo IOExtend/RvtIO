@@ -2515,13 +2515,16 @@ public partial class RvtFileReader
             BlockParser.CollectBipStrings(chunk, state);
 
         Lap("bip strings");
-        // a file read by its framing: the blocks of the partitions are its records, the chunks of Formats and Global are scanned
-        var partitionChunks = state.ReadsFramedRecords
+        // a file read by its framing or an unrewritten 64-bit file: skip the legacy 32-bit partition chunk scan
+        bool framedBlocks = state.ReadsFramedRecords;
+        bool skipPartitionScan = framedBlocks
+            || (!state.R22View && state.WideSchema != null && WideElementRecords.IdWidth(state.WideSchema) == 8);
+        var partitionChunks = skipPartitionScan
             ? state.Chunks.Take(state.PartitionChunkCount).ToHashSet(ReferenceEqualityComparer.Instance) : null;
         bool Scanned(byte[] chunk) => partitionChunks?.Contains(chunk) != true;
         // First pass: parse blocks, collect block-only IDs
         var firstPassGReps = new List<BlockParser.PendingGRep>();
-        if (partitionChunks != null) ParseFramedBlocks(state, collectBlockOnlyIds: true, firstPassGReps);
+        if (framedBlocks) ParseFramedBlocks(state, collectBlockOnlyIds: true, firstPassGReps);
         foreach (var chunk in state.NonRecordChunks.Where(Scanned))
             BlockParser.ParseChunk(chunk, state, collectBlockOnlyIds: true, deferred: firstPassGReps);
         foreach (var chunk in state.RecordChunks.Where(Scanned))
@@ -2536,7 +2539,7 @@ public partial class RvtFileReader
             foreach (var bid in state.BlockOnlyIds)
                 state.AllKnownIds.Add(bid);
             var secondPassGReps = new List<BlockParser.PendingGRep>();
-            if (partitionChunks != null) ParseFramedBlocks(state, collectBlockOnlyIds: false, secondPassGReps);
+            if (framedBlocks) ParseFramedBlocks(state, collectBlockOnlyIds: false, secondPassGReps);
             foreach (var chunk in state.NonRecordChunks.Where(Scanned))
                 BlockParser.ParseChunk(chunk, state, deferred: secondPassGReps);
             foreach (var chunk in state.RecordChunks.Where(Scanned))

@@ -204,4 +204,45 @@ public class R22TranscoderTests
         reader.Read(TestFileFixture.FindTestFile("Test_2025.rvt"));
         Assert.False(reader.LastParsingState!.R22View);
     }
+
+    [Fact]
+    public void Stream_SkipsAllPrunedRecordlessSectionAndRewritesFollowingSection()
+    {
+        var recordPayload = Bytes(w => { w.Write((ushort)6); w.Write(1); w.Write(2); w.Write(77L); });
+        var stream = Bytes(w =>
+        {
+            // All-pruned section: zero records, zero root blocks, zero other blocks.
+            w.Write(0xFFFFFFFFFFFFFFFFuL);
+            w.Write(0L);
+            w.Write(0xFFFFFFFFFFFFFFFFuL);
+            w.Write(0);
+            w.Write(0L);
+            w.Write(0xFFFFFFFFFFFFFFFFuL);
+            w.Write(0);
+            w.Write(0L);
+
+            // Second section with a normal 8-byte-id record.
+            w.Write(10L);
+            w.Write(recordPayload.Length);
+            w.Write(recordPayload);
+            w.Write(recordPayload.Length);
+            w.Write(0xFFFFFFFFFFFFFFFFuL);
+            w.Write(0L);
+            w.Write(0xFFFFFFFFFFFFFFFFuL);
+            w.Write(0);
+            w.Write(0L);
+            w.Write(0xFFFFFFFFFFFFFFFFuL);
+            w.Write(0);
+            w.Write(0L);
+        });
+
+        var transcoder = new R22Transcoder(Source(), Target(), 8);
+        _ = transcoder.Stream([stream], out var stats);
+
+        Assert.Equal(0, stats.UnparsedBytes);
+        Assert.Equal(stream.Length, stats.StoppedAt);
+        Assert.Equal(1, stats.Records);
+        Assert.Equal(1, stats.RecordsRewritten);
+        Assert.Empty(stats.Failures);
+    }
 }

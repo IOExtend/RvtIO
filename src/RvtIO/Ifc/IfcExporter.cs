@@ -1367,15 +1367,55 @@ public partial class IfcExporter
 
         var spatialTerrainElementIds = spatialTerrainSurfaces
             .Select(surface => surface.Id).ToHashSet();
+        IReadOnlyList<Element> productLoopElements = info.Elements;
+        if (CurrentProfile)
+        {
+            Dictionary<int, List<Element>>? deferredOpenings = null;
+            HashSet<Element>? deferredSet = null;
+            for (int i = 0; i < info.Elements.Count; i++)
+            {
+                var candidate = info.Elements[i];
+                if (candidate.Category?.Contains("OST_SWallRectOpening", StringComparison.OrdinalIgnoreCase) != true)
+                    continue;
+                int resolvedHostId = ResolveStandaloneOpeningHostWallId(candidate, visibleWallIds, elemById);
+                if (resolvedHostId > 0 && elementOrderById.TryGetValue(resolvedHostId, out int hostIdx) && hostIdx > i)
+                {
+                    deferredOpenings ??= new Dictionary<int, List<Element>>();
+                    if (!deferredOpenings.TryGetValue(resolvedHostId, out var list))
+                        deferredOpenings[resolvedHostId] = list = [];
+                    list.Add(candidate);
+                    deferredSet ??= new HashSet<Element>(ReferenceEqualityComparer.Instance);
+                    deferredSet.Add(candidate);
+                }
+            }
+            if (deferredOpenings != null)
+            {
+                var reordered = new List<Element>(info.Elements.Count);
+                for (int i = 0; i < info.Elements.Count; i++)
+                {
+                    var item = info.Elements[i];
+                    if (deferredSet!.Contains(item)) continue;
+                    reordered.Add(item);
+                    if (elementOrderById.TryGetValue(item.Id, out int firstIdx) && firstIdx == i
+                        && deferredOpenings.Remove(item.Id, out var openings))
+                        reordered.AddRange(openings);
+                }
+                productLoopElements = reordered;
+                elementOrderById.Clear();
+                for (int i = 0; i < productLoopElements.Count; i++)
+                    elementOrderById.TryAdd(productLoopElements[i].Id, i);
+            }
+        }
         var standaloneOpeningIdsByWall = new Dictionary<int, List<int>>();
         var directStandaloneOpeningBoundariesByWall = new Dictionary<int,
             List<(int OpeningId, GeometryData Boundary)>>();
-        foreach (var opening in info.Elements.Where(element =>
+        foreach (var opening in productLoopElements.Where(element =>
                      element.Category?.Contains("OST_SWallRectOpening",
                          StringComparison.OrdinalIgnoreCase) == true))
         {
-            int hostWallId = opening.References?.FirstOrDefault(
-                visibleWallIds.Contains) ?? 0;
+            int hostWallId = CurrentProfile
+                ? ResolveStandaloneOpeningHostWallId(opening, visibleWallIds, elemById)
+                : (opening.References?.FirstOrDefault(visibleWallIds.Contains) ?? 0);
             if (hostWallId <= 0) continue;
             if (!standaloneOpeningIdsByWall.TryGetValue(
                     hostWallId, out var openingIds))
@@ -1428,7 +1468,8 @@ public partial class IfcExporter
                 RejectStandaloneWriterPath("design-option");
                 continue;
             }
-            if (opening.References?.Any(referenceId =>
+            if ((!CurrentProfile || opening.SerializedHostId is not > 0)
+                && opening.References?.Any(referenceId =>
                     elemById.TryGetValue(referenceId, out var referencedWall)
                     && referencedWall.CategoryId == -2000011
                     && !visibleWallIds.Contains(referenceId)) == true)
@@ -1614,7 +1655,7 @@ public partial class IfcExporter
         bool bodiesDecoded = info.GeometryUndecoded && AnyElementHoldsABody(info.Elements);
         var exportClock = System.Diagnostics.Stopwatch.StartNew();
         _diag?.WriteLine("Timing: product loop starts");
-        foreach (var elem in info.Elements)
+        foreach (var elem in productLoopElements)
         {
             if (ExportFlagIsNo(elem, elemById)) { Skip(elem, "export-to-ifc-flag-no"); continue; }
             if (spatialTerrainElementIds.Contains(elem.Id)
@@ -1689,8 +1730,10 @@ public partial class IfcExporter
             // An opening connected to a filtered design-option wall is a preview record.
             if (elem.Category?.Contains("OST_SWallRectOpening", StringComparison.OrdinalIgnoreCase) == true
                 && (IntParam(elem, -1013201) != -4
-                    || elem.References?.Any(r => elemById.TryGetValue(r, out var wall)
-                        && wall.CategoryId == -2000011 && (!visibleWallIds.Contains(r) || ExportFlagIsNo(wall, elemById))) == true))
+                    || (CurrentProfile
+                        ? ResolveStandaloneOpeningHostWallId(elem, visibleWallIds, elemById) <= 0
+                        : elem.References?.Any(r => elemById.TryGetValue(r, out var wall)
+                            && wall.CategoryId == -2000011 && (!visibleWallIds.Contains(r) || ExportFlagIsNo(wall, elemById))) == true)))
             { Skip(elem, "opening-of-hidden-wall"); continue; }
 
             string? ifcType = elem.Category?.Contains("OST_SWallRectOpening", StringComparison.OrdinalIgnoreCase) == true
@@ -1741,10 +1784,14 @@ public partial class IfcExporter
             // The current profile writes a wall's openings only
             // beside a wall exported as an extrusion with an axis; the openings of a plain IfcWall
             // are cut into its Brep.
-            if (CurrentProfile && ifcType == "IFCOPENINGELEMENT"
-                && elem.References?.FirstOrDefault(r => visibleWallIds.Contains(r)) is int openingHostWallId
-                && WallWritesNoBodyOpeningsCurrent(exportedIfcElements, openingHostWallId))
-            { Skip(elem, "opening-of-wall-without-body-openings"); continue; }
+            if (CurrentProfile && ifcType == "IFCOPENINGELEMENT")
+            {
+                int openingHostWallId = ResolveStandaloneOpeningHostWallId(elem, visibleWallIds, elemById);
+                if (openingHostWallId <= 0 || !wallIfcIds.ContainsKey(openingHostWallId))
+                { Skip(elem, "opening-of-hidden-wall"); continue; }
+                if (WallWritesNoBodyOpeningsCurrent(exportedIfcElements, openingHostWallId))
+                { Skip(elem, "opening-of-wall-without-body-openings"); continue; }
+            }
             if (Environment.GetEnvironmentVariable("RVTIO_PROD_DIAG") is { Length: > 0 } prodDiag)
                 File.AppendAllText(prodDiag, string.Join(',', elem.Id, ifcType, elem.IsDiscovered ? 1 : 0, elem.TypeId,
                     elem.CategoryId, elem.SerializedCreatedPhaseId, elem.SerializedDemolishedPhaseId, elem.SerializedFamilyId,
@@ -4341,7 +4388,9 @@ public partial class IfcExporter
                 }
                 if (ifcType == "IFCOPENINGELEMENT" && elem.CategoryId == -2000997
                     && elem.SerializedHostId is > 0 && visibleWallIds.Contains(elem.SerializedHostId.Value)
-                    && elem.References?.FirstOrDefault(visibleWallIds.Contains) == elem.SerializedHostId.Value
+                    && (CurrentProfile
+                        ? ResolveStandaloneOpeningHostWallId(elem, visibleWallIds, elemById) == elem.SerializedHostId.Value
+                        : elem.References?.FirstOrDefault(visibleWallIds.Contains) == elem.SerializedHostId.Value)
                     && elemById.TryGetValue(elem.SerializedHostId.Value, out var openingBodyHost)
                     && TryCreateRectangularOpeningBodyCurrent(w, geoForBrep, openingBodyHost.Location,
                         bodySubCtxId, out shapeId, out bodyWriteOutcome))
@@ -4624,7 +4673,9 @@ public partial class IfcExporter
 
             if (ifcType == "IFCOPENINGELEMENT")
             {
-                int hostWallId = elem.References?.FirstOrDefault(r => visibleWallIds.Contains(r)) ?? 0;
+                int hostWallId = CurrentProfile
+                    ? ResolveStandaloneOpeningHostWallId(elem, visibleWallIds, elemById)
+                    : (elem.References?.FirstOrDefault(r => visibleWallIds.Contains(r)) ?? 0);
                 if (hostWallId > 0 && wallIfcIds.TryGetValue(hostWallId, out var openingWall))
                 {
                     w.Add("IFCRELVOIDSELEMENT",
@@ -70047,6 +70098,29 @@ public partial class IfcExporter
             double dx = Math.Abs(bbox[3] - bbox[0]) * FeetToMetres * 1000;
             double dy = Math.Abs(bbox[4] - bbox[1]) * FeetToMetres * 1000;
             return Math.Max(dx, dy);
+        }
+        return 0;
+    }
+
+    private static int ResolveStandaloneOpeningHostWallId(
+        Element opening, IReadOnlySet<int> visibleWallIds, IReadOnlyDictionary<int, Element> elemById)
+    {
+        if (opening.SerializedHostId is int serializedHostId && serializedHostId > 0)
+        {
+            if (visibleWallIds.Contains(serializedHostId))
+                return !elemById.TryGetValue(serializedHostId, out var hostWall) || !ExportFlagIsNo(hostWall, elemById)
+                    ? serializedHostId : 0;
+            if (elemById.TryGetValue(serializedHostId, out var hiddenHostWall)
+                && hiddenHostWall.CategoryId == -2000011)
+                return 0;
+        }
+        if (opening.References != null)
+        {
+            if (opening.References.Any(r => elemById.TryGetValue(r, out var wall)
+                && wall.CategoryId == -2000011 && (!visibleWallIds.Contains(r) || ExportFlagIsNo(wall, elemById))))
+                return 0;
+            return opening.References.FirstOrDefault(r => visibleWallIds.Contains(r)
+                && (!elemById.TryGetValue(r, out var w) || !ExportFlagIsNo(w, elemById)));
         }
         return 0;
     }
