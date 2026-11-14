@@ -529,16 +529,17 @@ public class GRepParserV2Tests
     }
 
     [Fact]
-    public void TrimTriangulation_TriangulatesManyFinelySampledHolesInNearLinearWork()
+    public async Task TrimTriangulation_TriangulatesManyFinelySampledHolesInNearLinearWork()
     {
         var rings = PerforatedTrimRings();
 
         // A regression runs for minutes: fail instead of hanging the test run.
         var triangulation = Task.Run(() => GRepParserV2.TriangulateTrimRegions(rings));
-        Assert.True(triangulation.Wait(TimeSpan.FromSeconds(60)), "the trim triangulation did not finish in 60 s");
-        var polygons = triangulation.Result;
+        Assert.True(await Task.WhenAny(triangulation, Task.Delay(TimeSpan.FromSeconds(60))) == triangulation,
+            "the trim triangulation did not finish in 60 s");
+        var polygons = await triangulation;
 
-        // Not null: the triangulation stayed within the default near-linear work budget.
+        // Not null: the triangulation stayed within the default budget.
         Assert.NotNull(polygons);
         double expected = PolygonArea(rings[0]) - rings.Skip(1).Sum(PolygonArea);
         Assert.Equal(expected, polygons.Sum(PolygonArea), 9);
