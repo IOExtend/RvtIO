@@ -55,6 +55,18 @@ extension and label helpers carry the ids and names stored in the file format.
 
 See [sheets and viewports](sheets.md) for what is decoded, what the limits are and why no page coordinate is exposed yet.
 
+## PDF output
+
+| Type | Use |
+|---|---|
+| `PdfDocument` | `AddPage(size)` and `Save(path | stream)`; writes PDF 1.4 with vector lines, polygons, rectangles and text, without a third-party library. |
+| `PdfPage` | `DrawLine`, `DrawPolyline`, `DrawRectangle` and `DrawText` in millimetres from the lower-left corner, y up. |
+| `PdfPageSize` | Paper sizes A4 to A0 in millimetres, `Landscape` for the turned page. |
+| `PdfTextAlignment` | `Left`, `Center`, `Right`: where the text anchor sits. |
+
+The standard Helvetica font of the writer holds printable ASCII only; a text with another character is refused (an
+embedded font comes with the sheet renderer).
+
 ## Triangle meshes
 
 | Type | Use |

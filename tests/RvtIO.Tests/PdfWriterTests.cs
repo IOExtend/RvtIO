@@ -1,0 +1,149 @@
+using System.Text;
+using RvtIO.Pdf;
+using Xunit;
+
+namespace RvtIO.Tests;
+
+/// <summary>The PDF writer (src/RvtIO/Pdf): page sizes, content operators, the cross-reference table and the text
+/// restriction of the standard font. The document is parsed back from its bytes; no viewer is needed.</summary>
+public class PdfWriterTests
+{
+    private static string Write(PdfDocument document)
+    {
+        using var stream = new MemoryStream();
+        document.Save(stream);
+        return Encoding.ASCII.GetString(stream.ToArray());
+    }
+
+    [Fact]
+    public void EmptyDocument_IsAValidSkeleton()
+    {
+        string pdf = Write(new PdfDocument());
+
+        Assert.StartsWith("%PDF-1.4\n", pdf);
+        Assert.Contains("/Type /Catalog", pdf);
+        Assert.Contains("/Count 0", pdf);
+        Assert.EndsWith("%%EOF\n", pdf);
+        Assert.Contains("xref\n0 4\n", pdf);
+    }
+
+    [Fact]
+    public void Page_UsesThePaperSizeInPoints()
+    {
+        var document = new PdfDocument();
+        document.AddPage(PdfPageSize.A4.Landscape);
+
+        string pdf = Write(document);
+
+        Assert.Contains("/Count 1", pdf);
+        Assert.Contains("/MediaBox [0 0 841.8898 595.2756]", pdf);
+    }
+
+    [Fact]
+    public void Line_IsStrokedWithItsMillimetreWidth()
+    {
+        var document = new PdfDocument();
+        PdfPage page = document.AddPage(PdfPageSize.A4);
+        page.DrawLine(10, 20, 30, 40, widthMillimetres: 0.5);
+
+        string pdf = Write(document);
+
+        // 0.5 mm = 1.4173 pt
+        Assert.Contains("1.4173 w", pdf);
+        Assert.Contains("10 20 m 30 40 l S", pdf);
+    }
+
+    [Fact]
+    public void Rectangle_IsFilledAndStroked()
+    {
+        var document = new PdfDocument();
+        document.AddPage(PdfPageSize.A4).DrawRectangle(5, 6, 7, 8, widthMillimetres: 0.25, fillGray: 0.5);
+
+        string pdf = Write(document);
+
+        Assert.Contains("0.5 g", pdf);
+        Assert.Contains("5 6 7 8 re B", pdf);
+    }
+
+    [Fact]
+    public void Polyline_ClosesAndFills()
+    {
+        var document = new PdfDocument();
+        document.AddPage(PdfPageSize.A4)
+            .DrawPolyline([(0, 0), (10, 0), (10, 10)], widthMillimetres: 0.2, closed: true, fillGray: 1);
+
+        string pdf = Write(document);
+
+        Assert.Contains("0 0 m 10 0 l 10 10 l h B", pdf);
+    }
+
+    [Fact]
+    public void Text_IsDrawnWithTheStandardFontAndEscaped()
+    {
+        var document = new PdfDocument();
+        document.AddPage(PdfPageSize.A4).DrawText("A101 (1)", 10, 20, heightMillimetres: 3.5);
+
+        string pdf = Write(document);
+
+        Assert.Contains("BT /F1 9.9213 Tf", pdf);
+        Assert.Contains("A101 \\(1\\)", pdf);
+    }
+
+    [Fact]
+    public void Text_AlignmentMovesTheAnchor()
+    {
+        var document = new PdfDocument();
+        PdfPage page = document.AddPage(PdfPageSize.A4);
+        page.DrawText("AAAA", 100, 50, heightMillimetres: 10, PdfTextAlignment.Center);
+        page.DrawText("AAAA", 100, 50, heightMillimetres: 10, PdfTextAlignment.Right);
+
+        string pdf = Write(document);
+
+        // 10 mm cap height = 28.3465 pt; four characters at the 0.5 width estimate = 56.6929 pt wide
+        Assert.Contains("71.6535 50 Td (AAAA)", pdf);
+        Assert.Contains("43.3071 50 Td (AAAA)", pdf);
+    }
+
+    [Fact]
+    public void Text_RejectsCharactersOutsideTheStandardFont()
+    {
+        var document = new PdfDocument();
+        PdfPage page = document.AddPage(PdfPageSize.A4);
+
+        ArgumentException error = Assert.Throws<ArgumentException>(() => page.DrawText("Лист", 10, 10));
+        Assert.Contains("U+041B", error.Message);
+    }
+
+    [Fact]
+    public void TwoPages_HaveTwoContentStreams()
+    {
+        var document = new PdfDocument();
+        document.AddPage(PdfPageSize.A4).DrawLine(0, 0, 10, 10);
+        document.AddPage(PdfPageSize.A3).DrawLine(0, 0, 20, 20);
+
+        string pdf = Write(document);
+
+        Assert.Contains("/Count 2", pdf);
+        Assert.Contains("5 0 obj", pdf);
+        Assert.Contains("7 0 obj", pdf);
+    }
+
+    [Fact]
+    public void Save_WritesACrossReferenceThatPointsAtEveryObject()
+    {
+        var document = new PdfDocument();
+        document.AddPage(PdfPageSize.A4).DrawText("A1", 1, 1);
+        string pdf = Write(document);
+
+        int xrefAt = pdf.LastIndexOf("\nxref\n", StringComparison.Ordinal);
+        Assert.True(xrefAt > 0);
+        string[] lines = pdf[(xrefAt + 6)..].Split('\n');
+        Assert.Equal("0 6", lines[0]);
+        Assert.Equal("0000000000 65535 f ", lines[1]);
+        for (int id = 1; id <= 5; id++)
+        {
+            long offset = long.Parse(lines[1 + id][..10], System.Globalization.CultureInfo.InvariantCulture);
+            Assert.StartsWith($"{id} 0 obj", pdf[(int)offset..]);
+        }
+    }
+}
