@@ -65,6 +65,8 @@ The site plan shows the entourage (cars, people) as their footprints from above,
 
 The house stands dark on the site plan: the rooms of the level with most walls are filled grey under its walls, the way the reference export fills the building on A101.
 
+The planting schedule of a site plan is a ruled table (border and a rule under the header), the way the reference draws it. Measured on private models: АР.rvt prints 11 sheets and 8 views, КР_maxah.rvt 11 and 11, АР_1_maxah.rvt its views (no numbered sheets), all without a failure.
+
 The planting schedule of a site plan has the columns of the reference export: Type Mark (T1, T2, ... in the order of the plan tags), Common Name and Count.
 
 The planting of a site plan is tagged the way the planting schedule tags it: T1, T2, ... on leader lines from the plants (up to two tags per kind), a north arrow stands at the lower right of the site, and the schedule sits under the view title, clear of the plan.

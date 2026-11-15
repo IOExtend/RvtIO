@@ -507,6 +507,10 @@ public static class SheetComposer
             page.DrawText(count.ToString(), x + 65, row, 2.4, PdfTextAlignment.Right);
             row -= 4.5;
         }
+        // The table of the reference site plan has a border and a rule under the header.
+        double tableTop = y + 3, tableBottom = row + 1.8;
+        page.DrawRectangle(x - 2, tableBottom, 72, tableTop - tableBottom, 0.15);
+        page.DrawLine(x - 2, y - 6.5, x + 70, y - 6.5, 0.12);
     }
 
     /// <summary>Writes the room legend: a title and one row per kind of room, a colour swatch and the name. The rows
