@@ -491,6 +491,7 @@ internal static partial class ElementBuilder
         }
         if (outGeo.Faces.Count > 0)
             outGeo.BoundingBox = new[] { minx, miny, minz, maxx, maxy, maxz };
+        outGeo.UntriangulatedFaces = sym.UntriangulatedFaces;
         return outGeo;
     }
 
@@ -578,6 +579,7 @@ internal static partial class ElementBuilder
             ExactMappedInstances = source.ExactMappedInstances,
             Solids = source.Solids,
             MeshNodes = source.MeshNodes,
+            UntriangulatedFaces = source.UntriangulatedFaces,
         };
         var oldToNew = new Dictionary<int, int>();
         var clippedFaces = new HashSet<int>();
@@ -689,6 +691,7 @@ internal static partial class ElementBuilder
                 Normal = face.XVector, CurvedSurface = face.CurvedSurface,
             }).ToList(),
             MeshNodes = grep.MeshNodes,
+            UntriangulatedFaces = grep.UntriangulatedFaces,
             NodeMeasures = grep.NodeMeasures,
             Transform = grep.Transform,
             Instances = grep.Instances.Count > 0
@@ -4434,6 +4437,7 @@ internal static partial class ElementBuilder
         ParsingState? hostState = null)
     {
         const int FloorsCategoryId = -2000032;
+        const int StructuralFoundationCategoryId = -2001300;
         var occurrences = new Dictionary<int, int>();
         foreach (Element element in elements)
         {
@@ -4446,7 +4450,7 @@ internal static partial class ElementBuilder
 
         foreach (Element instance in elements)
         {
-            if (instance.CategoryId != FloorsCategoryId
+            if (instance.CategoryId is not (FloorsCategoryId or StructuralFoundationCategoryId)
                 || !nativeParams.TryGetValue(
                     (uint)instance.Id, out var instanceNativeParams)
                 || !instanceNativeParams.Fields.TryGetValue(
@@ -4455,7 +4459,7 @@ internal static partial class ElementBuilder
                 || serializedTypeId == instance.Id
                 || !elementsById.TryGetValue(
                     serializedTypeId, out Element? typeElement)
-                || typeElement.CategoryId != FloorsCategoryId)
+                || typeElement.CategoryId is not (FloorsCategoryId or StructuralFoundationCategoryId))
                 continue;
 
             ExactIfcStringParameterResult explicitReference =
@@ -6567,6 +6571,7 @@ internal static partial class ElementBuilder
     {
         int faceOffset = target.Faces.Count;
         int edgeOffset = target.Edges?.Count ?? 0;
+        target.UntriangulatedFaces += source.UntriangulatedFaces;
         // Geometry node ids are unique within one GeometryData: the appended nodes follow the
         // existing ones. (a negative id marks a node that Revit does not take, see
         // GRepParserV2).
@@ -8558,8 +8563,13 @@ internal static partial class ElementBuilder
         }
     }
 
-    /// <summary>Build UniqueId for an element. Revit UniqueId format: {episodeGUID}-{elemId:x8}</summary>
-    private static string? BuildUniqueId(uint elemId, ParsingState state)
+    /// <summary>
+    /// UniqueId of an element from an external dump's episode index ({episodeGUID}-{elemId:x8}); null otherwise.
+    /// <see cref="ApplyExportIds"/> later sets the UniqueId of every element whose ElemRec history and episode are read
+    /// exactly. An element without them has no UniqueId: its creation episode is not in the file, and any other episode
+    /// GUID gives a wrong id.
+    /// </summary>
+    internal static string? BuildUniqueId(uint elemId, ParsingState state)
     {
         if (state.EpisodeGuids.Count > 0
             && state.ElemEpisodeNumbers.TryGetValue(elemId, out int episodeNum)
@@ -8569,10 +8579,6 @@ internal static partial class ElementBuilder
             if (!string.IsNullOrEmpty(episodeGuid))
                 return $"{episodeGuid}-{elemId:x8}";
         }
-
-        // Fallback to document GUID
-        if (state.DocGuid != null)
-            return $"{state.DocGuid}-{elemId:x8}";
 
         return null;
     }

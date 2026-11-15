@@ -374,7 +374,7 @@ public class IfcExporterQuantityTakeOffPropertySetTests
     [Theory]
     [InlineData("IFCROOF", -2000032)]
     [InlineData("IFCSLAB", -2000035)]
-    [InlineData("IFCSLAB", -2001300)]
+    [InlineData("IFCSLAB", -2000011)]
     public void FloorTypeValidation_IsIgnoredOutsideMainFloorIfcSlab(
         string ifcType, int categoryId)
     {
@@ -387,6 +387,22 @@ public class IfcExporterQuantityTakeOffPropertySetTests
 
         Assert.Equal("Baseline", IfcExporter.ResolveQuantityTakeOffReferenceValue(
             element, ifcType, element.Name));
+    }
+
+    [Theory]
+    [InlineData(-2000032)]
+    [InlineData(-2001300)]
+    public void FloorTypeValidation_IsAppliedForFloorsAndStructuralFoundations(int categoryId)
+    {
+        var element = new Element
+        {
+            CategoryId = categoryId,
+            Name = "Baseline",
+            ValidatedFloorTypeReferenceName = "Validated floor type",
+        };
+
+        Assert.Equal("Validated floor type", IfcExporter.ResolveQuantityTakeOffReferenceValue(
+            element, "IFCSLAB", element.Name));
     }
 
     [Theory]

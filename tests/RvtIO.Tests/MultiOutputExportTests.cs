@@ -25,6 +25,40 @@ public class MultiOutputExportTests
     }
 
     [Fact]
+    public void MultiOutput_IfcLengthUnitChoiceAppliesAlongsideJsonAndScene()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "rvtio-multi-units-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string rvt = Path.Combine(directory, "model.rvt");
+            string ifc = Path.Combine(directory, "model.ifc");
+            string compact = Path.Combine(directory, "compact.json");
+            string full = Path.Combine(directory, "full.json");
+            string scene = Path.Combine(directory, "scene.json");
+            CliExitCodeTests.WriteSyntheticRvt(rvt);
+
+            var (exit, error, _) = Run(rvt, "--ifc", ifc, "--compact-json", compact,
+                "--full-json", full, "--scene", scene, "--ifc-length-unit", "ft");
+            Assert.True(exit == 0, error);
+            Assert.Contains(".LENGTHUNIT.,'FOOT'", File.ReadAllText(ifc));
+            using var compactDocument = JsonDocument.Parse(File.ReadAllText(compact));
+            using var fullDocument = JsonDocument.Parse(File.ReadAllText(full));
+            Assert.NotNull(IOScene.SceneJson.Read(File.ReadAllText(scene)));
+
+            string rejected = Path.Combine(directory, "rejected.json");
+            var (invalidExit, invalidError, _) = Run(rvt, "--full-json", rejected, "--ifc-length-unit", "ft");
+            Assert.Equal(1, invalidExit);
+            Assert.Contains("--ifc-length-unit requires IFC output", invalidError);
+            Assert.False(File.Exists(rejected));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void MultiOutput_AllOutputs_GeneratesValidFiles()
     {
         string directory = Path.Combine(Path.GetTempPath(), "rvtio-multi-" + Guid.NewGuid().ToString("N"));

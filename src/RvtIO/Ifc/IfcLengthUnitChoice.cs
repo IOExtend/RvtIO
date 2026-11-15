@@ -2,7 +2,7 @@ using RvtIO.Parsing;
 
 namespace RvtIO.Ifc;
 
-/// <summary>The IFC length unit family the file declares, decided by the document's stored Length format option.</summary>
+/// <summary>The IFC length unit family the file declares, decided by <see cref="IfcExporter.LengthUnit"/> or by the document's stored Length format option.</summary>
 public enum IfcUnitFamily
 {
     /// <summary>Lengths are written in millimetres.</summary>

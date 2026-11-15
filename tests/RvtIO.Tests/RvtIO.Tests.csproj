@@ -33,6 +33,7 @@
     <!-- The command line option parser of the CLI, compiled here to test it without starting the tool. -->
     <Compile Include="..\..\src\RvtIO.Cli\JsonClassPrefixOption.cs" Link="Cli\JsonClassPrefixOption.cs" />
     <Compile Include="..\..\src\RvtIO.Cli\IfcTimestampOption.cs" Link="Cli\IfcTimestampOption.cs" />
+    <Compile Include="..\..\src\RvtIO.Cli\IfcLengthUnitOption.cs" Link="Cli\IfcLengthUnitOption.cs" />
     <Compile Include="..\..\src\RvtIO.Cli\OpeningAxesOption.cs" Link="Cli\OpeningAxesOption.cs" />
     <Compile Include="..\..\src\RvtIO.Cli\CurrentCopiesOption.cs" Link="Cli\CurrentCopiesOption.cs" />
     <Compile Include="..\..\src\RvtIO.Cli\ReportPathOption.cs" Link="Cli\ReportPathOption.cs" />
