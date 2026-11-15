@@ -496,6 +496,10 @@ internal class ParsingState
     /// (0xC3 = power, 0xC7 = occupancy, 0xCB = lighting schedule element id).</summary>
     public Dictionary<uint, (int Power, int Occupancy, int Lighting)> HvacScheduleRefs { get; set; } = new();
 
+    /// <summary>The placement of a viewport decoded from its 0x07C6 block: the view it displays and the offset of the
+    /// view on the sheet in feet. Key = viewport element id.</summary>
+    public Dictionary<uint, (int ViewId, double X, double Y, double Z)> ViewportPlacements { get; set; } = new();
+
     /// <summary>Plain text of the text notes decoded from their RTF string (class 0x0F83 block), with the position the
     /// block stores in feet and the font size the RTF declares in points. Key = element id.</summary>
     public Dictionary<uint, (string Text, double X, double Y, double? FontSizePoints)> TextNotes { get; set; } = new();

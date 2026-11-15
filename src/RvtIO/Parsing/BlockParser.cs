@@ -187,6 +187,11 @@ internal static class BlockParser
             state.NativeParams[eid] = np;
         }
 
+        // A viewport's own block (class 0x07C6) holds the view it displays and the offset of that view on the sheet:
+        // m_offset = three doubles at payload+0x47, m_dbViewId = a u32 at payload+0x8F.
+        if ((classIdx & 0xFFFF) == 0x07C6 && dataSize >= 0x93 && !state.ViewportPlacements.ContainsKey(eid))
+            ExtractViewport(chunk, dataStart, eid, state);
+
         // A text note's own block holds its text and position. The note can be an element the block walk discovered
         // after the element table, so the block is read here and not under the known-id guard below.
         if ((classIdx & 0xFFFF) == 0x0F83 && !state.TextNotes.ContainsKey(eid))
@@ -2040,6 +2045,22 @@ internal static class BlockParser
             int next = chunk.AsSpan(at + 2).IndexOf(marker);
             at = next < 0 ? -1 : at + 2 + next;
         }
+    }
+
+    /// <summary>
+    /// Extract the placement of a viewport: the displayed view id and the offset on the sheet (feet). The fields are
+    /// read from the element payload, two bytes before the block data.
+    /// </summary>
+    private static void ExtractViewport(byte[] d, int dataStart, uint eid, ParsingState state)
+    {
+        int payload = dataStart - 2;
+        double x = BitConverter.ToDouble(d, payload + 0x47);
+        double y = BitConverter.ToDouble(d, payload + 0x4F);
+        double z = BitConverter.ToDouble(d, payload + 0x57);
+        int viewId = BitConverter.ToInt32(d, payload + 0x8F);
+        if (!double.IsFinite(x) || !double.IsFinite(y) || !double.IsFinite(z)) return;
+        if (Math.Abs(x) > 1e5 || Math.Abs(y) > 1e5 || viewId <= 0 || viewId > 50_000_000) return;
+        state.ViewportPlacements[eid] = (viewId, x, y, z);
     }
 
     /// <summary>

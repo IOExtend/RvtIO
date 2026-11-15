@@ -247,6 +247,15 @@ namespace RvtIO.Model
         [JsonIgnore]
         public double? TextFontSizePoints { get; set; }
 
+        /// <summary>For a viewport: the element id of the view it displays; null when the reader did not decode it.</summary>
+        [JsonIgnore]
+        public int? ViewportViewId { get; set; }
+
+        /// <summary>For a viewport: the offset of the displayed view on the sheet (feet), [x, y, z]; null when not
+        /// decoded.</summary>
+        [JsonIgnore]
+        public double[]? ViewportOffset { get; set; }
+
         /// <summary>Exact BaseRailing.m_baseRailingSymbolId stored by this occurrence.</summary>
         [JsonIgnore]
         internal int? SerializedBaseRailingSymbolId { get; set; }

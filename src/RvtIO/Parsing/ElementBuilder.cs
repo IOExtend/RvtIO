@@ -2878,6 +2878,18 @@ internal static partial class ElementBuilder
         }
     }
 
+    /// <summary>The view a viewport displays and the offset of that view on the sheet, from the 0x07C6 blocks.</summary>
+    private static void ApplyViewports(RevitFileInfo info, ParsingState? state)
+    {
+        if (state == null || state.ViewportPlacements.Count == 0) return;
+        foreach (var element in info.Elements)
+        {
+            if (!state.ViewportPlacements.TryGetValue((uint)element.Id, out var placement)) continue;
+            element.ViewportViewId = placement.ViewId;
+            element.ViewportOffset = [placement.X, placement.Y, placement.Z];
+        }
+    }
+
     /// <summary>Plain text and position of the text notes decoded from their 0x0F83 blocks.</summary>
     private static void ApplyTextNotes(RevitFileInfo info, ParsingState? state)
     {
@@ -6360,6 +6372,7 @@ internal static partial class ElementBuilder
         ApplyRoomParams(rvtInfo);
         ApplySheetParams(rvtInfo, state);
         ApplyTextNotes(rvtInfo, state);
+        ApplyViewports(rvtInfo, state);
         AddViewAndDatumDefaults(rvtInfo);
         AddCurtainQuantities(rvtInfo);
         EnrichTypeLevelBips(rvtInfo, state);
