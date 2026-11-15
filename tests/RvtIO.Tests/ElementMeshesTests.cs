@@ -586,6 +586,28 @@ public class ElementMeshesTests
         Assert.Equal(useSymbolPlacements ? 1 : 0, element.Placements.Count);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void InstanceFaceLeftOutOfItsTrimTriangulation_IsPartial(bool useSymbolPlacements)
+    {
+        // The instance places a symbol, but an own face of the instance itself was left out of trim triangulation.
+        var state = new ParsingState();
+        state.GrepBlocks[InstanceId] = new GRepData
+        {
+            Instances = [new GRepInstance { SymbolElemId = SymbolId, Transform = Identity }],
+            UntriangulatedFaces = 1,
+        };
+        state.GrepBlocks[SymbolId] = TriangleBlock(0);
+
+        var set = ElementMeshes.Extract(Built(state, SymbolId), new ElementMeshOptions { UseSymbolPlacements = useSymbolPlacements });
+
+        var element = Assert.Single(set.Elements);
+        Assert.Equal(MeshCoverage.Partial, element.Coverage);
+        Assert.Equal(1, element.UntriangulatedFaces);
+        Assert.Equal(useSymbolPlacements ? 1 : 0, element.Placements.Count);
+    }
+
     [Fact]
     public void UntriangulatedFace_IsPartial()
     {

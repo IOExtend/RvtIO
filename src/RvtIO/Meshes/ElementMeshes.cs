@@ -70,7 +70,7 @@ public static class ElementMeshes
                 bool ghosts = geometry.GhostNodes is { Count: > 0 };
                 var (meshes, failed) = Triangulate(geometry.Faces, MaterialOf, ghosts);
                 if (meshes.Count > 0)
-                    symbol = new SymbolMeshes(meshes, failed + geometry.UntriangulatedFaces,
+                    symbol = new SymbolMeshes(meshes, failed + geometry.UntriangulatedFaces, geometry.UntriangulatedFaces,
                         DropsUntakenNodes(geometry.Faces, ghosts), geometry.Faces.Any(face => face.GeometryNode < 0), ghosts);
             }
             symbolCache[symbolId] = symbol;
@@ -78,13 +78,14 @@ public static class ElementMeshes
         }
 
         // The placements of an element whose geometry is exactly its symbols placed, or null.
-        (List<SymbolPlacement> Placements, int Failed, bool Ghosts)? PlacementsOf(GeometryData geometry)
+        (List<SymbolPlacement> Placements, int Failed, int UntriangulatedInSymbols, bool Ghosts)? PlacementsOf(GeometryData geometry)
         {
             if (geometry.ExactMappedInstances is not { Count: > 0 } mapped || geometry.PlacedSymbolClipped || geometry.PlacedSymbolBox)
                 return null;
             bool dropsUntaken = DropsUntakenNodes(geometry.Faces, geometry.GhostNodes is { Count: > 0 });
             var placements = new List<SymbolPlacement>(mapped.Count);
             int failed = 0;
+            int untriangulatedInSymbols = 0;
             bool ghosts = false;
             foreach (var instance in mapped)
             {
@@ -97,9 +98,10 @@ public static class ElementMeshes
                 if (symbol.HasHiddenNode && symbol.DropsUntakenNodes != dropsUntaken) return null;
                 placements.Add(new SymbolPlacement(instance.SymbolId, transform));
                 failed += symbol.Failed;
+                untriangulatedInSymbols += symbol.UntriangulatedFaces;
                 ghosts |= symbol.HasGhostNodes;
             }
-            return placements.Count > 0 ? (placements, failed, ghosts) : null;
+            return placements.Count > 0 ? (placements, failed, untriangulatedInSymbols, ghosts) : null;
         }
 
         var elements = new List<ElementMesh>();
@@ -110,16 +112,18 @@ public static class ElementMeshes
                 elements.Add(new ElementMesh { ElementId = element.Id, Coverage = MeshCoverage.Undecoded });
                 continue;
             }
-            if (options.UseSymbolPlacements && ReferenceEquals(body, element.Geometry) && PlacementsOf(body) is var (placements, failedInSymbols, symbolGhosts))
+            if (options.UseSymbolPlacements && ReferenceEquals(body, element.Geometry) && PlacementsOf(body) is var (placements, failedInSymbols, untriangulatedInSymbols, symbolGhosts))
             {
                 foreach (var placement in placements)
                     placedSymbols.TryAdd(placement.SymbolId, symbolCache[placement.SymbolId]!.Meshes);
+                int ownUntriangulated = Math.Max(0, body.UntriangulatedFaces - untriangulatedInSymbols);
+                int totalFailed = failedInSymbols + ownUntriangulated;
                 elements.Add(new ElementMesh
                 {
                     ElementId = element.Id,
                     Placements = placements,
-                    Coverage = CoverageOf(true, body, failedInSymbols, symbolGhosts),
-                    UntriangulatedFaces = failedInSymbols,
+                    Coverage = CoverageOf(true, body, totalFailed, symbolGhosts),
+                    UntriangulatedFaces = totalFailed,
                 });
                 continue;
             }
@@ -144,7 +148,7 @@ public static class ElementMeshes
         : failed > 0 || geometry.UnresolvedSymbol || symbolGhosts || geometry.GhostNodes is { Count: > 0 } ? MeshCoverage.Partial
         : MeshCoverage.Complete;
 
-    private sealed record SymbolMeshes(IReadOnlyList<TriangleMesh> Meshes, int Failed, bool DropsUntakenNodes, bool HasHiddenNode,
+    private sealed record SymbolMeshes(IReadOnlyList<TriangleMesh> Meshes, int Failed, int UntriangulatedFaces, bool DropsUntakenNodes, bool HasHiddenNode,
         bool HasGhostNodes);
 
     /// <summary>Whether the faces of untaken Geometry nodes are left out: when a face of a taken node is there and the geometry has
