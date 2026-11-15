@@ -201,6 +201,7 @@ public static class SheetComposer
                             new List<List<(double X, double Y)>>(),
                             new List<(List<(double X, double Y)> Polygon, string Name, string Number, double AreaSquareFeet)>(),
                             new List<List<(double X, double Y)>>(),
+                            new List<(double MidX, double MidY, double Nx, double Ny, string Text)>(),
                             sitePlan.MinX, sitePlan.MinY, sitePlan.MaxX, sitePlan.MaxY);
                         PlanPrinter.DrawContent(page2, wallsOnly, scale,
                             (sitePlan.MinX - site.MinX) / scale + frameX,

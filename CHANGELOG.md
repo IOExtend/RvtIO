@@ -20,6 +20,8 @@ Elevations print as pages too: `rvtio print --view South` and `RvtIO.Print.Eleva
 
 Elevations print: `RvtIO.Print.ElevationPrinter` projects every planar face of the model on the vertical plane of a compass view (North, South, East, West, taken from the view name until the view plane is decoded), paints it white from far to near and outlines the faces that look at the viewer; plants, topography and site surfaces are left out. `SheetComposer` draws such a viewport on its sheet. Measured on the Revit sample project: the South elevation prints on A103, the two-storey facade with balcony rail, columns and roof; a section is not printed yet.
 
+A door and a window carry their mark: the Mark parameter (103, 104, 202 ...) is written in a small circle beside the opening, on the side it opens into.
+
 A room is tagged the way a plan tags it: the room number in a white circle at the centre of the footprint, the room name and its area in m2 beside it.
 
 A site plan carries a planting schedule under the plan: one row per kind of plant with its count (Honey Locust, Hawthorn, Lombardy Poplar, Red Maple, Red Ash, Scarlet Oak on the sample).

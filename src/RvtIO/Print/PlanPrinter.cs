@@ -59,6 +59,7 @@ public static class PlanPrinter
         List<List<(double X, double Y)>> OpeningLoops,
         List<(List<(double X, double Y)> Polygon, string Name, string Number, double AreaSquareFeet)> Rooms,
         List<List<(double X, double Y)>> Furniture,
+        List<(double MidX, double MidY, double Nx, double Ny, string Text)> Tags,
         double MinX, double MinY, double MaxX, double MaxY);
 
     /// <summary>The levels a plan can be printed for: those that own at least one wall or column with a location line,
@@ -255,6 +256,7 @@ public static class PlanPrinter
         var gaps = new Dictionary<int, List<(double From, double To)>>();
         var windowGaps = new List<(int HostId, double From, double To)>();
         var doorGaps = new List<(int HostId, double From, double To)>();
+        var tags = new List<(double MidX, double MidY, double Nx, double Ny, string Text)>();
         foreach (var insert in document.Elements)
         {
             if (insert.CategoryId is not ((int)BuiltInCategory.OST_Doors or (int)BuiltInCategory.OST_Windows)) continue;
@@ -286,6 +288,13 @@ public static class PlanPrinter
             list.Add((from, to));
             if (insert.CategoryId == (int)BuiltInCategory.OST_Windows) windowGaps.Add((wall.Id, from, to));
             else doorGaps.Add((wall.Id, from, to));
+            // The tag of a door or a window: its mark, placed beside the opening on the side it opens into.
+            string mark = insert.LookupParameter(BuiltInParameter.ALL_MODEL_MARK)?.Value as string ?? "";
+            if (mark.Length > 0)
+            {
+                double mid = (from + to) / 2;
+                tags.Add((wall.X1 + ux * mid, wall.Y1 + uy * mid, -uy, ux, mark));
+            }
         }
 
         // The floors of the level are drawn as their sketch loops, light under the walls, and every door or window cut
@@ -401,7 +410,7 @@ public static class PlanPrinter
         minX -= annotation; minY -= annotation; maxX += annotation; maxY += annotation;
 
         return new PlanContent(walls, columns, grids, gaps, windowGaps, doorGaps, floorLoops, openingLoops, rooms,
-            furniture, minX, minY, maxX, maxY);
+            furniture, tags, minX, minY, maxX, maxY);
     }
 
     /// <summary>Draws collected plan content on a page: the model point (content.MinX, content.MinY) goes to
@@ -494,6 +503,26 @@ public static class PlanPrinter
         // A door is drawn as its leaf and the quarter arc it sweeps: the leaf stands at one jamb, perpendicular to the
         // wall and on the side of the building the door opens into.
         double centerX = (content.MinX + content.MaxX) / 2, centerY = (content.MinY + content.MaxY) / 2;
+
+        // The marks of the doors and windows, in a small circle beside the opening.
+        if (page.Owner.Font != null)
+        {
+            foreach (var tag in content.Tags)
+            {
+                double side = (centerX - tag.MidX) * tag.Nx + (centerY - tag.MidY) * tag.Ny >= 0 ? 1 : -1;
+                double tagX = ToX(tag.MidX + tag.Nx * side * 550);
+                double tagY = ToY(tag.MidY + tag.Ny * side * 550);
+                var circle = new List<(double X, double Y)>(20);
+                for (int i = 0; i < 20; i++)
+                {
+                    double angle = i * Math.PI * 2 / 20;
+                    circle.Add((tagX + 2.2 * Math.Cos(angle), tagY + 2.2 * Math.Sin(angle)));
+                }
+                page.DrawPolyline(circle, 0.12, true, 1);
+                page.DrawText(tag.Text, tagX, tagY - 1, 1.8, PdfTextAlignment.Center);
+            }
+        }
+
         foreach (var door in content.DoorGaps)
         {
             if (!wallById.TryGetValue(door.HostId, out var wall)) continue;
