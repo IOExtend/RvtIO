@@ -313,11 +313,14 @@ namespace RvtIO.Model
             if (Value == null) return null;
             if (StorageType == StorageType.ElementId && Value is int elemId)
             {
-                if (elemId <= 0) return null;
                 if (elementResolver != null && elementResolver(elemId) is { } target)
                 {
                     if (!string.IsNullOrEmpty(target.Name))
                         return target.Name;
+                }
+                if (elemId < 0 && RvtIO.Lookup.EnglishCategoryNames.Get(elemId) is { } catName)
+                {
+                    return catName;
                 }
                 return elemId.ToString(CultureInfo.InvariantCulture);
             }
@@ -383,7 +386,6 @@ namespace RvtIO.Model
             if (Value == null) return null;
             if (StorageType == StorageType.ElementId && Value is int elemId)
             {
-                if (elemId <= 0) return null;
                 if (elementResolver != null && elementResolver(elemId) is { } target)
                 {
                     string typeName = target.Category ?? target.FamilyName ?? "Element";
@@ -391,6 +393,10 @@ namespace RvtIO.Model
                     return !string.IsNullOrEmpty(name)
                         ? $"{typeName} \"{name}\", #{elemId}"
                         : $"{typeName}, #{elemId}";
+                }
+                if (elemId < 0 && RvtIO.Lookup.EnglishCategoryNames.Get(elemId) is { } catName)
+                {
+                    return $"{catName}, #{elemId}";
                 }
                 return $"#{elemId}";
             }

@@ -233,14 +233,44 @@ public class ParameterValueFormattingTests
         Assert.Equal("12345", param.AsValueString((Func<int, Element?>?)null));
         Assert.Equal("12345", param.AsValueString(_ => null));
 
-        // Invalid or negative ID returns null
-        var invalidParam = new Parameter
+        // Negative ID without element: resolves to category name or string representation
+        var catParam = new Parameter
+        {
+            StorageType = StorageType.ElementId,
+            Value = -2000011, // OST_Walls
+            Definition = new Definition { Name = "Category Ref" }
+        };
+        Assert.Equal("Walls", catParam.AsValueString());
+        Assert.Equal("Walls, #-2000011", catParam.AsNavisworksValueString());
+
+        // Valid phase with ElementId 0
+        var phase0 = new Element
+        {
+            Id = 0,
+            Name = "Existing",
+            Category = "Phases"
+        };
+        var phaseParam = new Parameter
+        {
+            StorageType = StorageType.ElementId,
+            Value = 0,
+            Definition = new Definition { Name = "Phase Created" }
+        };
+        Assert.Equal("Existing", phaseParam.AsValueString(id => id == 0 ? phase0 : null));
+        Assert.Equal("Phases \"Existing\", #0", phaseParam.AsNavisworksValueString(id => id == 0 ? phase0 : null));
+        // Unresolved phase 0
+        Assert.Equal("0", phaseParam.AsValueString());
+        Assert.Equal("#0", phaseParam.AsNavisworksValueString());
+
+        // Negative non-category ID returns string representation
+        var negParam = new Parameter
         {
             StorageType = StorageType.ElementId,
             Value = -1,
-            Definition = new Definition { Name = "Invalid Ref" }
+            Definition = new Definition { Name = "Unassigned Ref" }
         };
-        Assert.Null(invalidParam.AsValueString(id => id == 12345 ? targetElement : null));
+        Assert.Equal("-1", negParam.AsValueString());
+        Assert.Equal("#-1", negParam.AsNavisworksValueString());
     }
 
     [Fact]
