@@ -28,6 +28,14 @@ public static class ElevationPrinter
     {
         ArgumentNullException.ThrowIfNull(document);
         var views = new List<ElevationView>();
+        // The views the project places on a sheet: a section-class view without a compass word in its name is only
+        // printed when a sheet places it (the library of the file holds hundreds of family sections otherwise).
+        var placedViews = new HashSet<int>();
+        foreach (var element in document.Elements)
+        {
+            if (element.CategoryId != (int)BuiltInCategory.OST_Viewports) continue;
+            if (element.ViewportViewId is int placedId) placedViews.Add(placedId);
+        }
         foreach (var element in document.Elements)
         {
             if (element.RootClassName is not ("DBViewSection" or "DBViewElevation") && element.NativeRecordClass != 1016)
@@ -37,7 +45,8 @@ public static class ElevationPrinter
             // A view of the section class is a section even when its name carries no compass word (a stair detail).
             bool sectionClass = element.RootClassName is "DBViewSection" or "DBViewElevation"
                 || element.NativeRecordClass == 1016;
-            string? direction = DirectionOf(name) ?? (sectionClass ? "section" : null);
+            bool placed = placedViews.Contains(element.Id);
+            string? direction = DirectionOf(name) ?? (sectionClass && placed ? "section" : null);
             if (direction == null) continue;
             int? storedScale = element.LookupParameter(BuiltInParameter.VIEW_SCALE)?.Value as int?;
             int scale = storedScale is int value && value > 0 ? value : direction == "section" ? 0 : 100;
@@ -49,7 +58,7 @@ public static class ElevationPrinter
             // A section is printed when it is a building section (1:100 or wider), a stair section, or a detail section
             // whose cutting plane the reader decoded: the detail is then cut at its plane inside a window around it.
             if (section && (scale == 0 || scale < 100) && !name.Contains("stair", StringComparison.OrdinalIgnoreCase)
-                && !planeDecoded)
+                && !(planeDecoded && placed))
                 continue;
             views.Add(new ElevationView(element.Id, name, direction, scale));
         }
