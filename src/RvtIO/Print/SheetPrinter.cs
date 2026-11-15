@@ -191,6 +191,7 @@ public static class SheetPrinter
 
         // The text notes of the sheet, at the positions the file stores (sheet coordinates, feet). The text is real,
         // selectable PDF text when the document has an embedded font.
+        bool drewText = false;
         if (pdf.Font != null)
         {
             foreach (var element in document.Elements)
@@ -205,10 +206,13 @@ public static class SheetPrinter
                 string[] lines = text.Split('\n');
                 for (int line = 0; line < lines.Length; line++)
                     page.DrawText(lines[line], x, y - line * height * 1.25, height);
+                drewText = true;
             }
         }
 
-        if (options.DrawSheetFields && pdf.Font != null)
+        // The number and name in a corner only when the sheet has no decoded text of its own (the stamp labels are
+        // then missing and the corner identifies the page).
+        if (options.DrawSheetFields && pdf.Font != null && !drewText)
         {
             string number = Text(sheet, BuiltInParameter.SHEET_NUMBER) ?? string.Empty;
             string name = Text(sheet, BuiltInParameter.SHEET_NAME) ?? string.Empty;
