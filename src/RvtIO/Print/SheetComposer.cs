@@ -159,6 +159,7 @@ public static class SheetComposer
             int scale = view?.LookupParameter(BuiltInParameter.VIEW_SCALE)?.Value is int value && value > 0 ? value : 100;
             double centerX = 0, centerY = 0;
             bool placed = false;
+            int relocated = 0;
             if (element.ViewportOffset is { Length: >= 2 } offset)
             {
                 placed = true;
@@ -283,7 +284,9 @@ public static class SheetComposer
                 // A detail section (1:10 to 1:50) shows the cut near the point of its plane: a window about three by
                 // two metres around it, the size a wall or roof detail covers. The detail is printed only when its
                 // viewport sits on the drawable part of the page: the file places some of them outside it.
-                bool detailSection = direction == "section" && scale < 100
+                // A stair section is printed whole like a building section, not as a windowed detail.
+                bool stairSection = name.Contains("stair", StringComparison.OrdinalIgnoreCase);
+                bool detailSection = direction == "section" && scale < 100 && !stairSection
                     && viewElement?.ViewDirection is { Length: 3 };
                 double stripLeft = page.WidthMillimetres - 5
                     - Math.Min(180, page.WidthMillimetres * 0.22) - 3;
@@ -292,19 +295,52 @@ public static class SheetComposer
                     && centerY > 10 && centerY < page.HeightMillimetres - 15);
 
                 var elevation = detailOnPage
-                    ? ElevationPrinter.Collect(document, direction,
-                        name.Contains("stair", StringComparison.OrdinalIgnoreCase), viewElement, detailWindow)
+                    ? ElevationPrinter.Collect(document, direction, stairSection, viewElement, detailWindow)
                     : null;
                 if (elevation != null)
                 {
-                    frameWidth = (elevation.MaxX - elevation.MinX) / scale
+                    double drawScale = scale;
+                    frameWidth = (elevation.MaxX - elevation.MinX) / drawScale
                         + ElevationPrinter.LabelMarginMillimetres;
-                    frameHeight = (elevation.MaxY - elevation.MinY) / scale;
+                    frameHeight = (elevation.MaxY - elevation.MinY) / drawScale;
+                    // A view whose drawing would not fit its place on the sheet (a stair detail at 1:20 is taller than
+                    // the page) is drawn at a scale that fits, and one the file places off the page is put in the free
+                    // space of the sheet.
+                    double drawableWidth = Math.Max(60, stripLeft - 20);
+                    double drawableHeight = Math.Max(60, page.HeightMillimetres - 30);
+                    if (frameWidth > drawableWidth || frameHeight > drawableHeight)
+                    {
+                        double factor = Math.Max(frameWidth / drawableWidth, frameHeight / drawableHeight);
+                        frameWidth /= factor;
+                        frameHeight /= factor;
+                        drawScale *= factor;
+                    }
+                    if (centerX < 10 || centerX > stripLeft - 10 || centerY < 10
+                        || centerY > page.HeightMillimetres - 15)
+                    {
+                        centerX = 40 + frameWidth / 2 + relocated * Math.Min(300, drawableWidth / 2);
+                        if (centerX + frameWidth / 2 > stripLeft - 10) centerX = stripLeft - 10 - frameWidth / 2;
+                        centerY = page.HeightMillimetres - 40 - frameHeight / 2;
+                        relocated++;
+                    }
+                    // The drawing stays inside the page: a view the file places against an edge is moved in.
                     frameX = centerX - frameWidth / 2;
                     frameY = centerY - frameHeight / 2;
+                    if (frameX < 5) { frameX = 5; centerX = frameX + frameWidth / 2; }
+                    if (frameY < 5) { frameY = 5; centerY = frameY + frameHeight / 2; }
+                    if (frameX + frameWidth > stripLeft - 5)
+                    {
+                        frameX = stripLeft - 5 - frameWidth;
+                        centerX = frameX + frameWidth / 2;
+                    }
+                    if (frameY + frameHeight > page.HeightMillimetres - 5)
+                    {
+                        frameY = page.HeightMillimetres - 5 - frameHeight;
+                        centerY = frameY + frameHeight / 2;
+                    }
                     double m = options.ViewMarginMillimetres;
                     page2.BeginClip(frameX - m, frameY - m, frameWidth + 2 * m, frameHeight + 2 * m);
-                    ElevationPrinter.DrawContent(page2, elevation, scale, frameX, frameY,
+                    ElevationPrinter.DrawContent(page2, elevation, drawScale, frameX, frameY,
                         direction == "section" ? 0.82 : 1);
                     page2.EndClip();
                 }

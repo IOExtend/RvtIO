@@ -153,8 +153,6 @@ public static class ElevationPrinter
                             sitePoints.Add((x * H[0] + y * H[1] + z * H[2],
                                 x * V[0] + y * V[1] + z * V[2]));
                             siteDepth += x * D[0] + y * D[1] + z * D[2];
-                            minX = Math.Min(minX, sitePoints[^1].Item1); maxX = Math.Max(maxX, sitePoints[^1].Item1);
-                            minY = Math.Min(minY, sitePoints[^1].Item2); maxY = Math.Max(maxY, sitePoints[^1].Item2);
                         }
                         // The mesh of the ground is tessellated into tens of thousands of triangles: only the larger
                         // ones shade the background, which keeps the page light.
@@ -229,6 +227,21 @@ public static class ElevationPrinter
             }
         }
         if (faces.Count == 0) return null;
+        // The site around the building is drawn, but it does not decide the frame: the building does, with a little
+        // air around it for the trees and the ground. Context beyond that air (a tree far down the site) is dropped,
+        // so the drawing stays the size of the building.
+        if (context.Count > 0)
+        {
+            double breadth = maxX - minX, heightExtent = maxY - minY;
+            double keepLeft = minX - breadth * 0.25, keepRight = maxX + breadth * 0.25;
+            double keepBottom = minY - heightExtent * 0.15, keepTop = maxY + heightExtent * 0.15;
+            context.RemoveAll(shape => shape.Points.Any(point => point.X < keepLeft || point.X > keepRight
+                || point.Y < keepBottom || point.Y > keepTop));
+            minX -= breadth * 0.02;
+            maxX += breadth * 0.02;
+            minY -= heightExtent * 0.02;
+            maxY += heightExtent * 0.02;
+        }
         // Far to near: painter's algorithm, so a nearer wall hides the one behind it.
         faces.Sort((left, right) => right.Depth.CompareTo(left.Depth));
 
