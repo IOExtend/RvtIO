@@ -63,7 +63,8 @@ from the farthest to the nearest and outlined when it faces the viewer. Plants, 
 out: in an elevation they print as symbols, and their tessellated faces bury the building.
 
 The plane of the view itself is not decoded yet, so the direction is taken from the view name (North, South, East,
-West) and a section ("Longitudinal Section") is not printed. Measured on the Revit sample project: the South view prints
+West). A view named "Section" is projected along the short axis of the building, the way a longitudinal section looks; it
+is a projection, not a true cut through the model. Measured on the Revit sample project: the South view prints
 the two-storey facade with its balcony rail, columns and roof on sheet A103.
 
 ## Composing a sheet

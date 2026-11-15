@@ -21,7 +21,7 @@ public class ElevationPrinterTests
     [InlineData("North Elevation", "north")]
     [InlineData("East", "east")]
     [InlineData("West", "west")]
-    [InlineData("Longitudinal Section", null)]
+    [InlineData("Longitudinal Section", "section")]
     [InlineData("Level 1", null)]
     public void DirectionOf_ReadsTheCompassName(string name, string? expected) =>
         Assert.Equal(expected, ElevationPrinter.DirectionOf(name));

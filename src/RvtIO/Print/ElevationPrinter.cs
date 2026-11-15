@@ -51,6 +51,7 @@ public static class ElevationPrinter
         if (lower.Contains("south")) return "south";
         if (lower.Contains("east")) return "east";
         if (lower.Contains("west")) return "west";
+        if (lower.Contains("section")) return "section";
         return null;
     }
 
@@ -65,6 +66,25 @@ public static class ElevationPrinter
     /// <summary>Projects the model geometry on the vertical plane of a direction. Null when the model has no face.</summary>
     internal static ElevationContent? Collect(RvtDocument document, string direction)
     {
+        if (direction == "section")
+        {
+            // A section is not decoded to its cutting plane yet: it is projected along the short axis of the building,
+            // the way a longitudinal section looks.
+            double wallMinX = double.MaxValue, wallMinY = double.MaxValue;
+            double wallMaxX = double.MinValue, wallMaxY = double.MinValue;
+            foreach (var element in document.Elements)
+            {
+                if (element.CategoryId != (int)BuiltInCategory.OST_Walls) continue;
+                if (element.Location is not { CurveType: "Line" } line) continue;
+                foreach (var point in new[] { line.StartPoint, line.EndPoint })
+                {
+                    double x = point[0] * FeetToMillimetres, y = point[1] * FeetToMillimetres;
+                    wallMinX = Math.Min(wallMinX, x); wallMaxX = Math.Max(wallMaxX, x);
+                    wallMinY = Math.Min(wallMinY, y); wallMaxY = Math.Max(wallMaxY, y);
+                }
+            }
+            direction = wallMaxX - wallMinX >= wallMaxY - wallMinY ? "south" : "east";
+        }
         (double[] H, double[] V, double[] D) = direction switch
         {
             "south" => (new[] { 1.0, 0, 0 }, new[] { 0.0, 0, 1 }, new[] { 0.0, 1, 0 }),
