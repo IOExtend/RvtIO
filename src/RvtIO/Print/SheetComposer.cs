@@ -290,6 +290,7 @@ public static class SheetComposer
                 (double Width, double Height)? detailWindow = detailSection ? (3000, 2200) : null;
                 bool detailOnPage = !detailSection || (centerX > 10 && centerX < stripLeft - 10
                     && centerY > 10 && centerY < page.HeightMillimetres - 15);
+
                 var elevation = detailOnPage
                     ? ElevationPrinter.Collect(document, direction,
                         name.Contains("stair", StringComparison.OrdinalIgnoreCase), viewElement, detailWindow)
@@ -405,14 +406,20 @@ public static class SheetComposer
             groups[name] = groups.TryGetValue(name, out int count) ? count + 1 : 1;
         }
         if (groups.Count == 0) return;
+        // The table of the reference site plan: the type mark of the plant (T1, T2, ... as the plan tags them), its
+        // common name and its count.
         page.DrawText("Planting Schedule", x, y, 3.5);
-        page.DrawText("Type", x, y - 5, 2.4, PdfTextAlignment.Left, 0.4);
-        page.DrawText("Count", x + 40, y - 5, 2.4, PdfTextAlignment.Right, 0.4);
+        page.DrawText("Type Mark", x, y - 5, 2.2, PdfTextAlignment.Left, 0.4);
+        page.DrawText("Common Name", x + 20, y - 5, 2.2, PdfTextAlignment.Left, 0.4);
+        page.DrawText("Count", x + 65, y - 5, 2.2, PdfTextAlignment.Right, 0.4);
         double row = y - 9;
+        int index = 0;
         foreach (var (name, count) in groups)
         {
-            page.DrawText(name, x, row, 2.4);
-            page.DrawText(count.ToString(), x + 40, row, 2.4, PdfTextAlignment.Right);
+            index++;
+            page.DrawText($"T{index}", x, row, 2.4);
+            page.DrawText(name, x + 20, row, 2.4);
+            page.DrawText(count.ToString(), x + 65, row, 2.4, PdfTextAlignment.Right);
             row -= 4.5;
         }
     }
