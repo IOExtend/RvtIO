@@ -21,6 +21,21 @@ the Security tab. Do not open public issues for security vulnerabilities.
 Open an issue first for larger changes so the scope and approach can be
 discussed before implementation. Keep changes focused on the agreed problem.
 
+## Clean-room rule
+
+All code is written independently from the analysis of files for
+interoperability. Do not add vendor code, SDKs, SDK internals, headers or
+binaries, decompiled or leaked source, or anything taken from the files of an
+installed vendor application. Do not add Revit models or other Revit files,
+customer data, or names, paths, sizes, counts, GUIDs or other details of
+private sample files to the repository, including tests, comments and
+documentation. Test inputs are built synthetically in the tests, or taken from
+public samples whose source is recorded with the fixture; tests that need
+private files read them from folders named by environment variables
+(`RVTIO_TEST_FILES`) and are skipped when those folders are not set.
+
+Do not put personal data in code, documentation, test data or commit metadata. Use your GitHub noreply address as the commit email.
+
 ## Development setup
 
 Install the .NET SDK specified by `global.json`. It currently specifies
