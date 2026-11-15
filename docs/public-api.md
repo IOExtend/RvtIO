@@ -37,6 +37,8 @@ known, while a known unset bound user parameter is written as an empty string. A
 
 `Element.BoundingBox` is the axis-aligned outline stored in the element header, as the Revit API bounding box (null for elements with no stored outline, such as grids and levels). The tight box of the decoded geometry is `Element.Geometry.BoundingBox`; before 0.3.0 `Element.BoundingBox` held that decoded value, which also changes the result of `FilteredElementCollector.WhereBoundingBoxIsNotNull`.
 
+`Element.OwnerViewId` is the stored `m_ownerDBViewId` of the element: the view or sheet whose annotations and view-specific graphics hold it (a text note on a sheet names the sheet), null when no view owns it. `SheetCatalog` uses it for the elements a sheet owns.
+
 ## Built-in identifiers
 
 `BuiltInCategory`, `BuiltInParameter`, `BuiltInParameterGroup`, `ParameterType`, `UnitType`, `DisplayUnitType`,
@@ -52,6 +54,17 @@ extension and label helpers carry the ids and names stored in the file format.
 | `IfcUnitFamily` | The length unit family an IFC export declares (`Millimetre`, `Metre` or `Foot`), chosen explicitly via `IfcExporter.LengthUnit` or derived in the current profile from the length format of the project (`Metre` for metres and for metres and centimetres, `Foot` for feet, feet and fractional inches and US survey feet, `Millimetre` for millimetres, for every other format and for an unreadable one; the legacy profile defaults to millimetres). |
 | `CompactJsonExporter` | `Export(rvtPath, outputPath, readerOptions, options)` reads a file and writes the compact JSON. |
 | `CompactJsonExportOptions` | `JsonClassNamePrefix`: text put in front of every class name in the `name` field. |
+
+## Sheets and viewports
+
+| Type | Use |
+|---|---|
+| `SheetCatalog` | `Extract(document)` (or a `RevitFileInfo`) returns the sheets of the file, the viewports placed on them and the limits of this release: `Sheets`, `Viewports` and `Issues`. Nothing is read from the file again. |
+| `SheetRecord` | A sheet: `ElementId`, `Number`, `Name`, `IssueDate`, `Scale`, `DrawnBy`, `DesignedBy`, `CheckedBy`, `ApprovedBy`, `ViewportIds` and `OwnedElementIds`. |
+| `ViewportRecord` | A placed view: `ElementId`, `SheetId` and `DetailNumber`; `DisplayedViewId` is null until the viewer element is decoded. |
+| `SheetIssue`, `SheetIssueKind` | What this release does not decode: page size, view placement, displayed view, view content and crop region. |
+
+See [sheets and viewports](sheets.md) for what is decoded, what the limits are and why no page coordinate is exposed yet.
 
 ## Triangle meshes
 
