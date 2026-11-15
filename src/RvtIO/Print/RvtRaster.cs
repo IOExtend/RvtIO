@@ -66,22 +66,16 @@ internal static class RvtRaster
                 if (raw == null) continue;
                 foreach (var chunk in Chunks(raw))
                 {
-                    int pos = 0;
-                    while (pos + 16 <= chunk.Length)
+                    // The blocks of the images are not aligned to the walked blocks of the element table: they are found
+                    // by scanning every byte for the element id of the image, as the project's own block walk does not
+                    // reach the streams the images live in.
+                    for (int pos = 0; pos + 16 <= chunk.Length; pos++)
                     {
                         uint eid = BinaryPrimitives.ReadUInt32LittleEndian(chunk.AsSpan(pos));
+                        if (eid != (uint)elementId) continue;
                         int size = BinaryPrimitives.ReadInt32LittleEndian(chunk.AsSpan(pos + 8));
                         uint classIdx = BinaryPrimitives.ReadUInt32LittleEndian(chunk.AsSpan(pos + 12));
-                        if (eid == 0 || size <= 0 || pos + 16 + size > chunk.Length)
-                        {
-                            pos++;
-                            continue;
-                        }
-                        if (eid != (uint)elementId || (classIdx & 0xFFFF) != 0x0890)
-                        {
-                            pos += 16 + size;
-                            continue;
-                        }
+                        if (size <= 0 || pos + 16 + size > chunk.Length || (classIdx & 0xFFFF) != 0x0890) continue;
                         var payload = chunk.AsSpan(pos + 16, size);
                         int start = payload.IndexOf(new byte[] { 0xFF, 0xD8, 0xFF });
                         if (start < 0) return null;

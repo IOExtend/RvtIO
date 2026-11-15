@@ -53,6 +53,13 @@ reader decodes the PNG it finds there (8 bits per channel, RGB, RGBA or palette)
 embeds it as an image object with Flate compression. The logo is fitted into the logo area of the title block strip with
 its aspect preserved. The API is `PdfRasterImage` and `PdfPage.DrawImage`.
 
+## Rendering views
+
+A rendering view (a 3D view Revit rendered) prints its image: Revit stores the JPEG in the block of the image symbol's
+type (class 0x0890), the reader finds it among the partition streams and the PDF writer embeds it with the DCTDecode
+filter without decoding the picture. A sheet places it at the offset of its viewport, keeping clear of the title block
+strip.
+
 ## Printing a site plan
 
 A view named "Site" or "Site Plan" is drawn from the site itself, not from the walls of a level: the topography is a

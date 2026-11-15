@@ -166,7 +166,25 @@ public static class SheetComposer
                 centerY = offset[1] * FeetToMillimetres - originY;
             }
             double frameX = centerX, frameY = centerY, frameWidth = 0, frameHeight = 0;
-            if (placed && plans.TryGetValue(viewId, out var plan))
+            if (placed && view?.RootClassName == "DBViewRendering")
+            {
+                // A rendering: the JPEG Revit stored for the view, placed at the offset of its viewport.
+                if (RenderingImage(document, viewId) is { } jpeg)
+                {
+                    double height = 110, width = height * jpeg.Width / jpeg.Height;
+                    if (width > 240)
+                    {
+                        width = 240;
+                        height = width * jpeg.Height / jpeg.Width;
+                    }
+                    // The images keep clear of the title block strip on the right.
+                    double stripLeft = page.WidthMillimetres - 5
+                        - Math.Min(180, page.WidthMillimetres * 0.22) - 3;
+                    double x = Math.Min(centerX - width / 2, stripLeft - width);
+                    page2.DrawImage(jpeg, x, centerY - height / 2, width, height);
+                }
+            }
+            else if (placed && plans.TryGetValue(viewId, out var plan))
             {
                 int viewScale = plan.Scale;
                 var content = PlanPrinter.CollectLevel(document, plan.LevelId);
@@ -285,6 +303,27 @@ public static class SheetComposer
     }
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, PdfRasterImage?> Logos = new();
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string Path, int ViewId), PdfJpegImage?>
+        Renderings = new();
+
+    /// <summary>The JPEG a rendering view stores: the image symbol the view owns carries its type, and the type's block
+    /// holds the image.</summary>
+    private static PdfJpegImage? RenderingImage(RvtDocument document, int viewId)
+    {
+        if (document.SourcePath is not { Length: > 0 } path) return null;
+        return Renderings.GetOrAdd((path, viewId), key =>
+        {
+            foreach (var element in document.Elements)
+            {
+                if (element.OwnerViewId != key.ViewId || element.RootClassName != "ImageSymbol") continue;
+                if (element.TypeId <= 0) continue;
+                var image = RvtRaster.FindJpeg(key.Path, element.TypeId);
+                if (image != null) return image;
+            }
+            return null;
+        });
+    }
 
     /// <summary>The logo of the title block family: the image symbol whose name holds "logo", decoded from the file.
     /// </summary>

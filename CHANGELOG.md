@@ -50,6 +50,8 @@ Plans draw the frames of the doors and windows whose cut loop is decoded and the
 
 A placed view is titled as Revit titles it: the viewport detail number in a circle, the view name beside it, the scale below and a rule over the title (1 Level 1 1:100, 2 Level 2 1:100 on A102).
 
+A rendering view prints its image: the JPEG Revit stores in the block of the image symbol type (class 0x0890) is found among the partition streams (scanning every byte, as the blocks of the images are not aligned to the walked blocks), embedded with DCTDecode and placed at the offset of the viewport, clear of the title block strip. Measured on the Revit sample project: the title sheet A001 now carries the five renderings (Approach, From Yard, Kitchen, Living Room, Section Perspective) beside the title block, as in the reference export.
+
 The logo of the title block family is printed: the reader finds the PNG among the file's partition streams and decodes it (RGB, RGBA or palette, 8 bits per channel) to a raster, and the PDF writer embeds it (Flate, RGB) in the logo area of the strip, aspect preserved. New API: `PdfRasterImage` and `PdfPage.DrawImage`. Measured on the Revit sample project: the Autodesk logo appears on every sheet.
 
 The title block strip now follows the reference layout: a logo area, a two-column consultant table (Consultant / Address / Phone / Fax / e-mail, empty fields), the revision table (No. / Description / Date), a project area and the sheet information rows.
