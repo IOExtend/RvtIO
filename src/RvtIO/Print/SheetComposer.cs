@@ -117,16 +117,17 @@ public static class SheetComposer
     private static void AddSheetPage(PdfDocument pdf, RvtDocument document, Element sheet,
         Dictionary<int, PlanView> plans, SheetComposeOptions options)
     {
-        var (page, originX, originY) = PageOf(document, sheet, options);
+        // A composed sheet keeps the paper of its title block: --paper applies to plans and views, not to a sheet.
+        var (page, originX, originY) = PageOf(document, sheet, null);
+        PdfPageSize layout = page;
         PdfPage page2 = pdf.AddPage(page);
-
         // The title block family's linework is not decoded: the page border and a title block strip on the right, built
         // from the sheet's own fields, stand in for it, so a printed sheet reads as a framed page of a set.
         if (options.DrawPageFrame)
         {
             double margin = 5;
-            page2.DrawRectangle(margin, margin, page.WidthMillimetres - 2 * margin,
-                page.HeightMillimetres - 2 * margin, 0.35);
+            page2.DrawRectangle(margin, margin, layout.WidthMillimetres - 2 * margin,
+                layout.HeightMillimetres - 2 * margin, 0.35);
             if (pdf.Font != null)
             {
                 // The scale noted on the sheet: the most common scale of its placed views.
@@ -144,7 +145,7 @@ public static class SheetComposer
                 string scaleText = scales.Count == 0
                     ? ""
                     : "1:" + scales.OrderByDescending(pair => pair.Value).First().Key;
-                TitleBlockPrinter.Draw(page2, document, sheet, Math.Min(180, page.WidthMillimetres * 0.22),
+                TitleBlockPrinter.Draw(page2, document, sheet, Math.Min(180, layout.WidthMillimetres * 0.22),
                     margin, scaleText, TitleLogo(document));
             }
         }
@@ -202,8 +203,8 @@ public static class SheetComposer
                         height = width * jpeg.Height / jpeg.Width;
                     }
                     // The images keep clear of the title block strip on the right.
-                    double stripLeft = page.WidthMillimetres - 5
-                        - Math.Min(180, page.WidthMillimetres * 0.22) - 3;
+                    double stripLeft = layout.WidthMillimetres - 5
+                        - Math.Min(180, layout.WidthMillimetres * 0.22) - 3;
                     double x = Math.Min(centerX - width / 2, stripLeft - width);
                     page2.DrawImage(jpeg, x, centerY - height / 2, width, height);
                 }
@@ -297,12 +298,12 @@ public static class SheetComposer
                 // part of the sheet, the way the reference places it.
                 bool stairSection = name.Contains("stair", StringComparison.OrdinalIgnoreCase);
                 bool stairsOnly = stairSection && scale >= 50;
-                double stripLeftForStair = page.WidthMillimetres - 5
-                    - Math.Min(180, page.WidthMillimetres * 0.22) - 3;
+                double stripLeftForStair = layout.WidthMillimetres - 5
+                    - Math.Min(180, layout.WidthMillimetres * 0.22) - 3;
                 bool detailSection = direction == "section" && scale < 100 && !stairSection
                     && viewElement?.ViewDirection is { Length: 3 };
-                double stripLeft = page.WidthMillimetres - 5
-                    - Math.Min(180, page.WidthMillimetres * 0.22) - 3;
+                double stripLeft = layout.WidthMillimetres - 5
+                    - Math.Min(180, layout.WidthMillimetres * 0.22) - 3;
                 // A stair detail (1:20) is cropped to the stair enclosure, like the details of the reference: a window of
                 // 80 x 60 mm on the page around the point of its plane.
                 (double Width, double Height)? detailWindow = detailSection ? (3000, 2200)
@@ -310,7 +311,7 @@ public static class SheetComposer
                     : null;
                 // A detail whose viewport the file puts against the border or outside the page is not printed.
                 bool detailOnPage = !detailSection || (centerX > 40 && centerX < stripLeft - 40
-                    && centerY > 40 && centerY < page.HeightMillimetres - 40);
+                    && centerY > 40 && centerY < layout.HeightMillimetres - 40);
                 var elevation = detailOnPage
                     ? ElevationPrinter.Collect(document, direction, stairsOnly, viewElement, detailWindow)
                     : null;
@@ -324,17 +325,17 @@ public static class SheetComposer
                     // the page) is drawn at a scale that fits, and one the file places off the page is put in the free
                     // space of the sheet.
                     double drawableWidth = Math.Max(60, stripLeft - 20);
-                    double drawableHeight = Math.Max(60, page.HeightMillimetres - 30);
+                    double drawableHeight = Math.Max(60, layout.HeightMillimetres - 30);
                     // A stair detail (1:20) takes the right part of the sheet, not the whole drawing area; any other
                     // elevation or section keeps to the third of the page its place holds, so two of them never merge.
                     if (stairSection && scale < 50)
                     {
                         drawableWidth = Math.Min(drawableWidth, stripLeft * 0.45);
-                        drawableHeight = Math.Min(drawableHeight, page.HeightMillimetres * 0.6);
+                        drawableHeight = Math.Min(drawableHeight, layout.HeightMillimetres * 0.6);
                     }
                     else
                     {
-                        drawableHeight = Math.Min(drawableHeight, page.HeightMillimetres * 0.30);
+                        drawableHeight = Math.Min(drawableHeight, layout.HeightMillimetres * 0.30);
                     }
                     if (frameWidth > drawableWidth || frameHeight > drawableHeight)
                     {
@@ -346,14 +347,14 @@ public static class SheetComposer
                     if (stairSection && scale < 50)
                     {
                         centerX = stripLeftForStair - 20 - frameWidth / 2;
-                        centerY = page.HeightMillimetres - 40 - frameHeight / 2;
+                        centerY = layout.HeightMillimetres - 40 - frameHeight / 2;
                     }
                     else if (centerX < 10 || centerX > stripLeft - 10 || centerY < 10
-                        || centerY > page.HeightMillimetres - 15)
+                        || centerY > layout.HeightMillimetres - 15)
                     {
                         centerX = 40 + frameWidth / 2 + relocated * Math.Min(300, drawableWidth / 2);
                         if (centerX + frameWidth / 2 > stripLeft - 10) centerX = stripLeft - 10 - frameWidth / 2;
-                        centerY = page.HeightMillimetres - 40 - frameHeight / 2;
+                        centerY = layout.HeightMillimetres - 40 - frameHeight / 2;
                         relocated++;
                     }
                     // The drawing stays inside the page: a view the file places against an edge is moved in.
@@ -366,9 +367,9 @@ public static class SheetComposer
                         frameX = stripLeft - 5 - frameWidth;
                         centerX = frameX + frameWidth / 2;
                     }
-                    if (frameY + frameHeight > page.HeightMillimetres - 5)
+                    if (frameY + frameHeight > layout.HeightMillimetres - 5)
                     {
-                        frameY = page.HeightMillimetres - 5 - frameHeight;
+                        frameY = layout.HeightMillimetres - 5 - frameHeight;
                         centerY = frameY + frameHeight / 2;
                     }
                     // A drawing the file places on top of one already on the page goes to the next place of the top row.
@@ -390,7 +391,7 @@ public static class SheetComposer
                         relocated++;
                         // The free place of the top row, from the right of the drawing area.
                         centerX = stripLeft - 15 - frameWidth / 2;
-                        centerY = page.HeightMillimetres - 40 - frameHeight / 2;
+                        centerY = layout.HeightMillimetres - 40 - frameHeight / 2;
                         if (centerX - frameWidth / 2 < 15) break;
                         frameX = centerX - frameWidth / 2;
                         frameY = centerY - frameHeight / 2;
@@ -442,6 +443,7 @@ public static class SheetComposer
             for (int line = 0; line < lines.Length; line++)
                 page2.DrawText(lines[line], x, y - line * height * 1.25, height);
         }
+
     }
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, PdfRasterImage?> Logos = new();

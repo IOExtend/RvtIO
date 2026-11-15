@@ -361,6 +361,8 @@ public sealed class PdfPage
     /// <summary>Ends the clipping region started by <see cref="BeginClip"/>.</summary>
     public void EndClip() => _content.Append("Q\n");
 
+
+
     /// <summary>The images of the page, in the order they were drawn.</summary>
     internal List<IPdfImage> Images { get; } = new();
 
