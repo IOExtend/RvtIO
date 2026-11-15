@@ -17,7 +17,7 @@ public static class SitePrinter
     /// </summary>
     internal sealed record SiteContent(
         List<List<(double X, double Y)>> Topography,
-        List<(double X, double Y, double Radius)> Plants,
+        List<(double X, double Y, double Radius, string Type)> Plants,
         double MinX, double MinY, double MaxX, double MaxY);
 
     /// <summary>Projects the topography and the planting of the document on the plan. Null when the model has neither.
@@ -51,7 +51,7 @@ public static class SitePrinter
             }
         }
 
-        var plants = new List<(double X, double Y, double Radius)>();
+        var plants = new List<(double X, double Y, double Radius, string Type)>();
         foreach (var element in document.Elements)
         {
             if (element.CategoryId != (int)BuiltInCategory.OST_Planting) continue;
@@ -61,7 +61,7 @@ public static class SitePrinter
             double y = (box[1] + box[4]) / 2 * FeetToMillimetres;
             double radius = Math.Min(box[3] - box[0], box[4] - box[1]) / 2 * FeetToMillimetres;
             if (radius <= 0) continue;
-            plants.Add((x, y, radius));
+            plants.Add((x, y, radius, element.Name ?? ""));
             Grow(x - radius, y - radius);
             Grow(x + radius, y + radius);
         }
@@ -101,7 +101,7 @@ public static class SitePrinter
             if (count != 1 || !edgeLines.TryGetValue(key, out var line)) continue;
             page.DrawLine(line.A.Item1, line.A.Item2, line.B.Item1, line.B.Item2, 0.15, 0.45);
         }
-        foreach (var (x, y, radius) in content.Plants)
+        foreach (var (x, y, radius, _) in content.Plants)
         {
             double pageX = ToX(x), pageY = ToY(y), r = radius / scale;
             var circle = new List<(double X, double Y)>(24);
@@ -114,5 +114,43 @@ public static class SitePrinter
             page.DrawLine(pageX - r, pageY, pageX + r, pageY, 0.08, 0.45);
             page.DrawLine(pageX, pageY - r, pageX, pageY + r, 0.08, 0.45);
         }
+
+        // The planting of the site is tagged the way the planting schedule tags it: T1 for the first kind of plant, T2
+        // for the next, each on a leader line from the plant.
+        var types = content.Plants.Where(plant => plant.Type.Length > 0).Select(plant => plant.Type)
+            .Distinct().OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToList();
+        var tagged = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        if (page.Owner.Font != null)
+        {
+            foreach (var plant in content.Plants)
+            {
+                int index = types.IndexOf(plant.Type);
+                if (index < 0) continue;
+                tagged.TryGetValue(plant.Type, out int count);
+                if (count >= 2) continue;
+                tagged[plant.Type] = count + 1;
+                double pageX = ToX(plant.X), pageY = ToY(plant.Y), r = plant.Radius / scale;
+                double endX = pageX + r + 3, endY = pageY + r * 0.5 + 3 + count * 4;
+                page.DrawLine(pageX + r * 0.7, pageY + r * 0.7, endX, endY, 0.08, 0.45);
+                page.DrawLine(endX, endY, endX + 3, endY, 0.08, 0.45);
+                page.DrawText($"T{index + 1}", endX + 3.6, endY - 0.9, 2, PdfTextAlignment.Left, 0.4);
+            }
+        }
+
+        // The north arrow at the lower right of the site.
+        double boxRight = (content.MaxX - content.MinX) / scale + originX;
+        double boxBottom = originY;
+        double northX = boxRight - 12, northY = boxBottom + 14;
+        var northCircle = new List<(double X, double Y)>(24);
+        for (int i = 0; i < 24; i++)
+        {
+            double angle = i * Math.PI * 2 / 24;
+            northCircle.Add((northX + 5 * Math.Cos(angle), northY + 5 * Math.Sin(angle)));
+        }
+        page.DrawPolyline(northCircle, 0.12, true, (PdfColor?)null);
+        page.DrawPolyline([(northX, northY - 5), (northX + 2.4, northY), (northX, northY + 5), (northX - 2.4, northY)],
+            0.12, true, 0.2);
+        page.DrawLine(northX, northY, northX, northY + 5, 0.18);
+        page.DrawText("N", northX, northY + 6, 2.6, PdfTextAlignment.Center);
     }
 }

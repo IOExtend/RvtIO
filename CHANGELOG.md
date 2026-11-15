@@ -28,6 +28,8 @@ A door and a window carry their mark: the Mark parameter (103, 104, 202 ...) is 
 
 A room is tagged the way a plan tags it: the room number in a white circle at the centre of the footprint, the room name and its area in m2 beside it.
 
+The planting of a site plan is tagged the way the planting schedule tags it: T1, T2, ... on leader lines from the plants (up to two tags per kind), a north arrow stands at the lower right of the site, and the schedule sits under the view title, clear of the plan.
+
 A site plan carries a planting schedule under the plan: one row per kind of plant with its count (Honey Locust, Hawthorn, Lombardy Poplar, Red Maple, Red Ash, Scarlet Oak on the sample).
 
 A site view prints as a site plan: the topography as a light green wash with its outer edge inked (the edges shared by two mesh triangles are dropped), the planting as a circle with four spokes at its position and size, and the building footprint as the walls of the level with most walls. Measured on the Revit sample project: A101 is no longer empty.

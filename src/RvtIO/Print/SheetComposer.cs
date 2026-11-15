@@ -243,7 +243,9 @@ public static class SheetComposer
                             (sitePlan.MinY - site.MinY) / scale + frameY);
                     }
                     page2.EndClip();
-                    if (pdf.Font != null) DrawPlantingSchedule(page2, document, Math.Max(frameX, 8), frameY - 6);
+                    // The planting schedule sits under the view title, clear of the site plan.
+                    if (pdf.Font != null)
+                        DrawPlantingSchedule(page2, document, Math.Max(frameX, 8), frameY - 18);
                 }
             }
             else if (placed && ElevationPrinter.DirectionOf(name) is string direction)

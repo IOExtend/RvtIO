@@ -67,7 +67,9 @@ light green wash with its outer edge inked (the edges shared by two mesh triangl
 circle with four spokes at its position and size, and the walls of the level with most walls stand on the same plan as
 the building footprint.
 
-A planting schedule under the plan lists every kind of plant with its count.
+Each kind of plant is tagged the way the planting schedule tags it (T1, T2, ... in the order of the schedule) on a leader
+line from the plant, a north arrow stands at the lower right of the site, and a planting schedule under the plan lists
+every kind of plant with its count.
 
 ## Printing an elevation
 
