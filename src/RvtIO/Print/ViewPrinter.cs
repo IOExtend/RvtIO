@@ -64,9 +64,11 @@ public static class ViewPrinter
     public static IReadOnlyList<Element> OtherViews(RvtDocument document)
     {
         ArgumentNullException.ThrowIfNull(document);
+        // A rendering comes before a 3D view of the same name: the rendering is the picture the name stands for.
         return document.Elements
             .Where(element => element.RootClassName is "DBViewRendering" or "DBView3d")
-            .OrderBy(element => element.Name, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(element => element.RootClassName == "DBViewRendering" ? 0 : 1)
+            .ThenBy(element => element.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
