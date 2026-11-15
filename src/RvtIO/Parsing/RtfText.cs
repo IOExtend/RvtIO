@@ -55,6 +55,9 @@ internal static class RtfText
             if (b == (byte)'{')
             {
                 depth++;
+                fallbackStack.Push(fallbackLength);
+                codePageStack.Push(codePage);
+                fallback = 0;
                 int word = i + 1;
                 if (word + 1 < end && data[word] == (byte)'\\' && data[word + 1] == (byte)'*')
                 {
@@ -64,9 +67,6 @@ internal static class RtfText
                 }
                 if (word < end && data[word] == (byte)'\\'
                     && IsDestination(ControlWordName(data, word + 1, end)) && skipFrom < 0) skipFrom = depth;
-                fallbackStack.Push(fallbackLength);
-                codePageStack.Push(codePage);
-                fallback = 0;
                 i++;
                 continue;
             }

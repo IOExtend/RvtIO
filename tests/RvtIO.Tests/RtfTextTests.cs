@@ -103,6 +103,20 @@ public class RtfTextTests
     }
 
     [Fact]
+    public void Parse_IgnoredGroupWithAsteriskPreservesCodePage()
+    {
+        var parsed = Parse("{\\rtf1\\ansi\\ansicpg1252 {\\*\\generator test;}\\'e9}");
+        Assert.Equal("é", parsed?.Text);
+    }
+
+    [Fact]
+    public void Parse_IgnoredGroupWithAsteriskPreservesUcCount()
+    {
+        var parsed = Parse("{\\rtf1\\ansi\\uc0{\\*\\generator test;}\\u1040B}");
+        Assert.Equal("АB", parsed?.Text);
+    }
+
+    [Fact]
     public void Parse_ReturnsNullWhenTheBytesAreNotAnRtfString()
     {
         Assert.Null(Parse("plain text"));
