@@ -166,7 +166,24 @@ public static class SheetComposer
                 centerY = offset[1] * FeetToMillimetres - originY;
             }
             double frameX = centerX, frameY = centerY, frameWidth = 0, frameHeight = 0;
-            if (placed && view?.RootClassName == "DBViewRendering")
+            if (placed && view?.RootClassName == "DBView3d")
+            {
+                // A 3D view: an isometric projection of the model, white faces with their outlines, as the massing the
+                // view would show without its rendering.
+                var model = ElevationPrinter.Collect(document, "iso");
+                if (model != null)
+                {
+                    frameWidth = (model.MaxX - model.MinX) / scale + ElevationPrinter.LabelMarginMillimetres;
+                    frameHeight = (model.MaxY - model.MinY) / scale;
+                    frameX = centerX - frameWidth / 2;
+                    frameY = centerY - frameHeight / 2;
+                    double m = options.ViewMarginMillimetres;
+                    page2.BeginClip(frameX - m, frameY - m, frameWidth + 2 * m, frameHeight + 2 * m);
+                    ElevationPrinter.DrawContent(page2, model, scale, frameX, frameY);
+                    page2.EndClip();
+                }
+            }
+            else if (placed && view?.RootClassName == "DBViewRendering")
             {
                 // A rendering: the JPEG Revit stored for the view, placed at the offset of its viewport.
                 if (RenderingImage(document, viewId) is { } jpeg)

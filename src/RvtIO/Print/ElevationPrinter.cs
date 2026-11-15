@@ -101,6 +101,9 @@ public static class ElevationPrinter
             "south" => (new[] { 1.0, 0, 0 }, new[] { 0.0, 0, 1 }, new[] { 0.0, 1, 0 }),
             "north" => (new[] { -1.0, 0, 0 }, new[] { 0.0, 0, 1 }, new[] { 0.0, -1, 0 }),
             "east" => (new[] { 0.0, 1, 0 }, new[] { 0.0, 0, 1 }, new[] { -1.0, 0, 0 }),
+            // The view of a 3D view: an isometric projection from above the south west corner.
+            "iso" => (new[] { 0.7071068, -0.7071068, 0 }, new[] { -0.4082483, -0.4082483, 0.8164966 },
+                new[] { 0.5773503, 0.5773503, -0.5773503 }),
             _ => (new[] { 0.0, -1, 0 }, new[] { 0.0, 0, 1 }, new[] { 1.0, 0, 0 }),
         };
         var faces = new List<(List<(double X, double Y)> Points, double Depth, bool Outline)>();

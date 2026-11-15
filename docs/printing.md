@@ -53,6 +53,12 @@ reader decodes the PNG it finds there (8 bits per channel, RGB, RGBA or palette)
 embeds it as an image object with Flate compression. The logo is fitted into the logo area of the title block strip with
 its aspect preserved. The API is `PdfRasterImage` and `PdfPage.DrawImage`.
 
+## 3D views
+
+A 3D view placed on a sheet (a rendering that has no image, a solar analysis) prints as an isometric projection of the
+model from above the south west corner, white faces with their outlines: it is the massing the view would show, not the
+shaded picture Revit renders.
+
 ## Rendering views
 
 A rendering view (a 3D view Revit rendered) prints its image: Revit stores the JPEG in the block of the image symbol's
