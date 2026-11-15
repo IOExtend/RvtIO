@@ -192,6 +192,43 @@ public class RvtDocument
                 elem.FamilyName = typeElem.FamilyName;
             }
         }
+
+        // Parts (OST_Parts): resolve FamilyName, Name and Category from DPART_ORIGINAL_* parameters when empty
+        foreach (var elem in _info.Elements)
+        {
+            if (elem.CategoryId == (int)BuiltIns.BuiltInCategory.OST_Parts || elem.Category == "Parts" || elem.Category == "OST_Parts")
+            {
+                if (string.IsNullOrEmpty(elem.FamilyName))
+                {
+                    var paramFamily = elem.LookupParameter(BuiltIns.BuiltInParameter.DPART_ORIGINAL_FAMILY)
+                        ?? elem.LookupParameter("DPART_ORIGINAL_FAMILY");
+                    if (paramFamily?.Value is string family && !string.IsNullOrWhiteSpace(family))
+                    {
+                        elem.FamilyName = family;
+                    }
+                }
+
+                if (string.IsNullOrEmpty(elem.Name))
+                {
+                    var paramType = elem.LookupParameter(BuiltIns.BuiltInParameter.DPART_ORIGINAL_TYPE)
+                        ?? elem.LookupParameter("DPART_ORIGINAL_TYPE");
+                    if (paramType?.Value is string typeName && !string.IsNullOrWhiteSpace(typeName))
+                    {
+                        elem.Name = typeName;
+                    }
+                }
+
+                if (string.IsNullOrEmpty(elem.Category))
+                {
+                    var paramCat = elem.LookupParameter(BuiltIns.BuiltInParameter.DPART_ORIGINAL_CATEGORY)
+                        ?? elem.LookupParameter("DPART_ORIGINAL_CATEGORY");
+                    if (paramCat?.Value is string cat && !string.IsNullOrWhiteSpace(cat))
+                    {
+                        elem.Category = cat;
+                    }
+                }
+            }
+        }
     }
 
     /// <summary>

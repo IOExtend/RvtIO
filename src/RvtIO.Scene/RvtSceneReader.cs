@@ -26,7 +26,7 @@ namespace RvtIO.Scene;
 /// <c>revit:instance</c>; the parameters of its type are the property set <c>revit:type</c>, one set shared by every element of
 /// the type. A parameter whose value the reader only estimates (<see cref="Parameter.IsApproximate"/>) is left out. The key of
 /// a built-in parameter is <c>revit:bip:&lt;id&gt;</c>, other parameters have no key.</para>
-/// <para>Values are text: the display string of <see cref="Parameter.AsValueString"/>, with the invariant culture, and only
+/// <para>Values are text: the display string of <see cref="Parameter.AsValueString()"/>, with the invariant culture, and only
 /// where it is the text Revit shows. A string is the stored text; a double is its value in the display unit and the unit symbol
 /// (<c>3200.4 mm</c>) when the unit comes from the parameter's measurement spec and is mm, m², m³, ° or A, the units whose
 /// factor converts Revit's internal unit, and is left out otherwise (no spec, as for every built-in double, whose unit the
@@ -261,7 +261,7 @@ public static class RvtSceneReader
         return id;
     }
 
-    /// <summary>The display string of the value as <see cref="Parameter.AsValueString"/> gives it, with the invariant culture;
+    /// <summary>The display string of the value as <see cref="Parameter.AsValueString()"/> gives it, with the invariant culture;
     /// null when the public API gives no display string that is exactly the one Revit shows.</summary>
     private static string? DisplayText(Parameter parameter) => parameter.StorageType switch
     {

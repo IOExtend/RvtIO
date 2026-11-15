@@ -298,9 +298,29 @@ namespace RvtIO.Model
         /// Uses ForgeTypeId spec registry for precise unit conversion when available,
         /// falls back to parameter name heuristics.
         /// </summary>
-        public string? AsValueString()
+        public string? AsValueString() => AsValueString(elementResolver: null);
+
+        /// <summary>
+        /// Get a formatted display string for the value, resolving referenced element names for ElementId parameters.
+        /// </summary>
+        public string? AsValueString(RvtDocument? doc) => AsValueString(doc != null ? doc.GetElement : null);
+
+        /// <summary>
+        /// Get a formatted display string for the value, resolving referenced element names for ElementId parameters.
+        /// </summary>
+        public string? AsValueString(Func<int, Element?>? elementResolver)
         {
             if (Value == null) return null;
+            if (StorageType == StorageType.ElementId && Value is int elemId)
+            {
+                if (elemId <= 0) return null;
+                if (elementResolver != null && elementResolver(elemId) is { } target)
+                {
+                    if (!string.IsNullOrEmpty(target.Name))
+                        return target.Name;
+                }
+                return elemId.ToString(CultureInfo.InvariantCulture);
+            }
             if (Value is double d)
             {
                 // Use ForgeTypeId-derived unit info if available
@@ -352,6 +372,29 @@ namespace RvtIO.Model
                 return d.ToString("G", CultureInfo.InvariantCulture);
             }
             return Value.ToString();
+        }
+
+        /// <summary>
+        /// Formats an ElementId parameter as a Navisworks NamedConstant string, matching Autodesk Navisworks Exporter:
+        /// <c>{Type/Category} "{Name}", #{Id}</c> (e.g. <c>WallType "Generic - 200mm", #123456</c>).
+        /// </summary>
+        public string? AsNavisworksValueString(Func<int, Element?>? elementResolver = null)
+        {
+            if (Value == null) return null;
+            if (StorageType == StorageType.ElementId && Value is int elemId)
+            {
+                if (elemId <= 0) return null;
+                if (elementResolver != null && elementResolver(elemId) is { } target)
+                {
+                    string typeName = target.Category ?? target.FamilyName ?? "Element";
+                    string name = target.Name ?? string.Empty;
+                    return !string.IsNullOrEmpty(name)
+                        ? $"{typeName} \"{name}\", #{elemId}"
+                        : $"{typeName}, #{elemId}";
+                }
+                return $"#{elemId}";
+            }
+            return AsValueString(elementResolver);
         }
 
         private static readonly HashSet<string> LengthSpecCategories = new(StringComparer.OrdinalIgnoreCase)
