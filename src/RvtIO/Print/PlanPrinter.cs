@@ -99,8 +99,9 @@ public static class PlanPrinter
             if (best == null) throw new InvalidOperationException("The document has no level with a wall or column.");
             levelId = best;
         }
+        string? levelName = document.GetElement(levelId.Value)?.Name;
 
-        var segments = new List<(double X1, double Y1, double X2, double Y2, double Width)>();
+        var walls = new List<(int Id, double X1, double Y1, double X2, double Y2, double Width)>();
         var columns = new List<(double X, double Y, double Width, double Height)>();
         double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
         void Grow(double x, double y)
@@ -119,7 +120,7 @@ public static class PlanPrinter
                 double x1 = line.StartPoint[0] * FeetToMillimetres, y1 = line.StartPoint[1] * FeetToMillimetres;
                 double x2 = line.EndPoint[0] * FeetToMillimetres, y2 = line.EndPoint[1] * FeetToMillimetres;
                 double width = WidthOf(element) ?? options.FallbackWallWidthMillimetres;
-                segments.Add((x1, y1, x2, y2, width));
+                walls.Add((element.Id, x1, y1, x2, y2, width));
                 Grow(x1, y1); Grow(x2, y2);
                 continue;
             }
@@ -135,8 +136,50 @@ public static class PlanPrinter
             }
         }
 
-        if (segments.Count == 0 && columns.Count == 0)
+        if (walls.Count == 0 && columns.Count == 0)
             throw new InvalidOperationException("The level has no wall or column with a location line to draw.");
+
+        // Openings: the cut loop of a hosted door or window, transformed to the model, gives the stretch of its wall to
+        // leave out. The plan then draws the wall in the pieces between its openings, with a jamb at every cut.
+        var wallById = new Dictionary<int, (int Id, double X1, double Y1, double X2, double Y2, double Width)>();
+        foreach (var wall in walls) wallById[wall.Id] = wall;
+        var gaps = new Dictionary<int, List<(double From, double To)>>();
+        var windowGaps = new List<(int HostId, double From, double To)>();
+        int debugOpenings = 0, debugCutouts = 0, debugHosted = 0;
+        foreach (var insert in document.Elements)
+        {
+            if (insert.CategoryId is not ((int)BuiltInCategory.OST_Doors or (int)BuiltInCategory.OST_Windows)) continue;
+            debugOpenings++;
+            if (insert.OwnSingleFamilyCutout is not { } cutout || cutout.Transform is not { Length: 12 } matrix) continue;
+            debugCutouts++;
+            if (!wallById.TryGetValue(cutout.HostId, out var wall)) continue;
+            debugHosted++;
+            double dx = wall.X2 - wall.X1, dy = wall.Y2 - wall.Y1;
+            double length = Math.Sqrt(dx * dx + dy * dy);
+            if (length < 1e-6) continue;
+            double ux = dx / length, uy = dy / length;
+            double from = double.MaxValue, to = double.MinValue;
+            foreach (var vertex in cutout.Loop.Vertices)
+            {
+                // The loop and its transform are in feet; the wall line is in millimetres.
+                double wx = (matrix[0] * vertex[0] + matrix[1] * vertex[1] + matrix[2] * vertex[2] + matrix[9])
+                    * FeetToMillimetres;
+                double wy = (matrix[3] * vertex[0] + matrix[4] * vertex[1] + matrix[5] * vertex[2] + matrix[10])
+                    * FeetToMillimetres;
+                double t = (wx - wall.X1) * ux + (wy - wall.Y1) * uy;
+                double d = -(wx - wall.X1) * uy + (wy - wall.Y1) * ux;
+                if (Math.Abs(d) > wall.Width * 1.5 + 50) continue;
+                from = Math.Min(from, t);
+                to = Math.Max(to, t);
+            }
+            if (to <= from) continue;
+            from = Math.Max(0, from);
+            to = Math.Min(length, to);
+            if (to - from < 1) continue;
+            if (!gaps.TryGetValue(wall.Id, out var list)) gaps[wall.Id] = list = new List<(double From, double To)>();
+            list.Add((from, to));
+            if (insert.CategoryId == (int)BuiltInCategory.OST_Windows) windowGaps.Add((wall.Id, from, to));
+        }
 
         // Grids are clipped to the extent of the level: a grid line can run far beyond the building, and an unclipped
         // one would put the whole plan into the corner of an oversized page.
@@ -152,6 +195,10 @@ public static class PlanPrinter
                     minX - gridMargin, minY - gridMargin, maxX + gridMargin, maxY + gridMargin))
                 grids.Add((gx1, gy1, gx2, gy2));
         }
+
+        if (Environment.GetEnvironmentVariable("RVTIO_PRINT_DEBUG") is { Length: > 0 } debugPath)
+            File.WriteAllText(debugPath, $"walls={walls.Count} doorsWindows={debugOpenings} cutouts={debugCutouts} "
+                + $"hosted={debugHosted} gaps={gaps.Count} windows={windowGaps.Count}");
 
         double contentWidth = (maxX - minX) / scale;
         double contentHeight = (maxY - minY) / scale;
@@ -169,7 +216,8 @@ public static class PlanPrinter
         double offsetX = (paper.WidthMillimetres - (maxX - minX) / effectiveScale) / 2;
         double offsetY = (paper.HeightMillimetres - (maxY - minY) / effectiveScale) / 2;
 
-        var pdf = new PdfDocument();
+        PdfTrueTypeFont? font = PdfFonts.TryFind(out _);
+        var pdf = new PdfDocument { Font = font };
         PdfPage page = pdf.AddPage(paper);
         if (options.DrawFrame)
         {
@@ -181,25 +229,71 @@ public static class PlanPrinter
         foreach (var grid in grids)
             page.DrawLine(ToX(grid.X1), ToY(grid.Y1), ToX(grid.X2), ToY(grid.Y2), 0.18, 0.45);
 
-        foreach (var wall in segments)
+        foreach (var wall in walls)
         {
             double dx = wall.X2 - wall.X1, dy = wall.Y2 - wall.Y1;
             double length = Math.Sqrt(dx * dx + dy * dy);
             if (length < 1e-9) continue;
-            double nx = -dy / length * wall.Width / 2, ny = dx / length * wall.Width / 2;
-            page.DrawLine(ToX(wall.X1 + nx), ToY(wall.Y1 + ny), ToX(wall.X2 + nx), ToY(wall.Y2 + ny), 0.2);
-            page.DrawLine(ToX(wall.X1 - nx), ToY(wall.Y1 - ny), ToX(wall.X2 - nx), ToY(wall.Y2 - ny), 0.2);
-            page.DrawLine(ToX(wall.X1 + nx), ToY(wall.Y1 + ny), ToX(wall.X1 - nx), ToY(wall.Y1 - ny), 0.2);
-            page.DrawLine(ToX(wall.X2 + nx), ToY(wall.Y2 + ny), ToX(wall.X2 - nx), ToY(wall.Y2 - ny), 0.2);
+            double ux = dx / length, uy = dy / length;
+            double nx = -uy * wall.Width / 2, ny = ux * wall.Width / 2;
+            foreach (var (from, to) in SplitWall(length, gaps.TryGetValue(wall.Id, out var list) ? list : null))
+            {
+                double ax = wall.X1 + ux * from, ay = wall.Y1 + uy * from;
+                double bx = wall.X1 + ux * to, by = wall.Y1 + uy * to;
+                page.DrawLine(ToX(ax + nx), ToY(ay + ny), ToX(bx + nx), ToY(by + ny), 0.2);
+                page.DrawLine(ToX(ax - nx), ToY(ay - ny), ToX(bx - nx), ToY(by - ny), 0.2);
+                page.DrawLine(ToX(ax + nx), ToY(ay + ny), ToX(ax - nx), ToY(ay - ny), 0.2);
+                page.DrawLine(ToX(bx + nx), ToY(by + ny), ToX(bx - nx), ToY(by - ny), 0.2);
+            }
+        }
+
+        // A window is a light line across its opening on the wall axis, the glass of the plan.
+        foreach (var (hostId, from, to) in windowGaps)
+        {
+            if (!wallById.TryGetValue(hostId, out var wall)) continue;
+            double dx = wall.X2 - wall.X1, dy = wall.Y2 - wall.Y1;
+            double length = Math.Sqrt(dx * dx + dy * dy);
+            if (length < 1e-6) continue;
+            double ux = dx / length, uy = dy / length;
+            page.DrawLine(ToX(wall.X1 + ux * from), ToY(wall.Y1 + uy * from),
+                ToX(wall.X1 + ux * to), ToY(wall.Y1 + uy * to), 0.15, 0.35);
         }
 
         foreach (var column in columns)
             page.DrawRectangle(ToX(column.X), ToY(column.Y), column.Width / effectiveScale, column.Height / effectiveScale, 0.2, 1);
 
+        // A title inside the frame: the level and the scale, in the level's own name. Drawn only when a font with the
+        // name's characters was found; the standard font cannot write Cyrillic.
+        if (font != null && levelName != null)
+        {
+            double margin = options.MarginMillimetres;
+            page.DrawText(levelName, margin + 3, paper.HeightMillimetres - margin - 8, 4.5);
+            page.DrawText($"1:{scale}", margin + 3, paper.HeightMillimetres - margin - 15, 3.5, PdfTextAlignment.Left, 0.35);
+        }
+
         return pdf;
 
         double ToX(double x) => (x - minX) / effectiveScale + offsetX;
         double ToY(double y) => (y - minY) / effectiveScale + offsetY;
+    }
+
+    /// <summary>The stretches of a wall that are not an opening: [0, length] minus the gaps, in order.</summary>
+    private static List<(double From, double To)> SplitWall(double length, List<(double From, double To)>? gaps)
+    {
+        var result = new List<(double From, double To)>();
+        double cursor = 0;
+        if (gaps != null)
+        {
+            gaps.Sort((left, right) => left.From.CompareTo(right.From));
+            foreach (var gap in gaps)
+            {
+                if (gap.From > cursor) result.Add((cursor, Math.Min(gap.From, length)));
+                cursor = Math.Max(cursor, gap.To);
+                if (cursor >= length) break;
+            }
+        }
+        if (cursor < length) result.Add((cursor, length));
+        return result;
     }
 
     private static bool ClipToBox(ref double x1, ref double y1, ref double x2, ref double y2,

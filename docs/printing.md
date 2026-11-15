@@ -33,16 +33,20 @@ The library API is `RvtIO.Print.PlanPrinter`: `Levels(document)` returns the pri
 | Content | Source |
 |---|---|
 | Walls | the stored location line, drawn as two sides its stored width apart with end caps (`WALL_ATTR_WIDTH_PARAM` of the wall or its type; 100 mm when neither stores one) |
+| Openings | the cut loop of a hosted door or window, transformed to the model, leaves its stretch of wall out; the wall is drawn in the pieces between its openings, with a jamb at every cut, and a window gets a light line across the opening |
 | Columns | the stored bounding box footprint, as a filled rectangle |
 | Grids | the stored location lines, clipped to the extent of the level (a grid line can run far beyond the building) |
 
-The page is white with a frame at the margin, and the drawing is centred. Elements are selected by their level
+The page is white with a frame at the margin, and the drawing is centred. The title (the level name and the scale) is
+written with an embedded TrueType font found on the machine (Arial, Segoe UI or Tahoma on Windows, DejaVu Sans on Linux,
+Arial or Helvetica Neue on macOS); without such a font the page is drawn without a title, because the standard PDF font
+holds no Cyrillic. Elements are selected by their level
 (`LEVEL_PARAM`); a wall without a location line or a column without a footprint is left out and counted by neither
 selection nor drawing.
 
 ## What is not drawn yet
 
-- **Openings**: doors and windows do not cut the walls, so a wall is drawn solid through its openings.
+- **Door leaves and swings**: an opening is a gap with jambs; the leaf and its swing arc are not drawn.
 - **Floors, roofs, ceilings, stairs, furniture** and every other model category.
 - **Rooms**: the reader decodes no room boundary loops for these files, so no room boundaries or names are drawn.
 - **Annotations**: text, dimensions, tags, symbols, revision clouds.
@@ -50,14 +54,14 @@ selection nor drawing.
   plane of the view is not applied.
 - **The sheet**: no title block, sheet number or name, no viewport placement, no multiple views on one page. This is the
   next part of the work; see [the sheets and viewports catalog](sheets.md) for what is decoded of a sheet today.
-- **Text**: the PDF writer has the standard Helvetica font only, which holds no Cyrillic; labels (grid names, room
-  names, the title) wait for an embedded font.
+- **Annotations text**: grid names, room names and dimension text are not drawn yet; the title is.
+- **The view's cut plane**: the level is drawn whole, not cut at the view range of a Revit view.
 
 ## Roadmap
 
-1. Walls cut by the openings of their hosted doors and windows, and door and window symbols at the cut.
+1. Door leaves and swing arcs, and window frames with their mullions.
 2. Floors and roofs as their boundary loops; stairs and furniture as their projected footprints.
 3. The view's crop and view range, so the drawing is the part the view shows at the view's cut plane.
-4. A TrueType font embedded in the PDF for Cyrillic text: grid labels, room names and the title.
+4. Grid labels, room names and dimension text with the embedded font.
 5. Sheet composition: page size from the title block, the view placed at its viewport position, the title block and the
    sheet fields, several views on one page.

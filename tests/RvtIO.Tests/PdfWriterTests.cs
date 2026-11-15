@@ -99,9 +99,9 @@ public class PdfWriterTests
 
         string pdf = Write(document);
 
-        // 10 mm cap height = 28.3465 pt; four characters at the 0.5 width estimate = 56.6929 pt wide
-        Assert.Contains("71.6535 50 Td (AAAA)", pdf);
-        Assert.Contains("43.3071 50 Td (AAAA)", pdf);
+        // 10 mm font size; four characters at the 0.5 em width estimate = 20 mm wide
+        Assert.Contains("90 50 Td (AAAA)", pdf);
+        Assert.Contains("80 50 Td (AAAA)", pdf);
     }
 
     [Fact]

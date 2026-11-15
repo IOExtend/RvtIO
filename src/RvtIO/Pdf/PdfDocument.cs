@@ -46,6 +46,16 @@ public sealed class PdfDocument
 {
     private readonly List<PdfPage> _pages = new();
 
+    /// <summary>
+    /// The font text is written with. Null uses the standard Helvetica font, whose characters are printable ASCII only.
+    /// A <see cref="PdfTrueTypeFont"/> is embedded whole as a Type0 font, so text in the scripts it covers (Cyrillic, for
+    /// one) is written as real, selectable text.
+    /// </summary>
+    public PdfTrueTypeFont? Font { get; set; }
+
+    /// <summary>The characters drawn with <see cref="Font"/>, which the font's width array and ToUnicode map hold.</summary>
+    internal HashSet<char> UsedCharacters { get; } = new();
+
     /// <summary>The pages, in the order they were added.</summary>
     public IReadOnlyList<PdfPage> Pages => _pages;
 
@@ -55,7 +65,7 @@ public sealed class PdfDocument
     {
         if (size.WidthMillimetres <= 0 || size.HeightMillimetres <= 0)
             throw new ArgumentOutOfRangeException(nameof(size), "A page needs a positive width and height.");
-        var page = new PdfPage(size);
+        var page = new PdfPage(size, this);
         _pages.Add(page);
         return page;
     }
@@ -74,9 +84,7 @@ public sealed class PdfDocument
     public void Save(Stream stream)
     {
         ArgumentNullException.ThrowIfNull(stream);
-        using var writer = new StreamWriter(stream, new UTF8Encoding(false), 64 * 1024, leaveOpen: true);
-        PdfSerializer.Write(writer, _pages);
-        writer.Flush();
+        PdfSerializer.Write(stream, this);
     }
 }
 
@@ -85,11 +93,18 @@ public sealed class PdfDocument
 public sealed class PdfPage
 {
     private readonly StringBuilder _content = new();
+    private readonly PdfDocument _document;
 
-    internal PdfPage(PdfPageSize size) => Size = size;
+    internal PdfPage(PdfPageSize size, PdfDocument document)
+    {
+        Size = size;
+        _document = document;
+    }
 
     /// <summary>The paper size of the page.</summary>
     public PdfPageSize Size { get; }
+
+    internal string Content => _content.ToString();
 
     /// <summary>Draws a line of the given width.</summary>
     /// <param name="x1">Start x in millimetres.</param>
@@ -103,6 +118,45 @@ public sealed class PdfPage
         Stroke(widthMillimetres, gray);
         _content.Append(Number(x1)).Append(' ').Append(Number(y1)).Append(" m ")
                 .Append(Number(x2)).Append(' ').Append(Number(y2)).Append(" l S\n");
+    }
+
+    /// <summary>Draws a circular arc of the given width, approximated by cubic Bézier segments.</summary>
+    /// <param name="centerX">Centre x in millimetres.</param>
+    /// <param name="centerY">Centre y in millimetres.</param>
+    /// <param name="radius">Radius in millimetres.</param>
+    /// <param name="startDegrees">Start angle in degrees, counter-clockwise from +x.</param>
+    /// <param name="endDegrees">End angle in degrees; a negative span draws clockwise.</param>
+    /// <param name="widthMillimetres">Line width in millimetres.</param>
+    /// <param name="gray">Ink from 0 (black) to 1 (white).</param>
+    public void DrawArc(double centerX, double centerY, double radius, double startDegrees, double endDegrees,
+        double widthMillimetres = 0.25, double gray = 0)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(radius);
+        if (endDegrees < startDegrees) (startDegrees, endDegrees) = (endDegrees, startDegrees);
+        double span = endDegrees - startDegrees;
+        if (span <= 0) return;
+        double sweep = span * Math.PI / 180;
+        int segments = Math.Max(1, (int)Math.Ceiling(sweep / (Math.PI / 2)));
+        double step = sweep / segments;
+        double handle = 4.0 / 3.0 * Math.Tan(step / 4);
+        double angle = startDegrees * Math.PI / 180;
+        double x0 = centerX + radius * Math.Cos(angle), y0 = centerY + radius * Math.Sin(angle);
+        Stroke(widthMillimetres, gray);
+        _content.Append(Number(x0)).Append(' ').Append(Number(y0)).Append(" m ");
+        for (int i = 0; i < segments; i++)
+        {
+            double next = angle + step;
+            double x1 = centerX + radius * (Math.Cos(angle) - handle * Math.Sin(angle));
+            double y1 = centerY + radius * (Math.Sin(angle) + handle * Math.Cos(angle));
+            double x2 = centerX + radius * (Math.Cos(next) + handle * Math.Sin(next));
+            double y2 = centerY + radius * (Math.Sin(next) - handle * Math.Cos(next));
+            double x3 = centerX + radius * Math.Cos(next), y3 = centerY + radius * Math.Sin(next);
+            _content.Append(Number(x1)).Append(' ').Append(Number(y1)).Append(' ')
+                    .Append(Number(x2)).Append(' ').Append(Number(y2)).Append(' ')
+                    .Append(Number(x3)).Append(' ').Append(Number(y3)).Append(" c ");
+            angle = next;
+        }
+        _content.Append("S\n");
     }
 
     /// <summary>Draws a polyline through the points, optionally closed, either stroked or filled.</summary>
@@ -147,34 +201,60 @@ public sealed class PdfPage
         _content.Append(stroke && fillGray != null ? "B\n" : stroke ? "S\n" : "f\n");
     }
 
-    /// <summary>Draws one line of text in the standard Helvetica font.</summary>
-    /// <param name="text">The text; printable ASCII only, the standard font holds no Cyrillic.</param>
+    /// <summary>Draws one line of text. With <see cref="PdfDocument.Font"/> set the text is written with the embedded
+    /// font and may hold any character the font covers; without it the standard Helvetica font is used and the text must
+    /// be printable ASCII.</summary>
+    /// <param name="text">The text.</param>
     /// <param name="x">Anchor x in millimetres.</param>
     /// <param name="y">Baseline y in millimetres.</param>
-    /// <param name="heightMillimetres">Cap height in millimetres, converted to the font size in points.</param>
+    /// <param name="heightMillimetres">Font size in millimetres (the em size: the cap height is about 0.7 of it).</param>
     /// <param name="alignment">Where the anchor sits along the line.</param>
     /// <param name="gray">Ink from 0 (black) to 1 (white).</param>
-    /// <exception cref="ArgumentException">The text holds a character outside printable ASCII.</exception>
+    /// <exception cref="ArgumentException">No font is set and the text holds a character outside printable ASCII.</exception>
     public void DrawText(string text, double x, double y, double heightMillimetres = 3,
         PdfTextAlignment alignment = PdfTextAlignment.Left, double gray = 0)
     {
         if (string.IsNullOrEmpty(text)) return;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(heightMillimetres);
-        foreach (char c in text)
-            if (c < ' ' || c > '~')
-                throw new ArgumentException(
-                    $"The standard PDF font holds printable ASCII only; '{c}' (U+{(int)c:X4}) needs an embedded font.", nameof(text));
         double fontPoints = heightMillimetres * 72.0 / 25.4;
-        double width = text.Length * fontPoints * 0.5;
-        double anchor = alignment switch
+        Stroke(0, gray);
+        if (_document.Font is { } font)
         {
-            PdfTextAlignment.Center => x - width / 2,
-            PdfTextAlignment.Right => x - width,
+            var encoded = new StringBuilder(text.Length * 4);
+            double width = 0;
+            foreach (char character in text)
+            {
+                int glyph = font.GlyphOf(character);
+                _document.UsedCharacters.Add(character);
+                width += font.AdvanceOf(glyph) / (double)font.UnitsPerEm * heightMillimetres;
+                encoded.Append(glyph.ToString("X4", CultureInfo.InvariantCulture));
+            }
+            double anchor = alignment switch
+            {
+                PdfTextAlignment.Center => x - width / 2,
+                PdfTextAlignment.Right => x - width,
+                _ => x,
+            };
+            _content.Append("BT /F2 ").Append(Number(fontPoints)).Append(" Tf ")
+                    .Append(Number(anchor)).Append(' ').Append(Number(y)).Append(" Td <")
+                    .Append(encoded).Append("> Tj ET\n");
+            return;
+        }
+
+        foreach (char character in text)
+            if (character < ' ' || character > '~')
+                throw new ArgumentException(
+                    $"The standard PDF font holds printable ASCII only; '{character}' (U+{(int)character:X4}) needs an embedded font.",
+                    nameof(text));
+        double asciiWidth = text.Length * heightMillimetres * 0.5;
+        double asciiAnchor = alignment switch
+        {
+            PdfTextAlignment.Center => x - asciiWidth / 2,
+            PdfTextAlignment.Right => x - asciiWidth,
             _ => x,
         };
-        Stroke(0, gray);
         _content.Append("BT /F1 ").Append(Number(fontPoints)).Append(" Tf ")
-                .Append(Number(anchor)).Append(' ').Append(Number(y)).Append(" Td (")
+                .Append(Number(asciiAnchor)).Append(' ').Append(Number(y)).Append(" Td (")
                 .Append(text.Replace("\\", "\\\\").Replace("(", "\\(").Replace(")", "\\)"))
                 .Append(") Tj ET\n");
     }
@@ -188,8 +268,6 @@ public sealed class PdfPage
 
     private void Fill(double gray) =>
         _content.Append(Number(Math.Clamp(gray, 0, 1))).Append(" g\n");
-
-    internal string Content => _content.ToString();
 
     private static string Number(double value) =>
         Math.Round(value, 4).ToString("0.####", CultureInfo.InvariantCulture);

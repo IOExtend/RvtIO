@@ -4,37 +4,46 @@ using System.Text;
 namespace RvtIO.Pdf;
 
 /// <summary>Writes the objects of a <see cref="PdfDocument"/> as PDF 1.4: catalog, page tree, one content stream per
-/// page, a standard Helvetica font, and the cross-reference table. Everything is written uncompressed, so a page can be
-/// inspected in a text editor while the writer is developed.</summary>
+/// page, the standard Helvetica font, the embedded TrueType font when the document has one, and the cross-reference
+/// table. Everything is written uncompressed, so a page can be inspected in a text editor while the writer is
+/// developed.</summary>
 internal static class PdfSerializer
 {
     private const int CatalogId = 1;
     private const int PagesId = 2;
-    private const int FontId = 3;
-    private const int FirstPageId = 4;
+    private const int HelveticaId = 3;
+    private const int Type0Id = 4;
+    private const int CidFontId = 5;
+    private const int DescriptorId = 6;
+    private const int FontFileId = 7;
+    private const int ToUnicodeId = 8;
+    private const int FirstPageWithFont = 9;
+    private const int FirstPageWithoutFont = 4;
 
-    private static int PageId(int index) => FirstPageId + index * 2;
-
-    private static int ContentId(int index) => FirstPageId + index * 2 + 1;
-
-    internal static void Write(TextWriter writer, IReadOnlyList<PdfPage> pages)
+    internal static void Write(Stream stream, PdfDocument document)
     {
+        IReadOnlyList<PdfPage> pages = document.Pages;
+        PdfTrueTypeFont? font = document.Font;
+        int firstPage = font != null ? FirstPageWithFont : FirstPageWithoutFont;
+        int PageId(int index) => firstPage + index * 2;
+        int ContentId(int index) => firstPage + index * 2 + 1;
+
         var offsets = new List<long>();
         long position = 0;
-        void Raw(string text)
+        void Raw(string text) => WriteBytes(Encoding.ASCII.GetBytes(text));
+        void WriteBytes(byte[] bytes)
         {
-            writer.Write(text);
-            position += Encoding.ASCII.GetByteCount(text);
+            stream.Write(bytes);
+            position += bytes.Length;
         }
-
         void BeginObject(int id)
         {
             while (offsets.Count < id) offsets.Add(0);
             offsets[id - 1] = position;
             Raw($"{id} 0 obj\n");
         }
-
         void EndObject() => Raw("endobj\n");
+        string Number(double value) => Math.Round(value, 4).ToString("0.####", CultureInfo.InvariantCulture);
 
         Raw("%PDF-1.4\n");
 
@@ -48,20 +57,63 @@ internal static class PdfSerializer
         Raw($"<< /Type /Pages /Kids [ {kids.ToString().TrimEnd()} ] /Count {pages.Count} >>\n");
         EndObject();
 
-        BeginObject(FontId);
+        BeginObject(HelveticaId);
         Raw("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>\n");
         EndObject();
+
+        if (font != null)
+        {
+            double scale = 1000.0 / font.UnitsPerEm;
+            BeginObject(Type0Id);
+            Raw($"<< /Type /Font /Subtype /Type0 /BaseFont /{font.Name} /Encoding /Identity-H "
+                + $"/DescendantFonts [ {CidFontId} 0 R ] /ToUnicode {ToUnicodeId} 0 R >>\n");
+            EndObject();
+
+            var widths = new StringBuilder();
+            var used = new SortedSet<int>();
+            foreach (char character in document.UsedCharacters) used.Add(font.GlyphOf(character));
+            foreach (int glyph in used)
+            {
+                widths.Append(glyph).Append(" [ ")
+                      .Append(Number(font.AdvanceOf(glyph) * scale)).Append(" ] ");
+            }
+            BeginObject(CidFontId);
+            Raw($"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /{font.Name} "
+                + "/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> "
+                + $"/FontDescriptor {DescriptorId} 0 R /CIDToGIDMap /Identity /DW 1000 /W [ {widths.ToString().TrimEnd()} ] >>\n");
+            EndObject();
+
+            BeginObject(DescriptorId);
+            Raw($"<< /Type /FontDescriptor /FontName /{font.Name} /Flags 32 "
+                + $"/FontBBox [ {Number(font.XMin * scale)} {Number(font.YMin * scale)} "
+                + $"{Number(font.XMax * scale)} {Number(font.YMax * scale)} ] /ItalicAngle 0 "
+                + $"/Ascent {Number(font.Ascent * scale)} /Descent {Number(font.Descent * scale)} "
+                + $"/CapHeight {Number(font.Ascent * 0.7 * scale)} /StemV 80 /FontFile2 {FontFileId} 0 R >>\n");
+            EndObject();
+
+            byte[] file = font.File_;
+            BeginObject(FontFileId);
+            Raw($"<< /Length {file.Length} /Length1 {file.Length} >>\nstream\n");
+            WriteBytes(file);
+            Raw("\nendstream\n");
+            EndObject();
+
+            BeginObject(ToUnicodeId);
+            string cmap = ToUnicode(document, font);
+            Raw($"<< /Length {Encoding.ASCII.GetByteCount(cmap)} >>\nstream\n");
+            Raw(cmap);
+            Raw("\nendstream\n");
+            EndObject();
+        }
 
         for (int i = 0; i < pages.Count; i++)
         {
             PdfPage page = pages[i];
             var (width, height) = page.Size.InPoints;
-            var pageObject = new StringBuilder("<< /Type /Page ")
-                .Append($"/Parent {PagesId} 0 R /MediaBox [0 0 {Number(width)} {Number(height)}] ")
-                .Append($"/Resources << /Font << /F1 {FontId} 0 R >> >> ")
-                .Append($"/Contents {ContentId(i)} 0 R >>\n");
+            string fonts = font != null ? $"/F1 {HelveticaId} 0 R /F2 {Type0Id} 0 R" : $"/F1 {HelveticaId} 0 R";
             BeginObject(PageId(i));
-            Raw(pageObject.ToString());
+            Raw($"<< /Type /Page /Parent {PagesId} 0 R /MediaBox [0 0 {Number(width)} {Number(height)}] "
+                + $"/Resources << /Font << {fonts} >> >> /Contents {ContentId(i)} 0 R >>\n");
             EndObject();
 
             string content = page.Content;
@@ -81,6 +133,21 @@ internal static class PdfSerializer
         Raw($"startxref\n{xref}\n%%EOF\n");
     }
 
-    private static string Number(double value) =>
-        Math.Round(value, 4).ToString("0.####", CultureInfo.InvariantCulture);
+    private static string ToUnicode(PdfDocument document, PdfTrueTypeFont font)
+    {
+        var byGlyph = new SortedDictionary<int, char>();
+        foreach (char character in document.UsedCharacters)
+            byGlyph.TryAdd(font.GlyphOf(character), character);
+        var text = new StringBuilder();
+        text.Append("/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n")
+            .Append("/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n")
+            .Append("/CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n")
+            .Append("1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n")
+            .Append($"{byGlyph.Count} beginbfchar\n");
+        foreach (var (glyph, character) in byGlyph)
+            text.Append('<').Append(glyph.ToString("X4", CultureInfo.InvariantCulture)).Append("> <")
+                .Append(((int)character).ToString("X4", CultureInfo.InvariantCulture)).Append(">\n");
+        text.Append("endbfchar\nendcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n");
+        return text.ToString();
+    }
 }

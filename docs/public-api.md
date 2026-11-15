@@ -73,9 +73,11 @@ See [printing a plan](printing.md) for what is drawn, what is not, and the roadm
 | `PdfPage` | `DrawLine`, `DrawPolyline`, `DrawRectangle` and `DrawText` in millimetres from the lower-left corner, y up. |
 | `PdfPageSize` | Paper sizes A4 to A0 in millimetres, `Landscape` for the turned page. |
 | `PdfTextAlignment` | `Left`, `Center`, `Right`: where the text anchor sits. |
+| `PdfTrueTypeFont` | A TrueType font parsed for embedding (`UnitsPerEm`, `GlyphOf`, `AdvanceOf`), drawn as a Type0 font with Identity-H encoding and a ToUnicode map, so text in the scripts it covers (Cyrillic included) is real, selectable PDF text. |
+| `PdfFonts` | `TryFind` loads the first TrueType font found on the machine (Arial, Segoe UI, Tahoma, DejaVu Sans, Helvetica Neue). |
 
-The standard Helvetica font of the writer holds printable ASCII only; a text with another character is refused (an
-embedded font comes with the sheet renderer).
+Without `PdfDocument.Font` the writer uses the standard Helvetica font, which holds printable ASCII only, and a text with
+another character is refused. With it, every text is written with the embedded font.
 
 ## Triangle meshes
 

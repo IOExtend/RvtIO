@@ -104,6 +104,37 @@ public class PlanPrinterTests
     }
 
     [Fact]
+    public void Render_CutsAWallAtAHostedDoor()
+    {
+        var wall = Wall(100, 1, 0, 0, 10, 0, widthFeet: 1);
+        var door = new Element
+        {
+            Id = 200,
+            CategoryId = (int)BuiltInCategory.OST_Doors,
+            HostId = 100,
+            OwnSingleFamilyCutout = (300, 100, new double[]
+                {
+                    1, 0, 0,
+                    0, 1, 0,
+                    0, 0, 1,
+                    4.5, 0, 0,
+                },
+                new FamilyCutLoopData(
+                    new[] { new[] { -0.5, 0.0, 0.0 }, new[] { 0.5, 0.0, 0.0 },
+                            new[] { 0.5, 0.0, 3.0 }, new[] { -0.5, 0.0, 3.0 } },
+                    new[] { 0.0, 1.0, 0.0 }, 0)),
+        };
+        var document = Document(Level(1, "First", 0), wall, door);
+
+        PdfDocument pdf = PlanPrinter.Render(document, levelId: 1);
+        string content = Content(pdf);
+
+        // The 10 m wall is cut into two stretches of 4 m and 5 m, each with two sides and two caps: eight lines where an
+        // uncut wall draws four.
+        Assert.Equal(8, Count(content, " l S"));
+    }
+
+    [Fact]
     public void Render_DrawsAColumnAsAFilledRectangle()
     {
         var document = Document(Level(1, "First", 0), Wall(100, 1, 0, 0, 10, 0), Column(200, 1, 2, 2, 2.5, 2.5));
