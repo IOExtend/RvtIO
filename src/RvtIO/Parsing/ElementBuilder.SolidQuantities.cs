@@ -55,7 +55,7 @@ internal static partial class ElementBuilder
                 var own = level == 1 ? grep?.Coarse ?? grep : grep?.Medium ?? grep;
                 if (own != null)
                 {
-                    alt.Geometry = BuildGeometryData(own);
+                    alt.Geometry = BuildGeometryData(own, state.SeparateFacesWithDistinctOpenings);
                     ExpandInstanceGeometry(alt, own, element.TypeId, state);
                 }
                 ExpandTransformOnlyInstanceGeometry(alt, id, element.TypeId, state);

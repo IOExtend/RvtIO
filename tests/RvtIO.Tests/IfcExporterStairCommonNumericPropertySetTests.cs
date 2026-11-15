@@ -49,6 +49,20 @@ public class IfcExporterStairCommonNumericPropertySetTests
         Assert.DoesNotContain("'NumberOfTreads'", ifc);
     }
 
+    [Theory]
+    [InlineData(IfcProfile.Current)]
+    [InlineData(IfcProfile.Legacy)]
+    public void ValidatedStair_WritesNumberOfRiserInBothProfiles(IfcProfile profile)
+    {
+        // Revit's exports write the stored riser count of a stair; the current profile no longer omits it.
+        Element stair = Stair(513254, 613254, "Exact stair reference");
+        Confirm(stair, 3, 0.5923738699329402, 0.984251968503937);
+
+        string ifc = ExportToText(profile, stair, StairType(stair.SerializedStairTypeId!.Value));
+
+        Assert.Equal("IFCCOUNTMEASURE(3.)", Properties(ifc, SolePset(ifc, "Pset_StairCommon"))["NumberOfRiser"].Expression);
+    }
+
     [Fact]
     public void EqualValues_KeepThreePrivatePropertyEntitiesPerOccurrence()
     {
@@ -498,7 +512,9 @@ public class IfcExporterStairCommonNumericPropertySetTests
         };
     }
 
-    private static string ExportToText(params Element[] elements)
+    private static string ExportToText(params Element[] elements) => ExportToText(IfcProfile.Legacy, elements);
+
+    private static string ExportToText(IfcProfile profile, params Element[] elements)
     {
         var info = new RevitFileInfo();
         info.Elements.AddRange(elements);
@@ -507,7 +523,7 @@ public class IfcExporterStairCommonNumericPropertySetTests
             $"revitreader-stair-numeric-{Guid.NewGuid():N}.ifc");
         try
         {
-            new IfcExporter() { Profile = IfcProfile.Legacy }.Export(info, path);
+            new IfcExporter() { Profile = profile }.Export(info, path);
             return File.ReadAllText(path);
         }
         finally

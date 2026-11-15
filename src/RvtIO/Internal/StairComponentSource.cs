@@ -49,11 +49,7 @@ internal static class StairComponentSource
             state.StairMembershipRoots[owner] = state.StairMembershipRoots.TryGetValue(owner, out var prior)
                 ? new(prior.BlockCount + 1, null) : new(1, value);
         }
-        // Count every semantic class of table-backed ids so a railing's non-owned
-        // duplicate cannot be hidden by scan order. Separate GElement frames never count.
-        if (!TfBlockDeserializer.IsSubclassOf(classId, 37)
-            || classId != 3681 && !(state.ElemRecOwningElementIds?.ContainsKey(owner) ?? false))
-            return;
+        if (!CountsClassRoot(state, classId, owner)) return;
         ushort? exactClass = headerMatches
             && TfBlockDeserializer.TryExtractOwnElementClass(data, start, size, classId, out int namedOwner)
             && namedOwner == owner ? classId : null;
@@ -62,6 +58,13 @@ internal static class StairComponentSource
         state.WalkedElementClassRoots[owner] = state.WalkedElementClassRoots.TryGetValue(owner, out var walked)
             ? new(walked.BlockCount + 1, null) : new(1, exactClass);
     }
+
+    /// <summary>Whether <see cref="Record"/> counts a root of this class in <see cref="ParsingState.OwnedElementClassRoots"/>: every
+    /// semantic class of table-backed ids, so a railing's non-owned duplicate cannot be hidden by scan order. Separate GElement frames
+    /// never count.</summary>
+    internal static bool CountsClassRoot(ParsingState state, ushort classId, uint owner) =>
+        TfBlockDeserializer.IsSubclassOf(classId, 37)
+        && (classId == 3681 || (state.ElemRecOwningElementIds?.ContainsKey(owner) ?? false));
 
     internal static void Apply(IReadOnlyList<Element> elements, ParsingState state)
     {
@@ -80,13 +83,14 @@ internal static class StairComponentSource
             .Where(group => group.Count() == 1).ToDictionary(group => group.Key, group => group.Single());
         foreach (var element in unique.Values)
         {
-            if (element.Id <= 0 || element.IsBlockOnly) continue;
+            if (element.Id < 0 || element.IsBlockOnly) continue;
             if (state.ElemRecOwningElementIds.TryGetValue((uint)element.Id, out int owner))
                 element.SerializedOwningElementId = owner;
             if (state.StairClassRoot((uint)element.Id) is { BlockCount: 1 } root)
                 element.SerializedOwnElementClassId = root.ClassId;
             element.OwnClassRootSeededOnce = state.OwnedElementClassRoots.TryGetValue((uint)element.Id, out var seeded)
                 && seeded is { BlockCount: 1, ClassId: not null };
+            if (element.Id == 0) continue;
             if (state.RailingStairHostRoots.TryGetValue((uint)element.Id, out var railing)
                 && railing is { BlockCount: 1, StairId: > 0 }
                 && element.SerializedOwnElementClassId == 485 && element.SerializedOwningElementId != null

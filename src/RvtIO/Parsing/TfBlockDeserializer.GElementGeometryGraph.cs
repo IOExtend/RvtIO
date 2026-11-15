@@ -18,7 +18,7 @@ internal static partial class TfBlockDeserializer
     /// use queue indices, never handles, order or shape matching. Non-owning references and flags remain raw: this does
     /// not reconstruct runtime pointers, document lookup, active faces or extrusion validity.</summary>
     internal static OwnGElementGeometryGraph? ExtractOwnGElementGeometryGraph(
-        byte[] data, int start, uint size, ushort classId, out string? failure, bool includeAnnotationNodes = false)
+        byte[] data, int start, uint size, ushort classId, out string? failure)
     {
         failure = "frame";
         if (classId != 2007 || start < 0 || start > data.Length - 16 || size < 4 || size > int.MaxValue
@@ -43,8 +43,7 @@ internal static partial class TfBlockDeserializer
                 var entry = queue[index];
                 context = $"fifo:{index}:{entry.ClassId}";
                 if (entry.ClassId is not (2007 or 2015 or 2009 or 2092 or 1996 or 1589 or 1243 or 1254
-                    or 2014 or 522 or 1850 or 1848 or 1736 or 1999 or 1257 or 1974 or 983 or 1991 or 2238)
-                    && !(includeAnnotationNodes && entry.ClassId is 1982 or 2017 or 2032))
+                    or 2014 or 522 or 1850 or 1848 or 1736 or 1999 or 1257 or 1974 or 983 or 1991 or 2238))
                     throw Fail;
                 nodes.Add(Node(index, entry.ClassId, entry.Handle));
             }

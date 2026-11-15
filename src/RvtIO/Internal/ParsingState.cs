@@ -13,6 +13,9 @@ internal class ParsingState
     /// <see cref="TfBlockDeserializer.SelectOwnWallTrimmedRange"/>), on the line of its curve driver.</summary>
     public Dictionary<uint, (double Lo, double Hi)> OwnWallTrimmedRanges { get; } = new();
     public Dictionary<uint, (uint SourceFace, double[] Normal)> OwnWallSide0Normals { get; } = new();
+    /// <summary>The <see cref="RvtReaderOptions.SeparateFacesWithDistinctOpenings"/> of the read this state belongs to; a value of the read, so
+    /// reads with different options, even at the same time, do not affect each other.</summary>
+    internal bool SeparateFacesWithDistinctOpenings { get; init; }
     public HashSet<uint> OwnCurrentWallRoots { get; } = new();
     public Dictionary<uint, IReadOnlyDictionary<uint, uint>> OwnCurrentWallFaceGroups { get; } = new();
     /// <summary>Element-table membership. Values are zero: ElemRec has no type/class column.</summary>
@@ -118,6 +121,10 @@ internal class ParsingState
     /// <see cref="R22View"/> the segments hold only the records of channels 102 and 103, each rewritten into the Revit 2022 layout.</summary>
     public IReadOnlyList<Parsing.PartitionFraming.Framed?>? FramedPartitions { get; set; }
 
+    /// <summary>For multi-partition files whose partition headers and increment table decode: maps each multi-partition
+    /// element id to the partition number that holds its current copy (populated even when stale-copy pruning is disabled).</summary>
+    public IReadOnlyDictionary<ulong, int>? IncrementRoutedPartitions { get; set; }
+
     /// <summary>How many of the first <see cref="Chunks"/> are the chunks of the partition streams (the chunks of Formats and Global follow).</summary>
     public int PartitionChunkCount { get; set; }
 
@@ -150,7 +157,6 @@ internal class ParsingState
     public Dictionary<uint, Dictionary<int, int>> ElemBipInts { get; set; } = new();
     public Dictionary<uint, BaseElementFields> ElemBaseFields { get; set; } = new();
     public Dictionary<uint, GRepData> GrepBlocks { get; set; } = new();
-    internal Dictionary<uint, double> OwnProfileRoofAreas { get; } = new();
     internal Dictionary<uint, (int BlockCount, TfBlockDeserializer.OwnRailingQuantityInput? Input)> RailingQuantityInputs { get; } = new();
 
     /// <summary>While set, the symbols placed from <see cref="GrepBlocks"/> are taken at the Coarse detail level.</summary>
@@ -442,9 +448,10 @@ internal class ParsingState
     public Dictionary<uint, StairComponentSource.MembershipRoot> StairMembershipRoots { get; } = new();
     public Dictionary<uint, StairComponentSource.ElementClassRoot> OwnedElementClassRoots { get; } = new();
 
-    /// <summary>The same root count as <see cref="OwnedElementClassRoots"/>, taken from the stream walk alone. A file with its own
-    /// class schema is seeded in <see cref="OwnedElementClassRoots"/> by the schema index and the walk then counts the same block a
-    /// second time, so every id there reads as a duplicate; the stair source reads this table instead.</summary>
+    /// <summary>The same root count as <see cref="OwnedElementClassRoots"/>, taken from the counted roots alone (the records of the project's
+    /// block, or the stream walk when a stream is not read by its framing). A file with its own class schema is seeded in
+    /// <see cref="OwnedElementClassRoots"/> by the schema index; read by the walk, the walk then counts the same block a second time, so
+    /// every id there reads as a duplicate; the stair source reads this table instead.</summary>
     public Dictionary<uint, StairComponentSource.ElementClassRoot> WalkedElementClassRoots { get; } = new();
 
     /// <summary>The root count of the stair source: the stream walk's own count when the walk saw the element, else the seeded one.</summary>

@@ -30,7 +30,7 @@ public class StairComponentSampleTests
             Assert.EndsWith(":" + type, flight.ObjectType);
             Assert.DoesNotContain("Element ", flight.ObjectType);
             var common = Assert.Single(ifc.PropertySetsOf(flight.EntityId), set => set.Name == "Pset_StairFlightCommon");
-            Assert.Equal(["Reference", "RiserHeight", "TreadLength", "NosingLength", "WalkingLineOffset", "TreadLengthAtOffset", "TreadLengthAtInnerSide"],
+            Assert.Equal(["Reference", "NumberOfRiser", "NumberOfTreads", "RiserHeight", "TreadLength", "NosingLength", "WalkingLineOffset", "TreadLengthAtOffset", "TreadLengthAtInnerSide"],
                 common.Properties);
             var takeOff = Assert.Single(ifc.PropertySetsOf(flight.EntityId), set => set.Name == "Pset_QuantityTakeOff");
             Assert.Equal(["Reference"], takeOff.Properties);
@@ -51,8 +51,9 @@ public class StairComponentSampleTests
             Assert.Equal(predefined, ifc.TypeOf(flight.EntityId).Predefined);
             var quantities = Assert.Single(ifc.QuantitySetsOf(flight.EntityId), set => set.Name == "BaseQuantities");
             // a monolithic run counts its treads along the walking line; an assembled run has no such length. The Length surrogate keeps the
-            // inputs it had before the type was resolved (IsRunLengthRuleCurrent): only the file that counts the class root once (Test_2022) has it.
-            bool hasLength = id != 665560 && sample == "Test_2022.rvt";
+            // inputs it had before the type was resolved (IsRunLengthRuleCurrent) and needs the class root counted once, which every save
+            // read by its framing does (900 mm in each, as the reference writes for Test_2020 and Test_2022).
+            bool hasLength = id != 665560;
             Assert.Equal(hasLength ? ["Length", "NetVolume"] : ["NetVolume"], quantities.Properties.Order().ToArray());
         }
     }

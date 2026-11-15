@@ -49,8 +49,8 @@ folder (`TestFiles.Scratch`); no test uses a fixed absolute path.
 
 ## What runs without the private files
 
-With no private file at all, 10528 of the 10975 test cases run and pass on net8.0 and 447 are skipped (net10.0: 10532 of
-10979, 447 skipped): 441 need private files (listed below; 17 of them only `bim_dump.txt` or `formats_latest_decompressed.bin`)
+With no private file at all, 10529 of the 10976 test cases run and pass on net8.0 and 447 are skipped (net10.0: 10533 of
+10980, 447 skipped): 441 need private files (listed below; 17 of them only `bim_dump.txt` or `formats_latest_decompressed.bin`)
 and 6 need other inputs (two need symbolic links, three
 need `RVTIO_FREEFORM_FULL`, `RVTIO_CYL_FULL` or `RVTIO_MESH_FULL`, one is a known gap). The tests that run use synthetic data built
 in the tests and the small fixtures committed under `tests/RvtIO.Tests/Fixtures`. With the full private fixture folder the
@@ -107,7 +107,6 @@ Run with the private files: `RVTIO_TEST_FILES=<folder> dotnet test` (PowerShell:
 | `OwnElementClassTests` | 1 | 1 | TESTFILE.rvt |
 | `PageCodecSampleTests` | 2 | 2 | any `.rvt` project files |
 | `PartitionFramingFuzzTests` | 1 | 1 | TESTFILE.rvt |
-| `ProfileRoofAreaTests` | 3 | 11 | TestData blocks |
 | `ProjectLengthUnitTests` | 1 | 1 | One Way Sign in Route Analysis.rfa |
 | `R22TranscoderTests` | 2 | 2 | Test_2025.rvt, TESTFILE.rvt |
 | `RailingQuantitySourceTests` | 4 | 18 | TestData blocks |
@@ -152,7 +151,6 @@ same test. The tests therefore read the blocks from `TestData` of the fixture fo
 | `ArcProfileTests` | `sample-a-wall-9765668-grep` |
 | `EdgeBoundsTests` | `sample-a-wall-8954843-grep`, `-8959579-grep`, `-9750515-grep`, `-9750549-grep`, `-9765007-grep`, `-9765665-grep`, `-9765668-grep`, `-9766112-grep` |
 | `FaceAreaTests` | `sample-a-room-8964053-curved`, `sample-a-wall-8961372-arc` |
-| `ProfileRoofAreaTests` | `sample-a-roof-7311849-root`, `sample-a-roof-7311849-grep` |
 | `RailingQuantitySourceTests` | `sample-a-railing-7583306-root`, `-7583306-symbol`, `sample-a-railing-2653815-symbol` |
 | `SpaceBoundaryLiteralTests` | `sample-a-room-2766296-fourfaces`, `sample-a-room-5992163-sliver`, `sample-a-room-8964053-curved` |
 | `VkConnectorBlockTests` | `vk_flex_pipe_9123013`, `vk_proxy_directional_5919313`, `vk_proxy_mixed_domain_2823056` |

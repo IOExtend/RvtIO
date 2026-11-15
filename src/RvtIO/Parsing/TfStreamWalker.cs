@@ -150,13 +150,13 @@ internal static partial class TfStreamWalker
     {
         if (pos + 12 > n) return null;
         uint eid = BitConverter.ToUInt32(buf, pos);
-        if (!ElementIdEncoding.IsSupported(eid)) return null;
+        if (!ElementIdEncoding.IsSupported(eid) && eid != 0) return null;
         // Ids outside the known set (family-SYMBOL elements live in the family doc's own
         // numbering and are absent from ElemTable) or above the plain-id ceiling may still
         // anchor, but only on a BLOCK whose 4-byte footer echoes dataSize (strong
         // signature; well-formed blocks always carry it). Without this, whole family-
         // symbol regions (door leafs, fixture bodies) were skipped byte-by-byte.
-        bool needFooter = !knownIds.Contains(eid);
+        bool needFooter = eid == 0 || !knownIds.Contains(eid);
         if (!needFooter)
         {
             ushort magic = BitConverter.ToUInt16(buf, pos + 8);

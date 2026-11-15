@@ -76,7 +76,7 @@ namespace RvtIO.Model
         /// <summary>Parameters set by the NativeFieldParameters table with their validated presence domains, the
         /// parameter's state before the table set it (null: it did not exist) and the value the table left.</summary>
         [JsonIgnore]
-        internal List<(int ParamId, string[] Domains, StorageType Storage, object Value)>? NativeTableAddedParams { get; set; }
+        internal List<(int ParamId, string[] Domains, StorageType Storage, object Value, bool HasNoRevitValue)>? NativeTableAddedParams { get; set; }
 
         /// <summary>Parameter ids the NativeFieldParameters table created (they did not exist before it).</summary>
         [JsonIgnore]
@@ -84,7 +84,7 @@ namespace RvtIO.Model
 
         /// <summary>Values the table's domain rows replaced (first touch per parameter id).</summary>
         [JsonIgnore]
-        internal Dictionary<int, (object? Value, StorageType Storage)>? NativeTablePrevious { get; set; }
+        internal Dictionary<int, (object? Value, StorageType Storage, bool HasNoRevitValue)>? NativeTablePrevious { get; set; }
 
         /// <summary>StructCurveDriverBase.m_rotation as stored.</summary>
         [JsonIgnore]
@@ -212,9 +212,6 @@ namespace RvtIO.Model
         internal int? SerializedFamilyId { get; set; }
 
         [JsonIgnore]
-        internal double? ValidatedProfileRoofAreaFeet { get; set; }
-
-        [JsonIgnore]
         internal double? ValidatedRailingLengthFeet { get; set; }
 
         /// <summary>Exact serialized Element.m_unplacedOwnerId value.</summary>
@@ -300,9 +297,9 @@ namespace RvtIO.Model
         [JsonIgnore]
         internal ushort? SerializedOwnElementClassId { get; set; }
 
-        /// <summary>True when the element class root was counted once by the schema-seeded table alone (<c>OwnedElementClassRoots</c>), the
-        /// count the stair source read before the walked count replaced it. The Length surrogate of a stair run was calibrated on the files
-        /// where this holds, so only those runs get it.</summary>
+        /// <summary>True when the element class root was counted once in <c>OwnedElementClassRoots</c> with its class: by the records of the
+        /// project's block when every stream is read by its framing, else by the stream walk, after the schema index seeded the roots of a file
+        /// with its own class schema. The Length surrogate of a stair run was calibrated on the files where this holds, so only those runs get it.</summary>
         [JsonIgnore]
         internal bool OwnClassRootSeededOnce { get; set; }
 
@@ -978,6 +975,12 @@ namespace RvtIO.Model
         /// reference graph contains a wall.
         /// </summary>
         public int? SerializedHostId { get; set; }
+
+        /// <summary>
+        /// The workset ID of the element (equal to ELEM_PARTITION_PARAM / Autodesk.Revit.DB.Element.WorksetId).
+        /// Non-null in workshared files where a partition is assigned; null in non-workshared files.
+        /// </summary>
+        public int? WorksetId { get; set; }
 
         /// <summary>Own direct CurtainCellFamRef/MullionFamRef membership, distinct from
         /// the host which this instance can cut. Attached only from a unique native root.</summary>

@@ -339,6 +339,12 @@ public partial class IfcExporter
     /// <summary>Products written by the last export, as counted in the "IFC export:" diagnostic line.</summary>
     public int ExportedProducts { get; private set; }
 
+    private readonly List<ElementGeometryQuality> _exportedElementQualities = new();
+    private bool _lastWallUsedBboxFallback;
+
+    /// <summary>Per-element geometry quality classes of the products counted in <see cref="ExportedProducts"/>.</summary>
+    public IReadOnlyList<ElementGeometryQuality> ExportedElementQualities => _exportedElementQualities;
+
     /// <summary>Writes the IFC file for <paramref name="info"/> to <paramref name="outputPath"/>.</summary>
     public void Export(RevitFileInfo info, string outputPath)
     {
@@ -354,6 +360,7 @@ public partial class IfcExporter
     {
         using var diagnosticScope = DiagnosticSink.Use(_diag);
         s_keepNonPlanarPolygons = CurrentProfile && GRepParserV2.MeshEnabled;
+        Parameter.ResolveZeroElementIds(info);
         // The current profile exports an instance whose own geometry is only a void helper with the
         // geometry of its computed symbol (Element.SerializedComputedSymbolGeometry); the elements
         // get their own geometry back after the export.
@@ -385,10 +392,64 @@ public partial class IfcExporter
     private static bool AnyElementHoldsABody(IEnumerable<Element> elements) =>
         elements.Any(e => e.Geometry is { } geometry && (geometry.BrepSolids is { Count: > 0 } || geometry.Faces is { Count: > 0 }));
 
+    private static GeometryQualityClass ClassifyDecodedGeometryQuality(
+        Element elem, IReadOnlyDictionary<int, Element> elemById)
+    {
+        if (elem.Geometry is not { } geo)
+            return GeometryQualityClass.Approximated;
+        if (geo.PlacedSymbolBox)
+            return GeometryQualityClass.BoxOnly;
+        bool approximated = geo.PlacedSymbolClipped || geo.UnresolvedSymbol || geo.GhostNodes is { Count: > 0 };
+        if (geo.ExactMappedInstances is { Count: > 0 } mapped)
+        {
+            foreach (var inst in mapped)
+            {
+                if (!elemById.TryGetValue(inst.SymbolId, out var sym) || sym.Geometry is not { } symGeo)
+                {
+                    approximated = true;
+                    continue;
+                }
+                if (symGeo.PlacedSymbolBox)
+                    return GeometryQualityClass.BoxOnly;
+                if (symGeo.PlacedSymbolClipped || symGeo.UnresolvedSymbol || symGeo.GhostNodes is { Count: > 0 })
+                    approximated = true;
+            }
+        }
+        return approximated ? GeometryQualityClass.Approximated : GeometryQualityClass.Exact;
+    }
+
+    private void UpdateDecomposedStairQualities(
+        StepWriter w,
+        IReadOnlyDictionary<int, (int entityId, int placementId, string ifcType)> exportedIfcElements,
+        IReadOnlyDictionary<int, int> stairBodyParts)
+    {
+        var entityArgsById = new Dictionary<int, string>();
+        for (int i = 0; i < w.EntityCount; i++)
+        {
+            var entity = w.EntityAt(i);
+            if (entity.Type == "IFCSTAIR")
+                entityArgsById[entity.Id] = entity.Args;
+        }
+        if (entityArgsById.Count == 0) return;
+        for (int i = 0; i < _exportedElementQualities.Count; i++)
+        {
+            var entry = _exportedElementQualities[i];
+            if (stairBodyParts.ContainsKey(entry.Id)
+                || !exportedIfcElements.TryGetValue(entry.Id, out var emitted)
+                || emitted.ifcType != "IFCSTAIR"
+                || !entityArgsById.TryGetValue(emitted.entityId, out string? argsText))
+                continue;
+            var args = SplitStepArguments(argsText);
+            if (args.Length >= 7 && args[6] == "$")
+                _exportedElementQualities[i] = entry with { Quality = GeometryQualityClass.None };
+        }
+    }
+
     private void ExportDocument(RevitFileInfo info, TextWriter output)
     {
         ValidateRoomExportPhase(info);
         _geometryUndecoded = info.GeometryUndecoded;
+        _exportedElementQualities.Clear();
         _usedExportIds.Clear();
         _offStoreyLevelElementIds.Clear();
         _storeyLevels.Clear();
@@ -1367,15 +1428,55 @@ public partial class IfcExporter
 
         var spatialTerrainElementIds = spatialTerrainSurfaces
             .Select(surface => surface.Id).ToHashSet();
+        IReadOnlyList<Element> productLoopElements = info.Elements;
+        if (CurrentProfile)
+        {
+            Dictionary<int, List<Element>>? deferredOpenings = null;
+            HashSet<Element>? deferredSet = null;
+            for (int i = 0; i < info.Elements.Count; i++)
+            {
+                var candidate = info.Elements[i];
+                if (candidate.Category?.Contains("OST_SWallRectOpening", StringComparison.OrdinalIgnoreCase) != true)
+                    continue;
+                int resolvedHostId = ResolveStandaloneOpeningHostWallId(candidate, visibleWallIds, elemById);
+                if (resolvedHostId > 0 && elementOrderById.TryGetValue(resolvedHostId, out int hostIdx) && hostIdx > i)
+                {
+                    deferredOpenings ??= new Dictionary<int, List<Element>>();
+                    if (!deferredOpenings.TryGetValue(resolvedHostId, out var list))
+                        deferredOpenings[resolvedHostId] = list = [];
+                    list.Add(candidate);
+                    deferredSet ??= new HashSet<Element>(ReferenceEqualityComparer.Instance);
+                    deferredSet.Add(candidate);
+                }
+            }
+            if (deferredOpenings != null)
+            {
+                var reordered = new List<Element>(info.Elements.Count);
+                for (int i = 0; i < info.Elements.Count; i++)
+                {
+                    var item = info.Elements[i];
+                    if (deferredSet!.Contains(item)) continue;
+                    reordered.Add(item);
+                    if (elementOrderById.TryGetValue(item.Id, out int firstIdx) && firstIdx == i
+                        && deferredOpenings.Remove(item.Id, out var openings))
+                        reordered.AddRange(openings);
+                }
+                productLoopElements = reordered;
+                elementOrderById.Clear();
+                for (int i = 0; i < productLoopElements.Count; i++)
+                    elementOrderById.TryAdd(productLoopElements[i].Id, i);
+            }
+        }
         var standaloneOpeningIdsByWall = new Dictionary<int, List<int>>();
         var directStandaloneOpeningBoundariesByWall = new Dictionary<int,
             List<(int OpeningId, GeometryData Boundary)>>();
-        foreach (var opening in info.Elements.Where(element =>
+        foreach (var opening in productLoopElements.Where(element =>
                      element.Category?.Contains("OST_SWallRectOpening",
                          StringComparison.OrdinalIgnoreCase) == true))
         {
-            int hostWallId = opening.References?.FirstOrDefault(
-                visibleWallIds.Contains) ?? 0;
+            int hostWallId = CurrentProfile
+                ? ResolveStandaloneOpeningHostWallId(opening, visibleWallIds, elemById)
+                : (opening.References?.FirstOrDefault(visibleWallIds.Contains) ?? 0);
             if (hostWallId <= 0) continue;
             if (!standaloneOpeningIdsByWall.TryGetValue(
                     hostWallId, out var openingIds))
@@ -1428,7 +1529,8 @@ public partial class IfcExporter
                 RejectStandaloneWriterPath("design-option");
                 continue;
             }
-            if (opening.References?.Any(referenceId =>
+            if ((!CurrentProfile || opening.SerializedHostId is not > 0)
+                && opening.References?.Any(referenceId =>
                     elemById.TryGetValue(referenceId, out var referencedWall)
                     && referencedWall.CategoryId == -2000011
                     && !visibleWallIds.Contains(referenceId)) == true)
@@ -1614,7 +1716,7 @@ public partial class IfcExporter
         bool bodiesDecoded = info.GeometryUndecoded && AnyElementHoldsABody(info.Elements);
         var exportClock = System.Diagnostics.Stopwatch.StartNew();
         _diag?.WriteLine("Timing: product loop starts");
-        foreach (var elem in info.Elements)
+        foreach (var elem in productLoopElements)
         {
             if (ExportFlagIsNo(elem, elemById)) { Skip(elem, "export-to-ifc-flag-no"); continue; }
             if (spatialTerrainElementIds.Contains(elem.Id)
@@ -1635,7 +1737,10 @@ public partial class IfcExporter
                         int.TryParse(info.Metadata?.RevitVersion, out int revitRelease) && revitRelease >= 2026, storeyIds, defaultStoreyId, storeyContents))
                     Skip(elem, "rebar-product-not-written");
                 else
+                {
+                    _exportedElementQualities.Add(new ElementGeometryQuality(elem.Id, RvtIO.SkipLog.ClassOf(elem), GeometryQualityClass.Exact));
                     exportedCount++;
+                }
                 continue;
             }
             if (CurrentProfile && HasOnlyUnfilledFacesCurrent(elem)) { Skip(elem, "only-unfilled-faces"); continue; }
@@ -1689,8 +1794,10 @@ public partial class IfcExporter
             // An opening connected to a filtered design-option wall is a preview record.
             if (elem.Category?.Contains("OST_SWallRectOpening", StringComparison.OrdinalIgnoreCase) == true
                 && (IntParam(elem, -1013201) != -4
-                    || elem.References?.Any(r => elemById.TryGetValue(r, out var wall)
-                        && wall.CategoryId == -2000011 && (!visibleWallIds.Contains(r) || ExportFlagIsNo(wall, elemById))) == true))
+                    || (CurrentProfile
+                        ? ResolveStandaloneOpeningHostWallId(elem, visibleWallIds, elemById) <= 0
+                        : elem.References?.Any(r => elemById.TryGetValue(r, out var wall)
+                            && wall.CategoryId == -2000011 && (!visibleWallIds.Contains(r) || ExportFlagIsNo(wall, elemById))) == true)))
             { Skip(elem, "opening-of-hidden-wall"); continue; }
 
             string? ifcType = elem.Category?.Contains("OST_SWallRectOpening", StringComparison.OrdinalIgnoreCase) == true
@@ -1741,10 +1848,14 @@ public partial class IfcExporter
             // The current profile writes a wall's openings only
             // beside a wall exported as an extrusion with an axis; the openings of a plain IfcWall
             // are cut into its Brep.
-            if (CurrentProfile && ifcType == "IFCOPENINGELEMENT"
-                && elem.References?.FirstOrDefault(r => visibleWallIds.Contains(r)) is int openingHostWallId
-                && WallWritesNoBodyOpeningsCurrent(exportedIfcElements, openingHostWallId))
-            { Skip(elem, "opening-of-wall-without-body-openings"); continue; }
+            if (CurrentProfile && ifcType == "IFCOPENINGELEMENT")
+            {
+                int openingHostWallId = ResolveStandaloneOpeningHostWallId(elem, visibleWallIds, elemById);
+                if (openingHostWallId <= 0 || !wallIfcIds.ContainsKey(openingHostWallId))
+                { Skip(elem, "opening-of-hidden-wall"); continue; }
+                if (WallWritesNoBodyOpeningsCurrent(exportedIfcElements, openingHostWallId))
+                { Skip(elem, "opening-of-wall-without-body-openings"); continue; }
+            }
             if (Environment.GetEnvironmentVariable("RVTIO_PROD_DIAG") is { Length: > 0 } prodDiag)
                 File.AppendAllText(prodDiag, string.Join(',', elem.Id, ifcType, elem.IsDiscovered ? 1 : 0, elem.TypeId,
                     elem.CategoryId, elem.SerializedCreatedPhaseId, elem.SerializedDemolishedPhaseId, elem.SerializedFamilyId,
@@ -1835,6 +1946,7 @@ public partial class IfcExporter
                 && elem.BoundingBox is { Length: 6 } outline && (elem.DecodedBox ?? elem.Geometry?.BoundingBox) != null
                 ? outline : elem.DecodedBox ?? elem.Geometry?.BoundingBox;
             int shapeId = 0;
+            GeometryQualityClass? explicitQuality = null;
             List<(int ShapeId, bool IsLanding)>? rampPartBodies = null;
             var rampLayout = RampLayout.Single;
             int rampAxisId = 0;
@@ -4225,6 +4337,9 @@ public partial class IfcExporter
                          || hasVerifiedExactSixPointJoinShellWithTwoOpenings
                          || hasExactUncutPairedSideProfileVerticalExtrusion
                             ? straightWallBoundary : null);
+                explicitQuality = _lastWallUsedBboxFallback
+                    ? GeometryQualityClass.BoxOnly
+                    : GeometryQualityClass.Exact;
                 withFaces++;
             }
             else if (ifcType is "IFCWALL" or "IFCWALLSTANDARDCASE"
@@ -4244,6 +4359,7 @@ public partial class IfcExporter
                         out shapeId, out elemPlacementId))
                 {
                     // The embedded cut remains part of the exact BRep body.
+                    explicitQuality = GeometryQualityClass.Exact;
                 }
                 else if (ifcType == "IFCWALL" && elem.Location is { ArcRadius: null }
                     && TryWriteDecodedPlainWallBodyCurrent(w, elem, bodySubCtxId, out shapeId))
@@ -4259,6 +4375,7 @@ public partial class IfcExporter
                         w, straightWallBoundary, bodySubCtxId);
                     elemPlacementId = w.Add("IFCLOCALPLACEMENT",
                         $"{R(elemStoreyPlacementId)},{R(axisId)}");
+                    explicitQuality = GeometryQualityClass.Exact;
                 }
                 withFaces++;
             }
@@ -4267,6 +4384,9 @@ public partial class IfcExporter
                 // No complete pair of authored side profiles was decoded.
                 (shapeId, elemPlacementId) = CreateWallSweptSolid(
                     w, elem, bbox, bodySubCtxId, axisSubCtxId, elemStoreyPlacementId);
+                explicitQuality = _lastWallUsedBboxFallback
+                    ? GeometryQualityClass.BoxOnly
+                    : GeometryQualityClass.Approximated;
                 withFaces++;
             }
             else if (ifcType == "IFCWALL" && elem.Location is { ArcRadius: null })
@@ -4282,6 +4402,9 @@ public partial class IfcExporter
                     // height as a closed gross solid.
                     (shapeId, elemPlacementId) = CreateWallSweptSolid(
                         w, elem, bbox, bodySubCtxId, axisSubCtxId, elemStoreyPlacementId);
+                    explicitQuality = _lastWallUsedBboxFallback
+                        ? GeometryQualityClass.BoxOnly
+                        : GeometryQualityClass.Approximated;
                 }
                 withFaces++;
             }
@@ -4292,6 +4415,7 @@ public partial class IfcExporter
                     preserveValidatedPlanarFaces: true);
                 elemPlacementId = w.Add("IFCLOCALPLACEMENT",
                     $"{R(elemStoreyPlacementId)},{R(axisId)}");
+                explicitQuality = GeometryQualityClass.Exact;
                 if (debugGeometry)
                     DiagnosticSink.WriteLine($"IFCBEAMENDNOTCH eid={elem.Id} "
                         + $"faces={notchedBeam.Faces.Count}");
@@ -4305,6 +4429,7 @@ public partial class IfcExporter
                 // envelope retains the nominal rectangular export body.
                 (shapeId, elemPlacementId) = CreateBeamSweptSolid(
                     w, beamExtrusion, bodySubCtxId, elemStoreyPlacementId);
+                explicitQuality = GeometryQualityClass.Exact;
                 if (debugGeometry)
                     DiagnosticSink.WriteLine($"IFCBEAMNOMINAL eid={elem.Id} "
                         + $"lengthFt={beamExtrusion.LengthFt:G17} "
@@ -4341,7 +4466,9 @@ public partial class IfcExporter
                 }
                 if (ifcType == "IFCOPENINGELEMENT" && elem.CategoryId == -2000997
                     && elem.SerializedHostId is > 0 && visibleWallIds.Contains(elem.SerializedHostId.Value)
-                    && elem.References?.FirstOrDefault(visibleWallIds.Contains) == elem.SerializedHostId.Value
+                    && (CurrentProfile
+                        ? ResolveStandaloneOpeningHostWallId(elem, visibleWallIds, elemById) == elem.SerializedHostId.Value
+                        : elem.References?.FirstOrDefault(visibleWallIds.Contains) == elem.SerializedHostId.Value)
                     && elemById.TryGetValue(elem.SerializedHostId.Value, out var openingBodyHost)
                     && TryCreateRectangularOpeningBodyCurrent(w, geoForBrep, openingBodyHost.Location,
                         bodySubCtxId, out shapeId, out bodyWriteOutcome))
@@ -4389,6 +4516,9 @@ public partial class IfcExporter
                 // Walls: SweptSolid with profile from bottom face or GeoSolid
                 (shapeId, elemPlacementId) = CreateWallSweptSolid(
                     w, elem, bbox, bodySubCtxId, axisSubCtxId, elemStoreyPlacementId);
+                explicitQuality = _lastWallUsedBboxFallback
+                    ? GeometryQualityClass.BoxOnly
+                    : GeometryQualityClass.Approximated;
                 withFaces++;
             }
             else if (ifcType is "IFCDOOR" or "IFCWINDOW")
@@ -4428,6 +4558,7 @@ public partial class IfcExporter
                              elem, elemById, visibleWallIds, inverseHostedHostIds)
                          .Where(id => elemById[id].CategoryId == -2000011))
                     hostedElements.Add((elem, hostId, bbox, 0));
+                _exportedElementQualities.Add(new ElementGeometryQuality(elem.Id, RvtIO.SkipLog.ClassOf(elem), GeometryQualityClass.None));
                 exportedCount++;
                 continue;
             }
@@ -4624,7 +4755,9 @@ public partial class IfcExporter
 
             if (ifcType == "IFCOPENINGELEMENT")
             {
-                int hostWallId = elem.References?.FirstOrDefault(r => visibleWallIds.Contains(r)) ?? 0;
+                int hostWallId = CurrentProfile
+                    ? ResolveStandaloneOpeningHostWallId(elem, visibleWallIds, elemById)
+                    : (elem.References?.FirstOrDefault(r => visibleWallIds.Contains(r)) ?? 0);
                 if (hostWallId > 0 && wallIfcIds.TryGetValue(hostWallId, out var openingWall))
                 {
                     w.Add("IFCRELVOIDSELEMENT",
@@ -4729,8 +4862,7 @@ public partial class IfcExporter
                         w, elem, elemEntityId, ownerHistId,
                         propertySingleValueIds,
                         elem.CategoryId == RoofCategoryId && elem.ValidatedRoofOrRailingTypeReferenceName != null
-                            && !elem.ValidatedRoofOrRailingTypeReferenceIsBlocked ? quantityTakeOffReferenceValueId : null,
-                        CurrentProfile);
+                            && !elem.ValidatedRoofOrRailingTypeReferenceIsBlocked ? quantityTakeOffReferenceValueId : null);
                 }
                 if (quantityTakeOffReferenceValueId.HasValue
                     && quantityTakeOffReferenceValue is not null
@@ -4828,12 +4960,10 @@ public partial class IfcExporter
                         (elem, elemEntityId,
                             quantityTakeOffReferenceValueId.Value));
                 }
-                // The column pitch description of the current profile is a copy of the beam one
-                // (named after the beam, applying to IfcBeam), so a column receives no such set
-                // there.
+                // Revit's exports (2021 and 2022) write the column pitch set on every column with a Reference.
                 if (quantityTakeOffReferenceValueId.HasValue
                     && quantityTakeOffReferenceValue is not null
-                    && ifcType == "IFCCOLUMN" && !CurrentProfile)
+                    && ifcType == "IFCCOLUMN")
                 {
                     ExportReinforcementBarPitchOfColumnPropertySet(
                         w, elem, elemEntityId, ownerHistId,
@@ -4890,6 +5020,10 @@ public partial class IfcExporter
                 ExportPropertySets(w, elem, elemEntityId, ownerHistId, elemById);
             }
 
+            GeometryQualityClass emittedQuality = shapeId <= 0 && rampPartBodies == null
+                ? GeometryQualityClass.None
+                : explicitQuality ?? ClassifyDecodedGeometryQuality(elem, elemById);
+            _exportedElementQualities.Add(new ElementGeometryQuality(elem.Id, RvtIO.SkipLog.ClassOf(elem), emittedQuality));
             exportedCount++;
         }
 
@@ -4909,6 +5043,7 @@ public partial class IfcExporter
         var stairBodyParts = CurrentProfile
             ? StairAggregation.SplitLegacyBodies(w, info.Elements, exportedIfcElements, storeyContents, ownerHistId, axisId, _usedExportIds)
             : [];
+        UpdateDecomposedStairQualities(w, exportedIfcElements, stairBodyParts);
         AggregateRampRailings(w, info.Elements, exportedIfcElements, storeyContents, rampAggregations);
         if (CurrentProfile)
             // the main loop left the beam system out; its assembly is a product of the file
@@ -4917,6 +5052,8 @@ public partial class IfcExporter
                          system => ResolveStorey(system, storeyIds, defaultStoreyId, elemById, buildingId, system.BoundingBox)))
             {
                 // counted with or without a skip log; the log entry is only there to be taken out
+                string systemClass = elemById.TryGetValue(systemId, out var sysElem) ? RvtIO.SkipLog.ClassOf(sysElem) : "OST_StructuralFramingSystem";
+                _exportedElementQualities.Add(new ElementGeometryQuality(systemId, systemClass, GeometryQualityClass.None));
                 exportedCount++;
                 skippedCount--;
                 SkipLog?.Remove(systemId);
@@ -4925,6 +5062,8 @@ public partial class IfcExporter
         // the main loop left the grid elements out; their axes are products of the file
         foreach (int gridId in writtenGridElementIds.OrderBy(id => id))
         {
+            string gridClass = elemById.TryGetValue(gridId, out var gridElem) ? RvtIO.SkipLog.ClassOf(gridElem) : "OST_Grids";
+            _exportedElementQualities.Add(new ElementGeometryQuality(gridId, gridClass, GeometryQualityClass.Exact));
             exportedCount++;
             skippedCount--;
             SkipLog?.Remove(gridId);
@@ -4998,8 +5137,7 @@ public partial class IfcExporter
                 string? roofReference = ResolveValidatedProductTypeName(parent, "IFCROOF", elemById) ?? parent.Name;
                 int? roofReferenceId = ExportQuantityTakeOffPropertySet(
                     w, parent, entity, ownerHistId, roofReference, propertySingleValueIds);
-                ExportRoofCommonPropertySet(w, parent, entity, ownerHistId, propertySingleValueIds, roofReferenceId, CurrentProfile,
-                    withArea: !CurrentProfile);
+                ExportRoofCommonPropertySet(w, parent, entity, ownerHistId, propertySingleValueIds, roofReferenceId);
             }
             else
             {
@@ -5015,6 +5153,7 @@ public partial class IfcExporter
                 SkipLog?.Remove(parent.Id);
                 _suppressedGeometrylessProductsByClass[containerClass]--;
             }
+            _exportedElementQualities.Add(new ElementGeometryQuality(parent.Id, RvtIO.SkipLog.ClassOf(parent), GeometryQualityClass.None));
             exportedCount++;
         }
 
@@ -12046,6 +12185,7 @@ public partial class IfcExporter
         GeometryData? boundaryOwnedAxisEnvelope = null)
     {
         var solid = elem.Geometry?.Solids?.FirstOrDefault();
+        _lastWallUsedBboxFallback = false;
 
         double cx, cy, z0, wallLength, wallWidth, dz;
         double refDirX, refDirY;
@@ -12129,7 +12269,10 @@ public partial class IfcExporter
             double lx = loc.EndPoint[0] - loc.StartPoint[0], ly = loc.EndPoint[1] - loc.StartPoint[1];
             double lenFt = Math.Sqrt(lx * lx + ly * ly);
             if (lenFt < 0.01 && !forceSerializedDefinition)
+            {
+                _lastWallUsedBboxFallback = true;
                 return CreateBboxSweptSolid(w, bbox, subCtxId, parentPlacementId);
+            }
             wallLength = lenFt * FeetToMetres;
             wallWidth = widFt * FeetToMetres;
             refDirX = lx / lenFt; refDirY = ly / lenFt;
@@ -12319,6 +12462,7 @@ public partial class IfcExporter
         else
         {
             // Fallback: compute from bbox
+            _lastWallUsedBboxFallback = true;
             double x0 = bbox[0] * FeetToMetres, y0 = bbox[1] * FeetToMetres;
             z0 = bbox[2] * FeetToMetres;
             double x1 = bbox[3] * FeetToMetres, y1 = bbox[4] * FeetToMetres;
@@ -64045,11 +64189,16 @@ public partial class IfcExporter
         List<Parameter> matches = element.Parameters
             .Where(parameter => ParameterNameEquals(parameter, name)).ToList();
         if (matches.Count == 0) return (false, null);
-        if (matches.Any(parameter => parameter.IsApproximate
+        List<Parameter> valued = matches
+            .Where(parameter => !parameter.HasNoRevitValue && parameter.Value != null)
+            .ToList();
+        if (valued.Count == 0) return (false, null);
+        if (valued.Count != matches.Count
+            || valued.Any(parameter => parameter.IsApproximate
                 || parameter.StorageType != StorageType.String
                 || parameter.Value is not string))
             return (true, null);
-        var values = matches.Select(parameter => (string)parameter.Value!).Distinct().ToList();
+        var values = valued.Select(parameter => (string)parameter.Value!).Distinct().ToList();
         return values.Count == 1 ? (false, values[0]) : (true, null);
     }
 
@@ -64198,9 +64347,7 @@ public partial class IfcExporter
                         : "IFCBOOLEAN(.F.)"));
             }
 
-            // The current profile writes neither NumberOfRiser nor NumberOfTreads (the calculators
-            // find no run data).
-            if (!currentProfile && elem.SerializedActualNumberOfRisers is int numberOfRisers
+            if (elem.SerializedActualNumberOfRisers is int numberOfRisers
                 && numberOfRisers > 0
                 && !HasStairCommonOverrideCandidate(
                     elem, stairType, "NumberOfRiser", psetName))
@@ -64241,8 +64388,8 @@ public partial class IfcExporter
         }
         if (ifcType == "IFCSTAIRFLIGHT")
             AddStairFlightProperties(w, elem, elementsById, valueIds, currentProfile);
-        else if (ifcType == "IFCSTAIR" && stairType != null && !currentProfile)
-            AddStairTreadCount(w, elem, elementsById, stairType, valueIds);
+        else if (ifcType == "IFCSTAIR" && stairType != null)
+            AddStairTreadCount(w, elem, elementsById, stairType, valueIds, currentProfile);
         int psetId = w.Add("IFCPROPERTYSET",
             $"{S(IfcGuid.FromName($"{seedPrefix}-pset:{elem.Id}"))},{R(ownerHistId)},{S(psetName)},$,{StepWriter.List(valueIds.Select(R))}");
         w.Add("IFCRELDEFINESBYPROPERTIES",
@@ -64276,14 +64423,14 @@ public partial class IfcExporter
     /// Pset_StairCommon.NumberOfTreads of a stair: the sum of the tread counts of its runs.
     /// </summary>
     private static void AddStairTreadCount(StepWriter w, Element stair,
-        IReadOnlyDictionary<int, Element> elementsById, Element stairType, List<int> valueIds)
+        IReadOnlyDictionary<int, Element> elementsById, Element stairType, List<int> valueIds, bool current = false)
     {
         if (HasStairCommonOverrideCandidate(stair, stairType, "NumberOfTreads", "Pset_StairCommon")) return;
         int treads = 0, runs = 0;
         foreach (var run in elementsById.Values)
         {
             if (run.SerializedStairRunInput is not { Numbers: { } numbers } input || input.StairsId != stair.Id) continue;
-            if (!StairRunCountsAgree(run, elementsById, numbers) || StairRunTreads(run, numbers) is not int runTreads) return;
+            if (!StairRunCountsAgree(run, elementsById, numbers, current) || StairRunTreads(run, numbers, current) is not int runTreads) return;
             treads += runTreads; runs++;
         }
         if (runs == 0 || treads <= 0) return;
@@ -64315,7 +64462,6 @@ public partial class IfcExporter
     private static void AddStairFlightProperties(StepWriter w, Element run,
         IReadOnlyDictionary<int, Element> elementsById, List<int> valueIds, bool currentProfile = false)
     {
-        bool includeCounts = !currentProfile;
         if (run.SerializedStairRunInput is not { Numbers: { } numbers } input || input.OwnerId != run.Id
             || !elementsById.TryGetValue(run.FamilyTypeId > 0 ? run.FamilyTypeId : run.TypeId, out var runType)
             || runType.Id == run.Id || runType.CategoryId != run.CategoryId
@@ -64327,10 +64473,10 @@ public partial class IfcExporter
         void Add(string name, string value) => valueIds.Add(w.Add("IFCPROPERTYSINGLEVALUE", $"{S(name)},$,{value},$"));
         string Length(string measure, double millimetres) => $"{measure}({D17(millimetres)})";
 
-        int risers = StairRunIndexSpan(numbers);
-        bool countsAgree = StairRunCountsAgree(run, elementsById, numbers);
-        if (includeCounts && countsAgree && Free("NumberOfRiser")) Add("NumberOfRiser", $"IFCCOUNTMEASURE({D17(risers)})");
-        if (includeCounts && countsAgree && Free("NumberOfTreads") && StairRunTreads(run, numbers) is int treads && treads > 0)
+        int risers = StairRunIndexSpan(numbers), countedRisers = StairRunRisers(run, numbers, currentProfile);
+        bool countsAgree = StairRunCountsAgree(run, elementsById, numbers, currentProfile);
+        if (countsAgree && countedRisers > 0 && Free("NumberOfRiser")) Add("NumberOfRiser", $"IFCCOUNTMEASURE({D17(countedRisers)})");
+        if (countsAgree && Free("NumberOfTreads") && StairRunTreads(run, numbers, currentProfile) is int treads && treads > 0)
             Add("NumberOfTreads", $"IFCCOUNTMEASURE({D17(treads)})");
         double riserHeight = (numbers.TopElevation - numbers.BottomElevation) / risers * 304.8;
         if (Free("RiserHeight") && double.IsFinite(riserHeight) && riserHeight > 0)
@@ -65645,21 +65791,18 @@ public partial class IfcExporter
     /// </summary>
     internal static void ExportRoofCommonPropertySet(
         StepWriter w, Element elem, int elemEntityId, int ownerHistId,
-        Dictionary<(string PropertyName, string ValueExpr), int> valuePool, int? referenceValueId,
-        bool currentProfile = false, bool withArea = true)
+        Dictionary<(string PropertyName, string ValueExpr), int> valuePool, int? referenceValueId)
     {
         int isExternalValueId = GetOrAddPropertySingleValue(
             w, valuePool, "IsExternal", "IFCBOOLEAN(.T.)");
         var values = new List<int> { isExternalValueId };
         if (referenceValueId.HasValue) values.Insert(0, referenceValueId.Value);
-        if (withArea && elem.Parameters.FirstOrDefault(parameter => parameter.Id == -1012805)?.Value is double hostAreaFeet
+        if (elem.Parameters.FirstOrDefault(parameter => parameter.Id == -1012805)?.Value is double hostAreaFeet
             && double.IsFinite(hostAreaFeet) && hostAreaFeet > 0)
         {
-            if (currentProfile && elem.ValidatedProfileRoofAreaFeet is double ownArea) hostAreaFeet = ownArea;
-            // The current profile maps TotalArea to the same parameter and never computes
-            // ProjectedArea.
+            // Revit writes the stored HOST_AREA_COMPUTED as ProjectedArea; its TotalArea, the live sloped area, is not reproduced.
             values.Add(w.Add("IFCPROPERTYSINGLEVALUE",
-                $"{S(currentProfile ? "TotalArea" : "ProjectedArea")},$,IFCAREAMEASURE({D17(hostAreaFeet * FeetToMetres * FeetToMetres)}),$"));
+                $"{S("ProjectedArea")},$,IFCAREAMEASURE({D17(hostAreaFeet * FeetToMetres * FeetToMetres)}),$"));
         }
         int psetId = w.Add("IFCPROPERTYSET",
             $"{S(IfcGuid.FromName($"roof-common-pset:{elem.Id}"))},{R(ownerHistId)},{S("Pset_RoofCommon")},$,{StepWriter.List(values.Select(R))}");
@@ -66007,7 +66150,11 @@ public partial class IfcExporter
         var candidates = new List<ExactIsExternalParameterResult>(matches.Count);
         foreach (Parameter parameter in matches)
         {
-            if (parameter.IsApproximate
+            if (parameter.HasNoRevitValue)
+            {
+                candidates.Add(new(ExactIsExternalParameterState.Absent));
+            }
+            else if (parameter.IsApproximate
                 || parameter.StorageType != StorageType.Integer
                 || parameter.Value is not int integerValue)
             {
@@ -66025,6 +66172,8 @@ public partial class IfcExporter
     private static ExactIsExternalParameterResult ClassifyExactNamedIntParameter(
         Parameter parameter)
     {
+        if (parameter.HasNoRevitValue)
+            return new(ExactIsExternalParameterState.Absent);
         if (parameter.IsApproximate)
             return new(ExactIsExternalParameterState.Blocked);
         if (parameter.Value == null)
@@ -66040,6 +66189,8 @@ public partial class IfcExporter
                 if (parameter.Value is not double doubleValue
                     || !double.IsFinite(doubleValue))
                     return new(ExactIsExternalParameterState.Blocked);
+                if (Math.Abs(doubleValue) >= 1e29)
+                    return new(ExactIsExternalParameterState.Absent);
                 double truncatedValue = Math.Truncate(doubleValue);
                 if (truncatedValue < int.MinValue || truncatedValue > int.MaxValue)
                     return new(ExactIsExternalParameterState.Blocked);
@@ -66352,6 +66503,8 @@ public partial class IfcExporter
             return new ExactSpanParameterResult(ExactSpanParameterState.Blocked);
 
         Parameter parameter = candidates[0];
+        if (parameter.HasNoRevitValue)
+            return new ExactSpanParameterResult(ExactSpanParameterState.Absent);
         if (parameter.IsApproximate)
             return new ExactSpanParameterResult(ExactSpanParameterState.Blocked);
         if (parameter.Value == null)
@@ -66367,10 +66520,12 @@ public partial class IfcExporter
         else
             return new ExactSpanParameterResult(ExactSpanParameterState.Blocked);
 
-        return double.IsFinite(value)
-            ? new ExactSpanParameterResult(
-                ExactSpanParameterState.Value, parameter, value)
-            : new ExactSpanParameterResult(ExactSpanParameterState.Blocked);
+        if (!double.IsFinite(value))
+            return new ExactSpanParameterResult(ExactSpanParameterState.Blocked);
+        if (Math.Abs(value) >= 1e29)
+            return new ExactSpanParameterResult(ExactSpanParameterState.Absent);
+        return new ExactSpanParameterResult(
+            ExactSpanParameterState.Value, parameter, value);
     }
 
     private static bool TryGetSyntheticRuntimeInstanceLengthMarker(
@@ -66762,7 +66917,7 @@ public partial class IfcExporter
         switch (p.Id)
         {
             case elemCategoryParam or elemCategoryParamMt when p.Value is int categoryId
-                && Enum.IsDefined(typeof(BuiltIns.BuiltInCategory), categoryId):
+                && categoryId != -1 && Enum.IsDefined(typeof(BuiltIns.BuiltInCategory), categoryId):
                 return $"IFCLABEL({S(((BuiltIns.BuiltInCategory)categoryId).ToString())})";
             case symbolIdParam when typeOf(elem) is { } symbol:
                 return $"IFCLABEL({S(symbol.Id.ToString(System.Globalization.CultureInfo.InvariantCulture))})";
@@ -66795,6 +66950,8 @@ public partial class IfcExporter
                 };
             case StorageType.Integer when dataType == "autodesk.spec:spec.bool" && p.Value is int b:
                 return b == 0 ? "IFCBOOLEAN(.F.)" : "IFCBOOLEAN(.T.)";
+            case StorageType.Integer when dataType == "autodesk.spec:spec.bool" && p.Value is bool bb:
+                return bb ? "IFCBOOLEAN(.T.)" : "IFCBOOLEAN(.F.)";
             case StorageType.String:
                 return $"IFCTEXT({S(p.Value?.ToString() ?? "")})";
             default:
@@ -66811,7 +66968,7 @@ public partial class IfcExporter
 
         foreach (var p in elem.Parameters)
         {
-            if (p.Value == null) continue;
+            if (!p.HasRevitValue) continue;
 
             string propValue;
 
@@ -66825,10 +66982,12 @@ public partial class IfcExporter
                     else continue;
                     break;
                 case StorageType.String:
-                    propValue = $"IFCLABEL({S(p.Value.ToString() ?? "")})";
+                    propValue = $"IFCLABEL({S(p.Value?.ToString() ?? "")})";
                     break;
                 case StorageType.Integer:
-                    propValue = $"IFCINTEGER({p.Value})";
+                    propValue = p.Value is bool bv
+                        ? $"IFCINTEGER({(bv ? 1 : 0)})"
+                        : $"IFCINTEGER({p.Value})";
                     break;
                 case StorageType.ElementId:
                     propValue = $"IFCINTEGER({p.Value})";
@@ -68499,9 +68658,9 @@ public partial class IfcExporter
             // PropertySetDescription maps ThermalTransmittance to
             // ANALYTICAL_HEAT_TRANSFER_COEFFICIENT; the stored value is written unchanged.
             const int heatTransferCoefficientParamId = -1005430;
-            if (typeElem.Parameters.FirstOrDefault(parameter => parameter.Id == heatTransferCoefficientParamId)?.Value
+            if (typeElem.Parameters.FirstOrDefault(parameter => parameter.Id == heatTransferCoefficientParamId && parameter.HasRevitValue)?.Value
                     is double thermalTransmittance
-                && double.IsFinite(thermalTransmittance) && thermalTransmittance > 0)
+                && thermalTransmittance > 0)
                 propertyIds.Add(w.Add("IFCPROPERTYSINGLEVALUE",
                     $"{S("ThermalTransmittance")},$,IFCTHERMALTRANSMITTANCEMEASURE({D17(thermalTransmittance)}),$"));
         }
@@ -70057,6 +70216,29 @@ public partial class IfcExporter
             double dx = Math.Abs(bbox[3] - bbox[0]) * FeetToMetres * 1000;
             double dy = Math.Abs(bbox[4] - bbox[1]) * FeetToMetres * 1000;
             return Math.Max(dx, dy);
+        }
+        return 0;
+    }
+
+    private static int ResolveStandaloneOpeningHostWallId(
+        Element opening, IReadOnlySet<int> visibleWallIds, IReadOnlyDictionary<int, Element> elemById)
+    {
+        if (opening.SerializedHostId is int serializedHostId && serializedHostId > 0)
+        {
+            if (visibleWallIds.Contains(serializedHostId))
+                return !elemById.TryGetValue(serializedHostId, out var hostWall) || !ExportFlagIsNo(hostWall, elemById)
+                    ? serializedHostId : 0;
+            if (elemById.TryGetValue(serializedHostId, out var hiddenHostWall)
+                && hiddenHostWall.CategoryId == -2000011)
+                return 0;
+        }
+        if (opening.References != null)
+        {
+            if (opening.References.Any(r => elemById.TryGetValue(r, out var wall)
+                && wall.CategoryId == -2000011 && (!visibleWallIds.Contains(r) || ExportFlagIsNo(wall, elemById))))
+                return 0;
+            return opening.References.FirstOrDefault(r => visibleWallIds.Contains(r)
+                && (!elemById.TryGetValue(r, out var w) || !ExportFlagIsNo(w, elemById)));
         }
         return 0;
     }

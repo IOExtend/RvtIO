@@ -21,7 +21,7 @@ internal static partial class ElementBuilder
             || source.Solids.Sum(solid => solid.FaceIndices.Count) != source.Faces.Count
             || source.Solids.SelectMany(solid => solid.FaceIndices).Any(i => i < 0 || i >= source.Faces.Count)
             || source.Solids.SelectMany(solid => solid.FaceIndices).Distinct().Count() != source.Faces.Count) return false;
-        var geometry = BuildGeometryData(source);
+        var geometry = BuildGeometryData(source, state.SeparateFacesWithDistinctOpenings);
         if (geometry == null || geometry.Faces.Count != source.Faces.Count
             || geometry.BrepSolids is not { Count: > 0 } solids
             || solids.Sum(solid => solid.FaceIndices.Count) != geometry.Faces.Count
@@ -38,7 +38,7 @@ internal static partial class ElementBuilder
             {
                 PreserveSourceFaceIdentity = true, BoundingBox = source.BoundingBox, Solids = source.Solids,
                 Faces = source.Faces.Select(face => face with { SourceFace = groups[face.SourceFace] }).ToList(),
-            });
+            }, state.SeparateFacesWithDistinctOpenings);
         if (state.OwnWallSide0Normals.TryGetValue((uint)element.Id, out var side)
             && source.Faces.Any(face => face.SourceFace == side.SourceFace))
             element.OwnWallSide0NormalCurrent = side.Normal;

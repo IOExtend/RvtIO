@@ -7,7 +7,7 @@ namespace RvtIO.Tests;
 
 /// <summary>Occurrence property sets where the current profile differs from the legacy profile reference: Manufacturer and
 /// flow-segment Length sets, Pset_DistributionFlowElementCommon on doors and fittings, LoadBearing of
-/// walls from the Structural box and the usage, no column bar pitch, no ProvisionForVoid, and IsExternal as a plain function of the
+/// walls from the Structural box and the usage, no ProvisionForVoid, and IsExternal as a plain function of the
 /// type and host. The legacy profile contract stays in the original per-set test classes.</summary>
 public class IfcExporterCurrentInstancePropertySetTests
 {
@@ -215,13 +215,13 @@ public class IfcExporterCurrentInstancePropertySetTests
     }
 
     [Theory]
-    [InlineData(IfcProfile.Current, false)]
-    [InlineData(IfcProfile.Legacy, true)]
-    public void Column_ReceivesBarPitchOfColumnOnlyInLegacy(IfcProfile version, bool expected)
+    [InlineData(IfcProfile.Current)]
+    [InlineData(IfcProfile.Legacy)]
+    public void Column_ReceivesBarPitchOfColumnInBothProfiles(IfcProfile version)
     {
         var column = Flow(100, -2001330);
         string ifc = Export(version, column);
-        Assert.Equal(expected, SetsOf(ifc, "IFCCOLUMN").Any(set => set.Name == "Pset_ReinforcementBarPitchOfColumn"));
+        Assert.Contains(SetsOf(ifc, "IFCCOLUMN"), set => set.Name == "Pset_ReinforcementBarPitchOfColumn");
     }
 
     [Fact]
@@ -304,15 +304,16 @@ public class IfcExporterCurrentInstancePropertySetTests
     }
 
     [Theory]
-    [InlineData(IfcProfile.Current, "TotalArea")]
-    [InlineData(IfcProfile.Legacy, "ProjectedArea")]
-    public void RoofArea_IsNamedAfterTheVersion(IfcProfile version, string expectedProperty)
+    [InlineData(IfcProfile.Current)]
+    [InlineData(IfcProfile.Legacy)]
+    public void RoofArea_IsProjectedAreaInBothProfiles(IfcProfile version)
     {
+        // Revit's exports write the stored host area as ProjectedArea; TotalArea is the live sloped area.
         var roof = Flow(100, -2000035);
         roof.Parameters.Add(new Parameter { Id = -1012805, StorageType = StorageType.Double, Value = 100.0 });
         var set = SetsOf(Export(version, roof), "IFCROOF").Single(candidate => candidate.Name == "Pset_RoofCommon");
-        Assert.Contains(expectedProperty, set.Properties.Keys);
-        Assert.DoesNotContain(expectedProperty == "TotalArea" ? "ProjectedArea" : "TotalArea", set.Properties.Keys);
+        Assert.Contains("ProjectedArea", set.Properties.Keys);
+        Assert.DoesNotContain("TotalArea", set.Properties.Keys);
     }
 
     [Fact]
@@ -428,22 +429,6 @@ public class IfcExporterCurrentInstancePropertySetTests
         wall.SerializedWallJoinedToTop = joinedToTop;
         var set = SetsOf(Export(version, Level(), wall), "IFCWALLSTANDARDCASE").Single(candidate => candidate.Name == "Pset_WallCommon");
         Assert.Equal(expected, set.Properties.GetValueOrDefault("ExtendToStructure"));
-    }
-
-    [Fact]
-    public void RoofContainer_WithoutArea_KeepsOnlyIsExternal()
-    {
-        var roof = new Element { Id = 1, CategoryId = -2000035 };
-        roof.Parameters.Add(new Parameter { Id = -1012805, StorageType = StorageType.Double, Value = 100.0 });
-        foreach (bool withArea in new[] { true, false })
-        {
-            var writer = new StepWriter();
-            IfcExporter.ExportRoofCommonPropertySet(writer, roof, 10, 11, new(), null, currentProfile: true, withArea: withArea);
-            var properties = Enumerable.Range(0, writer.EntityCount).Select(writer.EntityAt)
-                .Where(entity => entity.Type == "IFCPROPERTYSINGLEVALUE").Select(entity => entity.Args).ToList();
-            Assert.Contains(properties, args => args.StartsWith("'IsExternal'", StringComparison.Ordinal));
-            Assert.Equal(withArea, properties.Any(args => args.StartsWith("'TotalArea'", StringComparison.Ordinal)));
-        }
     }
 
     private static Element TypedWall(int id, int typeId)

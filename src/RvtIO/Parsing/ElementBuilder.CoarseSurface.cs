@@ -37,7 +37,7 @@ internal static partial class ElementBuilder
                 var own = grep?.CoarseQuantities ?? grep?.Coarse ?? grep;
                 if (own != null)
                 {
-                    coarse.Geometry = BuildGeometryData(own);
+                    coarse.Geometry = BuildGeometryData(own, state.SeparateFacesWithDistinctOpenings);
                     ExpandInstanceGeometry(coarse, own, element.TypeId, state);
                 }
                 ExpandTransformOnlyInstanceGeometry(coarse, id, element.TypeId, state);
@@ -71,7 +71,7 @@ internal static partial class ElementBuilder
             var block = grep?.Medium ?? grep;
             if (block != null)
             {
-                alternative.Geometry = BuildGeometryData(block);
+                alternative.Geometry = BuildGeometryData(block, state.SeparateFacesWithDistinctOpenings);
                 ExpandInstanceGeometry(alternative, block, element.TypeId, state);
             }
             ExpandTransformOnlyInstanceGeometry(alternative, id, element.TypeId, state);

@@ -120,6 +120,31 @@ public class OwnElementClassTests
     }
 
     [Fact]
+    public void AFileWithItsOwnClassSchema_CountsTheRecordInPlaceOfTheSeededRoot_AndKeepsTheSeedOfARootLeftWithoutA2022Class()
+    {
+        // both roots are seeded by the element index; the rewrite of the root of 456 failed, which marks it with the unknown tag
+        byte[] root = Frame(3708), unknown = Frame(3708);
+        BitConverter.GetBytes(456u).CopyTo(unknown, 0);
+        BitConverter.GetBytes(R22Transcoder.UnknownTag).CopyTo(unknown, 12);
+        byte[] stream = [.. root, .. unknown];
+        var state = new ParsingState
+        {
+            WideSchema = new FileSchema(new SchemaDocument()),
+            R22View = true,
+            ElemRecOwningElementIds = new() { [123] = -1, [456] = -1 },
+            FramedPartitions = [new PartitionFraming.Framed([stream], [new(102, 123, 0, root.Length), new(102, 456, root.Length, unknown.Length)], 4)],
+        };
+        state.OwnedElementClassRoots[123] = new(1, 3708);
+        state.OwnedElementClassRoots[456] = new(1, 3708);
+
+        RvtFileReader.RecordFramedRoots(state);
+
+        Assert.Equal(new StairComponentSource.ElementClassRoot(1, 3708), state.OwnedElementClassRoots[123]);
+        Assert.Equal(new StairComponentSource.ElementClassRoot(1, 3708), state.OwnedElementClassRoots[456]);
+        Assert.False(state.WalkedElementClassRoots.ContainsKey(456));
+    }
+
+    [Fact]
     public void TheBlockParser_ReadsTheRecordsOfTheProjectBlock_EvenAcrossSegments_AndNotTheBlocksOfAFamilyDocument()
     {
         // the project's record of element 123 runs into the next segment; behind it a block of element 456 in the document of a loaded

@@ -61,6 +61,7 @@ public class RvtDocument
         }
 
         SynthesizeMissingParams();
+        Parameter.ResolveZeroElementIds(_info);
 
         ResolveElementNames();
 
