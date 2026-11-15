@@ -46,6 +46,8 @@ Plans draw a grid bubble (a white circle with the grid name, "1" to "7" and "A" 
 
 Plans draw the frames of the doors and windows whose cut loop is decoded and the sketch loops of the floors of the level, light under the walls. Measured on the Revit sample project: 25 opening frames and 6 floor loops are drawn; the plan is still sparse because only 60 of the 121 walls have a decoded location line and the rooms have no boundary to fill.
 
+The title block strip notes the scale of the sheet (1:100 for A102, the most common scale of its placed views) beside its name, number, issue date, drawn-by and checked-by rows.
+
 A composed sheet now carries a title block strip on the right of the page: a logo area, the project area, a revision table (No. / Description / Date) and the sheet information rows (name, number, issue date, drawn by, checked by), all read from the sheet's parameters. The graphic of the title block family is still not decoded, so the strip is a stand-in. On A102: Plans, A102, 07/24/12, SM, JLH.
 
 A composed sheet carries a plain stamp in its lower-right corner: the sheet name, the issue date, the drawn-by and checked-by fields and the sheet number, all decoded from the sheet's own parameters (A102: Plans, 07/24/12, SM, JLH). The graphic of the title block family itself is still not decoded, so this is a stand-in that keeps a printed page identifiable.

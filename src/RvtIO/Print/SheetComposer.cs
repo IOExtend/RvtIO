@@ -128,8 +128,25 @@ public static class SheetComposer
             page2.DrawRectangle(margin, margin, page.WidthMillimetres - 2 * margin,
                 page.HeightMillimetres - 2 * margin, 0.35);
             if (pdf.Font != null)
-                TitleBlockPrinter.Draw(page2, document, sheet,
-                    Math.Min(180, page.WidthMillimetres * 0.22), margin);
+            {
+                // The scale noted on the sheet: the most common scale of its placed views.
+                var scales = new Dictionary<int, int>();
+                foreach (var element in document.Elements)
+                {
+                    if (element.OwnerViewId != sheet.Id) continue;
+                    if (element.CategoryId != (int)BuiltInCategory.OST_Viewports) continue;
+                    if (element.ViewportViewId is not int viewId) continue;
+                    int scale = document.GetElement(viewId)?.LookupParameter(BuiltInParameter.VIEW_SCALE)?.Value
+                        is int value && value > 0 ? value : 0;
+                    if (scale == 0) continue;
+                    scales[scale] = scales.TryGetValue(scale, out int count) ? count + 1 : 1;
+                }
+                string scaleText = scales.Count == 0
+                    ? ""
+                    : "1:" + scales.OrderByDescending(pair => pair.Value).First().Key;
+                TitleBlockPrinter.Draw(page2, document, sheet, Math.Min(180, page.WidthMillimetres * 0.22),
+                    margin, scaleText);
+            }
         }
 
         foreach (var element in document.Elements)

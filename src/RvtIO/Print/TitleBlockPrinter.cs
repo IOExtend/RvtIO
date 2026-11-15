@@ -14,7 +14,7 @@ internal static class TitleBlockPrinter
     /// <summary>Draws the strip in the page margins: <paramref name="widthMillimetres"/> wide, from the lower border to
     /// the upper one.</summary>
     internal static void Draw(PdfPage page, RvtDocument document, Element sheet, double widthMillimetres,
-        double marginMillimetres)
+        double marginMillimetres, string scale)
     {
         double pageWidth = page.Size.WidthMillimetres, pageHeight = page.Size.HeightMillimetres;
         double left = pageWidth - marginMillimetres - widthMillimetres;
@@ -41,17 +41,24 @@ internal static class TitleBlockPrinter
         else page.DrawText("Project", left + 3, logoBottom - 8, 3, PdfTextAlignment.Left, 0.45);
         if (projectNumber.Length > 0) page.DrawText(projectNumber, left + 3, logoBottom - 15, 3.5);
 
-        // The sheet information at the bottom: name, number, date, drawn by, checked by.
-        double infoHeight = Math.Min(70, height * 0.3);
+        // The sheet information at the bottom: name, number, scale, date, drawn by, checked by.
+        double infoHeight = Math.Min(80, height * 0.32);
         double infoTop = bottom + infoHeight;
         page.DrawLine(left, infoTop, left + widthMillimetres, infoTop, 0.25);
-        double rowHeight = infoHeight / 5;
-        for (int i = 0; i < 5; i++)
+        double rowHeight = infoHeight / 6;
+        for (int i = 0; i < 6; i++)
         {
             double rowY = infoTop - (i + 1) * rowHeight;
             if (i > 0) page.DrawLine(left, rowY, left + widthMillimetres, rowY, 0.15);
-            string label = i switch { 0 => "Sheet Name", 1 => "Sheet Number", 2 => "Issue Date", 3 => "Drawn By", _ => "Checked By" };
-            string value = i switch { 0 => name, 1 => number, 2 => date, 3 => drawn, _ => checkedBy };
+            string label = i switch
+            {
+                0 => "Sheet Name", 1 => "Sheet Number", 2 => "Scale", 3 => "Issue Date", 4 => "Drawn By",
+                _ => "Checked By",
+            };
+            string value = i switch
+            {
+                0 => name, 1 => number, 2 => scale, 3 => date, 4 => drawn, _ => checkedBy,
+            };
             page.DrawText(label, left + 3, rowY + rowHeight - 4, 2.2, PdfTextAlignment.Left, 0.45);
             page.DrawText(value, left + 3, rowY + 2, i == 1 ? 6 : 3.2);
         }
