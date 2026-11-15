@@ -264,7 +264,18 @@ public static class ElevationPrinter
             {
                 double pageY = ToY(y);
                 if (pageY < ToY(content.MinY) - 1 || pageY > ToY(content.MaxY) + 1) continue;
-                page.DrawLine(ToX(content.MinX), pageY, ToX(content.MaxX), pageY, 0.15, 0.55);
+                double left = ToX(content.MinX), right = ToX(content.MaxX);
+                page.DrawLine(left, pageY, right, pageY, 0.15, 0.55);
+                // The level marker at the right end of the line: the height in metres, as an elevation notes it.
+                var marker = new List<(double X, double Y)>(20);
+                for (int i = 0; i < 20; i++)
+                {
+                    double angle = i * Math.PI * 2 / 20;
+                    marker.Add((right - 3 + 3 * Math.Cos(angle), pageY + 3 * Math.Sin(angle)));
+                }
+                page.DrawPolyline(marker, 0.12, true, 1);
+                page.DrawText($"{y / 1000:+0.000;-0.000;0.000}", right - 3, pageY - 0.9, 1.7,
+                    PdfTextAlignment.Center);
                 // Two levels a few millimetres apart (Ceiling over Level 1) would print their names on top of each
                 // other; the upper one keeps its label.
                 if (label.Length > 0 && pageY - lastLabelY >= 4)
