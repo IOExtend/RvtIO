@@ -2886,6 +2886,68 @@ internal static partial class ElementBuilder
         }
     }
 
+    /// <summary>The plane of a view decoded from its own block: origin and the three axes.</summary>
+    private static void ApplyViewPlanes(RevitFileInfo info, ParsingState? state)
+    {
+        if (state == null || state.ViewPlanes.Count == 0) return;
+        foreach (var element in info.Elements)
+        {
+            if (!state.ViewPlanes.TryGetValue((uint)element.Id, out var plane)) continue;
+            element.ViewOrigin = plane.Origin;
+            element.ViewHorizontalDirection = plane.Horiz;
+            element.ViewVerticalDirection = plane.Vert;
+            element.ViewDirection = plane.ViewDir;
+        }
+    }
+
+    /// <summary>The view scale of a viewport, from its own record.</summary>
+    private static void ApplyViewportScales(RevitFileInfo info, ParsingState? state)
+    {
+        if (state == null || state.ViewportScales.Count == 0) return;
+        foreach (var element in info.Elements)
+        {
+            if (state.ViewportScales.TryGetValue((uint)element.Id, out int scale))
+                element.ViewportScale = scale;
+        }
+    }
+
+    /// <summary>The pixel size of an image symbol, from its own block.</summary>
+    private static void ApplyImageSizes(RevitFileInfo info, ParsingState? state)
+    {
+        if (state == null || state.ImageSizes.Count == 0) return;
+        foreach (var element in info.Elements)
+        {
+            if (!state.ImageSizes.TryGetValue((uint)element.Id, out var size)) continue;
+            element.ImageWidth = size.Width;
+            element.ImageHeight = size.Height;
+        }
+    }
+
+    /// <summary>The view a viewport displays and the offset of that view on the sheet, from the 0x07C6 blocks.</summary>
+    private static void ApplyViewports(RevitFileInfo info, ParsingState? state)
+    {
+        if (state == null || state.ViewportPlacements.Count == 0) return;
+        foreach (var element in info.Elements)
+        {
+            if (!state.ViewportPlacements.TryGetValue((uint)element.Id, out var placement)) continue;
+            element.ViewportViewId = placement.ViewId;
+            element.ViewportOffset = [placement.X, placement.Y, placement.Z];
+        }
+    }
+
+    /// <summary>Plain text and position of the text notes decoded from their 0x0F83 blocks.</summary>
+    private static void ApplyTextNotes(RevitFileInfo info, ParsingState? state)
+    {
+        if (state == null || state.TextNotes.Count == 0) return;
+        foreach (var element in info.Elements)
+        {
+            if (!state.TextNotes.TryGetValue((uint)element.Id, out var note)) continue;
+            element.Text = note.Text;
+            element.TextPosition = [note.X, note.Y, 0];
+            element.TextFontSizePoints = note.FontSizePoints;
+        }
+    }
+
     /// <summary>Computed area/volume for curtain-wall members.</summary>
     private static void AddCurtainQuantities(RevitFileInfo info)
     {
@@ -6398,6 +6460,11 @@ internal static partial class ElementBuilder
             state.SeparateFacesWithDistinctOpenings);
         ApplyRoomParams(rvtInfo);
         ApplySheetParams(rvtInfo, state);
+        ApplyTextNotes(rvtInfo, state);
+        ApplyViewports(rvtInfo, state);
+        ApplyViewPlanes(rvtInfo, state);
+        ApplyImageSizes(rvtInfo, state);
+        ApplyViewportScales(rvtInfo, state);
         AddViewAndDatumDefaults(rvtInfo);
         AddCurtainQuantities(rvtInfo);
         EnrichTypeLevelBips(rvtInfo, state);

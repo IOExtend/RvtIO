@@ -37,7 +37,13 @@ known, while a known unset bound user parameter is written as an empty string. A
 
 `Element.BoundingBox` is the axis-aligned outline stored in the element header, as the Revit API bounding box (null for elements with no stored outline, such as grids and levels). The tight box of the decoded geometry is `Element.Geometry.BoundingBox`; before 0.3.0 `Element.BoundingBox` held that decoded value, which also changes the result of `FilteredElementCollector.WhereBoundingBoxIsNotNull`.
 
-`Element.OwnerViewId` is the stored `m_ownerDBViewId` of the element: the view or sheet whose annotations and view-specific graphics hold it (a text note on a sheet names the sheet), null when no view owns it. `SheetCatalog` uses it for the elements a sheet owns.
+`Element.ViewportViewId` and `Element.ViewportOffset` are the view a viewport displays and the offset of that view
+on the sheet (feet), decoded from the viewport's own block.
+
+`Element.Text`, `Element.TextPosition` and `Element.TextFontSizePoints` are the plain text of a text note, the
+position the file stores for it (feet) and the font size its RTF declares; they are null for every other element.
+
+`Element.ViewportScale` is the view scale (the denominator) decoded from a viewport record; `Element.ViewportViewId` and `Element.ViewportOffset` are what that record places on the sheet. `Element.OwnerViewId` is the stored `m_ownerDBViewId` of the element: the view or sheet whose annotations and view-specific graphics hold it (a text note on a sheet names the sheet), null when no view owns it. `SheetCatalog` uses it for the elements a sheet owns.
 
 ## Built-in identifiers
 
@@ -65,6 +71,40 @@ extension and label helpers carry the ids and names stored in the file format.
 | `SheetIssue`, `SheetIssueKind` | What this release does not decode: page size, view placement, displayed view, view content and crop region. |
 
 See [sheets and viewports](sheets.md) for what is decoded, what the limits are and why no page coordinate is exposed yet.
+
+## Printing
+
+| Type | Use |
+|---|---|
+| `PlanPrinter` | `Levels(document)` lists the levels a plan can be printed for; `Render(document, levelId, scale, options)` returns a `PdfDocument` with the plan of one level: walls with their stored width, column footprints, clipped grids. |
+| `PlanPrintOptions` | `PaperSize` (null picks the smallest paper that holds the drawing), `MarginMillimetres`, `FallbackWallWidthMillimetres`, `DrawFrame`. |
+| `PlanLevel`, `PlanView` | A printable level (id, name, elevation) and a printable plan view (id, name, level, scale). |
+| `ViewPrinter` | `Render(document, viewIds, options)` prints views into one PDF document, one page per view: a plan, an elevation or a section (`PlanPrinter.Views`, `ElevationPrinter.Views`), a 3D view (an isometric massing page) and a rendering (its image page). `OtherViews(document)` lists the 3D views and the renderings. |
+| `ElevationPrinter` | `Views(document)` lists the elevations and the building sections (North, South, East, West, Section, Stair Section) with their scale; `Collect(document, direction, stairsOnly, planeView)` projects the model faces on the plane of the view when the reader decoded it (a section is cut at that plane: the geometry in front of it is removed and the crossing polygons are clipped) or on the plane of the direction taken from the name; a stair section projects the stairs alone. `DrawContent` writes them. |
+| `ElevationView` | An elevation view: id, name, direction (north, south, east, west, section, iso) and scale. |
+| `SheetComposer` | `Sheets(document)` lists the numbered sheets with the page their title block spans; `Render(document, sheetId, options)` and `RenderSheets` compose pages: each placed viewport draws its plan at the stored offset and view scale, labelled with the view name and scale, and the sheet's own text notes are written. |
+| `SheetComposeOptions` | `PaperSize` (null takes the title block extent, snapped to A4-A0), `DrawViewLabels`, `ViewMarginMillimetres`. |
+| `ComposedSheet` | A composed sheet: id, number, name, page, placed viewport count, text count. |
+| `SheetPrinter` | `Sheets(document)` lists the sheets with page-sized decoded linework; `Render(document, sheetId, options)` and `RenderSheets` print one page per sheet from the lines the sheet owns, on the paper the linework spans. |
+| `SheetPrintOptions` | `PaperSize` (null uses the linework extent, snapped to A4-A0), `MarginMillimetres`, `PaperToleranceMillimetres`, `DrawSheetFields`. |
+| `PrintableSheet` | A printable sheet: id, number, name, linework extent, curve and text counts. |
+
+See [printing a plan](printing.md) for what is drawn, what is not, and the roadmap to sheet printing.
+
+## PDF output
+
+| Type | Use |
+|---|---|
+| `PdfDocument` | `AddPage(size)` and `Save(path | stream)`; writes PDF 1.4 with vector lines, polygons, rectangles and text, without a third-party library. |
+| `PdfPage` | `DrawLine`, `DrawPolyline`, `DrawRectangle`, `DrawText` and `DrawImage` in millimetres from the lower-left corner, y up. |
+| `IPdfImage`, `PdfRasterImage`, `PdfJpegImage` | An image the writer embeds: RGB pixels (`PdfRasterImage`, Flate) or a JPEG as it is (`PdfJpegImage`, DCTDecode, size and components read from its header). |
+| `PdfPageSize` | Paper sizes A4 to A0 in millimetres, `Landscape` for the turned page. |
+| `PdfTextAlignment` | `Left`, `Center`, `Right`: where the text anchor sits. |
+| `PdfTrueTypeFont` | A TrueType font parsed for embedding (`UnitsPerEm`, `GlyphOf`, `AdvanceOf`), drawn as a Type0 font with Identity-H encoding and a ToUnicode map, so text in the scripts it covers (Cyrillic included) is real, selectable PDF text. |
+| `PdfFonts` | `TryFind` loads the first TrueType font found on the machine (Arial, Segoe UI, Tahoma, DejaVu Sans, Helvetica Neue). |
+
+Without `PdfDocument.Font` the writer uses the standard Helvetica font, which holds printable ASCII only, and a text with
+another character is refused. With it, every text is written with the embedded font.
 
 ## Triangle meshes
 

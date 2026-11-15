@@ -187,6 +187,28 @@ internal static class BlockParser
             state.NativeParams[eid] = np;
         }
 
+        // An image symbol's own block (class 0x089A) holds the pixel size of the image: two u32 at data+0x80.
+        if ((classIdx & 0xFFFF) == 0x089A && dataSize >= 0x88 && !state.ImageSizes.ContainsKey(eid))
+        {
+            int width = BitConverter.ToInt32(chunk, dataStart + 0x80);
+            int height = BitConverter.ToInt32(chunk, dataStart + 0x84);
+            if (width is > 0 and < 20000 && height is > 0 and < 20000)
+                state.ImageSizes[eid] = (width, height);
+        }
+
+        // A viewer's own block (class 0x05BF) holds the basis of the view it belongs to; the chunk-level collector
+        // below finds those blocks, which the walk of the project's own block does not always reach.
+
+        // A viewport's own block (class 0x07C6) holds the view it displays and the offset of that view on the sheet:
+        // m_offset = three doubles at payload+0x47, m_dbViewId = a u32 at payload+0x8F.
+        if ((classIdx & 0xFFFF) == 0x07C6 && dataSize >= 0x93 && !state.ViewportPlacements.ContainsKey(eid))
+            ExtractViewport(chunk, dataStart, eid, state);
+
+        // A text note's own block holds its text and position. The note can be an element the block walk discovered
+        // after the element table, so the block is read here and not under the known-id guard below.
+        if ((classIdx & 0xFFFF) == 0x0F83 && !state.TextNotes.ContainsKey(eid))
+            ExtractTextNote(chunk, dataStart, dataEnd, eid, state);
+
         if (state.AllKnownIds.Contains(eid))
         {
             ExtractBlockStrings(chunk, dataStart, dataEnd, eid, state.ElemStrings);
@@ -2008,6 +2030,215 @@ internal static class BlockParser
             sheets[eid] = (num, date);
             return;
         }
+    }
+
+    /// <summary>Scans the blocks of a chunk for image-symbol blocks (class 0x089A) and records the pixel size of each
+    /// image.</summary>
+    internal static void CollectImageSizes(byte[] chunk, ParsingState state)
+    {
+        int pos = 0;
+        while (pos + 16 <= chunk.Length)
+        {
+            uint eid = BitConverter.ToUInt32(chunk, pos);
+            int size = BitConverter.ToInt32(chunk, pos + 8);
+            uint classIdx = BitConverter.ToUInt32(chunk, pos + 12);
+            if (eid == 0 || eid > 50_000_000 || size <= 0 || size > MaxBlockSize || pos + 16 + size > chunk.Length)
+            {
+                pos++;
+                continue;
+            }
+            if ((classIdx & 0xFFFF) == 0x089A && size >= 0x88 && !state.ImageSizes.ContainsKey(eid))
+            {
+                int width = BitConverter.ToInt32(chunk, pos + 16 + 0x80);
+                int height = BitConverter.ToInt32(chunk, pos + 16 + 0x84);
+                if (width is > 0 and < 20000 && height is > 0 and < 20000)
+                    state.ImageSizes[eid] = (width, height);
+            }
+            pos += 16 + size;
+        }
+    }
+
+    /// <summary>
+    /// Scans the blocks of a chunk for the plane of a view: the schema stores m_horzDir (a horizontal unit vector), the
+    /// view origin, the view scale, m_vertDir (a vertical unit vector) and m_viewDir (a horizontal unit vector) as
+    /// thirteen consecutive doubles. The block walk of the project's own data does not always reach them, so they are
+    /// found by signature and kept under the element id of the block.
+    /// </summary>
+    internal static void CollectViewPlanes(byte[] chunk, ParsingState state)
+    {
+        int pos = 0;
+        while (pos + 16 <= chunk.Length)
+        {
+            uint eid = BitConverter.ToUInt32(chunk, pos);
+            int size = BitConverter.ToInt32(chunk, pos + 8);
+            uint classIdx = BitConverter.ToUInt32(chunk, pos + 12);
+            if (eid == 0 || eid > 50_000_000 || size <= 0 || size > MaxBlockSize || pos + 16 + size > chunk.Length)
+            {
+                pos++;
+                continue;
+            }
+            // The view's own block (class 0x3F8) stores the plane as its origin, the view scale, the vertical and the
+            // camera direction; the older signature below is kept for the blocks that store it as thirteen consecutive
+            // doubles. The block layout wins: a wrong signature candidate must not hide the view's own plane.
+            bool found = (classIdx & 0xFFFF) == 0x03F8
+                && TryFindViewPlaneBlock(chunk, pos + 16, pos + 16 + size, eid, state);
+            if (!found && !state.ViewPlanes.ContainsKey(eid))
+                TryFindViewPlane(chunk, pos + 16, pos + 16 + size, eid, state);
+            pos += 16 + size;
+        }
+    }
+
+    /// <summary>The plane a view block (class 0x3F8) stores: a point of the plane (three doubles), the view scale
+    /// (the reciprocal of the scale denominator), the vertical axis and the camera direction (three doubles each, axis
+    /// aligned unit vectors). The scale double is found first and the other fields are read around it.</summary>
+    private static bool TryFindViewPlaneBlock(byte[] d, int start, int end, uint eid, ParsingState state)
+    {
+        for (int i = start; i + 56 <= end; i++)
+        {
+            double scale = BitConverter.ToDouble(d, i);
+            if (!double.IsFinite(scale) || scale <= 0) continue;
+            double denominator = 1 / scale;
+            if (denominator < 2 || denominator > 1000 || Math.Abs(denominator - Math.Round(denominator)) > 1e-3)
+                continue;
+            if (i - 32 < start || Math.Abs(BitConverter.ToDouble(d, i - 32)) > 1e-9) continue;
+            double ox = BitConverter.ToDouble(d, i - 24), oy = BitConverter.ToDouble(d, i - 16),
+                oz = BitConverter.ToDouble(d, i - 8);
+            if (!double.IsFinite(ox) || !double.IsFinite(oy) || !double.IsFinite(oz)
+                || Math.Abs(ox) > 1e6 || Math.Abs(oy) > 1e6 || Math.Abs(oz) > 1e6) continue;
+            double vx = BitConverter.ToDouble(d, i + 8), vy = BitConverter.ToDouble(d, i + 16),
+                vz = BitConverter.ToDouble(d, i + 24);
+            if (Math.Abs(vx) > 1e-6 || Math.Abs(vy) > 1e-6 || Math.Abs(vz - 1) > 1e-6) continue;
+            double cx = BitConverter.ToDouble(d, i + 32), cy = BitConverter.ToDouble(d, i + 40),
+                cz = BitConverter.ToDouble(d, i + 48);
+            if (!double.IsFinite(cx) || !double.IsFinite(cy) || !double.IsFinite(cz)) continue;
+            if (!AxisAlignedUnit(cx, cy, cz)) continue;
+            // The stored vector points from the model toward the camera; the view direction looks the other way.
+            double dx = -cx, dy = -cy, dz = -cz;
+            double hx = dy * vz - dz * vy, hy = dz * vx - dx * vz, hz = dx * vy - dy * vx;
+            state.ViewPlanes[eid] = ([ox, oy, oz], [hx, hy, hz], [vx, vy, vz], [dx, dy, dz]);
+            return true;
+        }
+        return false;
+    }
+
+    private static bool AxisAlignedUnit(double x, double y, double z)
+    {
+        static bool Component(double value) => Math.Abs(value) < 1e-6 || Math.Abs(Math.Abs(value) - 1) < 1e-6;
+        if (!Component(x) || !Component(y) || !Component(z)) return false;
+        return Math.Abs(Math.Abs(x) + Math.Abs(y) + Math.Abs(z) - 1) < 1e-6;
+    }
+
+    private static void TryFindViewPlane(byte[] d, int start, int end, uint eid, ParsingState state)
+    {
+        for (int i = start; i + 13 * 8 <= end; i++)
+        {
+            double hx = BitConverter.ToDouble(d, i), hy = BitConverter.ToDouble(d, i + 8);
+            double hz = BitConverter.ToDouble(d, i + 16);
+            if (!double.IsFinite(hx) || !double.IsFinite(hy) || !double.IsFinite(hz)) continue;
+            double hn = Math.Sqrt(hx * hx + hy * hy + hz * hz);
+            if (hn is < 0.999 or > 1.001 || Math.Abs(hz) > 0.01) continue;
+            double ox = BitConverter.ToDouble(d, i + 24), oy = BitConverter.ToDouble(d, i + 32);
+            double oz = BitConverter.ToDouble(d, i + 40);
+            if (!double.IsFinite(ox) || !double.IsFinite(oy) || !double.IsFinite(oz)
+                || Math.Abs(ox) > 1e5 || Math.Abs(oy) > 1e5 || Math.Abs(oz) > 1e5) continue;
+            double scale = BitConverter.ToDouble(d, i + 48);
+            if (!double.IsFinite(scale) || scale < 1 || scale > 1000
+                || Math.Abs(scale - Math.Round(scale)) > 1e-6) continue;
+            double vx = BitConverter.ToDouble(d, i + 56), vy = BitConverter.ToDouble(d, i + 64);
+            double vz = BitConverter.ToDouble(d, i + 72);
+            if (!double.IsFinite(vx) || !double.IsFinite(vy) || !double.IsFinite(vz)) continue;
+            double vn = Math.Sqrt(vx * vx + vy * vy + vz * vz);
+            if (vn is < 0.999 or > 1.001 || Math.Abs(vx) > 0.01 || Math.Abs(vy) > 0.01) continue;
+            double dx = BitConverter.ToDouble(d, i + 80), dy = BitConverter.ToDouble(d, i + 88);
+            double dz = BitConverter.ToDouble(d, i + 96);
+            if (!double.IsFinite(dx) || !double.IsFinite(dy) || !double.IsFinite(dz)) continue;
+            double dn = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+            if (dn is < 0.999 or > 1.001 || Math.Abs(dz) > 0.01) continue;
+            if (Math.Abs(hx * dx + hy * dy + hz * dz) > 0.01) continue;
+            state.ViewPlanes[eid] = ([ox, oy, oz], [hx, hy, hz], [vx, vy, vz], [dx, dy, dz]);
+            return;
+        }
+    }
+
+    /// <summary>
+    /// Scans a chunk for text-note blocks (class 0x0F83, little-endian 83 0F at the class field) and records the text
+    /// and position of every note whose block the block walk did not reach. The two class bytes are rare in text, so
+    /// the scan follows them instead of stepping through every byte.
+    /// </summary>
+    internal static void CollectTextNotes(byte[] chunk, ParsingState state)
+    {
+        ReadOnlySpan<byte> marker = [0x83, 0x0F];
+        int at = chunk.AsSpan().IndexOf(marker);
+        while (at >= 0)
+        {
+            int blockStart = at - 12;
+            if (blockStart >= 0 && blockStart + 16 <= chunk.Length)
+            {
+                uint eid = BitConverter.ToUInt32(chunk, blockStart);
+                int size = BitConverter.ToInt32(chunk, blockStart + 8);
+                uint classIdx = BitConverter.ToUInt32(chunk, blockStart + 12);
+                if (eid is > 0 and < 50_000_000 && size > 0 && size <= MaxBlockSize
+                    && blockStart + 16 + size <= chunk.Length && (classIdx & 0xFFFF) == 0x0F83
+                    && !state.TextNotes.ContainsKey(eid))
+                    ExtractTextNote(chunk, blockStart + 16, blockStart + 16 + size, eid, state);
+            }
+            int next = chunk.AsSpan(at + 2).IndexOf(marker);
+            at = next < 0 ? -1 : at + 2 + next;
+        }
+    }
+
+    /// <summary>
+    /// Extract the placement of a viewport: the displayed view id and the offset on the sheet (feet). The fields are
+    /// read from the element payload, two bytes before the block data.
+    /// </summary>
+    private static void ExtractViewport(byte[] d, int dataStart, uint eid, ParsingState state)
+    {
+        int payload = dataStart - 2;
+        double x = BitConverter.ToDouble(d, payload + 0x47);
+        double y = BitConverter.ToDouble(d, payload + 0x4F);
+        double z = BitConverter.ToDouble(d, payload + 0x57);
+        int viewId = BitConverter.ToInt32(d, payload + 0x8F);
+        if (!double.IsFinite(x) || !double.IsFinite(y) || !double.IsFinite(z)) return;
+        if (Math.Abs(x) > 1e5 || Math.Abs(y) > 1e5 || viewId <= 0 || viewId > 50_000_000) return;
+        state.ViewportPlacements[eid] = (viewId, x, y, z);
+        // The record also stores the reciprocal of the view scale (0.01 for 1:100, 0.05 for 1:20): a fallback for a
+        // view whose scale parameter is not decoded.
+        double reciprocal = BitConverter.ToDouble(d, payload + 0x87);
+        if (double.IsFinite(reciprocal) && reciprocal is > 0.0005 and < 0.6)
+            state.ViewportScales[eid] = (int)Math.Round(1 / reciprocal);
+    }
+
+    /// <summary>
+    /// Extract the plain text and the position of a text note from its 0x0F83 block. The block holds an RTF string
+    /// ("{\\rtf1...") and, before it, [0x0271][x:f64][y:f64], the position of the note in feet.
+    /// </summary>
+    private static void ExtractTextNote(byte[] d, int start, int end, uint eid, ParsingState state)
+    {
+        int rtf = -1;
+        for (int i = start; i + 7 <= end; i++)
+        {
+            if (d[i] == (byte)'{' && d[i + 1] == (byte)'\\' && d[i + 2] == (byte)'r' && d[i + 3] == (byte)'t'
+                && d[i + 4] == (byte)'f' && d[i + 5] == (byte)'1')
+            {
+                rtf = i;
+                break;
+            }
+        }
+        if (rtf < 0) return;
+        if (RtfText.Parse(d, rtf, end) is not { Text.Length: > 0 } parsed) return;
+
+        double x = 0, y = 0;
+        bool positioned = false;
+        for (int i = start; i + 18 <= rtf; i++)
+        {
+            if (d[i] != 0x71 || d[i + 1] != 0x02) continue;
+            double px = BitConverter.ToDouble(d, i + 2), py = BitConverter.ToDouble(d, i + 10);
+            if (!double.IsFinite(px) || !double.IsFinite(py) || Math.Abs(px) > 1e6 || Math.Abs(py) > 1e6) continue;
+            x = px; y = py; positioned = true;
+            break;
+        }
+        if (!positioned) return;
+        state.TextNotes[eid] = (parsed.Text, x, y, parsed.FontSizePoints);
     }
 
     /// <summary>

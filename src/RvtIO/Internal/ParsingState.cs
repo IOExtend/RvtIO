@@ -499,6 +499,26 @@ internal class ParsingState
     /// (0xC3 = power, 0xC7 = occupancy, 0xCB = lighting schedule element id).</summary>
     public Dictionary<uint, (int Power, int Occupancy, int Lighting)> HvacScheduleRefs { get; set; } = new();
 
+    /// <summary>The view scale of a viewport decoded from its own record (the reciprocal is stored in the block).
+    /// Key = viewport element id.</summary>
+    public Dictionary<uint, int> ViewportScales { get; } = new();
+
+    /// <summary>The pixel size of an image symbol decoded from its block (class 0x089A: two u32 at data+0x80).
+    /// Key = element id.</summary>
+    public Dictionary<uint, (int Width, int Height)> ImageSizes { get; set; } = new();
+
+    /// <summary>The plane of a view decoded from the view's own block: the origin, the horizontal and vertical axes of the
+    /// view plane and the direction it looks at (m_origin, m_horzDir, m_vertDir, m_viewDir). Key = view element id.</summary>
+    public Dictionary<uint, (double[] Origin, double[] Horiz, double[] Vert, double[] ViewDir)> ViewPlanes { get; set; } = new();
+
+    /// <summary>The placement of a viewport decoded from its 0x07C6 block: the view it displays and the offset of the
+    /// view on the sheet in feet. Key = viewport element id.</summary>
+    public Dictionary<uint, (int ViewId, double X, double Y, double Z)> ViewportPlacements { get; set; } = new();
+
+    /// <summary>Plain text of the text notes decoded from their RTF string (class 0x0F83 block), with the position the
+    /// block stores in feet and the font size the RTF declares in points. Key = element id.</summary>
+    public Dictionary<uint, (string Text, double X, double Y, double? FontSizePoints)> TextNotes { get; set; } = new();
+
     /// <summary>Sheet info decoded from 0x03E3 view-info blocks: element id -> (sheet number,
     /// issue date). Signature: [8 zero bytes][len-prefixed short ASCII string][len-prefixed date].
     /// Applied only to OST_Sheets elements (other view classes share the block layout).</summary>
