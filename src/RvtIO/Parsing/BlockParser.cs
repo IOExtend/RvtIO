@@ -187,6 +187,9 @@ internal static class BlockParser
             state.NativeParams[eid] = np;
         }
 
+        // A viewer's own block (class 0x05BF) holds the basis of the view it belongs to; the chunk-level collector
+        // below finds those blocks, which the walk of the project's own block does not always reach.
+
         // A viewport's own block (class 0x07C6) holds the view it displays and the offset of that view on the sheet:
         // m_offset = three doubles at payload+0x47, m_dbViewId = a u32 at payload+0x8F.
         if ((classIdx & 0xFFFF) == 0x07C6 && dataSize >= 0x93 && !state.ViewportPlacements.ContainsKey(eid))

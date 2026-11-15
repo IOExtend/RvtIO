@@ -2523,7 +2523,12 @@ public partial class RvtFileReader
         foreach (var chunk in state.RecordChunks)
             BlockParser.CollectTextNotes(chunk, state);
 
-        Lap("text notes");
+        foreach (var chunk in state.NonRecordChunks)
+            BlockParser.CollectViewPlanes(chunk, state);
+        foreach (var chunk in state.RecordChunks)
+            BlockParser.CollectViewPlanes(chunk, state);
+
+        Lap("view planes");
         // a file read by its framing: the blocks of the partitions are its records, the chunks of Formats and Global are scanned
         var partitionChunks = state.ReadsFramedRecords
             ? state.Chunks.Take(state.PartitionChunkCount).ToHashSet(ReferenceEqualityComparer.Instance) : null;
