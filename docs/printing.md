@@ -142,7 +142,7 @@ stays empty.
 | Rooms | the floor face of the room's decoded boundary, filled with a colour by the room name and tagged with the room number in a circle, the name and the area in m² |
 | Doors | the leaf at one jamb, perpendicular to the wall on the side the door opens into, and the quarter arc it sweeps |
 | Furniture | the horizontal faces of the furniture, casework, plumbing fixtures, specialty equipment, stairs and railings of the level, seen from above as light outlines |
-| Door and window marks | the Mark parameter of each door and window, in a small circle beside the opening |
+| Door and window marks | a door's Mark in a circle beside the opening, a window's type mark in a hexagon, each on a leader line from the opening |
 | Dimensions | a chain between neighbouring grid lines above and to the right of the building, with the distance in millimetres |
 | Room legend | below the plan: a colour swatch and the name of every kind of room on it |
 

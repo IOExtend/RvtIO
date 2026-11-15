@@ -59,7 +59,7 @@ public static class PlanPrinter
         List<List<(double X, double Y)>> OpeningLoops,
         List<(List<(double X, double Y)> Polygon, string Name, string Number, double AreaSquareFeet)> Rooms,
         List<List<(double X, double Y)>> Furniture,
-        List<(double MidX, double MidY, double Nx, double Ny, string Text)> Tags,
+        List<(double MidX, double MidY, double Nx, double Ny, string Text, bool IsWindow)> Tags,
         double MinX, double MinY, double MaxX, double MaxY);
 
     /// <summary>The levels a plan can be printed for: those that own at least one wall or column with a location line,
@@ -256,7 +256,7 @@ public static class PlanPrinter
         var gaps = new Dictionary<int, List<(double From, double To)>>();
         var windowGaps = new List<(int HostId, double From, double To)>();
         var doorGaps = new List<(int HostId, double From, double To)>();
-        var tags = new List<(double MidX, double MidY, double Nx, double Ny, string Text)>();
+        var tags = new List<(double MidX, double MidY, double Nx, double Ny, string Text, bool IsWindow)>();
         foreach (var insert in document.Elements)
         {
             if (insert.CategoryId is not ((int)BuiltInCategory.OST_Doors or (int)BuiltInCategory.OST_Windows)) continue;
@@ -288,12 +288,16 @@ public static class PlanPrinter
             list.Add((from, to));
             if (insert.CategoryId == (int)BuiltInCategory.OST_Windows) windowGaps.Add((wall.Id, from, to));
             else doorGaps.Add((wall.Id, from, to));
-            // The tag of a door or a window: its mark, placed beside the opening on the side it opens into.
-            string mark = insert.LookupParameter(BuiltInParameter.ALL_MODEL_MARK)?.Value as string ?? "";
+            // The tag of a door is its mark, the tag of a window its type mark: both are placed beside the opening on
+            // the side it opens into.
+            bool isWindow = insert.CategoryId == (int)BuiltInCategory.OST_Windows;
+            string mark = isWindow
+                ? TypeMarkOf(document, insert) ?? insert.LookupParameter(BuiltInParameter.ALL_MODEL_MARK)?.Value as string ?? ""
+                : insert.LookupParameter(BuiltInParameter.ALL_MODEL_MARK)?.Value as string ?? "";
             if (mark.Length > 0)
             {
                 double mid = (from + to) / 2;
-                tags.Add((wall.X1 + ux * mid, wall.Y1 + uy * mid, -uy, ux, mark));
+                tags.Add((wall.X1 + ux * mid, wall.Y1 + uy * mid, -uy, ux, mark, isWindow));
             }
         }
 
@@ -415,6 +419,14 @@ public static class PlanPrinter
 
     /// <summary>Draws collected plan content on a page: the model point (content.MinX, content.MinY) goes to
     /// (originX, originY), one model unit is 1/scale.</summary>
+    /// <summary>The type mark of an insert, read from its type element.</summary>
+    private static string? TypeMarkOf(RvtDocument document, Element insert)
+    {
+        if (insert.TypeId <= 0) return null;
+        var type = document.GetElement(insert.TypeId);
+        return type?.LookupParameter(BuiltInParameter.ALL_MODEL_TYPE_MARK)?.Value as string;
+    }
+
     internal static void DrawContent(PdfPage page, PlanContent content, double scale, double originX,
         double originY, double floorFill = 0.9)
     {
@@ -514,16 +526,23 @@ public static class PlanPrinter
             foreach (var tag in content.Tags)
             {
                 double side = (centerX - tag.MidX) * tag.Nx + (centerY - tag.MidY) * tag.Ny >= 0 ? 1 : -1;
-                double tagX = ToX(tag.MidX + tag.Nx * side * 550);
-                double tagY = ToY(tag.MidY + tag.Ny * side * 550);
-                var circle = new List<(double X, double Y)>(20);
-                for (int i = 0; i < 20; i++)
+                double distance = tag.IsWindow ? 900 : 550;
+                double tagX = ToX(tag.MidX + tag.Nx * side * distance);
+                double tagY = ToY(tag.MidY + tag.Ny * side * distance);
+                // A door is tagged with its mark in a circle, a window with its type mark in a hexagon, a leader line
+                // from the opening to the tag, as a plan draws them.
+                page.DrawLine(ToX(tag.MidX), ToY(tag.MidY), tagX, tagY, 0.1, 0.5);
+                var shape = new List<(double X, double Y)>(6);
+                double radius = tag.IsWindow ? 2.6 : 2.2;
+                for (int i = 0; i < (tag.IsWindow ? 6 : 20); i++)
                 {
-                    double angle = i * Math.PI * 2 / 20;
-                    circle.Add((tagX + 2.2 * Math.Cos(angle), tagY + 2.2 * Math.Sin(angle)));
+                    double angle = tag.IsWindow
+                        ? i * Math.PI * 2 / 6 + Math.PI / 6
+                        : i * Math.PI * 2 / 20;
+                    shape.Add((tagX + radius * Math.Cos(angle), tagY + radius * Math.Sin(angle)));
                 }
-                page.DrawPolyline(circle, 0.12, true, 1);
-                page.DrawText(tag.Text, tagX, tagY - 1, 1.8, PdfTextAlignment.Center);
+                page.DrawPolyline(shape, 0.12, true, 1);
+                page.DrawText(tag.Text, tagX, tagY - 0.9, tag.IsWindow ? 1.6 : 1.8, PdfTextAlignment.Center);
             }
         }
 

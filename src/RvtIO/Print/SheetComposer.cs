@@ -236,7 +236,7 @@ public static class SheetComposer
                             new List<List<(double X, double Y)>>(),
                             new List<(List<(double X, double Y)> Polygon, string Name, string Number, double AreaSquareFeet)>(),
                             new List<List<(double X, double Y)>>(),
-                            new List<(double MidX, double MidY, double Nx, double Ny, string Text)>(),
+                            new List<(double MidX, double MidY, double Nx, double Ny, string Text, bool IsWindow)>(),
                             sitePlan.MinX, sitePlan.MinY, sitePlan.MaxX, sitePlan.MaxY);
                         // The house is filled dark on a site plan, the way the reference fills the building: the rooms
                         // of the level under its walls.
