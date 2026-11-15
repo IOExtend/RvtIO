@@ -602,7 +602,8 @@ public sealed class ExportReport
             {
                 if (geo.PlacedSymbolBox)
                     return GeometryQualityClass.BoxOnly;
-                bool approximated = geo.PlacedSymbolClipped || geo.UnresolvedSymbol || geo.GhostNodes is { Count: > 0 };
+                bool approximated = geo.PlacedSymbolClipped || geo.UnresolvedSymbol || geo.GhostNodes is { Count: > 0 }
+                    || geo.UntriangulatedFaces > 0;
                 if (geo.ExactMappedInstances is { Count: > 0 } mapped && elemById != null)
                 {
                     foreach (var inst in mapped)
@@ -614,7 +615,8 @@ public sealed class ExportReport
                         }
                         if (symGeo.PlacedSymbolBox)
                             return GeometryQualityClass.BoxOnly;
-                        if (symGeo.PlacedSymbolClipped || symGeo.UnresolvedSymbol || symGeo.GhostNodes is { Count: > 0 })
+                        if (symGeo.PlacedSymbolClipped || symGeo.UnresolvedSymbol || symGeo.GhostNodes is { Count: > 0 }
+                            || symGeo.UntriangulatedFaces > 0)
                             approximated = true;
                     }
                 }
