@@ -31,6 +31,10 @@ public class RvtReaderOptions
     /// samples decode the same either way). Off by default; the command line tool turns it on for an IFC export.</summary>
     public bool R22Layout { get; set; }
 
+    /// <summary>When true and reading with R22Layout on a 64-bit wide-schema file, also decodes and preserves
+    /// the wide-schema model in <see cref="RvtFileReader.WideModel"/> for multi-output exports without a second file read.</summary>
+    public bool PreserveWideLayout { get; set; }
+
     /// <summary>When several partition streams hold a copy of the same element, keep the current copy named by the file's document
     /// increment table and drop the superseded ones before decoding (see <see cref="Parsing.RecordRouting"/>). On by default; set it to false
     /// to decode every copy, as releases before this default did. A file with one partition stream is read the same either way.</summary>

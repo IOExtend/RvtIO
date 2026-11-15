@@ -22,6 +22,12 @@ public partial class RvtFileReader
     /// Never read by production export code.</summary>
     internal ParsingState? LastParsingState { get; private set; }
 
+    /// <summary>The wide-schema model when <see cref="RvtReaderOptions.PreserveWideLayout"/> was requested.</summary>
+    internal RevitFileInfo? WideModel { get; private set; }
+
+    /// <summary>The wide-schema parsing state when <see cref="RvtReaderOptions.PreserveWideLayout"/> was requested.</summary>
+    internal ParsingState? WideState { get; private set; }
+
     /// <summary>Read and parse a Revit file, returning structured element data.</summary>
     /// <exception cref="RvtInputException">The file cannot be read: missing, empty, not a compound file, cut or damaged.</exception>
     /// <exception cref="RvtLimitException">A stream is longer than one array can hold.</exception>
@@ -75,6 +81,16 @@ public partial class RvtFileReader
         var (elemRecHistories, elemRecOwners, wideSchema) = ReadElemRecs(root);
         LogRelease(root, fileMetadata, wideSchema, diag);
         var episodeTable = ReadEpisodeTable(root, diag, wideSchema);
+        if (wideSchema != null && _options.R22Layout && _options.PreserveWideLayout)
+        {
+            var (wideInfo, wideState) = ParseModel(root, chunks, framedStreams, partitionStreams.Sum(s => s.Count),
+                r22View: false, partitionStreams, framedStreams, wideSchema, elemTable, elemWorksets, fileMetadata,
+                projectInfo, transmissionData, episodeTable, elemRecHistories, elemRecOwners, tfSchemas, ownPartitionWallParts,
+                staleCopiesRemoved, incrementRoutedPartitions, elemTableIsExact, previewBase64, previewMime, diag, LogPhase);
+            WideModel = wideInfo;
+            WideState = wideState;
+        }
+
         bool r22View = false;
         IReadOnlyList<PartitionFraming.Framed?> readFrames = framedStreams;
         int partitionChunkCount = partitionStreams.Sum(s => s.Count);
@@ -88,6 +104,41 @@ public partial class RvtFileReader
         diag?.WriteLine($"ElemRec histories: {(elemRecHistories != null ? $"{elemRecHistories.Count} (exact)" : "unavailable")}");
 
         LogPhase("Decompression done");
+        var (rvtInfo, state) = ParseModel(root, chunks, readFrames, partitionChunkCount,
+            r22View, partitionStreams, framedStreams, wideSchema, elemTable, elemWorksets, fileMetadata,
+            projectInfo, transmissionData, episodeTable, elemRecHistories, elemRecOwners, tfSchemas, ownPartitionWallParts,
+            staleCopiesRemoved, incrementRoutedPartitions, elemTableIsExact, previewBase64, previewMime, diag, LogPhase);
+        LastParsingState = state;
+        return rvtInfo;
+    }
+
+    private (RevitFileInfo Info, ParsingState State) ParseModel(
+        RootStorage root,
+        List<byte[]> chunks,
+        IReadOnlyList<PartitionFraming.Framed?> readFrames,
+        int partitionChunkCount,
+        bool r22View,
+        IReadOnlyList<IReadOnlyList<byte[]>> partitionStreams,
+        IReadOnlyList<PartitionFraming.Framed?> framedStreams,
+        FileSchema? wideSchema,
+        Dictionary<uint, uint> elemTable,
+        Dictionary<uint, uint> elemWorksets,
+        Dictionary<string, string> fileMetadata,
+        Dictionary<string, string> projectInfo,
+        TransmissionInfo? transmissionData,
+        EpisodeTableParseResult episodeTable,
+        Dictionary<uint, ElemRecHistory>? elemRecHistories,
+        Dictionary<uint, int>? elemRecOwners,
+        Dictionary<string, TfClassRegistry.TfClassDef>? tfSchemas,
+        Dictionary<uint, OwnPartitionParts.WallParts>? ownPartitionWallParts,
+        bool staleCopiesRemoved,
+        IReadOnlyDictionary<ulong, int>? incrementRoutedPartitions,
+        bool elemTableIsExact,
+        string? previewBase64,
+        string? previewMime,
+        TextWriter? diag,
+        Action<string> LogPhase)
+    {
         var state = new ParsingState
         {
             SeparateFacesWithDistinctOpenings = _options.SeparateFacesWithDistinctOpenings,
@@ -805,8 +856,7 @@ public partial class RvtFileReader
                 $"{rvtInfo.Elements.Where(e => e.SketchLoops != null).Sum(e => e.SketchLoops!.Count)} loops");
 
         rvtInfo.UserParameters = UserParameterCatalog.Build(state);
-        LastParsingState = state;
-        return rvtInfo;
+        return (rvtInfo, state);
     }
 
     internal static void MergeElemScanStringsInChunkOrder(
