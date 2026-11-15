@@ -188,6 +188,47 @@ public static class SheetComposer
                             frameY - 16);
                 }
             }
+            else if (placed && name.Contains("site", StringComparison.OrdinalIgnoreCase))
+            {
+                // A site view: the topography and the planting, not the plan of a level.
+                var site = SitePrinter.Collect(document);
+                if (site != null)
+                {
+                    frameWidth = (site.MaxX - site.MinX) / scale;
+                    frameHeight = (site.MaxY - site.MinY) / scale;
+                    frameX = centerX - frameWidth / 2;
+                    frameY = centerY - frameHeight / 2;
+                    double m = options.ViewMarginMillimetres;
+                    page2.BeginClip(frameX - m, frameY - m, frameWidth + 2 * m, frameHeight + 2 * m);
+                    SitePrinter.DrawContent(page2, site, scale, frameX, frameY);
+                    // The building stands on the site: the walls of the level with most walls go on the same plan,
+                    // without its rooms, furniture and dimensions, which a site plan does not show.
+                    int? bestLevel = null;
+                    int bestCount = 0;
+                    foreach (var level in PlanPrinter.Levels(document))
+                    {
+                        var content = PlanPrinter.CollectLevel(document, level.LevelId);
+                        if (content == null || content.Walls.Count <= bestCount) continue;
+                        bestLevel = level.LevelId;
+                        bestCount = content.Walls.Count;
+                    }
+                    if (bestLevel is int levelId && PlanPrinter.CollectLevel(document, levelId) is { } sitePlan)
+                    {
+                        var wallsOnly = new PlanPrinter.PlanContent(sitePlan.Walls, sitePlan.Columns,
+                            new List<(double X1, double Y1, double X2, double Y2, string Name)>(),
+                            sitePlan.Gaps, sitePlan.WindowGaps, sitePlan.DoorGaps,
+                            new List<List<(double X, double Y)>>(),
+                            new List<List<(double X, double Y)>>(),
+                            new List<(List<(double X, double Y)> Polygon, string Name, string Number, double AreaSquareFeet)>(),
+                            new List<List<(double X, double Y)>>(),
+                            sitePlan.MinX, sitePlan.MinY, sitePlan.MaxX, sitePlan.MaxY);
+                        PlanPrinter.DrawContent(page2, wallsOnly, scale,
+                            (sitePlan.MinX - site.MinX) / scale + frameX,
+                            (sitePlan.MinY - site.MinY) / scale + frameY);
+                    }
+                    page2.EndClip();
+                }
+            }
             else if (placed && ElevationPrinter.DirectionOf(name) is string direction)
             {
                 // An elevation: the model faces projected on the vertical plane of the direction. The view plane itself

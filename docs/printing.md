@@ -46,6 +46,13 @@ left out until its renderer exists.
 The library API is `RvtIO.Print.PlanPrinter`: `Levels(document)` returns the printable levels, and
 `Render(document, levelId, scale, options)` returns a `PdfDocument` with one page.
 
+## Printing a site plan
+
+A view named "Site" or "Site Plan" is drawn from the site itself, not from the walls of a level: the topography is a
+light green wash with its outer edge inked (the edges shared by two mesh triangles are dropped), each planting is a
+circle with four spokes at its position and size, and the walls of the level with most walls stand on the same plan as
+the building footprint.
+
 ## Printing an elevation
 
 `rvtio print project.rvt elevations.pdf --view South` prints an elevation from the 3D geometry: every planar face of the
