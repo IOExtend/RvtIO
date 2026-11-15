@@ -85,7 +85,8 @@ holds many level elements at the same height, and the drawing reserves a label m
 
 The plane of the view itself is not decoded yet, so the direction is taken from the view name (North, South, East,
 West). A view named "Section" is projected along the short axis of the building, the way a longitudinal section looks; it
-is a projection, not a true cut through the model. Measured on the Revit sample project: the South view prints
+is a projection, not a true cut through the model. A stair section (a view whose name holds "stair", 1:20 to 1:50)
+projects only the stairs, their railings and supports, so the page shows the stair rather than the whole building. Measured on the Revit sample project: the South view prints
 the two-storey facade with its balcony rail, columns and roof on sheet A103.
 
 ## Composing a sheet

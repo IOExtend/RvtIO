@@ -39,7 +39,8 @@ public static class ElevationPrinter
             int scale = element.LookupParameter(BuiltInParameter.VIEW_SCALE)?.Value is int value && value > 0 ? value : 100;
             // A detail section (1:10 to 1:50) is drawn from the same whole-model projection, which is not the detail:
             // only a building section (1:100 or wider) is printed.
-            if (direction == "section" && scale < 100) continue;
+            if (direction == "section" && scale < 100 && !name.Contains("stair", StringComparison.OrdinalIgnoreCase))
+                continue;
             views.Add(new ElevationView(element.Id, name, direction, scale));
         }
         views.Sort((left, right) => string.CompareOrdinal(left.Name, right.Name));
@@ -67,7 +68,14 @@ public static class ElevationPrinter
         double MinX, double MinY, double MaxX, double MaxY);
 
     /// <summary>Projects the model geometry on the vertical plane of a direction. Null when the model has no face.</summary>
-    internal static ElevationContent? Collect(RvtDocument document, string direction)
+    /// <summary>The categories a stair section draws: the stairs, their railings and supports.</summary>
+    private static readonly HashSet<int> StairCategories =
+    [
+        (int)BuiltInCategory.OST_Stairs, (int)BuiltInCategory.OST_StairsRailing,
+        (int)BuiltInCategory.OST_StairsSupports, (int)BuiltInCategory.OST_Lines,
+    ];
+
+    internal static ElevationContent? Collect(RvtDocument document, string direction, bool stairsOnly = false)
     {
         if (direction == "section")
         {
@@ -104,6 +112,8 @@ public static class ElevationPrinter
             if (element.CategoryId is (int)BuiltInCategory.OST_Planting or (int)BuiltInCategory.OST_Topography
                 or (int)BuiltInCategory.OST_Site) continue;
             if (element.Geometry is not { Faces.Count: > 0 } geometry) continue;
+            // A stair section draws the stair, not the building around it.
+            if (stairsOnly && !StairCategories.Contains(element.CategoryId ?? -1)) continue;
             foreach (var face in geometry.Faces)
             {
                 if (face.OuterVertices is not { Count: >= 3 } vertices) continue;

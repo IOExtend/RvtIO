@@ -18,6 +18,8 @@ A whole model prints with one option: `--all-views` writes every printable view 
 
 Only a building section is printed (1:100 or wider): a detail section (1:10 to 1:50) would be drawn from the same whole-model projection, which is not the detail. A face whose projection is under 0.002 m2 is dropped, which cut the six-sheet set from 24.8 MB to 2.6 MB and the nine-view set to 2.3 MB without losing a line of the drawing.
 
+A stair section (a view whose name holds "stair", 1:20 to 1:50) is printed from the stairs alone: only the stairs, their railings and supports are projected, so the sheet shows the stair instead of the whole building. Measured on the Revit sample project: A105 carries its Stair Section and Main Stair Detail beside the East elevation.
+
 A section view prints as well: a view named "Section" is projected along the short axis of the building, the way a longitudinal section looks (the cutting plane itself is not decoded yet, so this is a projection, not a true cut). Measured on the Revit sample project: A103 now carries both the South elevation and the Longitudinal Section.
 
 Elevations print as pages too: `rvtio print --view South` and `RvtIO.Print.ElevationPrinter.Render` put one elevation on a page fitted to it, and `RvtIO.Print.ViewPrinter` prints a plan and an elevation into one document, one page each; `--list-views` lists elevations with their direction. A detail view of a plan (a DBViewPlan at 1:2 to 1:24) is no longer listed as the plan of its level.
