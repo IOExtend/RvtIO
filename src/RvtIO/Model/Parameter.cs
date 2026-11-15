@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json.Serialization;
 
 namespace RvtIO.Model
@@ -306,26 +307,198 @@ namespace RvtIO.Model
                 if (UnitSymbol != null && ConversionFactor.HasValue && ConversionFactor.Value != 0)
                 {
                     double displayed = d * ConversionFactor.Value;
-                    return $"{displayed:G6} {UnitSymbol}";
+                    return string.IsNullOrWhiteSpace(UnitSymbol)
+                        ? displayed.ToString("G6", CultureInfo.InvariantCulture)
+                        : $"{displayed:G6} {UnitSymbol}";
                 }
 
-                // Fallback: heuristic based on parameter name
+                // If the parameter has an explicit SpecType, evaluate spec category with highest priority.
+                if (!string.IsNullOrWhiteSpace(SpecType))
+                {
+                    var specDisplay = ResolveSpecDisplay(SpecType);
+                    if (specDisplay.HasValue)
+                    {
+                        var (symbol, factor) = specDisplay.Value;
+                        if (string.IsNullOrWhiteSpace(symbol))
+                        {
+                            return d.ToString("G", CultureInfo.InvariantCulture);
+                        }
+                        double displayed = d * factor;
+                        return $"{displayed:G6} {symbol}";
+                    }
+                    return d.ToString("G", CultureInfo.InvariantCulture);
+                }
+
+                // Fallback: heuristic based on parameter or BIP name tokens
                 string? name = Definition?.Name;
-                if (name != null && (name.Contains("WIDTH") || name.Contains("HEIGHT")
-                    || name.Contains("LENGTH") || name.Contains("OFFSET")
-                    || name.Contains("THICKNESS") || name.Contains("DEPTH")))
+                string? bip = Definition?.BuiltInParameter;
+
+                // Dimensionless coefficients, scales, ratios, and factors must not be inferred as dimensional lengths/areas/volumes
+                if (HasWordToken(name, bip, ScalarKeywords))
+                {
+                    return d.ToString("G", CultureInfo.InvariantCulture);
+                }
+
+                if (HasWordToken(name, bip, LengthKeywords))
                 {
                     return $"{d * 304.8:F1} mm";
                 }
-                if (name != null && name.Contains("AREA"))
+                if (HasWordToken(name, bip, AreaKeywords))
                     return $"{d * 0.09290304:F3} m²";
-                if (name != null && name.Contains("VOLUME"))
+                if (HasWordToken(name, bip, VolumeKeywords))
                     return $"{d * 0.0283168466:F4} m³";
-                if (name != null && name.Contains("ANGLE"))
+                if (HasWordToken(name, bip, AngleKeywords))
                     return $"{d * 180 / Math.PI:F2}°";
-                return d.ToString("G");
+                return d.ToString("G", CultureInfo.InvariantCulture);
             }
             return Value.ToString();
+        }
+
+        private static readonly HashSet<string> LengthSpecCategories = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "length",
+            "barDiameter",
+            "cableTraySize",
+            "conduitSize",
+            "crackWidth",
+            "ductInsulationThickness",
+            "ductLiningThickness",
+            "ductSize",
+            "pipeInsulationThickness",
+            "pipeSize",
+            "pipeDimension",
+            "reinforcementCover",
+            "reinforcementLength",
+            "reinforcementSpacing",
+            "wireDiameter",
+            "displacement",
+            "sectionDimension",
+            "decimalSheetLength",
+            "sheetLength",
+        };
+
+        private static readonly HashSet<string> AreaSpecCategories = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "area",
+            "crossSection",
+        };
+
+        private static readonly HashSet<string> VolumeSpecCategories = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "volume",
+            "reinforcementVolume",
+        };
+
+        private static readonly HashSet<string> AngleSpecCategories = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "angle",
+        };
+
+        private static readonly HashSet<string> ScalarSpecCategories = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "number",
+            "integer",
+            "factor",
+            "ratio",
+            "unitless",
+            "fraction",
+            "slope",
+            "demandFactor",
+        };
+
+        private static (string? symbol, double factor)? ResolveSpecDisplay(string specType)
+        {
+            string? cat = GetSpecCategory(specType);
+            if (cat == null) return null;
+
+            if (LengthSpecCategories.Contains(cat))
+            {
+                return ("mm", 304.8);
+            }
+
+            if (AreaSpecCategories.Contains(cat))
+            {
+                return ("m\u00B2", 0.09290304);
+            }
+
+            if (VolumeSpecCategories.Contains(cat))
+            {
+                return ("m\u00B3", 0.0283168466);
+            }
+
+            if (AngleSpecCategories.Contains(cat))
+            {
+                return ("\u00B0", 180.0 / Math.PI);
+            }
+
+            if (ScalarSpecCategories.Contains(cat))
+            {
+                return (null, 1.0);
+            }
+
+            return null;
+        }
+
+        private static string? GetSpecCategory(string specType)
+        {
+            if (string.IsNullOrWhiteSpace(specType)) return null;
+            int colon = specType.LastIndexOf(':');
+            string afterColon = colon >= 0 ? specType[(colon + 1)..] : specType;
+            int dash = afterColon.IndexOf('-');
+            return dash > 0 ? afterColon[..dash] : afterColon;
+        }
+
+        private static readonly System.Text.RegularExpressions.Regex WordTokenRegex =
+            new(@"[A-Z]+(?![a-z])|[A-Z][a-z]+|[a-z]+|\d+", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        private static readonly HashSet<string> ScalarKeywords = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "SCALE", "SCALES",
+            "FACTOR", "FACTORS",
+            "RATIO", "RATIOS",
+            "COEFFICIENT", "COEFFICIENTS",
+            "PERCENT", "PERCENTAGE", "PERCENTAGES",
+            "MULTIPLIER", "MULTIPLIERS"
+        };
+
+        private static readonly HashSet<string> LengthKeywords = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "WIDTH", "HEIGHT", "LENGTH", "OFFSET", "THICKNESS", "DEPTH",
+            "RADIUS", "DIAMETER", "DISTANCE", "PERIMETER", "SPAN", "ELEVATION"
+        };
+
+        private static readonly HashSet<string> AreaKeywords = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "AREA", "AREAS"
+        };
+
+        private static readonly HashSet<string> VolumeKeywords = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "VOLUME", "VOLUMES"
+        };
+
+        private static readonly HashSet<string> AngleKeywords = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "ANGLE", "ANGLES", "ROTATION", "SLOPE"
+        };
+
+        private static bool HasWordToken(string? text1, string? text2, HashSet<string> keywords)
+        {
+            if (!string.IsNullOrEmpty(text1))
+            {
+                foreach (System.Text.RegularExpressions.Match m in WordTokenRegex.Matches(text1))
+                {
+                    if (keywords.Contains(m.Value)) return true;
+                }
+            }
+            if (!string.IsNullOrEmpty(text2))
+            {
+                foreach (System.Text.RegularExpressions.Match m in WordTokenRegex.Matches(text2))
+                {
+                    if (keywords.Contains(m.Value)) return true;
+                }
+            }
+            return false;
         }
     }
 }
