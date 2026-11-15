@@ -37,6 +37,9 @@ public static class ElevationPrinter
             string? direction = DirectionOf(name);
             if (direction == null) continue;
             int scale = element.LookupParameter(BuiltInParameter.VIEW_SCALE)?.Value is int value && value > 0 ? value : 100;
+            // A detail section (1:10 to 1:50) is drawn from the same whole-model projection, which is not the detail:
+            // only a building section (1:100 or wider) is printed.
+            if (direction == "section" && scale < 100) continue;
             views.Add(new ElevationView(element.Id, name, direction, scale));
         }
         views.Sort((left, right) => string.CompareOrdinal(left.Name, right.Name));
@@ -114,6 +117,15 @@ public static class ElevationPrinter
                     points.Add((x * H[0] + y * H[1] + z * H[2], z));
                     depth += x * D[0] + y * D[1] + z * D[2];
                 }
+                // A sliver of a face adds a line to the page and nothing to the drawing.
+                double projected = 0;
+                for (int i = 0; i < points.Count; i++)
+                {
+                    var a = points[i];
+                    var b = points[(i + 1) % points.Count];
+                    projected += a.X * b.Y - b.X * a.Y;
+                }
+                if (Math.Abs(projected) / 2 < 2000) continue;
                 depth /= vertices.Count;
                 double facing = Math.Abs(face.Normal[0] * D[0] + face.Normal[1] * D[1] + face.Normal[2] * D[2]);
                 foreach (var (x, y) in points)

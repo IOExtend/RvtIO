@@ -12,6 +12,8 @@ API between minor releases.
 
 A whole model prints with one option: `--all-views` writes every printable view (plans and compass elevations) and `--all-sheets` every numbered sheet, one page each. The PDF writer compresses its streams on request (`PdfDocument.Compress`): the six-sheet set dropped from 69 MB to 9.4 MB and the six-view set from 89 MB to 12.5 MB, and a viewer reads the Flate streams unchanged.
 
+Only a building section is printed (1:100 or wider): a detail section (1:10 to 1:50) would be drawn from the same whole-model projection, which is not the detail. A face whose projection is under 0.002 m2 is dropped, which cut the six-sheet set from 24.8 MB to 2.6 MB and the nine-view set to 2.3 MB without losing a line of the drawing.
+
 A section view prints as well: a view named "Section" is projected along the short axis of the building, the way a longitudinal section looks (the cutting plane itself is not decoded yet, so this is a projection, not a true cut). Measured on the Revit sample project: A103 now carries both the South elevation and the Longitudinal Section.
 
 Elevations print as pages too: `rvtio print --view South` and `RvtIO.Print.ElevationPrinter.Render` put one elevation on a page fitted to it, and `RvtIO.Print.ViewPrinter` prints a plan and an elevation into one document, one page each; `--list-views` lists elevations with their direction. A detail view of a plan (a DBViewPlan at 1:2 to 1:24) is no longer listed as the plan of its level.
