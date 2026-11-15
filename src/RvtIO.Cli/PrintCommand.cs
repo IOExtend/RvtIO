@@ -67,7 +67,10 @@ internal static class PrintCommand
         if (file == null) return Usage(error, "print requires the file.");
         bool listing = listLevels || listViews || listSheets;
         if (!listing && outputPath == null) return Usage(error, "print requires the output PDF path.");
-        if (outputPath != null && SamePath(file, outputPath))
+        // The comparison is the file's identity, not the spelling of the paths: an output path that is a hard link,
+        // symbolic link or junction to the input PDF would truncate the model. ExportReport.SameFile guards the other
+        // writing commands the same way.
+        if (outputPath != null && ExportReport.SameFile(outputPath, file))
         {
             error.WriteLine("The output path is the input file. Nothing was read or written.");
             return RvtExitCodes.Usage;
@@ -262,7 +265,19 @@ internal static class PrintCommand
                 pdf = PlanPrinter.Render(document, levelId, scale, new PlanPrintOptions { PaperSize = paper });
             }
 
-            pdf.Save(outputPath!);
+            // The PDF is written beside the target and moved over it, so a failure leaves the target as it was and the
+            // output keeps its own directory (the temporary file is on the same volume).
+            string temporary = outputPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                pdf.Save(temporary);
+                File.Move(temporary, outputPath!, overwrite: true);
+            }
+            catch
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+                throw;
+            }
             PdfPageSize page = pdf.Pages[0].Size;
             error.WriteLine($"[print] {pdf.Pages.Count} page(s), first {page.WidthMillimetres:0} x {page.HeightMillimetres:0} mm -> {outputPath}");
             return RvtExitCodes.Success;
@@ -305,13 +320,6 @@ internal static class PrintCommand
         "A0" => PdfPageSize.A0,
         _ => null,
     };
-
-    private static bool SamePath(string left, string right)
-    {
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        try { return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), comparison); }
-        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException) { return false; }
-    }
 
     private static int Usage(TextWriter error, string problem)
     {

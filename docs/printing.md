@@ -114,6 +114,9 @@ neither drawn nor titled, so a sheet shows only the views the printer can stand 
 projects only the stairs, their railings and supports, so the page shows the stair rather than the whole building. Measured on the Revit sample project: the South view prints
 the two-storey facade with its balcony rail, columns and roof on sheet A103.
 
+A drawing the layout reduces to fit its place prints at the scale it finally has: its view title, the sheet scale
+row and the plan page title name that scale, not the nominal one.
+
 ## Composing a sheet
 
 `rvtio print project.rvt sheets.pdf --sheet A102` composes a sheet the way Revit prints it: the page is the size the

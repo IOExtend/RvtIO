@@ -60,6 +60,49 @@ public class RtfTextTests
     }
 
     [Fact]
+    public void Parse_DecodesTheStandardCodePageWord()
+    {
+        // The standard control word is \ansicpg (a byte of Windows-1252 here); \ansicp is Revit's own spelling.
+        var parsed = Parse("{\\rtf1\\ansi\\ansicpg1252 \\'e9}");
+
+        Assert.Equal("é", parsed?.Text);
+    }
+
+    [Fact]
+    public void Parse_KeepsUnicodeCharactersOutOfTheCodePageBytes()
+    {
+        // \u1040 is Cyrillic A; the '?' is its fallback character and \'c1 is Cyrillic B in Windows-1251.
+        var parsed = Parse("{\\rtf1\\ansi\\ansicpg1251\\uc1 \\u1040?\\'c1}");
+
+        Assert.Equal("АБ", parsed?.Text);
+    }
+
+    [Fact]
+    public void Parse_RespectsUc0AndSkipsNoFallbackCharacter()
+    {
+        var parsed = Parse("{\\rtf1\\ansi\\uc0 \\u1040B}");
+
+        Assert.Equal("АB", parsed?.Text);
+    }
+
+    [Fact]
+    public void Parse_DecodesEachCodePageRunWithItsOwnCodePage()
+    {
+        var parsed = Parse("{\\rtf1\\ansi\\ansicpg1251 \\'c0\\'c1\\ansicpg1252 \\'e9}");
+
+        Assert.Equal("АБé", parsed?.Text);
+    }
+
+    [Fact]
+    public void Parse_RestoresTheUcCountOfTheOuterGroup()
+    {
+        // The inner group sets uc0, so the B is text there; the outer group's uc1 applies again after it.
+        var parsed = Parse("{\\rtf1\\ansi\\uc1 \\u1040?{\\uc0 \\u1041B}C}");
+
+        Assert.Equal("АБBC", parsed?.Text);
+    }
+
+    [Fact]
     public void Parse_ReturnsNullWhenTheBytesAreNotAnRtfString()
     {
         Assert.Null(Parse("plain text"));

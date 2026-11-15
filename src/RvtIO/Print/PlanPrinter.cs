@@ -612,7 +612,10 @@ public static class PlanPrinter
         {
             double margin = options.MarginMillimetres;
             page.DrawText(title, margin + 3, paper.HeightMillimetres - margin - 8, 4.5);
-            page.DrawText($"1:{scale}", margin + 3, paper.HeightMillimetres - margin - 15, 3.5,
+            // The scale the drawing is printed at: a plan reduced to fit a small page no longer prints at its nominal
+            // scale, and the title must not claim it does.
+            int printedScale = (int)Math.Round(effectiveScale);
+            page.DrawText($"1:{printedScale}", margin + 3, paper.HeightMillimetres - margin - 15, 3.5,
                 PdfTextAlignment.Left, 0.35);
         }
     }

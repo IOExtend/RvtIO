@@ -4,13 +4,18 @@ using System.Text;
 namespace RvtIO.Parsing;
 
 /// <summary>
-/// Reads the plain text of an RTF string as Revit stores it for a text note (\rtf1\ansi\ansicp1251...).
-/// Destinations (font and color tables, generator, pictures) are skipped; \par and \line become newlines, \tab a tan,
-/// and the text bytes are decoded first as UTF-8 and, when that fails, with Windows-1251 (the code page a Russian file
-/// declares) or Windows-1252.
+/// Reads the plain text of an RTF string as Revit stores it for a text note (\rtf1\ansi\ansicpg1251...).
+/// Destinations (font and color tables, generator, pictures) are skipped; \par and \line become newlines, \tab a tab,
+/// and a \uNNNN Unicode character keeps its own code unit instead of being decoded again with the byte runs. The bytes
+/// of a code page run are decoded as strict UTF-8 first (Revit writes UTF-8 text inside the RTF of many files) and then
+/// with the code page the file declares (Windows-1251 or Windows-1252), so a run declared with \ansicpg is not mixed
+/// with the bytes of another.
 /// </summary>
 internal static class RtfText
 {
+    /// <summary>A run of the text: bytes of a code page, or one Unicode character taken from a \uNNNN escape.</summary>
+    private sealed record Segment(byte[]? Bytes, char? Character, int CodePage);
+
     /// <summary>Parses an RTF string.</summary>
     /// <param name="data">The bytes that hold the RTF.</param>
     /// <param name="start">The offset of the opening brace.</param>
@@ -24,11 +29,25 @@ internal static class RtfText
         if (data[start + 2] != (byte)'r' || data[start + 3] != (byte)'t' || data[start + 4] != (byte)'f'
             || data[start + 5] != (byte)'1') return null;
 
-        var text = new List<byte>();
+        var segments = new List<Segment>();
+        var bytes = new List<byte>();
         double? fontSize = null;
         int codePage = 1251;
         int depth = 0;
         int skipFrom = -1;
+        // The fallback characters a \uNNNN escape leaves to skip, and the \ucN count of the current group.
+        int fallback = 0;
+        int fallbackLength = 1;
+        var fallbackStack = new Stack<int>();
+        var codePageStack = new Stack<int>();
+
+        void Flush()
+        {
+            if (bytes.Count == 0) return;
+            segments.Add(new Segment(bytes.ToArray(), null, codePage));
+            bytes.Clear();
+        }
+
         int i = start;
         while (i < end)
         {
@@ -37,23 +56,30 @@ internal static class RtfText
             {
                 depth++;
                 int word = i + 1;
-                if (word < end && data[word] == (byte)'\\' && word + 1 < end && data[word + 1] == (byte)'*')
+                if (word + 1 < end && data[word] == (byte)'\\' && data[word + 1] == (byte)'*')
                 {
                     if (skipFrom < 0) skipFrom = depth;
                     i += 2;
                     continue;
                 }
-                if (word < end && data[word] == (byte)'\\')
-                {
-                    if (IsDestination(ControlWordName(data, word + 1, end)) && skipFrom < 0) skipFrom = depth;
-                }
+                if (word < end && data[word] == (byte)'\\'
+                    && IsDestination(ControlWordName(data, word + 1, end)) && skipFrom < 0) skipFrom = depth;
+                fallbackStack.Push(fallbackLength);
+                codePageStack.Push(codePage);
+                fallback = 0;
                 i++;
                 continue;
             }
             if (b == (byte)'}')
             {
-                if (skipFrom >= 0 && skipFrom == depth) skipFrom = -1;
+                if (skipFrom == depth) skipFrom = -1;
+                // The run is closed before the code page of the group is restored: its bytes belong to the page that
+                // was in force where they stand.
+                Flush();
                 depth = Math.Max(0, depth - 1);
+                if (codePageStack.Count > 0) codePage = codePageStack.Pop();
+                if (fallbackStack.Count > 0) fallbackLength = fallbackStack.Pop();
+                fallback = 0;
                 i++;
                 if (depth == 0) break;
                 continue;
@@ -62,9 +88,25 @@ internal static class RtfText
             {
                 if (i + 1 >= end) { i++; continue; }
                 byte next = data[i + 1];
+                // A fallback unit of a \uNNNN escape: one hex escape or one escaped literal counts as one character.
+                if (skipFrom < 0 && fallback > 0)
+                {
+                    if (next == (byte)'\'' && i + 3 < end && IsHex(data[i + 2]) && IsHex(data[i + 3]))
+                    {
+                        fallback--;
+                        i += 4;
+                        continue;
+                    }
+                    if (next is (byte)'*' or (byte)'{' or (byte)'}' or (byte)'\\')
+                    {
+                        fallback--;
+                        i += 2;
+                        continue;
+                    }
+                }
                 if (next is (byte)'*' or (byte)'{' or (byte)'}' or (byte)'\\')
                 {
-                    if (skipFrom < 0 && next != (byte)'*') text.Add(next);
+                    if (skipFrom < 0 && next != (byte)'*') bytes.Add(next);
                     i += 2;
                     continue;
                 }
@@ -73,7 +115,7 @@ internal static class RtfText
                     if (i + 3 < end && IsHex(data[i + 2]) && IsHex(data[i + 3]))
                     {
                         if (skipFrom < 0)
-                            text.Add((byte)Convert.ToInt32(((char)data[i + 2]).ToString()
+                            bytes.Add((byte)Convert.ToInt32(((char)data[i + 2]).ToString()
                                 + (char)data[i + 3], 16));
                         i += 4;
                         continue;
@@ -91,16 +133,21 @@ internal static class RtfText
                     code *= sign;
                     if (code < 0) code += 65536;
                     if (skipFrom < 0 && code is > 0 and <= 0xFFFF)
-                        text.AddRange(Encoding.UTF8.GetBytes(((char)code).ToString()));
+                    {
+                        // A Unicode character is not a byte of the code page: it is added to the text as it is, and the
+                        // fallback characters the escape repeats for a reader without Unicode are skipped below.
+                        Flush();
+                        segments.Add(new Segment(null, (char)code, codePage));
+                        fallback = fallbackLength;
+                    }
                     if (at < end && data[at] == (byte)' ') at++;
-                    if (at < end && data[at] != (byte)'\\' && data[at] != (byte)'}') at++;
                     i = at;
                     continue;
                 }
                 int wordStart = i + 1;
                 int wordEnd = wordStart;
                 while (wordEnd < end && char.IsAsciiLetter((char)data[wordEnd])) wordEnd++;
-                string word2 = Encoding.ASCII.GetString(data, wordStart, wordEnd - wordStart);
+                string name = Encoding.ASCII.GetString(data, wordStart, wordEnd - wordStart);
                 int number = int.MinValue;
                 int numberEnd = wordEnd;
                 if (numberEnd < end && data[numberEnd] == (byte)'-') numberEnd++;
@@ -110,38 +157,54 @@ internal static class RtfText
                 if (numberEnd < end && data[numberEnd] == (byte)' ') numberEnd++;
                 if (skipFrom < 0)
                 {
-                    switch (word2)
+                    switch (name)
                     {
-                        case "par" or "line": text.Add((byte)'\n'); break;
-                        case "tab": text.Add((byte)'\t'); break;
-                        case "ansicp" when number > 0: codePage = number; break;
+                        case "par" or "line": bytes.Add((byte)'\n'); break;
+                        case "tab": bytes.Add((byte)'\t'); break;
                         case "fs" when number > 0: fontSize = number / 2.0; break;
+                        // The standard control word is \ansicpg; Revit also writes \ansicp, which is accepted as an
+                        // alias. A new code page starts a new run so the bytes of two pages are never decoded together.
+                        case "ansicpg" or "ansicp" when number > 0:
+                            Flush();
+                            codePage = number;
+                            break;
+                        case "uc" when number >= 0: fallbackLength = number; break;
                     }
                 }
                 i = numberEnd;
                 continue;
             }
-            if (skipFrom < 0 && (b >= 0x20 || b == (byte)'\t')) text.Add(b);
+            if (skipFrom < 0)
+            {
+                if (fallback > 0) fallback--;
+                else if (b >= 0x20 || b == (byte)'\t') bytes.Add(b);
+            }
             i++;
         }
+        Flush();
 
-        string plain = Decode(text, codePage).Replace("\r\n", "\n").Replace('\r', '\n').TrimEnd();
+        var builder = new StringBuilder();
+        foreach (var segment in segments)
+        {
+            if (segment.Character is char character) builder.Append(character);
+            else builder.Append(DecodeBytes(segment.Bytes!, segment.CodePage));
+        }
+        string plain = builder.ToString().Replace("\r\n", "\n").Replace('\r', '\n').TrimEnd();
         return (plain, fontSize);
     }
 
-    /// <summary>Decodes the text bytes: strict UTF-8 first (Revit writes UTF-8 text inside the RTF of many files), else
-    /// the declared code page.</summary>
-    private static string Decode(List<byte> bytes, int codePage)
+    /// <summary>Decodes the bytes of one code page run: strict UTF-8 first (Revit writes UTF-8 text inside the RTF of many
+    /// files), else the declared code page.</summary>
+    private static string DecodeBytes(byte[] bytes, int codePage)
     {
-        var array = bytes.ToArray();
         try
         {
-            return new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(array);
+            return new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(bytes);
         }
         catch (DecoderFallbackException)
         {
-            var builder = new StringBuilder(array.Length);
-            foreach (byte b in array) builder.Append(DecodeByte(b, codePage));
+            var builder = new StringBuilder(bytes.Length);
+            foreach (byte b in bytes) builder.Append(DecodeByte(b, codePage));
             return builder.ToString();
         }
     }

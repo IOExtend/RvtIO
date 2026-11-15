@@ -123,35 +123,52 @@ public static class SheetComposer
         PdfPage page2 = pdf.AddPage(page);
         // The title block family's linework is not decoded: the page border and a title block strip on the right, built
         // from the sheet's own fields, stand in for it, so a printed sheet reads as a framed page of a set.
+        double margin = 5;
         if (options.DrawPageFrame)
-        {
-            double margin = 5;
             page2.DrawRectangle(margin, margin, layout.WidthMillimetres - 2 * margin,
                 layout.HeightMillimetres - 2 * margin, 0.35);
-            if (pdf.Font != null)
-            {
-                // The scale noted on the sheet: the most common scale of its placed views.
-                var scales = new Dictionary<int, int>();
-                foreach (var element in document.Elements)
-                {
-                    if (element.OwnerViewId != sheet.Id) continue;
-                    if (element.CategoryId != (int)BuiltInCategory.OST_Viewports) continue;
-                    if (element.ViewportViewId is not int viewId) continue;
-                    int scale = document.GetElement(viewId)?.LookupParameter(BuiltInParameter.VIEW_SCALE)?.Value
-                        is int value && value > 0 ? value : 0;
-                    if (scale == 0) continue;
-                    scales[scale] = scales.TryGetValue(scale, out int count) ? count + 1 : 1;
-                }
-                string scaleText = scales.Count == 0
-                    ? ""
-                    : "1:" + scales.OrderByDescending(pair => pair.Value).First().Key;
-                TitleBlockPrinter.Draw(page2, document, sheet, Math.Min(180, layout.WidthMillimetres * 0.22),
-                    margin, scaleText, TitleLogo(document), Revisions(document));
-            }
-        }
 
         // The drawings already put on the page: two sections the file places on top of each other are separated.
         var placedRects = new List<(double X, double Y, double Width, double Height)>();
+        // The scale each drawing was finally printed at: a view the layout had to reduce no longer shows its nominal
+        // scale, and the title of the view and the sheet tell the scale the geometry is printed at.
+        var effectiveScales = new Dictionary<int, int>();
+        double areaLeft = 5, areaBottom = 5;
+        double areaRight = layout.WidthMillimetres - 5 - Math.Min(180, layout.WidthMillimetres * 0.22) - 3;
+        double areaTop = layout.HeightMillimetres - 5;
+
+        // A drawing larger than its place on the sheet is reduced until it fits, and every drawing is kept inside the
+        // page frame and left of the title block strip: no line of a view may run into the frame or the strip.
+        void FitFrame(ref double width, ref double height, ref double drawScale)
+        {
+            double drawableWidth = Math.Max(40, areaRight - areaLeft);
+            double drawableHeight = Math.Max(40, areaTop - areaBottom);
+            if (width <= drawableWidth && height <= drawableHeight) return;
+            double factor = Math.Max(width / drawableWidth, height / drawableHeight);
+            width /= factor;
+            height /= factor;
+            drawScale *= factor;
+        }
+
+        void ClampFrame(ref double x, ref double y, double width, double height)
+        {
+            // The margin around a drawing holds its annotations (dimension chains, view titles): it stays inside the
+            // page frame too, so no annotation is cut by the frame or runs under the title block strip.
+            double inset = options.ViewMarginMillimetres;
+            if (x < areaLeft + inset) x = areaLeft + inset;
+            if (y < areaBottom + inset) y = areaBottom + inset;
+            if (x + width > areaRight - inset) x = areaRight - inset - width;
+            if (y + height > areaTop - inset) y = areaTop - inset - height;
+        }
+
+        void ClipFrame(double frameX, double frameY, double frameWidth, double frameHeight)
+        {
+            double m = options.ViewMarginMillimetres;
+            double x0 = Math.Max(areaLeft, frameX - m), y0 = Math.Max(areaBottom, frameY - m);
+            double x1 = Math.Min(areaRight, frameX + frameWidth + m);
+            double y1 = Math.Min(areaTop, frameY + frameHeight + m);
+            page2.BeginClip(x0, y0, Math.Max(0, x1 - x0), Math.Max(0, y1 - y0));
+        }
 
 
         foreach (var element in document.Elements)
@@ -167,6 +184,7 @@ public static class SheetComposer
             double centerX = 0, centerY = 0;
             bool placed = false;
             int relocated = 0;
+            int effectiveScale = scale;
             if (element.ViewportOffset is { Length: >= 2 } offset)
             {
                 placed = true;
@@ -181,14 +199,17 @@ public static class SheetComposer
                 var model = ElevationPrinter.Collect(document, "iso");
                 if (model != null)
                 {
-                    frameWidth = (model.MaxX - model.MinX) / scale + ElevationPrinter.LabelMarginMillimetres;
-                    frameHeight = (model.MaxY - model.MinY) / scale;
+                    double drawScale = scale;
+                    frameWidth = (model.MaxX - model.MinX) / drawScale + ElevationPrinter.LabelMarginMillimetres;
+                    frameHeight = (model.MaxY - model.MinY) / drawScale;
+                    FitFrame(ref frameWidth, ref frameHeight, ref drawScale);
                     frameX = centerX - frameWidth / 2;
                     frameY = centerY - frameHeight / 2;
-                    double m = options.ViewMarginMillimetres;
-                    page2.BeginClip(frameX - m, frameY - m, frameWidth + 2 * m, frameHeight + 2 * m);
-                    ElevationPrinter.DrawContent(page2, model, scale, frameX, frameY);
+                    ClampFrame(ref frameX, ref frameY, frameWidth, frameHeight);
+                    ClipFrame(frameX, frameY, frameWidth, frameHeight);
+                    ElevationPrinter.DrawContent(page2, model, drawScale, frameX, frameY);
                     page2.EndClip();
+                    effectiveScale = (int)Math.Round(drawScale);
                 }
             }
             else if (placed && view?.RootClassName == "DBViewRendering")
@@ -211,19 +232,22 @@ public static class SheetComposer
             }
             else if (placed && plans.TryGetValue(viewId, out var plan))
             {
-                int viewScale = plan.Scale;
+                double viewScale = plan.Scale;
                 var content = PlanPrinter.CollectLevel(document, plan.LevelId);
                 if (content != null)
                 {
-                    frameWidth = (content.MaxX - content.MinX) / viewScale;
-                    frameHeight = (content.MaxY - content.MinY) / viewScale;
+                    double drawScale = viewScale;
+                    frameWidth = (content.MaxX - content.MinX) / drawScale;
+                    frameHeight = (content.MaxY - content.MinY) / drawScale;
+                    FitFrame(ref frameWidth, ref frameHeight, ref drawScale);
                     frameX = centerX - frameWidth / 2;
                     frameY = centerY - frameHeight / 2;
-                    double m = options.ViewMarginMillimetres;
-                    page2.BeginClip(frameX - m, frameY - m, frameWidth + 2 * m, frameHeight + 2 * m);
-                    PlanPrinter.DrawContent(page2, content, viewScale, frameX, frameY, 0.9,
+                    ClampFrame(ref frameX, ref frameY, frameWidth, frameHeight);
+                    ClipFrame(frameX, frameY, frameWidth, frameHeight);
+                    PlanPrinter.DrawContent(page2, content, drawScale, frameX, frameY, 0.9,
                         ElevationPrinter.SectionMarks(document));
                     page2.EndClip();
+                    effectiveScale = (int)Math.Round(drawScale);
                     if (options.DrawRoomLegend && pdf.Font != null && content.Rooms.Count > 0)
                         DrawRoomLegend(page2, content.Rooms.Select(room => room.Name), Math.Max(frameX, 8),
                             frameY - 16);
@@ -235,13 +259,16 @@ public static class SheetComposer
                 var site = SitePrinter.Collect(document);
                 if (site != null)
                 {
-                    frameWidth = (site.MaxX - site.MinX) / scale;
-                    frameHeight = (site.MaxY - site.MinY) / scale;
+                    double drawScale = scale;
+                    frameWidth = (site.MaxX - site.MinX) / drawScale;
+                    frameHeight = (site.MaxY - site.MinY) / drawScale;
+                    FitFrame(ref frameWidth, ref frameHeight, ref drawScale);
                     frameX = centerX - frameWidth / 2;
                     frameY = centerY - frameHeight / 2;
-                    double m = options.ViewMarginMillimetres;
-                    page2.BeginClip(frameX - m, frameY - m, frameWidth + 2 * m, frameHeight + 2 * m);
-                    SitePrinter.DrawContent(page2, site, scale, frameX, frameY);
+                    ClampFrame(ref frameX, ref frameY, frameWidth, frameHeight);
+                    ClipFrame(frameX, frameY, frameWidth, frameHeight);
+                    SitePrinter.DrawContent(page2, site, drawScale, frameX, frameY);
+                    effectiveScale = (int)Math.Round(drawScale);
                     // The building stands on the site: the walls of the level with most walls go on the same plan,
                     // without its rooms, furniture and dimensions, which a site plan does not show.
                     int? bestLevel = null;
@@ -269,13 +296,13 @@ public static class SheetComposer
                         foreach (var room in sitePlan.Rooms)
                         {
                             var polygon = room.Polygon.Select(point => (
-                                (point.X - site.MinX) / scale + frameX,
-                                (point.Y - site.MinY) / scale + frameY)).ToList();
+                                (point.X - site.MinX) / drawScale + frameX,
+                                (point.Y - site.MinY) / drawScale + frameY)).ToList();
                             if (polygon.Count >= 3) page2.DrawPolyline(polygon, 0, true, 0.45);
                         }
-                        PlanPrinter.DrawContent(page2, wallsOnly, scale,
-                            (sitePlan.MinX - site.MinX) / scale + frameX,
-                            (sitePlan.MinY - site.MinY) / scale + frameY);
+                        PlanPrinter.DrawContent(page2, wallsOnly, drawScale,
+                            (sitePlan.MinX - site.MinX) / drawScale + frameX,
+                            (sitePlan.MinY - site.MinY) / drawScale + frameY);
                     }
                     page2.EndClip();
                     // The planting schedule sits under the view title, clear of the site plan.
@@ -345,6 +372,7 @@ public static class SheetComposer
                         frameHeight /= factor;
                         drawScale *= factor;
                     }
+                    effectiveScale = (int)Math.Round(drawScale);
                     if (stairSection && scale < 50)
                     {
                         centerX = stripLeftForStair - 20 - frameWidth / 2;
@@ -358,21 +386,13 @@ public static class SheetComposer
                         centerY = layout.HeightMillimetres - 40 - frameHeight / 2;
                         relocated++;
                     }
-                    // The drawing stays inside the page: a view the file places against an edge is moved in.
+                    // The drawing stays inside the page frame and clear of the title block strip: a view the file places
+                    // against an edge is moved in.
                     frameX = centerX - frameWidth / 2;
                     frameY = centerY - frameHeight / 2;
-                    if (frameX < 5) { frameX = 5; centerX = frameX + frameWidth / 2; }
-                    if (frameY < 5) { frameY = 5; centerY = frameY + frameHeight / 2; }
-                    if (frameX + frameWidth > stripLeft - 5)
-                    {
-                        frameX = stripLeft - 5 - frameWidth;
-                        centerX = frameX + frameWidth / 2;
-                    }
-                    if (frameY + frameHeight > layout.HeightMillimetres - 5)
-                    {
-                        frameY = layout.HeightMillimetres - 5 - frameHeight;
-                        centerY = frameY + frameHeight / 2;
-                    }
+                    ClampFrame(ref frameX, ref frameY, frameWidth, frameHeight);
+                    centerX = frameX + frameWidth / 2;
+                    centerY = frameY + frameHeight / 2;
                     // A drawing the file places on top of one already on the page goes to the next place of the top row.
                     for (int guard = 0; guard < 6; guard++)
                     {
@@ -397,13 +417,17 @@ public static class SheetComposer
                         frameX = centerX - frameWidth / 2;
                         frameY = centerY - frameHeight / 2;
                     }
-                    double m = options.ViewMarginMillimetres;
-                    page2.BeginClip(frameX - m, frameY - m, frameWidth + 2 * m, frameHeight + 2 * m);
+                    ClipFrame(frameX, frameY, frameWidth, frameHeight);
                     ElevationPrinter.DrawContent(page2, elevation, drawScale, frameX, frameY,
                         direction == "section" ? 0.82 : 1);
                     page2.EndClip();
                     placedRects.Add((frameX, frameY, frameWidth, frameHeight));
                 }
+            }
+            if (placed && frameWidth > 0)
+            {
+                effectiveScales[effectiveScale] = effectiveScales.TryGetValue(effectiveScale, out int counted)
+                    ? counted + 1 : 1;
             }
             // A viewport whose view prints nothing (a wall section at 1:20, a schedule) is not titled either.
             if (options.DrawViewLabels && pdf.Font != null && (!placed || frameHeight > 0))
@@ -428,7 +452,7 @@ public static class SheetComposer
                 }
                 page2.DrawLine(frameX, labelY + 6, frameX + Math.Min(Math.Max(frameWidth, 40), 120), labelY + 6, 0.2);
                 page2.DrawText(name, textX, labelY, 3.5);
-                page2.DrawText($"1:{scale}", textX, labelY - 3.5, 2.5, PdfTextAlignment.Left, 0.45);
+                page2.DrawText($"1:{effectiveScale}", textX, labelY - 3.5, 2.5, PdfTextAlignment.Left, 0.45);
             }
         }
 
@@ -445,6 +469,31 @@ public static class SheetComposer
                 page2.DrawText(lines[line], x, y - line * height * 1.25, height);
         }
 
+        // The title block strip goes last, over the drawings: the scale row names the scale the views were printed at
+        // (a view the layout reduced no longer shows its nominal scale), and no drawing line runs under the strip.
+        if (options.DrawPageFrame && pdf.Font != null)
+        {
+            string scaleText = effectiveScales.Count > 0
+                ? "1:" + effectiveScales.OrderByDescending(pair => pair.Value).First().Key
+                : "";
+            if (scaleText.Length == 0)
+            {
+                var nominal = new Dictionary<int, int>();
+                foreach (var element in document.Elements)
+                {
+                    if (element.OwnerViewId != sheet.Id) continue;
+                    if (element.CategoryId != (int)BuiltInCategory.OST_Viewports) continue;
+                    if (element.ViewportViewId is not int viewId) continue;
+                    int scale = document.GetElement(viewId)?.LookupParameter(BuiltInParameter.VIEW_SCALE)?.Value
+                        is int value && value > 0 ? value : 0;
+                    if (scale == 0) continue;
+                    nominal[scale] = nominal.TryGetValue(scale, out int count) ? count + 1 : 1;
+                }
+                if (nominal.Count > 0) scaleText = "1:" + nominal.OrderByDescending(pair => pair.Value).First().Key;
+            }
+            TitleBlockPrinter.Draw(page2, document, sheet, Math.Min(180, layout.WidthMillimetres * 0.22),
+                margin, scaleText, TitleLogo(document), Revisions(document));
+        }
     }
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, PdfRasterImage?> Logos = new();
