@@ -118,4 +118,52 @@ public class ParameterValueFormattingTests
         };
         Assert.Equal("0.62", dischargeCoeff.AsValueString());
     }
+
+    [Fact]
+    public void Parameter_AsValueString_WordsContainingRatioSubstringDoNotTriggerScalarHeuristic()
+    {
+        // OPERATION_HEIGHT contains "RATIO" inside "OPERATION", but is a height (length)
+        var operationHeight = new Parameter
+        {
+            StorageType = StorageType.Double,
+            Value = 2.0,
+            Definition = new Definition { Name = "OPERATION_HEIGHT" }
+        };
+        Assert.Equal($"{2.0 * 304.8:F1} mm", operationHeight.AsValueString());
+
+        // CONFIGURATION_WIDTH contains "RATIO" inside "CONFIGURATION", but is a width (length)
+        var configurationWidth = new Parameter
+        {
+            StorageType = StorageType.Double,
+            Value = 2.0,
+            Definition = new Definition { Name = "CONFIGURATION_WIDTH" }
+        };
+        Assert.Equal($"{2.0 * 304.8:F1} mm", configurationWidth.AsValueString());
+    }
+
+    [Fact]
+    public void Parameter_AsValueString_ExplicitLengthSpecTypeFormatsAsLength()
+    {
+        // User parameter with explicit SpecType of length without pre-populated UnitSymbol
+        var userLengthParam = new Parameter
+        {
+            Id = 54321,
+            StorageType = StorageType.Double,
+            Value = 2.0,
+            SpecType = "autodesk.spec.aec:length-2.0.0",
+            Definition = new Definition { Id = 54321, Name = "Custom User Length" }
+        };
+        Assert.Equal($"{2.0 * 304.8:G6} mm", userLengthParam.AsValueString());
+
+        // User parameter with explicit length spec and name containing "OPERATION_HEIGHT"
+        var userOperationHeight = new Parameter
+        {
+            Id = 54322,
+            StorageType = StorageType.Double,
+            Value = 2.0,
+            SpecType = "autodesk.spec.aec:length-2.0.0",
+            Definition = new Definition { Id = 54322, Name = "OPERATION_HEIGHT" }
+        };
+        Assert.Equal($"{2.0 * 304.8:G6} mm", userOperationHeight.AsValueString());
+    }
 }

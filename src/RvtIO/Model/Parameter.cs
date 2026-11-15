@@ -135,60 +135,172 @@ namespace RvtIO.Model
                         : $"{displayed:G6} {UnitSymbol}";
                 }
 
-                // If the parameter has a scalar measurement spec (e.g. Number, Integer, Ratio),
-                // respect the spec and format as a plain dimensionless scalar.
-                if (SpecType != null && IsScalarSpec(SpecType))
+                // If the parameter has an explicit SpecType, evaluate spec category with highest priority.
+                if (!string.IsNullOrWhiteSpace(SpecType))
                 {
-                    return d.ToString("G", CultureInfo.InvariantCulture);
+                    var specDisplay = ResolveSpecDisplay(SpecType);
+                    if (specDisplay.HasValue)
+                    {
+                        var (symbol, factor) = specDisplay.Value;
+                        if (string.IsNullOrWhiteSpace(symbol))
+                        {
+                            return d.ToString("G", CultureInfo.InvariantCulture);
+                        }
+                        double displayed = d * factor;
+                        return $"{displayed:G6} {symbol}";
+                    }
                 }
 
-                // Fallback: heuristic based on parameter or BIP name
+                // Fallback: heuristic based on parameter or BIP name tokens
                 string? name = Definition?.Name;
                 string? bip = Definition?.BuiltInParameter;
 
                 // Dimensionless coefficients, scales, ratios, and factors must not be inferred as dimensional lengths/areas/volumes
-                if (IsScalarOrCoefficient(name) || IsScalarOrCoefficient(bip))
+                if (HasWordToken(name, bip, ScalarKeywords))
                 {
                     return d.ToString("G", CultureInfo.InvariantCulture);
                 }
 
-                bool Matches(string token) =>
-                    (name != null && name.Contains(token, StringComparison.OrdinalIgnoreCase))
-                    || (bip != null && bip.Contains(token, StringComparison.OrdinalIgnoreCase));
-
-                if (Matches("WIDTH") || Matches("HEIGHT") || Matches("LENGTH") || Matches("OFFSET")
-                    || Matches("THICKNESS") || Matches("DEPTH"))
+                if (HasWordToken(name, bip, LengthKeywords))
                 {
                     return $"{d * 304.8:F1} mm";
                 }
-                if (Matches("AREA"))
+                if (HasWordToken(name, bip, AreaKeywords))
                     return $"{d * 0.09290304:F3} m²";
-                if (Matches("VOLUME"))
+                if (HasWordToken(name, bip, VolumeKeywords))
                     return $"{d * 0.0283168466:F4} m³";
-                if (Matches("ANGLE"))
+                if (HasWordToken(name, bip, AngleKeywords))
                     return $"{d * 180 / Math.PI:F2}°";
                 return d.ToString("G", CultureInfo.InvariantCulture);
             }
             return Value.ToString();
         }
 
-        private static bool IsScalarSpec(string specType) =>
-            specType.Contains("number", StringComparison.OrdinalIgnoreCase)
-            || specType.Contains("integer", StringComparison.OrdinalIgnoreCase)
-            || specType.Contains("factor", StringComparison.OrdinalIgnoreCase)
-            || specType.Contains("ratio", StringComparison.OrdinalIgnoreCase)
-            || specType.Contains("unitless", StringComparison.OrdinalIgnoreCase)
-            || specType.Contains("fraction", StringComparison.OrdinalIgnoreCase);
-
-        private static bool IsScalarOrCoefficient(string? token)
+        private static (string? symbol, double factor)? ResolveSpecDisplay(string specType)
         {
-            if (string.IsNullOrEmpty(token)) return false;
-            return token.Contains("SCALE", StringComparison.OrdinalIgnoreCase)
-                || token.Contains("FACTOR", StringComparison.OrdinalIgnoreCase)
-                || token.Contains("RATIO", StringComparison.OrdinalIgnoreCase)
-                || token.Contains("COEFFICIENT", StringComparison.OrdinalIgnoreCase)
-                || token.Contains("PERCENT", StringComparison.OrdinalIgnoreCase)
-                || token.Contains("MULTIPLIER", StringComparison.OrdinalIgnoreCase);
+            string? cat = GetSpecCategory(specType);
+            if (cat == null) return null;
+
+            if (cat.Equals("length", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("barDiameter", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("cableTraySize", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("conduitSize", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("crackWidth", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("ductInsulationThickness", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("ductLiningThickness", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("ductSize", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("pipeInsulationThickness", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("pipeSize", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("pipeDimension", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("reinforcementCover", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("reinforcementLength", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("reinforcementSpacing", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("wireDiameter", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("displacement", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("sectionDimension", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("decimalSheetLength", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("sheetLength", StringComparison.OrdinalIgnoreCase)
+                || cat.Contains("length", StringComparison.OrdinalIgnoreCase))
+            {
+                return ("mm", 304.8);
+            }
+
+            if (cat.Equals("area", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("crossSection", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("surfaceAreaPerUnitLength", StringComparison.OrdinalIgnoreCase)
+                || cat.Contains("area", StringComparison.OrdinalIgnoreCase))
+            {
+                return ("m\u00B2", 0.09290304);
+            }
+
+            if (cat.Equals("volume", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("reinforcementVolume", StringComparison.OrdinalIgnoreCase)
+                || cat.Contains("volume", StringComparison.OrdinalIgnoreCase))
+            {
+                return ("m\u00B3", 0.0283168466);
+            }
+
+            if (cat.Equals("angle", StringComparison.OrdinalIgnoreCase)
+                || cat.Contains("angle", StringComparison.OrdinalIgnoreCase))
+            {
+                return ("\u00B0", 180.0 / Math.PI);
+            }
+
+            if (cat.Equals("number", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("integer", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("factor", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("ratio", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("unitless", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("fraction", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("slope", StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("demandFactor", StringComparison.OrdinalIgnoreCase))
+            {
+                return (null, 1.0);
+            }
+
+            return null;
+        }
+
+        private static string? GetSpecCategory(string specType)
+        {
+            if (string.IsNullOrWhiteSpace(specType)) return null;
+            int colon = specType.LastIndexOf(':');
+            string afterColon = colon >= 0 ? specType[(colon + 1)..] : specType;
+            int dash = afterColon.IndexOf('-');
+            return dash > 0 ? afterColon[..dash] : afterColon;
+        }
+
+        private static readonly System.Text.RegularExpressions.Regex WordTokenRegex =
+            new(@"[A-Z]+(?![a-z])|[A-Z][a-z]+|[a-z]+|\d+", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        private static readonly HashSet<string> ScalarKeywords = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "SCALE", "SCALES",
+            "FACTOR", "FACTORS",
+            "RATIO", "RATIOS",
+            "COEFFICIENT", "COEFFICIENTS",
+            "PERCENT", "PERCENTAGE", "PERCENTAGES",
+            "MULTIPLIER", "MULTIPLIERS"
+        };
+
+        private static readonly HashSet<string> LengthKeywords = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "WIDTH", "HEIGHT", "LENGTH", "OFFSET", "THICKNESS", "DEPTH",
+            "RADIUS", "DIAMETER", "DISTANCE", "PERIMETER", "SPAN", "ELEVATION"
+        };
+
+        private static readonly HashSet<string> AreaKeywords = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "AREA", "AREAS"
+        };
+
+        private static readonly HashSet<string> VolumeKeywords = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "VOLUME", "VOLUMES"
+        };
+
+        private static readonly HashSet<string> AngleKeywords = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "ANGLE", "ANGLES", "ROTATION", "SLOPE"
+        };
+
+        private static bool HasWordToken(string? text1, string? text2, HashSet<string> keywords)
+        {
+            if (!string.IsNullOrEmpty(text1))
+            {
+                foreach (System.Text.RegularExpressions.Match m in WordTokenRegex.Matches(text1))
+                {
+                    if (keywords.Contains(m.Value)) return true;
+                }
+            }
+            if (!string.IsNullOrEmpty(text2))
+            {
+                foreach (System.Text.RegularExpressions.Match m in WordTokenRegex.Matches(text2))
+                {
+                    if (keywords.Contains(m.Value)) return true;
+                }
+            }
+            return false;
         }
     }
 }
