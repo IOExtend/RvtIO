@@ -18,6 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Fixtures\issue6-unfilled-opening.json" />
     <ProjectReference Include="..\..\src\RvtIO\RvtIO.csproj" />
     <!-- The command line tool, run through its entry point by CliExitCodeTests. -->
     <ProjectReference Include="..\..\src\RvtIO.Cli\RvtIO.Cli.csproj" />
