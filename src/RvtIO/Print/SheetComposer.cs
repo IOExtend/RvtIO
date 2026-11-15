@@ -149,6 +149,9 @@ public static class SheetComposer
             }
         }
 
+        // The drawings already put on the page: two sections the file places on top of each other are separated.
+        var placedRects = new List<(double X, double Y, double Width, double Height)>();
+
         foreach (var element in document.Elements)
         {
             if (element.OwnerViewId != sheet.Id) continue;
@@ -276,7 +279,9 @@ public static class SheetComposer
                 }
             }
             else if (placed && ElevationPrinter.Views(document).Any(view => view.ViewId == viewId)
-                && ElevationPrinter.DirectionOf(name) is string direction)
+                && (ElevationPrinter.DirectionOf(name) ?? (view?.NativeRecordClass == 1016
+                    || view?.RootClassName is "DBViewSection" or "DBViewElevation" ? "section" : null))
+                    is string direction)
             {
                 // An elevation or a section: the model faces projected on the view's plane when the reader decoded it
                 // (a section is then cut at its plane), otherwise on the plane of the direction taken from the name.
@@ -338,11 +343,36 @@ public static class SheetComposer
                         frameY = page.HeightMillimetres - 5 - frameHeight;
                         centerY = frameY + frameHeight / 2;
                     }
+                    // A drawing the file places on top of one already on the page goes to the next place of the top row.
+                    for (int guard = 0; guard < 6; guard++)
+                    {
+                        bool overlaps = false;
+                        foreach (var other in placedRects)
+                        {
+                            double overlapWidth = Math.Min(frameX + frameWidth, other.X + other.Width)
+                                - Math.Max(frameX, other.X);
+                            double overlapHeight = Math.Min(frameY + frameHeight, other.Y + other.Height)
+                                - Math.Max(frameY, other.Y);
+                            if (overlapWidth <= 0 || overlapHeight <= 0) continue;
+                            double overlap = overlapWidth * overlapHeight;
+                            double smaller = Math.Min(frameWidth * frameHeight, other.Width * other.Height);
+                            if (overlap > smaller * 0.05) overlaps = true;
+                        }
+                        if (!overlaps) break;
+                        relocated++;
+                        // The free place of the top row, from the right of the drawing area.
+                        centerX = stripLeft - 15 - frameWidth / 2;
+                        centerY = page.HeightMillimetres - 40 - frameHeight / 2;
+                        if (centerX - frameWidth / 2 < 15) break;
+                        frameX = centerX - frameWidth / 2;
+                        frameY = centerY - frameHeight / 2;
+                    }
                     double m = options.ViewMarginMillimetres;
                     page2.BeginClip(frameX - m, frameY - m, frameWidth + 2 * m, frameHeight + 2 * m);
                     ElevationPrinter.DrawContent(page2, elevation, drawScale, frameX, frameY,
                         direction == "section" ? 0.82 : 1);
                     page2.EndClip();
+                    placedRects.Add((frameX, frameY, frameWidth, frameHeight));
                 }
             }
             // A viewport whose view prints nothing (a wall section at 1:20, a schedule) is not titled either.

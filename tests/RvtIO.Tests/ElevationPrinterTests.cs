@@ -63,7 +63,7 @@ public class ElevationPrinterTests
     {
         var document = Document(
             ElevationView(400, "South", 100), ElevationView(401, "Longitudinal Section", 100),
-            ElevationView(402, "Level 1", 100));
+            new Element { Id = 402, CategoryId = (int)BuiltInCategory.OST_Views });
 
         var views = ElevationPrinter.Views(document);
 

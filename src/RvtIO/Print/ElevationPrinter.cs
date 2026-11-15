@@ -34,7 +34,10 @@ public static class ElevationPrinter
                 continue;
             if (element.LookupParameter(BuiltInParameter.VIEW_NAME)?.Value is not string name || name.Length == 0)
                 continue;
-            string? direction = DirectionOf(name);
+            // A view of the section class is a section even when its name carries no compass word (a stair detail).
+            bool sectionClass = element.RootClassName is "DBViewSection" or "DBViewElevation"
+                || element.NativeRecordClass == 1016;
+            string? direction = DirectionOf(name) ?? (sectionClass ? "section" : null);
             if (direction == null) continue;
             int? storedScale = element.LookupParameter(BuiltInParameter.VIEW_SCALE)?.Value as int?;
             int scale = storedScale is int value && value > 0 ? value : direction == "section" ? 0 : 100;

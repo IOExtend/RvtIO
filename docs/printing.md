@@ -103,7 +103,9 @@ A detail section (1:10 to 1:50) is printed when its plane is decoded: the cut is
 3.0 x 2.2 metres around the point of the plane, the area a wall or roof detail covers, and only when the viewport sits on
 the drawable part of the page (the file places some detail viewports outside it). A view the file places off the page
 (a stair section whose stored centre is x = 0) is moved into the free space of the sheet, a drawing larger than its
-place (a stair detail at 1:20) is drawn at a scale that fits, and every drawing is kept inside the page. The plane of a view is looked for in
+place (a stair detail at 1:20) is drawn at a scale that fits, and every drawing is kept inside the page. Two drawings the file places on top of each other are separated: the later
+one moves to the free place of the top row. A view of the section class whose name carries no compass word (a "Main
+Stair Detail") is printed as a section too. The plane of a view is looked for in
 every chunk of the file, and the block layout (class 0x3F8) takes precedence over the older signature, so the details are
 found as well as the building sections. A viewport whose view is not printed (a wall section at 1:20, a schedule) is
 neither drawn nor titled, so a sheet shows only the views the printer can stand behind. A stair section (a view whose name holds "stair", 1:20 to 1:50)
