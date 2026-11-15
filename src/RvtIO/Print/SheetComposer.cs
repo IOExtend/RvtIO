@@ -289,8 +289,10 @@ public static class SheetComposer
                 // A detail section (1:10 to 1:50) shows the cut near the point of its plane: a window about three by
                 // two metres around it, the size a wall or roof detail covers. The detail is printed only when its
                 // viewport sits on the drawable part of the page: the file places some of them outside it.
-                // A stair section is printed whole like a building section, not as a windowed detail.
+                // A stair section is printed whole like a building section, not as a windowed detail; a stair detail
+                // (1:20) shows the stair in its enclosure, so it is not limited to the stairs alone.
                 bool stairSection = name.Contains("stair", StringComparison.OrdinalIgnoreCase);
+                bool stairsOnly = stairSection && scale >= 50;
                 bool detailSection = direction == "section" && scale < 100 && !stairSection
                     && viewElement?.ViewDirection is { Length: 3 };
                 double stripLeft = page.WidthMillimetres - 5
@@ -300,7 +302,7 @@ public static class SheetComposer
                     && centerY > 10 && centerY < page.HeightMillimetres - 15);
 
                 var elevation = detailOnPage
-                    ? ElevationPrinter.Collect(document, direction, stairSection, viewElement, detailWindow)
+                    ? ElevationPrinter.Collect(document, direction, stairsOnly, viewElement, detailWindow)
                     : null;
                 if (elevation != null)
                 {
@@ -313,6 +315,12 @@ public static class SheetComposer
                     // space of the sheet.
                     double drawableWidth = Math.Max(60, stripLeft - 20);
                     double drawableHeight = Math.Max(60, page.HeightMillimetres - 30);
+                    // A stair detail (1:20) takes the right part of the sheet, not the whole drawing area.
+                    if (stairSection && scale < 50)
+                    {
+                        drawableWidth = Math.Min(drawableWidth, stripLeft * 0.55);
+                        drawableHeight = Math.Min(drawableHeight, page.HeightMillimetres * 0.6);
+                    }
                     if (frameWidth > drawableWidth || frameHeight > drawableHeight)
                     {
                         double factor = Math.Max(frameWidth / drawableWidth, frameHeight / drawableHeight);
