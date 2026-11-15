@@ -56,6 +56,7 @@ public static class PlanPrinter
         List<(int HostId, double From, double To)> WindowGaps,
         List<List<(double X, double Y)>> FloorLoops,
         List<List<(double X, double Y)>> OpeningLoops,
+        List<(List<(double X, double Y)> Polygon, string Name, double AreaSquareFeet)> Rooms,
         double MinX, double MinY, double MaxX, double MaxY);
 
     /// <summary>The levels a plan can be printed for: those that own at least one wall or column with a location line,
@@ -298,6 +299,33 @@ public static class PlanPrinter
                 if (points.Count >= 3) floorLoops.Add(points);
             }
         }
+        // Rooms: the floor face of a room's boundary is its footprint; it is filled light and labelled with its name
+        // and area (m²), as a plan prints its rooms.
+        var rooms = new List<(List<(double X, double Y)> Polygon, string Name, double AreaSquareFeet)>();
+        foreach (var element in document.Elements)
+        {
+            if (element.CategoryId != (int)BuiltInCategory.OST_Rooms) continue;
+            if (element.LookupParameter(BuiltInParameter.ROOM_LEVEL_ID)?.Value is not int roomLevel
+                || roomLevel != levelId) continue;
+            if (element.SerializedSpaceBoundary is not { Faces.Count: > 0 } boundary) continue;
+            List<(double X, double Y)>? polygon = null;
+            double bestArea = 0;
+            foreach (var face in boundary.Faces)
+            {
+                if (face.OuterVertices is not { Count: >= 3 } vertices) continue;
+                if (Math.Abs(face.Normal[2]) < 0.9) continue;
+                var candidate = vertices.Select(vertex => (vertex[0] * FeetToMillimetres,
+                    vertex[1] * FeetToMillimetres)).ToList();
+                double area = Math.Abs(SignedArea(candidate));
+                if (area <= bestArea) continue;
+                bestArea = area;
+                polygon = candidate;
+            }
+            if (polygon == null) continue;
+            double areaFeet = element.LookupParameter(BuiltInParameter.ROOM_AREA)?.Value is double value ? value : 0;
+            rooms.Add((polygon, element.Name ?? "", areaFeet));
+        }
+
         var openingLoops = new List<List<(double X, double Y)>>();
         foreach (var insert in document.Elements)
         {
@@ -328,7 +356,8 @@ public static class PlanPrinter
                 grids.Add((gx1, gy1, gx2, gy2, element.Name ?? ""));
         }
 
-        return new PlanContent(walls, columns, grids, gaps, windowGaps, floorLoops, openingLoops, minX, minY, maxX, maxY);
+        return new PlanContent(walls, columns, grids, gaps, windowGaps, floorLoops, openingLoops, rooms, minX, minY,
+            maxX, maxY);
     }
 
     /// <summary>Draws collected plan content on a page: the model point (content.MinX, content.MinY) goes to
@@ -340,6 +369,9 @@ public static class PlanPrinter
 
         foreach (var floor in content.FloorLoops)
             page.DrawPolyline(floor.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0, true, 0.9);
+
+        foreach (var room in content.Rooms)
+            page.DrawPolyline(room.Polygon.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0, true, 0.94);
 
         foreach (var grid in content.Grids)
         {
@@ -380,6 +412,23 @@ public static class PlanPrinter
             double ux = dx / length, uy = dy / length;
             page.DrawLine(ToX(wall.X1 + ux * from), ToY(wall.Y1 + uy * from),
                 ToX(wall.X1 + ux * to), ToY(wall.Y1 + uy * to), 0.15, 0.35);
+        }
+
+        // The room names and areas, at the centre of the footprint, in plan millimetres.
+        if (page.Owner.Font != null)
+        {
+            foreach (var room in content.Rooms)
+            {
+                if (room.Name.Length == 0) continue;
+                double cx = 0, cy = 0;
+                foreach (var point in room.Polygon) { cx += point.X; cy += point.Y; }
+                cx /= room.Polygon.Count;
+                cy /= room.Polygon.Count;
+                page.DrawText(room.Name, ToX(cx), ToY(cy) + 1, 2.4, PdfTextAlignment.Center);
+                if (room.AreaSquareFeet > 0)
+                    page.DrawText($"{room.AreaSquareFeet * 0.092903:0} m²", ToX(cx), ToY(cy) - 2.2, 1.8,
+                        PdfTextAlignment.Center, 0.45);
+            }
         }
 
         foreach (var opening in content.OpeningLoops)
@@ -444,6 +493,19 @@ public static class PlanPrinter
         }
         page.DrawPolyline(points, 0.18, true, 1);
         page.DrawText(name, x, y - 1.4, 3, PdfTextAlignment.Center);
+    }
+
+    /// <summary>The signed area of a polygon (shoelace); its magnitude is the area and its sign the winding.</summary>
+    private static double SignedArea(List<(double X, double Y)> points)
+    {
+        double sum = 0;
+        for (int i = 0; i < points.Count; i++)
+        {
+            var (x1, y1) = points[i];
+            var (x2, y2) = points[(i + 1) % points.Count];
+            sum += x1 * y2 - x2 * y1;
+        }
+        return sum / 2;
     }
 
     /// <summary>The stretches of a wall that are not an opening: [0, length] minus the gaps, in order.</summary>

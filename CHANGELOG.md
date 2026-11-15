@@ -16,6 +16,8 @@ Elevations print as pages too: `rvtio print --view South` and `RvtIO.Print.Eleva
 
 Elevations print: `RvtIO.Print.ElevationPrinter` projects every planar face of the model on the vertical plane of a compass view (North, South, East, West, taken from the view name until the view plane is decoded), paints it white from far to near and outlines the faces that look at the viewer; plants, topography and site surfaces are left out. `SheetComposer` draws such a viewport on its sheet. Measured on the Revit sample project: the South elevation prints on A103, the two-storey facade with balcony rail, columns and roof; a section is not printed yet.
 
+Plans draw the rooms too: the floor face of a room's decoded boundary is filled light and labelled with the room name and its area in m², centred on the footprint. Measured on the Revit sample project: thirteen rooms carry a boundary, and A102 shows Mech, Bath, Hall, Laundry and Living on Level 1 and Master Bedroom, Bedroom, Master Bath and Entry Hall on Level 2.
+
 Plans draw a grid bubble (a white circle with the grid name, "1" to "7" and "A" to "G" on the Revit sample project) at both ends of every grid line. Text now sets the non-stroking colour: after a white-filled bubble or floor the fill stayed white and the text disappeared.
 
 Plans draw the frames of the doors and windows whose cut loop is decoded and the sketch loops of the floors of the level, light under the walls. Measured on the Revit sample project: 25 opening frames and 6 floor loops are drawn; the plan is still sparse because only 60 of the 121 walls have a decoded location line and the rooms have no boundary to fill.

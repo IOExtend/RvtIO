@@ -11,6 +11,48 @@ namespace RvtIO.Tests;
 /// paper chosen for the drawing, and the errors of a level with nothing to draw.</summary>
 public class PlanPrinterTests
 {
+    [Fact]
+    public void CollectLevel_ReadsTheRoomFootprints()
+    {
+        var room = new Element { Id = 700, Name = "Living", CategoryId = (int)BuiltInCategory.OST_Rooms };
+        Add(room, BuiltInParameter.ROOM_LEVEL_ID, StorageType.ElementId, 500);
+        Add(room, BuiltInParameter.ROOM_AREA, StorageType.Double, 200.0);
+        room.SerializedSpaceBoundary = new GeometryData
+        {
+            Faces =
+            [
+                new GeoFace
+                {
+                    Normal = [0, 0, 1],
+                    OuterVertices = [[0, 0, 0], [5, 0, 0], [5, 4, 0], [0, 4, 0]],
+                },
+            ],
+        };
+        var document = RvtDocument.FromInfo(new RevitFileInfo
+        {
+            Elements = { Level(500, "Level 1", 0), Wall(600, 500, 0, 0, 10, 0), room },
+        });
+
+        var content = PlanPrinter.CollectLevel(document, 500);
+
+        Assert.NotNull(content);
+        var footprint = Assert.Single(content!.Rooms);
+        Assert.Equal("Living", footprint.Name);
+        Assert.Equal(5 * 304.8 * 4 * 304.8, Math.Abs(Area(footprint.Polygon)), 3);
+    }
+
+    private static double Area(List<(double X, double Y)> points)
+    {
+        double sum = 0;
+        for (int i = 0; i < points.Count; i++)
+        {
+            var (x1, y1) = points[i];
+            var (x2, y2) = points[(i + 1) % points.Count];
+            sum += x1 * y2 - x2 * y1;
+        }
+        return sum / 2;
+    }
+
     private static void Add(Element element, BuiltInParameter id, StorageType storage, object value) =>
         element.Parameters.Add(BipHelpers.MakeBipParam((int)id, id.ToString(), storage, value));
 
