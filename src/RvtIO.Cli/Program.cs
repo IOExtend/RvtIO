@@ -159,21 +159,35 @@ internal static partial class Program
         string rvtPath = args[0];
         string? positionalOutput = args.Length >= 2 && !args[1].StartsWith("--") ? args[1] : null;
 
-        string? ifcPath = ValueOf(args, "--ifc");
-        string? scenePath = ValueOf(args, "--scene");
-        string? fullJsonPath = ValueOf(args, "--full-json");
-        string? explicitJsonPath = ValueOf(args, "--json");
+        string? ifcPath = null;
+        string? scenePath = null;
+        string? fullJsonPath = null;
+        string? explicitJsonPath = null;
         string? compactJsonPath = null;
         bool hasCompactJsonOption = false;
 
-        for (int i = 0; i < args.Length; i++)
+        for (int i = 1; i < args.Length; i++)
         {
-            if (args[i] == "--compact-json")
+            string arg = args[i];
+            if (arg is "--ifc" or "--scene" or "--full-json" or "--json")
+            {
+                if (i + 1 >= args.Length || args[i + 1].StartsWith("--", StringComparison.Ordinal))
+                {
+                    Console.Error.WriteLine($"{arg} requires a path.");
+                    return 1;
+                }
+                string path = args[++i];
+                if (arg == "--ifc") ifcPath = path;
+                else if (arg == "--scene") scenePath = path;
+                else if (arg == "--full-json") fullJsonPath = path;
+                else if (arg == "--json") explicitJsonPath = path;
+            }
+            else if (arg == "--compact-json")
             {
                 hasCompactJsonOption = true;
                 if (i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal))
                 {
-                    compactJsonPath = args[i + 1];
+                    compactJsonPath = args[++i];
                 }
             }
         }
@@ -202,6 +216,13 @@ internal static partial class Program
                 if (jsonFull) fullJsonPath ??= positionalOutput;
                 else compactJsonPath ??= positionalOutput;
             }
+        }
+
+        if (hasCompactJsonOption && compactJsonPath == null)
+        {
+            compactJsonPath = (positionalOutput != null && !positionalOutput.EndsWith(".ifc", StringComparison.OrdinalIgnoreCase))
+                ? positionalOutput
+                : "output.json";
         }
 
         bool anyExplicitOutput = ifcPath != null || scenePath != null || compactJsonPath != null || fullJsonPath != null;
@@ -379,8 +400,18 @@ internal static partial class Program
                     i += 1;
                 continue;
             }
-            if (OneValueOptions.Contains(arg)) { i += 1; continue; }
-            if (TwoValueOptions.Contains(arg)) { i += 2; continue; }
+            if (OneValueOptions.Contains(arg))
+            {
+                if (i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal))
+                    i += 1;
+                continue;
+            }
+            if (TwoValueOptions.Contains(arg))
+            {
+                if (i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal)) i += 1;
+                if (i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal)) i += 1;
+                continue;
+            }
             if (arg.StartsWith("--", StringComparison.Ordinal) && !SwitchOptions.Contains(arg)) return arg;
         }
         return null;

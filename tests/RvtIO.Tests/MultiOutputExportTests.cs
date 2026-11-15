@@ -99,6 +99,156 @@ public class MultiOutputExportTests
     }
 
     [Fact]
+    public void MultiOutput_InputCollision_ExitsWithCode1()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "rvtio-multi-incoll-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string rvt = Path.Combine(directory, "model.rvt");
+            string safeIfc = Path.Combine(directory, "safe.ifc");
+            CliExitCodeTests.WriteSyntheticRvt(rvt);
+            byte[] initialRvtBytes = File.ReadAllBytes(rvt);
+
+            var (exit, err, _) = Run(rvt, "--ifc", safeIfc, "--full-json", rvt);
+            Assert.Equal(1, exit);
+            Assert.Contains("must not name the input file", err);
+            Assert.False(File.Exists(safeIfc));
+            Assert.Equal(initialRvtBytes, File.ReadAllBytes(rvt));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void MultiOutput_MutualDestinationCollision_ExitsWithCode1()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "rvtio-multi-destcoll-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string rvt = Path.Combine(directory, "model.rvt");
+            string sameJson = Path.Combine(directory, "same.json");
+            CliExitCodeTests.WriteSyntheticRvt(rvt);
+
+            var (exit, err, _) = Run(rvt, "--compact-json", sameJson, "--full-json", sameJson);
+            Assert.Equal(1, exit);
+            Assert.Contains("must not name the same file", err);
+            Assert.False(File.Exists(sameJson));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("--ifc")]
+    [InlineData("--scene")]
+    [InlineData("--full-json")]
+    [InlineData("--json")]
+    public void MultiOutput_MissingPathOption_ExitsWithCode1(string option)
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "rvtio-multi-opt-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string rvt = Path.Combine(directory, "model.rvt");
+            CliExitCodeTests.WriteSyntheticRvt(rvt);
+
+            // Trailing option without value
+            var (exit1, err1, _) = Run(rvt, option);
+            Assert.Equal(1, exit1);
+            Assert.Contains($"{option} requires a path", err1);
+
+            // Followed by another option instead of a valid file path
+            var (exit2, err2, _) = Run(rvt, option, "--scene", "scene.json");
+            Assert.Equal(1, exit2);
+            Assert.Contains($"{option} requires a path", err2);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task MultiOutput_IfcWithBareCompactJson_ExportsBothFiles()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "rvtio-multi-barejson-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string rvt = Path.Combine(directory, "model.rvt");
+            string ifc = Path.Combine(directory, "result.ifc");
+            string defaultOutputJson = Path.Combine(directory, "output.json");
+            CliExitCodeTests.WriteSyntheticRvt(rvt);
+
+            // Run in working directory where output.json would land
+            var start = new ProcessStartInfo(CliExitCodeTests.DotnetExecutable)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                WorkingDirectory = directory
+            };
+            start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "RvtIO.Cli.dll"));
+            start.ArgumentList.Add("model.rvt");
+            start.ArgumentList.Add("--ifc");
+            start.ArgumentList.Add(ifc);
+            start.ArgumentList.Add("--compact-json");
+            start.ArgumentList.Add("--ifc-timestamp");
+            start.ArgumentList.Add("2026-01-01T00:00:00Z");
+
+            using var process = Process.Start(start)!;
+            var output = process.StandardOutput.ReadToEndAsync();
+            var error = process.StandardError.ReadToEndAsync();
+            Assert.True(process.WaitForExit(120_000));
+            await Task.WhenAll(output, error);
+
+            Assert.Equal(0, process.ExitCode);
+            Assert.True(File.Exists(ifc), "IFC was not created.");
+            Assert.True(File.Exists(defaultOutputJson), "Default output.json was not created.");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void MultiOutput_SceneIsolatedFromElementMutations_ByteIdentical()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "rvtio-multi-sceneiso-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string rvt = Path.Combine(directory, "model.rvt");
+            string singleScene = Path.Combine(directory, "single.scene.json");
+            string multiScene = Path.Combine(directory, "multi.scene.json");
+            string compact = Path.Combine(directory, "compact.json");
+            string full = Path.Combine(directory, "full.json");
+            CliExitCodeTests.WriteSyntheticRvt(rvt);
+
+            var (exit1, _, _) = Run(rvt, "--scene", singleScene);
+            Assert.Equal(0, exit1);
+
+            var (exit2, _, _) = Run(rvt, "--scene", multiScene, "--compact-json", compact, "--full-json", full);
+            Assert.Equal(0, exit2);
+
+            byte[] singleBytes = File.ReadAllBytes(singleScene);
+            byte[] multiBytes = File.ReadAllBytes(multiScene);
+            Assert.Equal(singleBytes, multiBytes);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void MultiOutput_ReportCollision_ExitsWithCode1()
     {
         string directory = Path.Combine(Path.GetTempPath(), "rvtio-multi-report-" + Guid.NewGuid().ToString("N"));
@@ -133,6 +283,33 @@ public class MultiOutputExportTests
             var (exit, err, _) = Run(rvt, "--scene", scene, "--ifc-phase", "last");
             Assert.Equal(1, exit);
             Assert.Contains("--ifc-phase requires IFC output", err);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void MultiOutput_CompactSolidQuantitiesFrom_MatchesRead()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "rvtio-multi-quantities-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string rvt = Path.Combine(directory, "model.rvt");
+            CliExitCodeTests.WriteSyntheticRvt(rvt);
+
+            var options = new RvtReaderOptions { R22Layout = true };
+            var reader = new RvtFileReader(options);
+            var info = reader.Read(rvt);
+            var state = reader.LastParsingState!;
+
+            var fromQuantities = RvtIO.Compact.CompactSolidQuantities.From(info, state, null);
+            var readQuantities = RvtIO.Compact.CompactSolidQuantities.Read(rvt, options, null);
+
+            Assert.Equal(readQuantities.AllCurveLengths.OrderBy(kv => kv.Key), fromQuantities.AllCurveLengths.OrderBy(kv => kv.Key));
+            Assert.Equal(readQuantities.AllSolids.OrderBy(kv => kv.Key), fromQuantities.AllSolids.OrderBy(kv => kv.Key));
         }
         finally
         {
