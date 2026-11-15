@@ -93,7 +93,8 @@ holds many level elements at the same height, and the drawing reserves a label m
 The plane of the view itself is not decoded yet, so the direction is taken from the view name (North, South, East,
 West). A view named "Section" is projected along the short axis of the building, the way a longitudinal section looks; it
 is a projection, not a true cut through the model: its faces are filled grey, so the cut mass reads as a section
-rather than as the white of an elevation. A stair section (a view whose name holds "stair", 1:20 to 1:50)
+rather than as the white of an elevation. A viewport whose view is not printed (a wall section at 1:20, a schedule) is
+neither drawn nor titled, so a sheet shows only the views the printer can stand behind. A stair section (a view whose name holds "stair", 1:20 to 1:50)
 projects only the stairs, their railings and supports, so the page shows the stair rather than the whole building. Measured on the Revit sample project: the South view prints
 the two-storey facade with its balcony rail, columns and roof on sheet A103.
 

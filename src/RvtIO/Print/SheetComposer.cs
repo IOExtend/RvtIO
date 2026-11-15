@@ -274,7 +274,8 @@ public static class SheetComposer
                         DrawPlantingSchedule(page2, document, Math.Max(frameX, 8), frameY - 18);
                 }
             }
-            else if (placed && ElevationPrinter.DirectionOf(name) is string direction)
+            else if (placed && ElevationPrinter.Views(document).Any(view => view.ViewId == viewId)
+                && ElevationPrinter.DirectionOf(name) is string direction)
             {
                 // An elevation: the model faces projected on the vertical plane of the direction. The view plane itself
                 // is not decoded, so the direction comes from the view name.
@@ -293,7 +294,8 @@ public static class SheetComposer
                     page2.EndClip();
                 }
             }
-            if (options.DrawViewLabels && pdf.Font != null)
+            // A viewport whose view prints nothing (a wall section at 1:20, a schedule) is not titled either.
+            if (options.DrawViewLabels && pdf.Font != null && (!placed || frameHeight > 0))
             {
                 // The view title as Revit draws it: a circled detail number, the view name beside it, the scale below and
                 // a rule over the title.

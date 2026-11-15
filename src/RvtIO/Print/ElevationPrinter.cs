@@ -36,10 +36,13 @@ public static class ElevationPrinter
                 continue;
             string? direction = DirectionOf(name);
             if (direction == null) continue;
-            int scale = element.LookupParameter(BuiltInParameter.VIEW_SCALE)?.Value is int value && value > 0 ? value : 100;
+            int? storedScale = element.LookupParameter(BuiltInParameter.VIEW_SCALE)?.Value as int?;
+            int scale = storedScale is int value && value > 0 ? value : direction == "section" ? 0 : 100;
             // A detail section (1:10 to 1:50) is drawn from the same whole-model projection, which is not the detail:
-            // only a building section (1:100 or wider) is printed.
-            if (direction == "section" && scale < 100 && !name.Contains("stair", StringComparison.OrdinalIgnoreCase))
+            // only a building section (1:100 or wider, with its scale decoded) is printed, and a stair section, which
+            // projects its stairs alone.
+            bool section = direction == "section";
+            if (section && (scale == 0 || scale < 100) && !name.Contains("stair", StringComparison.OrdinalIgnoreCase))
                 continue;
             views.Add(new ElevationView(element.Id, name, direction, scale));
         }
