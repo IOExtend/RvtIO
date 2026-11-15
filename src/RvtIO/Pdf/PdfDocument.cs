@@ -29,6 +29,18 @@ public readonly record struct PdfPageSize(double WidthMillimetres, double Height
     public (double Width, double Height) InPoints => (WidthMillimetres * 72.0 / 25.4, HeightMillimetres * 72.0 / 25.4);
 }
 
+/// <summary>An ink colour, each component from 0 (none) to 1 (full).</summary>
+/// <param name="R">Red.</param>
+/// <param name="G">Green.</param>
+/// <param name="B">Blue.</param>
+public readonly record struct PdfColor(double R, double G, double B)
+{
+    /// <summary>A light tint of the colour, mixed with white: the fill of a room plan.</summary>
+    /// <param name="amount">How much white to mix in, 0 (the colour) to 1 (white).</param>
+    public PdfColor Lighten(double amount) => new(R + (1 - R) * amount, G + (1 - G) * amount,
+        B + (1 - B) * amount);
+}
+
 /// <summary>Horizontal placement of a text anchor.</summary>
 public enum PdfTextAlignment
 {
@@ -173,21 +185,31 @@ public sealed class PdfPage
     /// <param name="closed">True to close the path.</param>
     /// <param name="fillGray">A fill from 0 (black) to 1 (white); null leaves the path unfilled.</param>
     public void DrawPolyline(IReadOnlyList<(double X, double Y)> points, double widthMillimetres = 0.25,
-        bool closed = false, double? fillGray = null)
+        bool closed = false, double? fillGray = null) =>
+        DrawPolyline(points, widthMillimetres, closed,
+            fillGray is double fill ? new PdfColor(fill, fill, fill) : null);
+
+    /// <summary>Draws a polyline through the points, optionally closed, either stroked or filled with a colour.</summary>
+    /// <param name="points">The points, x and y in millimetres.</param>
+    /// <param name="widthMillimetres">Line width in millimetres; 0 when the outline is not drawn.</param>
+    /// <param name="closed">True to close the path.</param>
+    /// <param name="fillColor">The fill colour; null leaves the path unfilled.</param>
+    public void DrawPolyline(IReadOnlyList<(double X, double Y)> points, double widthMillimetres, bool closed,
+        PdfColor? fillColor)
     {
         ArgumentNullException.ThrowIfNull(points);
         if (points.Count < 2) return;
         bool stroke = widthMillimetres > 0;
-        if (!stroke && fillGray == null) return;
+        if (!stroke && fillColor == null) return;
         if (stroke) Stroke(widthMillimetres, 0);
-        if (fillGray is double fill) Fill(fill);
+        if (fillColor is PdfColor fill) FillColor(fill);
         for (int i = 0; i < points.Count; i++)
         {
             _content.Append(Number(Points(points[i].X))).Append(' ').Append(Number(Points(points[i].Y)))
                     .Append(i == 0 ? " m " : " l ");
         }
         if (closed) _content.Append("h ");
-        _content.Append(stroke && fillGray != null ? "B\n" : stroke ? "S\n" : "f\n");
+        _content.Append(stroke && fillColor != null ? "B\n" : stroke ? "S\n" : "f\n");
     }
 
     /// <summary>Starts a clipping region: everything drawn until <see cref="EndClip"/> is cut to the rectangle.</summary>
@@ -305,6 +327,11 @@ public sealed class PdfPage
 
     private void Fill(double gray) =>
         _content.Append(Number(Math.Clamp(gray, 0, 1))).Append(" g\n");
+
+    private void FillColor(PdfColor color) =>
+        _content.Append(Number(Math.Clamp(color.R, 0, 1))).Append(' ')
+            .Append(Number(Math.Clamp(color.G, 0, 1))).Append(' ')
+            .Append(Number(Math.Clamp(color.B, 0, 1))).Append(" rg\n");
 
     private static string Number(double value) =>
         Math.Round(value, 4).ToString("0.####", CultureInfo.InvariantCulture);

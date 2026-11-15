@@ -371,7 +371,8 @@ public static class PlanPrinter
             page.DrawPolyline(floor.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0, true, 0.9);
 
         foreach (var room in content.Rooms)
-            page.DrawPolyline(room.Polygon.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0, true, 0.94);
+            page.DrawPolyline(room.Polygon.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0, true,
+                RoomFill(room.Name));
 
         foreach (var grid in content.Grids)
         {
@@ -493,6 +494,27 @@ public static class PlanPrinter
         }
         page.DrawPolyline(points, 0.18, true, 1);
         page.DrawText(name, x, y - 1.4, 3, PdfTextAlignment.Center);
+    }
+
+    /// <summary>A light colour for a room by its name: a bath is blue, a bedroom cyan, a living room green, a kitchen
+    /// tan, a laundry brown, a hall yellow, a mechanical room the green of a plant room; anything else light grey.</summary>
+    internal static PdfColor RoomFill(string name)
+    {
+        string lower = name.ToLowerInvariant();
+        PdfColor color = lower switch
+        {
+            _ when lower.Contains("master bath") => new PdfColor(0.86, 0.55, 0.86),
+            _ when lower.Contains("bath") => new PdfColor(0.55, 0.72, 0.9),
+            _ when lower.Contains("bedroom") => new PdfColor(0.6, 0.85, 0.9),
+            _ when lower.Contains("living") => new PdfColor(0.7, 0.85, 0.65),
+            _ when lower.Contains("kitchen") || lower.Contains("dining") => new PdfColor(0.85, 0.8, 0.6),
+            _ when lower.Contains("laundry") => new PdfColor(0.78, 0.62, 0.5),
+            _ when lower.Contains("hall") || lower.Contains("entry") => new PdfColor(0.95, 0.9, 0.55),
+            _ when lower.Contains("mech") || lower.Contains("plant") => new PdfColor(0.6, 0.8, 0.6),
+            _ when lower.Contains("garage") || lower.Contains("carport") => new PdfColor(0.8, 0.8, 0.8),
+            _ => new PdfColor(0.92, 0.92, 0.92),
+        };
+        return color.Lighten(0.35);
     }
 
     /// <summary>The signed area of a polygon (shoelace); its magnitude is the area and its sign the winding.</summary>

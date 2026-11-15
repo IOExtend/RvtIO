@@ -78,6 +78,19 @@ public class PdfWriterTests
     }
 
     [Fact]
+    public void Polyline_FillsWithAColour()
+    {
+        var document = new PdfDocument();
+        document.AddPage(PdfPageSize.A4)
+            .DrawPolyline([(0, 0), (10, 0), (10, 10)], 0, true, new PdfColor(0.2, 0.4, 0.6));
+
+        string pdf = Write(document);
+
+        Assert.Contains("0.2 0.4 0.6 rg", pdf);
+        Assert.Contains("f\n", pdf);
+    }
+
+    [Fact]
     public void Text_IsDrawnWithTheStandardFontAndEscaped()
     {
         var document = new PdfDocument();

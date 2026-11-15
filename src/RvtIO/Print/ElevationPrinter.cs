@@ -237,7 +237,9 @@ public static class ElevationPrinter
                 // other; the upper one keeps its label.
                 if (label.Length > 0 && pageY - lastLabelY >= 4)
                 {
-                    page.DrawText(label, ToX(content.MinX) + 1, pageY + 0.8, 2.2, PdfTextAlignment.Left, 0.35);
+                    // The level name and its height in millimetres, as an elevation notes them.
+                    page.DrawText($"{label}  {y:0}", ToX(content.MinX) + 1, pageY + 0.8, 2.2,
+                        PdfTextAlignment.Left, 0.35);
                     lastLabelY = pageY;
                 }
             }
