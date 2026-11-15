@@ -54,6 +54,8 @@ public static class PlanPrinter
         List<(double X1, double Y1, double X2, double Y2)> Grids,
         Dictionary<int, List<(double From, double To)>> Gaps,
         List<(int HostId, double From, double To)> WindowGaps,
+        List<List<(double X, double Y)>> FloorLoops,
+        List<List<(double X, double Y)>> OpeningLoops,
         double MinX, double MinY, double MaxX, double MaxY);
 
     /// <summary>The levels a plan can be printed for: those that own at least one wall or column with a location line,
@@ -275,6 +277,38 @@ public static class PlanPrinter
             if (insert.CategoryId == (int)BuiltInCategory.OST_Windows) windowGaps.Add((wall.Id, from, to));
         }
 
+        // The floors of the level are drawn as their sketch loops, light under the walls, and every door or window cut
+        // loop as its frame polygon, so an opening reads as a break in the wall with a jamb on each side.
+        var floorLoops = new List<List<(double X, double Y)>>();
+        foreach (var element in document.Elements)
+        {
+            if (element.CategoryId != (int)BuiltInCategory.OST_Floors) continue;
+            if (LevelOf(element) != levelId || element.SketchLoops is not { Count: > 0 } loops) continue;
+            foreach (var loop in loops)
+            {
+                var points = new List<(double X, double Y)>(loop.Count);
+                foreach (var vertex in loop)
+                    points.Add((vertex[0] * FeetToMillimetres, vertex[1] * FeetToMillimetres));
+                if (points.Count >= 3) floorLoops.Add(points);
+            }
+        }
+        var openingLoops = new List<List<(double X, double Y)>>();
+        foreach (var insert in document.Elements)
+        {
+            if (insert.CategoryId is not ((int)BuiltInCategory.OST_Doors or (int)BuiltInCategory.OST_Windows)) continue;
+            if (insert.OwnSingleFamilyCutout is not { } cutout || cutout.Transform is not { Length: 12 } matrix) continue;
+            var points = new List<(double X, double Y)>(cutout.Loop.Vertices.Count);
+            foreach (var vertex in cutout.Loop.Vertices)
+            {
+                double wx = (matrix[0] * vertex[0] + matrix[1] * vertex[1] + matrix[2] * vertex[2] + matrix[9])
+                    * FeetToMillimetres;
+                double wy = (matrix[3] * vertex[0] + matrix[4] * vertex[1] + matrix[5] * vertex[2] + matrix[10])
+                    * FeetToMillimetres;
+                points.Add((wx, wy));
+            }
+            if (points.Count >= 3) openingLoops.Add(points);
+        }
+
         var grids = new List<(double X1, double Y1, double X2, double Y2)>();
         double gridMargin = Math.Max((maxX - minX + maxY - minY) * 0.06, 1000);
         foreach (var element in document.Elements)
@@ -288,7 +322,7 @@ public static class PlanPrinter
                 grids.Add((gx1, gy1, gx2, gy2));
         }
 
-        return new PlanContent(walls, columns, grids, gaps, windowGaps, minX, minY, maxX, maxY);
+        return new PlanContent(walls, columns, grids, gaps, windowGaps, floorLoops, openingLoops, minX, minY, maxX, maxY);
     }
 
     /// <summary>Draws collected plan content on a page: the model point (content.MinX, content.MinY) goes to
@@ -297,6 +331,9 @@ public static class PlanPrinter
     {
         double ToX(double x) => (x - content.MinX) / scale + originX;
         double ToY(double y) => (y - content.MinY) / scale + originY;
+
+        foreach (var floor in content.FloorLoops)
+            page.DrawPolyline(floor.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0, true, 0.9);
 
         foreach (var grid in content.Grids)
             page.DrawLine(ToX(grid.X1), ToY(grid.Y1), ToX(grid.X2), ToY(grid.Y2), 0.18, 0.45);
@@ -333,6 +370,9 @@ public static class PlanPrinter
             page.DrawLine(ToX(wall.X1 + ux * from), ToY(wall.Y1 + uy * from),
                 ToX(wall.X1 + ux * to), ToY(wall.Y1 + uy * to), 0.15, 0.35);
         }
+
+        foreach (var opening in content.OpeningLoops)
+            page.DrawPolyline(opening.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0.18, true);
 
         foreach (var column in content.Columns)
             page.DrawRectangle(ToX(column.X), ToY(column.Y), column.Width / scale, column.Height / scale, 0.2, 1);
