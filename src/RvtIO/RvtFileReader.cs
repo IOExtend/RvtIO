@@ -2516,6 +2516,14 @@ public partial class RvtFileReader
             BlockParser.CollectBipStrings(chunk, state);
 
         Lap("bip strings");
+        // Text notes: their own block holds the text and its position; the block walk of the project's own block does
+        // not reach every note, so every chunk is scanned for the class bytes.
+        foreach (var chunk in state.NonRecordChunks)
+            BlockParser.CollectTextNotes(chunk, state);
+        foreach (var chunk in state.RecordChunks)
+            BlockParser.CollectTextNotes(chunk, state);
+
+        Lap("text notes");
         // a file read by its framing: the blocks of the partitions are its records, the chunks of Formats and Global are scanned
         var partitionChunks = state.ReadsFramedRecords
             ? state.Chunks.Take(state.PartitionChunkCount).ToHashSet(ReferenceEqualityComparer.Instance) : null;

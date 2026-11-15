@@ -187,6 +187,11 @@ internal static class BlockParser
             state.NativeParams[eid] = np;
         }
 
+        // A text note's own block holds its text and position. The note can be an element the block walk discovered
+        // after the element table, so the block is read here and not under the known-id guard below.
+        if ((classIdx & 0xFFFF) == 0x0F83 && !state.TextNotes.ContainsKey(eid))
+            ExtractTextNote(chunk, dataStart, dataEnd, eid, state);
+
         if (state.AllKnownIds.Contains(eid))
         {
             ExtractBlockStrings(chunk, dataStart, dataEnd, eid, state.ElemStrings);
@@ -2008,6 +2013,66 @@ internal static class BlockParser
             sheets[eid] = (num, date);
             return;
         }
+    }
+
+    /// <summary>
+    /// Scans a chunk for text-note blocks (class 0x0F83, little-endian 83 0F at the class field) and records the text
+    /// and position of every note whose block the block walk did not reach. The two class bytes are rare in text, so
+    /// the scan follows them instead of stepping through every byte.
+    /// </summary>
+    internal static void CollectTextNotes(byte[] chunk, ParsingState state)
+    {
+        ReadOnlySpan<byte> marker = [0x83, 0x0F];
+        int at = chunk.AsSpan().IndexOf(marker);
+        while (at >= 0)
+        {
+            int blockStart = at - 12;
+            if (blockStart >= 0 && blockStart + 16 <= chunk.Length)
+            {
+                uint eid = BitConverter.ToUInt32(chunk, blockStart);
+                int size = BitConverter.ToInt32(chunk, blockStart + 8);
+                uint classIdx = BitConverter.ToUInt32(chunk, blockStart + 12);
+                if (eid is > 0 and < 50_000_000 && size > 0 && size <= MaxBlockSize
+                    && blockStart + 16 + size <= chunk.Length && (classIdx & 0xFFFF) == 0x0F83
+                    && !state.TextNotes.ContainsKey(eid))
+                    ExtractTextNote(chunk, blockStart + 16, blockStart + 16 + size, eid, state);
+            }
+            int next = chunk.AsSpan(at + 2).IndexOf(marker);
+            at = next < 0 ? -1 : at + 2 + next;
+        }
+    }
+
+    /// <summary>
+    /// Extract the plain text and the position of a text note from its 0x0F83 block. The block holds an RTF string
+    /// ("{\\rtf1...") and, before it, [0x0271][x:f64][y:f64], the position of the note in feet.
+    /// </summary>
+    private static void ExtractTextNote(byte[] d, int start, int end, uint eid, ParsingState state)
+    {
+        int rtf = -1;
+        for (int i = start; i + 7 <= end; i++)
+        {
+            if (d[i] == (byte)'{' && d[i + 1] == (byte)'\\' && d[i + 2] == (byte)'r' && d[i + 3] == (byte)'t'
+                && d[i + 4] == (byte)'f' && d[i + 5] == (byte)'1')
+            {
+                rtf = i;
+                break;
+            }
+        }
+        if (rtf < 0) return;
+        if (RtfText.Parse(d, rtf, end) is not { Text.Length: > 0 } parsed) return;
+
+        double x = 0, y = 0;
+        bool positioned = false;
+        for (int i = start; i + 18 <= rtf; i++)
+        {
+            if (d[i] != 0x71 || d[i + 1] != 0x02) continue;
+            double px = BitConverter.ToDouble(d, i + 2), py = BitConverter.ToDouble(d, i + 10);
+            if (!double.IsFinite(px) || !double.IsFinite(py) || Math.Abs(px) > 1e6 || Math.Abs(py) > 1e6) continue;
+            x = px; y = py; positioned = true;
+            break;
+        }
+        if (!positioned) return;
+        state.TextNotes[eid] = (parsed.Text, x, y, parsed.FontSizePoints);
     }
 
     /// <summary>

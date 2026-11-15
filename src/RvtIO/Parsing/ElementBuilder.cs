@@ -2878,6 +2878,19 @@ internal static partial class ElementBuilder
         }
     }
 
+    /// <summary>Plain text and position of the text notes decoded from their 0x0F83 blocks.</summary>
+    private static void ApplyTextNotes(RevitFileInfo info, ParsingState? state)
+    {
+        if (state == null || state.TextNotes.Count == 0) return;
+        foreach (var element in info.Elements)
+        {
+            if (!state.TextNotes.TryGetValue((uint)element.Id, out var note)) continue;
+            element.Text = note.Text;
+            element.TextPosition = [note.X, note.Y, 0];
+            element.TextFontSizePoints = note.FontSizePoints;
+        }
+    }
+
     /// <summary>Computed area/volume for curtain-wall members.</summary>
     private static void AddCurtainQuantities(RevitFileInfo info)
     {
@@ -6346,6 +6359,7 @@ internal static partial class ElementBuilder
             state.SeparateFacesWithDistinctOpenings);
         ApplyRoomParams(rvtInfo);
         ApplySheetParams(rvtInfo, state);
+        ApplyTextNotes(rvtInfo, state);
         AddViewAndDatumDefaults(rvtInfo);
         AddCurtainQuantities(rvtInfo);
         EnrichTypeLevelBips(rvtInfo, state);

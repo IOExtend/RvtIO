@@ -189,12 +189,31 @@ public static class SheetPrinter
             page.DrawArc(arc.Cx + offsetX, arc.Cy + offsetY, arc.R, start, end, 0.18);
         }
 
+        // The text notes of the sheet, at the positions the file stores (sheet coordinates, feet). The text is real,
+        // selectable PDF text when the document has an embedded font.
+        if (pdf.Font != null)
+        {
+            foreach (var element in document.Elements)
+            {
+                if (element.OwnerViewId != sheet.Id) continue;
+                if (element.Text is not { Length: > 0 } text || element.TextPosition is not { Length: >= 2 } position)
+                    continue;
+                double x = position[0] * FeetToMillimetres + offsetX;
+                double y = position[1] * FeetToMillimetres + offsetY;
+                double height = element.TextFontSizePoints is double points && points > 0
+                    ? points * 25.4 / 72 : 2.5;
+                string[] lines = text.Split('\n');
+                for (int line = 0; line < lines.Length; line++)
+                    page.DrawText(lines[line], x, y - line * height * 1.25, height);
+            }
+        }
+
         if (options.DrawSheetFields && pdf.Font != null)
         {
             string number = Text(sheet, BuiltInParameter.SHEET_NUMBER) ?? string.Empty;
             string name = Text(sheet, BuiltInParameter.SHEET_NAME) ?? string.Empty;
             string title = (number + "  " + name).Trim();
-            if (title.Length > 0) page.DrawText(title, margin + 2, paper.HeightMillimetres - margin - 5, 4);
+            if (title.Length > 0) page.DrawText(title, margin + 1, paper.HeightMillimetres - 3.5, 2.8);
         }
     }
 

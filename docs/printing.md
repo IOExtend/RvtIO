@@ -57,8 +57,14 @@ upper-left corner with the embedded font.
 `--list-sheets` prints the id, number, name, extent, curve count and text count of every sheet with a page-sized
 linework (a frame smaller than 50 mm is the drawing frame of an embedded family document, not a sheet).
 
-A printed sheet as linework only: the text of its title block and notes is not decoded yet, and a placed view is not
-composed into the page (its viewport has no decoded position), so the drawing area of a sheet stays empty.
+The text of the sheet is printed too: the reader decodes the RTF string of every text note (class 0x0F83 block) into
+plain text, with the position the block stores in feet and the font size the RTF declares, and the page writes each note
+at that position with the embedded font. A title block therefore prints with its labels ("Изм.", "Кол.уч.", "Лист",
+"Согласовано" and so on) and the sheet number and name are written in the upper-left corner. The text alignment inside
+its box and any rotation are not decoded, so a note is drawn from its stored position as a left-aligned baseline.
+
+A placed view is not composed into the page yet (its viewport has no decoded position), so the drawing area of a sheet
+stays empty.
 
 ## What is drawn
 

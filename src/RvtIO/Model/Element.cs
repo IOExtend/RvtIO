@@ -233,6 +233,20 @@ namespace RvtIO.Model
         public int? OwnerViewId =>
             SerializedOwnerDbViewId is int id && id > 0 && id != Id ? id : null;
 
+        /// <summary>The plain text of a text note, decoded from the RTF string Revit stores for it; null for every other
+        /// element and for a text note whose block was not decoded.</summary>
+        [JsonIgnore]
+        public string? Text { get; set; }
+
+        /// <summary>The position of a text note in the coordinates of its view (feet), [x, y, z]; null when not
+        /// decoded.</summary>
+        [JsonIgnore]
+        public double[]? TextPosition { get; set; }
+
+        /// <summary>The font size of the text note in points, when the stored RTF declares one.</summary>
+        [JsonIgnore]
+        public double? TextFontSizePoints { get; set; }
+
         /// <summary>Exact BaseRailing.m_baseRailingSymbolId stored by this occurrence.</summary>
         [JsonIgnore]
         internal int? SerializedBaseRailingSymbolId { get; set; }

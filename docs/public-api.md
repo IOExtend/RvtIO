@@ -26,6 +26,9 @@ the parameter lists of a `RevitFileInfo`.
 
 `Element.BoundingBox` is the axis-aligned outline stored in the element header, as the Revit API bounding box (null for elements with no stored outline, such as grids and levels). The tight box of the decoded geometry is `Element.Geometry.BoundingBox`; before 0.3.0 `Element.BoundingBox` held that decoded value, which also changes the result of `FilteredElementCollector.WhereBoundingBoxIsNotNull`.
 
+`Element.Text`, `Element.TextPosition` and `Element.TextFontSizePoints` are the plain text of a text note, the
+position the file stores for it (feet) and the font size its RTF declares; they are null for every other element.
+
 `Element.OwnerViewId` is the stored `m_ownerDBViewId` of the element: the view or sheet whose annotations and view-specific graphics hold it (a text note on a sheet names the sheet), null when no view owns it. `SheetCatalog` uses it for the elements a sheet owns.
 
 ## Built-in identifiers
