@@ -84,7 +84,8 @@ every kind of plant with its count.
 `rvtio print project.rvt elevations.pdf --view South` prints an elevation from the 3D geometry: every planar face of the
 model (walls, floors, roofs, columns, windows and doors) is projected on the vertical plane of the view, painted white
 from the farthest to the nearest and outlined when it faces the viewer. Plants, topography and site surfaces are left
-out: in an elevation they print as symbols, and their tessellated faces bury the building.
+out of the building itself: they print as light shapes without outlines behind it, the faded context the reference
+export shows around an elevation (their faces of a few square metres, so the ground mesh does not bury the building).
 
 The level lines are dashed and end in the marker the reference export uses: a circle with an arrow head at the right of
 the drawing, the level name above and its height in millimetres below (Roof Line 6000, Level 2 3000, Ceiling 2700,

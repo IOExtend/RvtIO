@@ -72,6 +72,7 @@ public static class ElevationPrinter
         List<(List<(double X, double Y)> Points, double Depth, bool Outline)> Faces,
         List<(double Y, string Label)> Levels,
         List<(double X, string Name)> Grids,
+        List<(List<(double X, double Y)> Points, double Depth)> Context,
         double MinX, double MinY, double MaxX, double MaxY);
 
     /// <summary>Projects the model geometry on the vertical plane of a direction. Null when the model has no face.</summary>
@@ -129,13 +130,47 @@ public static class ElevationPrinter
         };
         }
         var faces = new List<(List<(double X, double Y)> Points, double Depth, bool Outline)>();
+        // The plants, the topography and the site surfaces print as the faded background of an elevation, behind the
+        // building, the way the reference export fades them.
+        var context = new List<(List<(double X, double Y)> Points, double Depth)>();
         double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
         foreach (var element in document.Elements)
         {
-            // The plants and the site surfaces are drawn in an elevation as symbols, not as their tessellated faces:
-            // projecting them buries the building under a mesh of leaves and ground.
             if (element.CategoryId is (int)BuiltInCategory.OST_Planting or (int)BuiltInCategory.OST_Topography
-                or (int)BuiltInCategory.OST_Site) continue;
+                or (int)BuiltInCategory.OST_Site)
+            {
+                if (element.Geometry is { Faces.Count: > 0 } siteGeometry)
+                {
+                    foreach (var siteFace in siteGeometry.Faces)
+                    {
+                        if (siteFace.OuterVertices is not { Count: >= 3 } siteVertices) continue;
+                        var sitePoints = new List<(double X, double Y)>(siteVertices.Count);
+                        double siteDepth = 0;
+                        foreach (var vertex in siteVertices)
+                        {
+                            double x = vertex[0] * FeetToMillimetres, y = vertex[1] * FeetToMillimetres;
+                            double z = vertex[2] * FeetToMillimetres;
+                            sitePoints.Add((x * H[0] + y * H[1] + z * H[2],
+                                x * V[0] + y * V[1] + z * V[2]));
+                            siteDepth += x * D[0] + y * D[1] + z * D[2];
+                            minX = Math.Min(minX, sitePoints[^1].Item1); maxX = Math.Max(maxX, sitePoints[^1].Item1);
+                            minY = Math.Min(minY, sitePoints[^1].Item2); maxY = Math.Max(maxY, sitePoints[^1].Item2);
+                        }
+                        // The mesh of the ground is tessellated into tens of thousands of triangles: only the larger
+                        // ones shade the background, which keeps the page light.
+                        double siteArea = 0;
+                        for (int i = 0; i < sitePoints.Count; i++)
+                        {
+                            var a = sitePoints[i];
+                            var b = sitePoints[(i + 1) % sitePoints.Count];
+                            siteArea += a.X * b.Y - b.X * a.Y;
+                        }
+                        if (Math.Abs(siteArea) / 2 < 500_000 || context.Count >= 3000) continue;
+                        context.Add((sitePoints, siteDepth / siteVertices.Count));
+                    }
+                }
+                continue;
+            }
             if (element.Geometry is not { Faces.Count: > 0 } geometry) continue;
             // A stair section draws the stair, not the building around it.
             if (stairsOnly && !StairCategories.Contains(element.CategoryId ?? -1)) continue;
@@ -234,7 +269,8 @@ public static class ElevationPrinter
         }
         grids.Sort((left, right) => left.X.CompareTo(right.X));
         if (grids.Count > 0) maxY += 4500;
-        return new ElevationContent(faces, distinctLevels, grids, minX, minY, maxX, maxY);
+        context.Sort((left, right) => right.Depth.CompareTo(left.Depth));
+        return new ElevationContent(faces, distinctLevels, grids, context, minX, minY, maxX, maxY);
     }
 
     /// <summary>Prints one elevation view to a one-page PDF document at the view's scale.</summary>
@@ -355,6 +391,9 @@ public static class ElevationPrinter
     {
         double ToX(double x) => (x - content.MinX) / scale + originX;
         double ToY(double y) => (y - content.MinY) / scale + originY;
+        // The faded site behind the building: the plants and the ground as light shapes without outlines.
+        foreach (var (contextPoints, _) in content.Context)
+            page.DrawPolyline(contextPoints.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0, true, 0.9);
         foreach (var (points, _, outline) in content.Faces)
         {
             var pagePoints = points.Select(point => (ToX(point.X), ToY(point.Y))).ToList();
