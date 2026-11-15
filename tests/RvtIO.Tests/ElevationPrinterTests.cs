@@ -65,11 +65,16 @@ public class ElevationPrinterTests
             ElevationView(400, "South", 100), ElevationView(401, "Longitudinal Section", 100),
             ElevationView(402, "Level 1", 100));
 
-        ElevationView view = Assert.Single(ElevationPrinter.Views(document));
+        var views = ElevationPrinter.Views(document);
 
-        Assert.Equal(400, view.ViewId);
-        Assert.Equal("south", view.Direction);
-        Assert.Equal(100, view.Scale);
+        // The plan view is not an elevation; the section is one (projected along the short axis). The list is sorted by
+        // name, so the views are found by id.
+        Assert.Equal(2, views.Count);
+        ElevationView south = Assert.Single(views.Where(view => view.ViewId == 400));
+        Assert.Equal("south", south.Direction);
+        Assert.Equal(100, south.Scale);
+        ElevationView section = Assert.Single(views.Where(view => view.ViewId == 401));
+        Assert.Equal("section", section.Direction);
     }
 
     [Fact]
