@@ -15,7 +15,8 @@ internal static class TitleBlockPrinter
     /// <summary>Draws the strip in the page margins: <paramref name="widthMillimetres"/> wide, from the lower border to
     /// the upper one.</summary>
     internal static void Draw(PdfPage page, RvtDocument document, Element sheet, double widthMillimetres,
-        double marginMillimetres, string scale, PdfRasterImage? logo = null)
+        double marginMillimetres, string scale, PdfRasterImage? logo = null,
+        IReadOnlyList<(string Number, string Description, string Date)>? revisions = null)
     {
         double pageWidth = page.Size.WidthMillimetres, pageHeight = page.Size.HeightMillimetres;
         double left = pageWidth - marginMillimetres - widthMillimetres;
@@ -73,7 +74,10 @@ internal static class TitleBlockPrinter
         if (projectNumber.Length > 0) page.DrawText(projectNumber, left + 3, infoTop + 3, 3.5);
 
         // The revision table fills what is left between the consultant table and the project area.
-        DrawRevisionTable(page, left, projectTop + 4, widthMillimetres, consultantBottom - 4 - projectTop - 4);
+        // The revision table fills the lift between the consultant table and the project area: its top edge is the
+        // consultation table's bottom and its rows run down to the project area.
+        DrawRevisionTable(page, left, consultantBottom - 4, widthMillimetres,
+            consultantBottom - 4 - projectTop - 4, revisions);
     }
 
     private static void DrawConsultantTable(PdfPage page, double left, double bottom, double width, double height)
@@ -91,7 +95,8 @@ internal static class TitleBlockPrinter
         }
     }
 
-    private static void DrawRevisionTable(PdfPage page, double left, double top, double width, double height)
+    private static void DrawRevisionTable(PdfPage page, double left, double top, double width, double height,
+        IReadOnlyList<(string Number, string Description, string Date)>? revisions)
     {
         if (height < 12) return;
         double noWidth = 14, dateWidth = 30;
@@ -100,11 +105,29 @@ internal static class TitleBlockPrinter
         page.DrawText("Date", left + width - dateWidth + 2, top - 3, 2, PdfTextAlignment.Left, 0.45);
         page.DrawLine(left, top - 4, left + width, top - 4, 0.2);
         double row = Math.Min(7, (height - 4) / 10);
-        for (int i = 0; i < 10; i++)
+        int rows = 10;
+        for (int i = 0; i < rows; i++)
         {
             double y = top - 4 - (i + 1) * row;
             if (y < top - height) break;
             page.DrawLine(left, y, left + width, y, 0.1);
+        }
+        // The revisions the file stores: the number, the description and the date of each, as the revision schedule of
+        // the reference title block lists them.
+        if (revisions is { Count: > 0 })
+        {
+            for (int i = 0; i < revisions.Count && i < rows; i++)
+            {
+                double y = top - 4 - (i + 1) * row;
+                if (y < top - height) break;
+                var revision = revisions[i];
+                page.DrawText(revision.Number, left + 2, y + 1.8, 2.2);
+                string description = revision.Description.Length > 30
+                    ? revision.Description[..30] + "…"
+                    : revision.Description;
+                page.DrawText(description, left + noWidth + 2, y + 1.8, 2);
+                page.DrawText(revision.Date, left + width - dateWidth + 2, y + 1.8, 1.9);
+            }
         }
         page.DrawLine(left + noWidth, top - 4, left + noWidth, top - height, 0.12);
         page.DrawLine(left + width - dateWidth, top - 4, left + width - dateWidth, top - height, 0.12);

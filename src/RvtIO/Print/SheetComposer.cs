@@ -146,7 +146,7 @@ public static class SheetComposer
                     ? ""
                     : "1:" + scales.OrderByDescending(pair => pair.Value).First().Key;
                 TitleBlockPrinter.Draw(page2, document, sheet, Math.Min(180, layout.WidthMillimetres * 0.22),
-                    margin, scaleText, TitleLogo(document));
+                    margin, scaleText, TitleLogo(document), Revisions(document));
             }
         }
 
@@ -565,6 +565,33 @@ public static class SheetComposer
         }
         return (PdfPageSize.A1.Landscape, 0, 0);
     }
+
+    /// <summary>The revisions of the model, as the revision schedule of the title block lists them: the sequence
+    /// number, the description and the date of each.</summary>
+    private static List<(string Number, string Description, string Date)> Revisions(RvtDocument document)
+    {
+        var revisions = new List<(string Number, string Description, string Date)>();
+        foreach (var element in document.Elements)
+        {
+            if (element.CategoryId != (int)BuiltInCategory.OST_Revisions) continue;
+            // The sequence number is stored as an integer, the description and the date as strings.
+            string number = Value(element, BuiltInParameter.PROJECT_REVISION_SEQUENCE_NUM);
+            string description = Value(element, BuiltInParameter.PROJECT_REVISION_REVISION_DESCRIPTION);
+            string date = Value(element, BuiltInParameter.PROJECT_REVISION_REVISION_DATE);
+            if (number.Length == 0 && description.Length == 0 && date.Length == 0) continue;
+            revisions.Add((number, description, date));
+        }
+        return revisions;
+    }
+
+    /// <summary>The text of a parameter: a string as it is, an integer as its digits, anything else empty.</summary>
+    private static string Value(Element element, BuiltInParameter id) =>
+        element.LookupParameter(id)?.Value switch
+        {
+            string text => text,
+            int number => number.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            _ => "",
+        };
 
     /// <summary>The standard paper the extent matches within ten millimetres, in the orientation of the extent.</summary>
     internal static PdfPageSize Snap(double width, double height)
