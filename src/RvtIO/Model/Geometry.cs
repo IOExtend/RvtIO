@@ -75,6 +75,10 @@ namespace RvtIO.Model
         /// geometry.</summary>
         internal bool UnresolvedSymbol { get; set; }
 
+        /// <summary>Faces of this geometry, or of the symbols placed into it, that are left out because the triangulation of their
+        /// trim loops ran out of its work budget: they have no polygon in <see cref="Faces"/>, so the geometry is partial.</summary>
+        internal int UntriangulatedFaces { get; set; }
+
         /// <summary>Number of stored GFace and Edge objects in the GRep block this geometry was
         /// built from (null when the block's object graph was not walked). Such node counts of a family instance's
         /// geometry are compared with its symbol's to decide whether the

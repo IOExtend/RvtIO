@@ -289,6 +289,27 @@ public sealed class ExportReportGeometryQualityTests : IDisposable
     }
 
     [Fact]
+    public void FaceLeftOutOfItsTrimTriangulation_IsReportedAsApproximated()
+    {
+        // The reader leaves out a face whose trim triangulation ran out of its work budget: the geometry is incomplete.
+        var partial = ClosedBox(6, 10, 0, 3, 0, 2);
+        partial.UntriangulatedFaces = 1;
+        var info = new RevitFileInfo
+        {
+            ElemTableIsExact = true,
+            Elements = [StoreyLevel(), GenericProduct(100, ClosedBox(0, 4, 0, 3, 0, 2)), GenericProduct(101, partial)],
+        };
+
+        var ifcReport = ExportIfcWithReport("sample-untriangulated", info);
+        Assert.Equal([(100, "exact"), (101, "approximated")], ifcReport.Export!.Elements.Select(e => (e.Id, e.Quality)).ToArray());
+
+        var jsonReport = ExportReport.ForRead("sample-untriangulated.rvt", 2048, new RvtReadDiagnostics(), false, false, [10u], info);
+        jsonReport.SetJsonExport(info, full: false);
+        Assert.Contains(jsonReport.Export!.Elements, e => e.Id == 100 && e.Quality == "exact");
+        Assert.Contains(jsonReport.Export.Elements, e => e.Id == 101 && e.Quality == "approximated");
+    }
+
+    [Fact]
     public void PinsPerStreamUnpackedBytesAcrossTwoSmallCompoundFiles()
     {
         byte[] partitionA = CoverageCensusTests.Partition(
