@@ -68,9 +68,9 @@ See [sheets and viewports](sheets.md) for what is decoded, what the limits are a
 | `PlanPrinter` | `Levels(document)` lists the levels a plan can be printed for; `Render(document, levelId, scale, options)` returns a `PdfDocument` with the plan of one level: walls with their stored width, column footprints, clipped grids. |
 | `PlanPrintOptions` | `PaperSize` (null picks the smallest paper that holds the drawing), `MarginMillimetres`, `FallbackWallWidthMillimetres`, `DrawFrame`. |
 | `PlanLevel`, `PlanView` | A printable level (id, name, elevation) and a printable plan view (id, name, level, scale). |
-| `ViewPrinter` | `Render(document, viewIds, options)` prints plans and elevations into one PDF document, one page per view (each must be one of `PlanPrinter.Views` or `ElevationPrinter.Views`). |
-| `ElevationPrinter` | `Views(document)` lists the compass elevations (North, South, East, West) with their scale; `Collect(document, direction)` projects the model faces on the vertical plane and `DrawContent` writes them. A view's plane is not decoded yet, so the direction comes from its name. |
-| `ElevationView` | An elevation view: id, name, direction and scale. |
+| `ViewPrinter` | `Render(document, viewIds, options)` prints views into one PDF document, one page per view: a plan, an elevation or a section (`PlanPrinter.Views`, `ElevationPrinter.Views`), a 3D view (an isometric massing page) and a rendering (its image page). `OtherViews(document)` lists the 3D views and the renderings. |
+| `ElevationPrinter` | `Views(document)` lists the elevations and the building sections (North, South, East, West, Section, Stair Section) with their scale; `Collect(document, direction)` projects the model faces on the plane of the direction (a section is projected grey, a stair section projects the stairs alone) and `DrawContent` writes them. A view's plane is not decoded yet, so the direction comes from its name. |
+| `ElevationView` | An elevation view: id, name, direction (north, south, east, west, section, iso) and scale. |
 | `SheetComposer` | `Sheets(document)` lists the numbered sheets with the page their title block spans; `Render(document, sheetId, options)` and `RenderSheets` compose pages: each placed viewport draws its plan at the stored offset and view scale, labelled with the view name and scale, and the sheet's own text notes are written. |
 | `SheetComposeOptions` | `PaperSize` (null takes the title block extent, snapped to A4-A0), `DrawViewLabels`, `ViewMarginMillimetres`. |
 | `ComposedSheet` | A composed sheet: id, number, name, page, placed viewport count, text count. |
@@ -85,7 +85,8 @@ See [printing a plan](printing.md) for what is drawn, what is not, and the roadm
 | Type | Use |
 |---|---|
 | `PdfDocument` | `AddPage(size)` and `Save(path | stream)`; writes PDF 1.4 with vector lines, polygons, rectangles and text, without a third-party library. |
-| `PdfPage` | `DrawLine`, `DrawPolyline`, `DrawRectangle` and `DrawText` in millimetres from the lower-left corner, y up. |
+| `PdfPage` | `DrawLine`, `DrawPolyline`, `DrawRectangle`, `DrawText` and `DrawImage` in millimetres from the lower-left corner, y up. |
+| `IPdfImage`, `PdfRasterImage`, `PdfJpegImage` | An image the writer embeds: RGB pixels (`PdfRasterImage`, Flate) or a JPEG as it is (`PdfJpegImage`, DCTDecode, size and components read from its header). |
 | `PdfPageSize` | Paper sizes A4 to A0 in millimetres, `Landscape` for the turned page. |
 | `PdfTextAlignment` | `Left`, `Center`, `Right`: where the text anchor sits. |
 | `PdfTrueTypeFont` | A TrueType font parsed for embedding (`UnitsPerEm`, `GlyphOf`, `AdvanceOf`), drawn as a Type0 font with Identity-H encoding and a ToUnicode map, so text in the scripts it covers (Cyrillic included) is real, selectable PDF text. |
