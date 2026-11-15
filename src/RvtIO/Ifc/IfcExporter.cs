@@ -336,6 +336,11 @@ public partial class IfcExporter
     /// <summary>UTC timestamp written into the STEP <c>FILE_NAME</c> header (<c>yyyy-MM-ddTHH:mm:ss</c>). Null (the default) uses the current UTC time.</summary>
     public DateTimeOffset? Timestamp { get; init; }
 
+    /// <summary>The length unit family written to the IFC file (<see cref="IfcUnitFamily.Millimetre"/>, <see cref="IfcUnitFamily.Metre"/>
+    /// or <see cref="IfcUnitFamily.Foot"/>). Null (the default) uses the length format stored in the project for
+    /// <see cref="IfcProfile.Current"/> and millimetres for <see cref="IfcProfile.Legacy"/>.</summary>
+    public IfcUnitFamily? LengthUnit { get; init; }
+
     /// <summary>Products written by the last export, as counted in the "IFC export:" diagnostic line.</summary>
     public int ExportedProducts { get; private set; }
 
@@ -464,15 +469,19 @@ public partial class IfcExporter
         _spaceBodyGeometry.Clear();
         _othersCurrentPlans.Clear();
         _facetedPlans.Clear();
+        if (LengthUnit is { } explicitUnit && !Enum.IsDefined(explicitUnit))
+            throw new ArgumentOutOfRangeException(nameof(LengthUnit), explicitUnit, "Unsupported IFC length unit family.");
         var w = new StepWriter();
-        // The legacy profile writes millimetres whatever the document says; the current profile
-        // follows the length unit of the project (IfcLengthUnitChoice).
-        _unitFamily = CurrentProfile ? IfcLengthUnitChoice.Family(info.SerializedLengthUnit) : IfcUnitFamily.Millimetre;
-        _diag?.WriteLine(info.SerializedLengthUnit == null
-            ? $"IFC length unit: stored option unreadable ({info.SerializedLengthUnitIssue ?? "not read"}); using the default {_unitFamily}"
-            : !CurrentProfile || IfcLengthUnitChoice.OwnFamily(info.SerializedLengthUnit) != null
-                ? $"IFC length unit: stored option {info.SerializedLengthUnit} -> {_unitFamily}"
-                : $"IFC length unit: stored option {info.SerializedLengthUnit} has no unit family of its own; using the default {_unitFamily}");
+        // Without an explicit LengthUnit choice, the legacy profile writes millimetres whatever the
+        // document says and the current profile follows the length unit of the project.
+        _unitFamily = LengthUnit ?? (CurrentProfile ? IfcLengthUnitChoice.Family(info.SerializedLengthUnit) : IfcUnitFamily.Millimetre);
+        _diag?.WriteLine(LengthUnit is { } chosenUnit
+            ? $"IFC length unit: explicit choice -> {chosenUnit}"
+            : info.SerializedLengthUnit == null
+                ? $"IFC length unit: stored option unreadable ({info.SerializedLengthUnitIssue ?? "not read"}); using the default {_unitFamily}"
+                : !CurrentProfile || IfcLengthUnitChoice.OwnFamily(info.SerializedLengthUnit) != null
+                    ? $"IFC length unit: stored option {info.SerializedLengthUnit} -> {_unitFamily}"
+                    : $"IFC length unit: stored option {info.SerializedLengthUnit} has no unit family of its own; using the default {_unitFamily}");
 
         int orgId = w.Add("IFCORGANIZATION", $"$,{S("RvtIO")},$,$,$");
         int appId = w.Add("IFCAPPLICATION", $"{R(orgId)},{S("1.0")},{S("RvtIO IFC Exporter")},{S("RvtIO")}");
@@ -483,7 +492,7 @@ public partial class IfcExporter
         int poaId = w.Add("IFCPERSONANDORGANIZATION", $"{R(personId)},{R(owningOrgId)},$");
         int ownerHistId = w.Add("IFCOWNERHISTORY", $"{R(poaId)},{R(appId)},$,.NOCHANGE.,$,$,$,0");
 
-        // ---- Units (metric: millimetres, square metres, cubic metres).
+        // ---- Units (metric: millimetres/metres, square metres, cubic metres; or conversion-based feet).
         int lengthUnitId = w.Add("IFCSIUNIT", _unitFamily == IfcUnitFamily.Millimetre
             ? "*,.LENGTHUNIT.,.MILLI.,.METRE." : "*,.LENGTHUNIT.,$,.METRE.");
         UnitAssignmentCurrent? unitsCurrent = null;
@@ -492,6 +501,15 @@ public partial class IfcExporter
         {
             unitsCurrent = CreateUnitAssignmentCurrent(w, lengthUnitId, _unitFamily);
             unitsId = unitsCurrent.AssignmentId;
+        }
+        else if (_unitFamily == IfcUnitFamily.Foot)
+        {
+            int footLengthId = AddFootLengthUnit(w, lengthUnitId);
+            int areaUnitId = AddSquareFootUnit(w);
+            int volumeUnitId = AddCubicFootUnit(w);
+            int angleUnitId = w.Add("IFCSIUNIT", "*,.PLANEANGLEUNIT.,$,.RADIAN.");
+            int timeUnitId = w.Add("IFCSIUNIT", "*,.TIMEUNIT.,$,.SECOND.");
+            unitsId = w.Add("IFCUNITASSIGNMENT", StepWriter.List(R(footLengthId), R(areaUnitId), R(volumeUnitId), R(angleUnitId), R(timeUnitId)));
         }
         else
         {
@@ -509,7 +527,7 @@ public partial class IfcExporter
         //.
         int trueNorthId = CurrentProfile ? w.Add("IFCDIRECTION", StepWriter.List(D(Math.Cos(Math.PI / 2)), "1.")) : 0;
         int contextId = w.Add("IFCGEOMETRICREPRESENTATIONCONTEXT",
-            $"{(CurrentProfile ? "''" : "$")},{S("Model")},3,{D(CurrentProfile ? (_unitFamily == IfcUnitFamily.Millimetre ? 0.1 : 0.0001) : 0.01)},{R(axisId)},{(CurrentProfile ? R(trueNorthId) : "$")}");
+            $"{(CurrentProfile ? "''" : "$")},{S("Model")},3,{D(CurrentProfile ? (_unitFamily == IfcUnitFamily.Millimetre ? 0.1 : 0.0001) : (_unitFamily == IfcUnitFamily.Millimetre ? 0.01 : 0.00001))},{R(axisId)},{(CurrentProfile ? R(trueNorthId) : "$")}");
         // The current profile writes the four sub-contexts of CoordinationView 2.0
         // (createContextInformation), each named by its identifier with type "Model" and no target
         // scale; Box and FootPrint are used by the grids and bounding boxes.
