@@ -17,6 +17,10 @@ public sealed class SheetComposeOptions
 
     /// <summary>The margin around a view frame that its content may still be drawn in, in millimetres.</summary>
     public double ViewMarginMillimetres { get; set; } = 3;
+
+    /// <summary>True (the default) draws the page border and, at its lower-right corner, the sheet number and name.
+    /// This stands in for the title block while the linework of its family is not decoded.</summary>
+    public bool DrawPageFrame { get; set; } = true;
 }
 
 /// <summary>A sheet that can be composed: the element id, its number and name, the page its title block spans and the
@@ -111,6 +115,24 @@ public static class SheetComposer
     {
         var (page, originX, originY) = PageOf(document, sheet, options);
         PdfPage page2 = pdf.AddPage(page);
+
+        // The title block family's linework is not decoded: the page border and the sheet number and name stand in for
+        // it, so a printed sheet still reads as a framed page of a set.
+        if (options.DrawPageFrame)
+        {
+            double margin = 5;
+            page2.DrawRectangle(margin, margin, page.WidthMillimetres - 2 * margin,
+                page.HeightMillimetres - 2 * margin, 0.35);
+            if (pdf.Font != null)
+            {
+                string number = sheet.LookupParameter(BuiltInParameter.SHEET_NUMBER)?.Value as string ?? "";
+                string name = sheet.LookupParameter(BuiltInParameter.SHEET_NAME)?.Value as string ?? "";
+                page2.DrawText(number, page.WidthMillimetres - margin - 3, margin + 9, 6, PdfTextAlignment.Right);
+                if (name.Length > 0)
+                    page2.DrawText(name, page.WidthMillimetres - margin - 3, margin + 3, 3.5,
+                        PdfTextAlignment.Right);
+            }
+        }
 
         foreach (var element in document.Elements)
         {

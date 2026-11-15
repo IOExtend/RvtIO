@@ -139,6 +139,7 @@ public class SheetComposerTests
         string content = System.Text.Encoding.ASCII.GetString(stream.ToArray());
 
         Assert.Contains(" l S", content);
+        Assert.Contains(" re S", content);
         if (PdfFonts.TryFind(out _) != null)
         {
             Assert.Contains("BT /F2", content);
