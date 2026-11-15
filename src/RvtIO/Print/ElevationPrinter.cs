@@ -135,6 +135,63 @@ public static class ElevationPrinter
         return new ElevationContent(faces, levels, grids, minX, minY, maxX, maxY);
     }
 
+    /// <summary>Prints one elevation view to a one-page PDF document at the view's scale.</summary>
+    /// <param name="document">The opened document.</param>
+    /// <param name="viewId">The element id of the view; it must be one of <see cref="Views"/>.</param>
+    /// <param name="options">The paper and margin; null uses the defaults.</param>
+    public static PdfDocument Render(RvtDocument document, int viewId, PlanPrintOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        options ??= new PlanPrintOptions();
+        var views = new Dictionary<int, ElevationView>();
+        foreach (var view in Views(document)) views[view.ViewId] = view;
+        if (!views.TryGetValue(viewId, out var elevation))
+            throw new InvalidOperationException($"View {viewId} is not a compass elevation (see ElevationPrinter.Views).");
+        var pdf = new PdfDocument { Font = PdfFonts.TryFind(out _) };
+        AddElevationPage(pdf, document, elevation, options);
+        return pdf;
+    }
+
+    /// <summary>Draws one elevation as a page of the document.</summary>
+    internal static void AddElevationPage(PdfDocument pdf, RvtDocument document, ElevationView view,
+        PlanPrintOptions options)
+    {
+        ElevationContent content = Collect(document, view.Direction)
+            ?? throw new InvalidOperationException($"The model has no face to project for the {view.Name} elevation.");
+        double width = (content.MaxX - content.MinX) / view.Scale;
+        double height = (content.MaxY - content.MinY) / view.Scale;
+        PdfPageSize paper = options.PaperSize ?? (width + 2 * options.MarginMillimetres <= PdfPageSize.A4.Landscape.WidthMillimetres
+            && height + 2 * options.MarginMillimetres <= PdfPageSize.A4.Landscape.HeightMillimetres
+            ? PdfPageSize.A4.Landscape
+            : width + 2 * options.MarginMillimetres <= PdfPageSize.A3.Landscape.WidthMillimetres
+                && height + 2 * options.MarginMillimetres <= PdfPageSize.A3.Landscape.HeightMillimetres
+                ? PdfPageSize.A3.Landscape
+                : width + 2 * options.MarginMillimetres <= PdfPageSize.A2.Landscape.WidthMillimetres
+                    && height + 2 * options.MarginMillimetres <= PdfPageSize.A2.Landscape.HeightMillimetres
+                    ? PdfPageSize.A2.Landscape
+                    : PdfPageSize.A1.Landscape);
+        double usableWidth = paper.WidthMillimetres - 2 * options.MarginMillimetres;
+        double usableHeight = paper.HeightMillimetres - 2 * options.MarginMillimetres;
+        double scale = view.Scale;
+        if (width > usableWidth || height > usableHeight)
+            scale = view.Scale * Math.Max(width / usableWidth, height / usableHeight);
+        double offsetX = (paper.WidthMillimetres - (content.MaxX - content.MinX) / scale) / 2;
+        double offsetY = (paper.HeightMillimetres - (content.MaxY - content.MinY) / scale) / 2;
+        PdfPage page = pdf.AddPage(paper);
+        if (options.DrawFrame)
+        {
+            double m = options.MarginMillimetres;
+            page.DrawRectangle(m, m, paper.WidthMillimetres - 2 * m, paper.HeightMillimetres - 2 * m, 0.25);
+        }
+        DrawContent(page, content, scale, offsetX, offsetY);
+        if (pdf.Font != null)
+        {
+            page.DrawText(view.Name, options.MarginMillimetres + 2, paper.HeightMillimetres - options.MarginMillimetres - 6, 4);
+            page.DrawText($"1:{view.Scale}", options.MarginMillimetres + 2,
+                paper.HeightMillimetres - options.MarginMillimetres - 11, 3, PdfTextAlignment.Left, 0.35);
+        }
+    }
+
     /// <summary>Draws the projected elevation with (MinX, MinY) at (originX, originY), one model unit per 1/scale.</summary>
     internal static void DrawContent(PdfPage page, ElevationContent content, double scale, double originX,
         double originY)

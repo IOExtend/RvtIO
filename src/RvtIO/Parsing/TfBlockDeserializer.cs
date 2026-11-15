@@ -4487,6 +4487,15 @@ internal static partial class TfBlockDeserializer
                 for (int i = 0; i < nn; i++) c.WallLineCapture[f.Name + i] = ReadF64(c);
                 return;
             }
+            // DBView plane: the origin and the three axes of the view. A section, an elevation and a plan all carry
+            // them, so the printed view can be oriented from the file instead of its name.
+            if (capture != null && f.Declaring == 108 && f.Type == 0x07 && (f.Cnt ?? 0) == 3
+                && f.Name is "m_origin" or "m_horzDir" or "m_vertDir" or "m_viewDir")
+            {
+                for (int i = 0; i < 3; i++)
+                    capture.DoubleFields["108:" + f.Name + "@" + i] = ReadF64(c);
+                return;
+            }
             int n = f.Cnt ?? 0;
             if (capture != null && (f.Type is 0x01 or 0x04 or 0x07 || (f.Type == 0x0E && f.Ref == 20)) && f.Mods == 0x10
                 && (CaptureAllFields || NativeFieldParameters.DeclaringClasses.Contains(f.Declaring)

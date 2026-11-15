@@ -124,6 +124,9 @@ public static class PlanPrinter
             }
             if (levelId == null) continue;
             int scale = element.LookupParameter(BuiltInParameter.VIEW_SCALE)?.Value is int value && value > 0 ? value : 100;
+            // A detail view of a plan is also a DBViewPlan and carries the plan's name; it is drawn at 1:2 to 1:24 and
+            // is not the plan of the level.
+            if (scale < 50) continue;
             views.Add(new PlanView(element.Id, name, levelId.Value, scale));
         }
         views.Sort((left, right) =>
@@ -387,7 +390,7 @@ public static class PlanPrinter
     }
 
     /// <summary>Draws the plan of a level as one page of the document.</summary>
-    private static void AddPlanPage(PdfDocument pdf, RvtDocument document, int levelId, int scale, string? title,
+    internal static void AddPlanPage(PdfDocument pdf, RvtDocument document, int levelId, int scale, string? title,
         PlanPrintOptions options)
     {
         PlanContent content = CollectLevel(document, levelId)

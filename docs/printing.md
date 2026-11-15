@@ -25,7 +25,8 @@ is chosen, and a drawing larger than A0 is scaled down to fit. Exit codes: 0 wri
 output path (also a level or view that is not printable), 2 the file cannot be read, 3 a reader limit cut a stream, 4
 nothing to draw.
 
-A view can be printed instead of a level, at the view's own view scale:
+A view can be printed instead of a level, at the view's own view scale; plans and compass elevations are both accepted
+(one page per view, in the order given):
 
 ```sh
 rvtio print project.rvt views.pdf --view "Уровень 1"
@@ -33,7 +34,9 @@ rvtio print project.rvt views.pdf --view "Уровень 1,Уровень 2"   #
 rvtio print project.rvt --list-views
 ```
 
-`--list-views` prints the id, name, scale and level of every printable plan view. A plan view is a `DBViewPlan` of the
+`--list-views` prints the id, name, scale and level of every printable plan view and the id, name, scale and direction
+of every compass elevation. A detail view of a plan (a DBViewPlan drawn at 1:2 to 1:24) is left out: it is not the plan
+of its level. A plan view is a `DBViewPlan` of the
 file whose name matches a printable level (or whose stored elevation equals the level's); a section or an elevation is
 left out until its renderer exists.
 

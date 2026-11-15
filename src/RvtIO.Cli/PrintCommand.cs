@@ -85,6 +85,7 @@ internal static class PrintCommand
 
         IReadOnlyList<PlanLevel> levels = PlanPrinter.Levels(document);
         IReadOnlyList<PlanView> views = PlanPrinter.Views(document);
+        IReadOnlyList<ElevationView> elevations = ElevationPrinter.Views(document);
         IReadOnlyList<PrintableSheet> sheets = SheetPrinter.Sheets(document);
         IReadOnlyList<ComposedSheet> composed = SheetComposer.Sheets(document);
         if (listSheets)
@@ -118,8 +119,10 @@ internal static class PrintCommand
         if (listViews)
         {
             foreach (PlanView view in views)
-                output.WriteLine($"{view.ViewId}\t{view.Name}\t1:{view.Scale}\tlevel {view.LevelId}");
-            if (views.Count == 0) error.WriteLine("No printable plan view was found.");
+                output.WriteLine($"{view.ViewId}\t{view.Name}\t1:{view.Scale}\tlevel {view.LevelId}\tplan");
+            foreach (ElevationView view in elevations)
+                output.WriteLine($"{view.ViewId}\t{view.Name}\t1:{view.Scale}\t{view.Direction}\televation");
+            if (views.Count == 0 && elevations.Count == 0) error.WriteLine("No printable view was found.");
             return RvtExitCodes.Success;
         }
 
@@ -171,23 +174,15 @@ internal static class PrintCommand
                 var viewIds = new List<int>();
                 foreach (string text in viewTexts)
                 {
-                    PlanView? match = null;
-                    foreach (PlanView view in views)
+                    int? resolved = ResolveView(text, views, elevations);
+                    if (resolved == null)
                     {
-                        if (int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int id) && id == view.ViewId)
-                            match = view;
-                        else if (string.Equals(view.Name, text, StringComparison.OrdinalIgnoreCase))
-                            match = view;
-                        if (match != null) break;
-                    }
-                    if (match == null)
-                    {
-                        error.WriteLine($"No printable plan view is named or numbered '{text}'. --list-views shows them.");
+                        error.WriteLine($"No printable view is named or numbered '{text}'. --list-views shows them.");
                         return RvtExitCodes.Usage;
                     }
-                    viewIds.Add(match.ViewId);
+                    viewIds.Add(resolved.Value);
                 }
-                pdf = PlanPrinter.RenderViews(document, viewIds, new PlanPrintOptions { PaperSize = paper });
+                pdf = ViewPrinter.Render(document, viewIds, new PlanPrintOptions { PaperSize = paper });
             }
             else
             {
@@ -231,6 +226,23 @@ internal static class PrintCommand
             error.WriteLine($"Cannot write {outputPath}: {exception.Message}");
             return RvtExitCodes.Usage;
         }
+    }
+
+    /// <summary>The id of the printable view a text names: a plan or an elevation, by id or by exact name.</summary>
+    private static int? ResolveView(string text, IReadOnlyList<PlanView> views, IReadOnlyList<ElevationView> elevations)
+    {
+        bool byId = int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int id);
+        foreach (PlanView view in views)
+        {
+            if ((byId && id == view.ViewId) || string.Equals(view.Name, text, StringComparison.OrdinalIgnoreCase))
+                return view.ViewId;
+        }
+        foreach (ElevationView view in elevations)
+        {
+            if ((byId && id == view.ViewId) || string.Equals(view.Name, text, StringComparison.OrdinalIgnoreCase))
+                return view.ViewId;
+        }
+        return null;
     }
 
     private static PdfPageSize? Paper(string name) => name.ToUpperInvariant() switch
