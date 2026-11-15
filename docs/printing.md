@@ -25,7 +25,8 @@ is chosen, and a drawing larger than A0 is scaled down to fit. Exit codes: 0 wri
 output path (also a level or view that is not printable), 2 the file cannot be read, 3 a reader limit cut a stream, 4
 nothing to draw.
 
-A view can be printed instead of a level, at the view's own view scale; plans and compass elevations are both accepted
+A view can be printed instead of a level, at the view's own view scale; plans, compass elevations, sections, 3D views
+and renderings are all accepted
 (one page per view, in the order given). `--all-views` prints every printable view and `--all-sheets` every numbered
 sheet:
 

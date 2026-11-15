@@ -128,7 +128,15 @@ internal static class PrintCommand
                 output.WriteLine($"{view.ViewId}\t{view.Name}\t1:{view.Scale}\tlevel {view.LevelId}\tplan");
             foreach (ElevationView view in elevations)
                 output.WriteLine($"{view.ViewId}\t{view.Name}\t1:{view.Scale}\t{view.Direction}\televation");
-            if (views.Count == 0 && elevations.Count == 0) error.WriteLine("No printable view was found.");
+            foreach (RvtIO.Model.Element other in ViewPrinter.OtherViews(document))
+            {
+                string kind = other.RootClassName == "DBViewRendering" ? "rendering" : "3d";
+                int otherScale = other.LookupParameter(RvtIO.BuiltIns.BuiltInParameter.VIEW_SCALE)?.Value is int value
+                    ? value : 0;
+                output.WriteLine($"{other.Id}\t{other.Name}\t1:{otherScale}\t-\t{kind}");
+            }
+            if (views.Count == 0 && elevations.Count == 0 && ViewPrinter.OtherViews(document).Count == 0)
+                error.WriteLine("No printable view was found.");
             return RvtExitCodes.Success;
         }
 
@@ -150,6 +158,8 @@ internal static class PrintCommand
                 var ids = new List<int>();
                 foreach (PlanView view in views) ids.Add(view.ViewId);
                 foreach (ElevationView view in elevations) ids.Add(view.ViewId);
+                // A view set is complete with the 3D views and the renderings.
+                foreach (RvtIO.Model.Element other in ViewPrinter.OtherViews(document)) ids.Add(other.Id);
                 if (ids.Count == 0)
                 {
                     error.WriteLine("No printable view was found; nothing to print.");
@@ -203,6 +213,19 @@ internal static class PrintCommand
                 foreach (string text in viewTexts)
                 {
                     int? resolved = ResolveView(text, views, elevations);
+                    if (resolved == null)
+                    {
+                        // A 3D view or a rendering is a printable view too.
+                        foreach (RvtIO.Model.Element other in ViewPrinter.OtherViews(document))
+                        {
+                            if (int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int otherId)
+                                && otherId == other.Id)
+                                resolved = other.Id;
+                            else if (string.Equals(other.Name, text, StringComparison.OrdinalIgnoreCase))
+                                resolved = other.Id;
+                            if (resolved != null) break;
+                        }
+                    }
                     if (resolved == null)
                     {
                         error.WriteLine($"No printable view is named or numbered '{text}'. --list-views shows them.");

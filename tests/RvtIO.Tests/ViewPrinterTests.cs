@@ -79,6 +79,33 @@ public class ViewPrinterTests
     private static RvtDocument Document(params Element[] elements) =>
         RvtDocument.FromInfo(new RevitFileInfo { Elements = elements.ToList() });
 
+    private static Element ThreeDimensionalView(int id, string name)
+    {
+        var view = new Element
+        {
+            Id = id,
+            CategoryId = (int)BuiltInCategory.OST_Views,
+            NativeRootClassName = "DBView3d",
+        };
+        Add(view, BuiltInParameter.VIEW_NAME, StorageType.String, name);
+        Add(view, BuiltInParameter.VIEW_SCALE, StorageType.Integer, 100);
+        return view;
+    }
+
+    [Fact]
+    public void Render_PrintsA3DViewAsAnIsometricPage()
+    {
+        var document = Document(ThreeDimensionalView(900, "3D View"), WallWithFace(700));
+
+        PdfDocument pdf = ViewPrinter.Render(document, [900]);
+
+        PdfPage page = Assert.Single(pdf.Pages);
+        using var stream = new MemoryStream();
+        pdf.Save(stream);
+        Assert.Contains(" l ", PdfTestContent.Read(stream.ToArray()));
+        Assert.True(page.Size.WidthMillimetres > 0);
+    }
+
     [Fact]
     public void Render_PrintsAPlanAndAnElevationAsTwoPages()
     {
@@ -97,7 +124,7 @@ public class ViewPrinterTests
         var document = Document(Level(500, "Level 1"));
 
         var error = Assert.Throws<InvalidOperationException>(() => ViewPrinter.Render(document, [312]));
-        Assert.Contains("not a printable plan or elevation", error.Message);
+        Assert.Contains("is not a printable plan, elevation, 3D view or rendering", error.Message);
     }
 
     [Fact]

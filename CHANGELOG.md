@@ -64,6 +64,8 @@ Plans draw the frames of the doors and windows whose cut loop is decoded and the
 
 A placed view is titled as Revit titles it: the viewport detail number in a circle, the view name beside it, the scale below and a rule over the title (1 Level 1 1:100, 2 Level 2 1:100 on A102).
 
+`rvtio print --view <name or id>` now prints a 3D view (isometric massing page) and a rendering (its image page), `--all-views` includes them, and `--list-views` lists them as 3d and rendering. ViewPrinter.OtherViews is the API.
+
 A 3D view placed on a sheet (the Solar Analysis of A101, a rendering without an image) prints as an isometric projection of the model from above the south west corner, white faces with their outlines: the massing the view stands for.
 
 A rendering view prints its image: the JPEG Revit stores in the block of the image symbol type (class 0x0890) is found among the partition streams (scanning every byte, as the blocks of the images are not aligned to the walked blocks), embedded with DCTDecode and placed at the offset of the viewport, clear of the title block strip. Measured on the Revit sample project: the title sheet A001 now carries the five renderings (Approach, From Yard, Kitchen, Living Room, Section Perspective) beside the title block, as in the reference export.
