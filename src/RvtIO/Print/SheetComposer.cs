@@ -303,7 +303,11 @@ public static class SheetComposer
                     && viewElement?.ViewDirection is { Length: 3 };
                 double stripLeft = page.WidthMillimetres - 5
                     - Math.Min(180, page.WidthMillimetres * 0.22) - 3;
-                (double Width, double Height)? detailWindow = detailSection ? (3000, 2200) : null;
+                // A stair detail (1:20) is cropped to the stair enclosure, like the details of the reference: a window of
+                // 80 x 60 mm on the page around the point of its plane.
+                (double Width, double Height)? detailWindow = detailSection ? (3000, 2200)
+                    : stairSection && scale < 50 ? (130 * scale, 95 * scale)
+                    : null;
                 // A detail whose viewport the file puts against the border or outside the page is not printed.
                 bool detailOnPage = !detailSection || (centerX > 40 && centerX < stripLeft - 40
                     && centerY > 40 && centerY < page.HeightMillimetres - 40);
@@ -325,7 +329,7 @@ public static class SheetComposer
                     // elevation or section keeps to the third of the page its place holds, so two of them never merge.
                     if (stairSection && scale < 50)
                     {
-                        drawableWidth = Math.Min(drawableWidth, stripLeft * 0.55);
+                        drawableWidth = Math.Min(drawableWidth, stripLeft * 0.45);
                         drawableHeight = Math.Min(drawableHeight, page.HeightMillimetres * 0.6);
                     }
                     else

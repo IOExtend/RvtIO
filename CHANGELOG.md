@@ -35,6 +35,8 @@ A viewport record (class 0x07C6) also stores the reciprocal of the view scale: t
 
 The plane of a view is decoded from the view's own block (class 0x3F8): a point of the plane, the view scale, the vertical axis and the camera direction. An elevation is projected on the exact axes of the view, and a section is cut at its plane — the geometry between the viewer and the plane is removed, the polygons crossing it are clipped and the faces behind it are filled grey. On the Revit sample project the Longitudinal Section of A103 now shows the rooms, walls and the stair cut at the section line, and the Building Section of A104 cuts the house the same way. `BlockParser` decodes the plane, `Element.ViewOrigin`/`ViewDirection`/`ViewHorizontalDirection`/`ViewVerticalDirection` carry it and `ElevationPrinter.Collect` takes it as its `planeView`. New tests: `ViewPlaneTests`.
 
+A stair detail (1:20) is cropped to the stair enclosure (a window of 130 x 95 mm on the page around the point of its plane), so it reads as the detail of a stair rather than as a wide cut of the floor.
+
 A stair detail (1:20) takes the right part of the sheet, the way the reference places its Main Stair Detail; its position is derived from the reference layout, not from the file (the file stores an off-page offset).
 
 A stair detail (1:20) prints the stair in its enclosure (the whole cut, not the stairs alone) and takes the right part of the sheet, the way the reference's Main Stair Detail does; a stair section (1:50) keeps projecting the stairs alone.
