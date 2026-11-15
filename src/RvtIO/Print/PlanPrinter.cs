@@ -495,20 +495,15 @@ public static class PlanPrinter
                 cx /= room.Polygon.Count;
                 cy /= room.Polygon.Count;
                 double pageX = ToX(cx), pageY = ToY(cy);
-                // The room tag: the number in a white circle, the name and the area beside it.
-                var circle = new List<(double X, double Y)>(24);
-                for (int i = 0; i < 24; i++)
-                {
-                    double angle = i * Math.PI * 2 / 24;
-                    circle.Add((pageX + 2.4 * Math.Cos(angle), pageY + 2.4 * Math.Sin(angle)));
-                }
-                page.DrawPolyline(circle, 0.15, true, 1);
-                if (room.Number.Length > 0)
-                    page.DrawText(room.Number, pageX, pageY - 1, 1.8, PdfTextAlignment.Center);
-                page.DrawText(room.Name, pageX + 3.6, pageY + 0.6, 2.2);
+                // The room tag of the reference plan: the number and the area in a rounded white box at the middle of
+                // the room (the legend carries the names).
+                double boxWidth = 16, boxHeight = 5.2;
+                page.DrawPolyline(RoundedBox(pageX - boxWidth / 2, pageY - boxHeight / 2, boxWidth, boxHeight, 1.2),
+                    0.18, true, 1);
+                page.DrawText(room.Number, pageX - boxWidth / 2 + 2, pageY - 1.1, 2.4);
                 if (room.AreaSquareFeet > 0)
-                    page.DrawText($"{room.AreaSquareFeet * 0.092903:0} m²", pageX + 3.6, pageY - 1.8, 1.8,
-                        PdfTextAlignment.Left, 0.45);
+                    page.DrawText($"{room.AreaSquareFeet * 0.092903:0} m²", pageX + boxWidth / 2 - 2, pageY - 1,
+                        2, PdfTextAlignment.Right);
             }
         }
 
@@ -621,6 +616,26 @@ public static class PlanPrinter
 
     /// <summary>A grid bubble: a white circle with the grid name centred in it, as a plan prints the end of a grid
     /// line.</summary>
+    /// <summary>The points of a rounded rectangle: the corners are quarter circles of the radius, approximated by
+    /// three segments each.</summary>
+    private static List<(double X, double Y)> RoundedBox(double x, double y, double width, double height, double radius)
+    {
+        var points = new List<(double X, double Y)>(20);
+        void Corner(double cx, double cy, double from)
+        {
+            for (int i = 0; i <= 3; i++)
+            {
+                double angle = from + i * Math.PI / 2 / 3;
+                points.Add((cx + radius * Math.Cos(angle), cy + radius * Math.Sin(angle)));
+            }
+        }
+        Corner(x + width - radius, y + radius, -Math.PI / 2);
+        Corner(x + width - radius, y + height - radius, 0);
+        Corner(x + radius, y + height - radius, Math.PI / 2);
+        Corner(x + radius, y + radius, Math.PI);
+        return points;
+    }
+
     private static void Bubble(PdfPage page, double x, double y, string name)
     {
         const double radius = 3.5;
