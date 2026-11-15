@@ -201,3 +201,17 @@ selection nor drawing.
 2. Decode the schedule graphics, so a schedule view prints its rows.
 3. Decode the linework of a drafting view, so a detail drawn by hand prints as drawn.
 4. Widen the same printing to the releases the reader supports in its own schema.
+
+## Comparison with the reference export
+
+Measured on the sample project `rac_basic_sample_project.rvt` against the reference export of the same file
+(`rac_basic_sample_project.pdf`, six A1 pages):
+
+| Sheet | Printed | Still different |
+|---|---|---|
+| A001 Title Sheet | the title texts, the five renderings from the file, the logo, the title block strip | the "How do I" table (a schedule view, whose rows are not decoded) |
+| A101 Site Plan | topography with its outline, the house as a dark mass, the planting and its tags T1..., the north arrow, the planting schedule with Type Mark / Common Name / Count, the 3D massing of the Solar Analysis view | the property and setback lines (the file stores no geometry for them) |
+| A102 Plans | both plans with the room colours of the reference, furniture, stairs, door and window tags, dimensions on all four sides, the room legend, the room tags | the section and view reference marks (annotation elements the reader does not decode) |
+| A103 Elevations/Sections | South elevation and the Longitudinal Section cut at its plane, level markers, the faded site | — |
+| A104 Elev/Sec/Det | West elevation and the Building Section cut at its plane | the four detail sections: the file places their viewports outside the page and stores no other position |
+| A105 Elev/Stair Sections | Stair Section, Main Stair Detail (cut), East elevation | the layout is tighter than the reference (placements are derived, not stored) |
