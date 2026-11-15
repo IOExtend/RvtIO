@@ -142,12 +142,15 @@ internal static class PdfSerializer
         // The images, after the pages: a page names them in its /XObject resources.
         for (int k = 0; k < document.Images.Count; k++)
         {
-            PdfRasterImage image = document.Images[k];
-            byte[] pixels = document.Compress ? Zlib(image.Rgb) : image.Rgb;
+            IPdfImage image = document.Images[k];
+            bool flate = image.Filter == null && document.Compress;
+            byte[] pixels = flate ? Zlib(image.Encoded) : image.Encoded;
+            string filter = image.Filter != null ? $" /Filter /{image.Filter}"
+                : flate ? " /Filter /FlateDecode" : string.Empty;
             BeginObject(ImageId(k));
             Raw($"<< /Type /XObject /Subtype /Image /Width {image.Width} /Height {image.Height} "
-                + "/ColorSpace /DeviceRGB /BitsPerComponent 8"
-                + (document.Compress ? " /Filter /FlateDecode" : string.Empty) + $" /Length {pixels.Length} >>\nstream\n");
+                + $"/ColorSpace {image.ColorSpace} /BitsPerComponent 8" + filter
+                + $" /Length {pixels.Length} >>\nstream\n");
             WriteBytes(pixels);
             Raw("\nendstream\n");
             EndObject();

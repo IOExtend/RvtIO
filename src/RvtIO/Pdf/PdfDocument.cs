@@ -31,7 +31,89 @@ public readonly record struct PdfPageSize(double WidthMillimetres, double Height
 
 /// <summary>A raster image of the document, 8 bits per channel and three channels (red, green, blue), the form the
 /// PDF image object is written in.</summary>
-public sealed class PdfRasterImage
+public interface IPdfImage
+{
+    /// <summary>Width in pixels.</summary>
+    int Width { get; }
+
+    /// <summary>Height in pixels.</summary>
+    int Height { get; }
+
+    /// <summary>The colour space of the pixels.</summary>
+    string ColorSpace { get; }
+
+    /// <summary>The encoded pixel stream as it is written, or the raw pixels when <see cref="Filter"/> is null.</summary>
+    byte[] Encoded { get; }
+
+    /// <summary>The PDF filter of the stream, null when the pixels are written raw.</summary>
+    string? Filter { get; }
+}
+
+/// <summary>A JPEG image read from the file, embedded as it is with the DCTDecode filter.</summary>
+public sealed class PdfJpegImage : IPdfImage
+{
+    /// <summary>The JPEG file bytes.</summary>
+    public byte[] Jpeg { get; }
+
+    /// <summary>Width in pixels.</summary>
+    public int Width { get; }
+
+    /// <summary>Height in pixels.</summary>
+    public int Height { get; }
+
+    /// <summary>The number of colour components: 1 (grey), 3 (RGB) or 4 (CMYK).</summary>
+    public int Components { get; }
+
+    /// <summary>Creates a JPEG image, reading the size and the components from its header.</summary>
+    /// <param name="jpeg">The JPEG file bytes.</param>
+    public PdfJpegImage(byte[] jpeg) : this(jpeg, 0, 0, 0)
+    {
+    }
+
+    private PdfJpegImage(byte[] jpeg, int width, int height, int components)
+    {
+        ArgumentNullException.ThrowIfNull(jpeg);
+        Jpeg = jpeg;
+        (Width, Height, Components) = ReadHeader(jpeg);
+        if (Width <= 0 || Height <= 0) throw new ArgumentException("The bytes are not a JPEG.", nameof(jpeg));
+    }
+
+    /// <summary>The colour space of the components.</summary>
+    public string ColorSpace => Components switch { 1 => "/DeviceGray", 4 => "/DeviceCMYK", _ => "/DeviceRGB" };
+
+    /// <summary>The JPEG bytes.</summary>
+    public byte[] Encoded => Jpeg;
+
+    /// <summary>The DCTDecode filter.</summary>
+    public string? Filter => "DCTDecode";
+
+    /// <summary>Reads the size and the components from the JPEG start-of-frame marker.</summary>
+    internal static (int Width, int Height, int Components) ReadHeader(byte[] jpeg)
+    {
+        if (jpeg.Length < 4 || jpeg[0] != 0xFF || jpeg[1] != 0xD8) return (0, 0, 0);
+        int at = 2;
+        while (at + 4 <= jpeg.Length)
+        {
+            if (jpeg[at] != 0xFF) { at++; continue; }
+            byte marker = jpeg[at + 1];
+            if (marker is 0xD8 or 0xD9 or 0x01 || marker is >= 0xD0 and <= 0xD7) { at += 2; continue; }
+            int length = (jpeg[at + 2] << 8) | jpeg[at + 3];
+            bool isFrame = marker is >= 0xC0 and <= 0xCF && marker is not 0xC4 and not 0xC8 and not 0xCC;
+            if (isFrame && at + 9 < jpeg.Length)
+            {
+                int height = (jpeg[at + 5] << 8) | jpeg[at + 6];
+                int width = (jpeg[at + 7] << 8) | jpeg[at + 8];
+                int components = jpeg[at + 9];
+                return (width, height, components);
+            }
+            at += 2 + length;
+        }
+        return (0, 0, 0);
+    }
+}
+
+/// <summary>An RGB raster image of the document, 8 bits per channel, written with Flate compression.</summary>
+public sealed class PdfRasterImage : IPdfImage
 {
     /// <summary>Width in pixels.</summary>
     public int Width { get; }
@@ -56,6 +138,15 @@ public sealed class PdfRasterImage
         Height = height;
         Rgb = rgb;
     }
+
+    /// <summary>The pixels are RGB.</summary>
+    public string ColorSpace => "/DeviceRGB";
+
+    /// <summary>The pixels, compressed by the writer when the document compresses its streams.</summary>
+    public byte[] Encoded => Rgb;
+
+    /// <summary>The writer applies Flate when the document compresses.</summary>
+    public string? Filter => null;
 }
 
 /// <summary>An ink colour, each component from 0 (none) to 1 (full).</summary>
@@ -106,15 +197,15 @@ public sealed class PdfDocument
     public IReadOnlyList<PdfPage> Pages => _pages;
 
     /// <summary>The images placed on the pages, in the order they were first drawn.</summary>
-    public IReadOnlyList<PdfRasterImage> Images => _images;
+    public IReadOnlyList<IPdfImage> Images => _images;
 
-    private readonly List<PdfRasterImage> _images = new();
+    private readonly List<IPdfImage> _images = new();
 
     /// <summary>Registers an image with the document (once) and returns it.</summary>
     /// <summary>The index of an image in the document list, -1 when it is not there.</summary>
-    internal int ImageIndex(PdfRasterImage image) => _images.IndexOf(image);
+    internal int ImageIndex(IPdfImage image) => _images.IndexOf(image);
 
-    internal PdfRasterImage Register(PdfRasterImage image)
+    internal IPdfImage Register(IPdfImage image)
     {
         if (!_images.Contains(image)) _images.Add(image);
         return image;
@@ -271,7 +362,7 @@ public sealed class PdfPage
     public void EndClip() => _content.Append("Q\n");
 
     /// <summary>The images of the page, in the order they were drawn.</summary>
-    internal List<PdfRasterImage> Images { get; } = new();
+    internal List<IPdfImage> Images { get; } = new();
 
     /// <summary>Draws a raster image with its lower-left corner at (x, y).</summary>
     /// <param name="image">The image; it is registered with the document.</param>
@@ -279,7 +370,7 @@ public sealed class PdfPage
     /// <param name="y">Bottom edge, millimetres.</param>
     /// <param name="widthMillimetres">Width, millimetres.</param>
     /// <param name="heightMillimetres">Height, millimetres.</param>
-    public void DrawImage(PdfRasterImage image, double x, double y, double widthMillimetres,
+    public void DrawImage(IPdfImage image, double x, double y, double widthMillimetres,
         double heightMillimetres)
     {
         ArgumentNullException.ThrowIfNull(image);

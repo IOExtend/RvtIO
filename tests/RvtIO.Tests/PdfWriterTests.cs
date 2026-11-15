@@ -155,6 +155,28 @@ public class PdfWriterTests
     }
 
     [Fact]
+    public void JpegImage_IsWrittenWithDctDecode()
+    {
+        // A one-pixel JPEG: the writer embeds it as it is, without decoding the picture.
+        byte[] jpeg = Convert.FromBase64String(
+            "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwc"
+            + "KDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAA"
+            + "AAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==");
+        var image = new PdfJpegImage(jpeg);
+        var document = new PdfDocument();
+        document.AddPage(PdfPageSize.A4).DrawImage(image, 10, 10, 20, 20);
+
+        string pdf = Write(document);
+
+        Assert.Equal(1, image.Width);
+        Assert.Equal(1, image.Height);
+        Assert.Equal(1, image.Components);
+        Assert.Equal("/DeviceGray", image.ColorSpace);
+        Assert.Contains("/Filter /DCTDecode", pdf);
+        Assert.Contains("/Subtype /Image", pdf);
+    }
+
+    [Fact]
     public void Compress_WritesFlateStreamsThatShrinkTheFile()
     {
         static PdfDocument Build(bool compress)

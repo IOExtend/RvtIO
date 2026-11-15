@@ -20,12 +20,8 @@ internal static class RvtRaster
             foreach (var entry in partitions.EnumerateEntries())
             {
                 if (entry.Type != EntryType.Stream) continue;
-                byte[] raw;
-                using (var stream = partitions.OpenStream(entry.Name))
-                {
-                    raw = new byte[stream.Length];
-                    stream.ReadExactly(raw);
-                }
+                byte[]? raw = ReadStream(partitions, entry);
+                if (raw == null) continue;
                 foreach (var chunk in new ChunkDecompressor().DecompressAll(raw))
                 {
                     for (int i = 0; i + 33 < chunk.Length; i++)
@@ -54,6 +50,59 @@ internal static class RvtRaster
         return null;
     }
 
+    /// <summary>Finds the JPEG that Revit stores in the block of the given element (class 0x0890) and returns it as an
+    /// image the PDF writer embeds as it is. A rendering of a 3D view is stored that way, in the block of its image
+    /// symbol's type.</summary>
+    internal static PdfJpegImage? FindJpeg(string path, int elementId)
+    {
+        try
+        {
+            using var root = RootStorage.OpenRead(path);
+            var partitions = root.OpenStorage("Partitions");
+            foreach (var entry in partitions.EnumerateEntries())
+            {
+                if (entry.Type != EntryType.Stream) continue;
+                byte[]? raw = ReadStream(partitions, entry);
+                if (raw == null) continue;
+                foreach (var chunk in Chunks(raw))
+                {
+                    int pos = 0;
+                    while (pos + 16 <= chunk.Length)
+                    {
+                        uint eid = BinaryPrimitives.ReadUInt32LittleEndian(chunk.AsSpan(pos));
+                        int size = BinaryPrimitives.ReadInt32LittleEndian(chunk.AsSpan(pos + 8));
+                        uint classIdx = BinaryPrimitives.ReadUInt32LittleEndian(chunk.AsSpan(pos + 12));
+                        if (eid == 0 || size <= 0 || pos + 16 + size > chunk.Length)
+                        {
+                            pos++;
+                            continue;
+                        }
+                        if (eid != (uint)elementId || (classIdx & 0xFFFF) != 0x0890)
+                        {
+                            pos += 16 + size;
+                            continue;
+                        }
+                        var payload = chunk.AsSpan(pos + 16, size);
+                        int start = payload.IndexOf(new byte[] { 0xFF, 0xD8, 0xFF });
+                        if (start < 0) return null;
+                        var jpeg = payload[start..].ToArray();
+                        // The end of the JPEG is its last end-of-image marker; anything after it is padding.
+                        int end = jpeg.AsSpan().LastIndexOf(new byte[] { 0xFF, 0xD9 });
+                        if (end < 0) return null;
+                        Array.Resize(ref jpeg, end + 2);
+                        return new PdfJpegImage(jpeg);
+                    }
+                }
+            }
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or ArgumentException
+            or NotSupportedException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+        return null;
+    }
+
     /// <summary>Finds the logo of the file: the widest PNG whose aspect (four to eight to one) is that of a title block
     /// logo, decoded to an RGB raster. Null when the file has no such image.</summary>
     internal static PdfRasterImage? FindLogo(string path)
@@ -67,12 +116,8 @@ internal static class RvtRaster
             foreach (var entry in partitions.EnumerateEntries())
             {
                 if (entry.Type != EntryType.Stream) continue;
-                byte[] raw;
-                using (var stream = partitions.OpenStream(entry.Name))
-                {
-                    raw = new byte[stream.Length];
-                    stream.ReadExactly(raw);
-                }
+                byte[]? raw = ReadStream(partitions, entry);
+                if (raw == null) continue;
                 foreach (var chunk in new ChunkDecompressor().DecompressAll(raw))
                 {
                     for (int i = 0; i + 33 < chunk.Length; i++)
@@ -204,6 +249,40 @@ internal static class RvtRaster
             }
         }
         return new PdfRasterImage(width, height, rgb);
+    }
+
+    /// <summary>The decompressed chunks of a stream; a stream that does not decode yields none.</summary>
+    private static IEnumerable<byte[]> Chunks(byte[] raw)
+    {
+        IReadOnlyList<byte[]> chunks;
+        try
+        {
+            chunks = new ChunkDecompressor().DecompressAll(raw);
+        }
+        catch (Exception exception) when (exception is InvalidDataException or ArgumentException
+            or IndexOutOfRangeException or OverflowException)
+        {
+            yield break;
+        }
+        foreach (var chunk in chunks) yield return chunk;
+    }
+
+    private static byte[]? ReadStream(Storage partitions, EntryInfo entry)
+    {
+        try
+        {
+            long length = entry.Length;
+            if (length <= 0 || length > 512L * 1024 * 1024) return null;
+            using var stream = partitions.OpenStream(entry.Name);
+            var raw = new byte[length];
+            stream.ReadExactly(raw);
+            return raw;
+        }
+        catch (Exception exception) when (exception is IOException or ArgumentException or NotSupportedException
+            or UnauthorizedAccessException or InvalidDataException)
+        {
+            return null;
+        }
     }
 
     private static int Paeth(int left, int up, int upLeft)
