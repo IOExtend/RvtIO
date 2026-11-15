@@ -247,9 +247,26 @@ public static class SheetComposer
             }
             if (options.DrawViewLabels && pdf.Font != null)
             {
+                // The view title as Revit draws it: a circled detail number, the view name beside it, the scale below and
+                // a rule over the title.
+                string detail = element.LookupParameter(BuiltInParameter.VIEWPORT_DETAIL_NUMBER)?.Value as string ?? "";
                 double labelY = placed && frameHeight > 0 ? frameY - 5 : centerY;
-                page2.DrawText(name, frameX, labelY, 3.5);
-                page2.DrawText($"1:{scale}", frameX, labelY - 3.5, 2.5, PdfTextAlignment.Left, 0.45);
+                double textX = frameX;
+                if (detail.Length > 0)
+                {
+                    var circle = new List<(double X, double Y)>(20);
+                    for (int i = 0; i < 20; i++)
+                    {
+                        double angle = i * Math.PI * 2 / 20;
+                        circle.Add((frameX + 3 + 3 * Math.Cos(angle), labelY + 1.2 + 3 * Math.Sin(angle)));
+                    }
+                    page2.DrawPolyline(circle, 0.15, true, 1);
+                    page2.DrawText(detail, frameX + 3, labelY + 0.2, 2.4, PdfTextAlignment.Center);
+                    textX = frameX + 8;
+                }
+                page2.DrawLine(frameX, labelY + 6, frameX + Math.Min(Math.Max(frameWidth, 40), 120), labelY + 6, 0.2);
+                page2.DrawText(name, textX, labelY, 3.5);
+                page2.DrawText($"1:{scale}", textX, labelY - 3.5, 2.5, PdfTextAlignment.Left, 0.45);
             }
         }
 
