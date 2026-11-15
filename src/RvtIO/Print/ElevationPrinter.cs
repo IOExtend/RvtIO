@@ -150,6 +150,19 @@ public static class ElevationPrinter
             levels.Add((elevation * FeetToMillimetres, element.Name ?? ""));
         }
         levels.Sort((left, right) => left.Y.CompareTo(right.Y));
+        // The project holds many level elements at the same height (one per family); an elevation notes each height
+        // once, with the first name it finds.
+        var distinctLevels = new List<(double Y, string Label)>();
+        foreach (var level in levels)
+        {
+            if (distinctLevels.Count > 0 && Math.Abs(distinctLevels[^1].Y - level.Y) < 1.0)
+            {
+                if (distinctLevels[^1].Label.Length == 0)
+                    distinctLevels[^1] = (distinctLevels[^1].Y, level.Label);
+                continue;
+            }
+            distinctLevels.Add(level);
+        }
         var grids = new List<(double X, string Name)>();
         foreach (var element in document.Elements)
         {
@@ -164,7 +177,7 @@ public static class ElevationPrinter
         }
         grids.Sort((left, right) => left.X.CompareTo(right.X));
         if (grids.Count > 0) maxY += 4500;
-        return new ElevationContent(faces, levels, grids, minX, minY, maxX, maxY);
+        return new ElevationContent(faces, distinctLevels, grids, minX, minY, maxX, maxY);
     }
 
     /// <summary>Prints one elevation view to a one-page PDF document at the view's scale.</summary>
@@ -190,7 +203,7 @@ public static class ElevationPrinter
     {
         ElevationContent content = Collect(document, view.Direction)
             ?? throw new InvalidOperationException($"The model has no face to project for the {view.Name} elevation.");
-        double width = (content.MaxX - content.MinX) / view.Scale;
+        double width = (content.MaxX - content.MinX) / view.Scale + LabelMarginMillimetres;
         double height = (content.MaxY - content.MinY) / view.Scale;
         PdfPageSize paper = options.PaperSize ?? (width + 2 * options.MarginMillimetres <= PdfPageSize.A4.Landscape.WidthMillimetres
             && height + 2 * options.MarginMillimetres <= PdfPageSize.A4.Landscape.HeightMillimetres
@@ -207,7 +220,7 @@ public static class ElevationPrinter
         double scale = view.Scale;
         if (width > usableWidth || height > usableHeight)
             scale = view.Scale * Math.Max(width / usableWidth, height / usableHeight);
-        double offsetX = (paper.WidthMillimetres - (content.MaxX - content.MinX) / scale) / 2;
+        double offsetX = (paper.WidthMillimetres - (content.MaxX - content.MinX) / scale - LabelMarginMillimetres) / 2;
         double offsetY = (paper.HeightMillimetres - (content.MaxY - content.MinY) / scale) / 2;
         PdfPage page = pdf.AddPage(paper);
         if (options.DrawFrame)
@@ -223,6 +236,10 @@ public static class ElevationPrinter
                 paper.HeightMillimetres - options.MarginMillimetres - 11, 3, PdfTextAlignment.Left, 0.35);
         }
     }
+
+    /// <summary>The width reserved to the right of an elevation for the level markers and their labels, in
+    /// millimetres of the page.</summary>
+    internal const double LabelMarginMillimetres = 42;
 
     /// <summary>Draws the projected elevation with (MinX, MinY) at (originX, originY), one model unit per 1/scale.</summary>
     internal static void DrawContent(PdfPage page, ElevationContent content, double scale, double originX,
@@ -266,24 +283,30 @@ public static class ElevationPrinter
                 if (pageY < ToY(content.MinY) - 1 || pageY > ToY(content.MaxY) + 1) continue;
                 double left = ToX(content.MinX), right = ToX(content.MaxX);
                 page.DrawLine(left, pageY, right, pageY, 0.15, 0.55);
-                // The level marker at the right end of the line: the height in metres, as an elevation notes it.
+                // The level marker at the right end of the line: a circle with an arrow head, the level name above its
+                // height in millimetres, as an elevation notes them.
+                double markerX = right + 4;
+                page.DrawLine(right, pageY, markerX - 2.5, pageY, 0.12, 0.4);
                 var marker = new List<(double X, double Y)>(20);
                 for (int i = 0; i < 20; i++)
                 {
                     double angle = i * Math.PI * 2 / 20;
-                    marker.Add((right - 3 + 3 * Math.Cos(angle), pageY + 3 * Math.Sin(angle)));
+                    marker.Add((markerX + 2.5 * Math.Cos(angle), pageY + 2.5 * Math.Sin(angle)));
                 }
                 page.DrawPolyline(marker, 0.12, true, 1);
-                page.DrawText($"{y / 1000:+0.000;-0.000;0.000}", right - 3, pageY - 0.9, 1.7,
-                    PdfTextAlignment.Center);
-                // Two levels a few millimetres apart (Ceiling over Level 1) would print their names on top of each
-                // other; the upper one keeps its label.
-                if (label.Length > 0 && pageY - lastLabelY >= 4)
+                page.DrawLine(markerX - 3.5, pageY, markerX, pageY, 0.15);
+                page.DrawLine(markerX, pageY, markerX - 1.5, pageY + 1.1, 0.15);
+                page.DrawLine(markerX, pageY, markerX - 1.5, pageY - 1.1, 0.15);
+                // Two levels a few millimetres apart (Ceiling over Level 1) would print their labels on top of each
+                // other; the label is pushed down instead.
+                double labelY = pageY;
+                if (labelY - lastLabelY < 5) labelY = lastLabelY + 5;
+                if (label.Length > 0 && labelY - lastLabelY >= 5)
                 {
-                    // The level name and its height in millimetres, as an elevation notes them.
-                    page.DrawText($"{label}  {y:0}", ToX(content.MinX) + 1, pageY + 0.8, 2.2,
-                        PdfTextAlignment.Left, 0.35);
-                    lastLabelY = pageY;
+                    page.DrawText(label, markerX + 4, labelY + 0.6, 2.2, PdfTextAlignment.Left, 0.4);
+                    page.DrawText($"{y:0}", markerX + 4, labelY - 3.6, 2, PdfTextAlignment.Left, 0.4);
+                    page.DrawLine(markerX + 2.5, pageY, markerX + 3.5, labelY + 0.4, 0.12, 0.4);
+                    lastLabelY = labelY;
                 }
             }
             page.ResetDash();

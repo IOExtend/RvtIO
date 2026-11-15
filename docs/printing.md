@@ -76,6 +76,11 @@ model (walls, floors, roofs, columns, windows and doors) is projected on the ver
 from the farthest to the nearest and outlined when it faces the viewer. Plants, topography and site surfaces are left
 out: in an elevation they print as symbols, and their tessellated faces bury the building.
 
+The level lines are dashed and end in the marker the reference export uses: a circle with an arrow head at the right of
+the drawing, the level name above and its height in millimetres below (Roof Line 6000, Level 2 3000, Ceiling 2700,
+Level 1 0, Level 1 Living Rm. -550, Foundation -800 on the sample). Each height is printed once even though the project
+holds many level elements at the same height, and the drawing reserves a label margin on the right.
+
 The plane of the view itself is not decoded yet, so the direction is taken from the view name (North, South, East,
 West). A view named "Section" is projected along the short axis of the building, the way a longitudinal section looks; it
 is a projection, not a true cut through the model. Measured on the Revit sample project: the South view prints

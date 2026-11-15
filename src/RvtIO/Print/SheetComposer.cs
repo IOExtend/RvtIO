@@ -253,7 +253,8 @@ public static class SheetComposer
                 var elevation = ElevationPrinter.Collect(document, direction);
                 if (elevation != null)
                 {
-                    frameWidth = (elevation.MaxX - elevation.MinX) / scale;
+                    frameWidth = (elevation.MaxX - elevation.MinX) / scale
+                        + ElevationPrinter.LabelMarginMillimetres;
                     frameHeight = (elevation.MaxY - elevation.MinY) / scale;
                     frameX = centerX - frameWidth / 2;
                     frameY = centerY - frameHeight / 2;
