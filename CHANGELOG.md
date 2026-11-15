@@ -29,6 +29,8 @@ A stair section (a view whose name holds "stair", 1:20 to 1:50) is printed from 
 
 A sheet titles only the views it prints: a viewport whose view is a wall section at 1:20 or a schedule stays empty and untitled instead of drawing the whole-model projection, so A104 shows its West elevation and Building Section cleanly.
 
+A detail section (1:10 to 1:50) whose plane is decoded is printed too: the cut inside a window of about 3.0 x 2.2 metres around the point of its plane, only when its viewport sits on the drawable part of the page. The plane is looked for in every chunk, and the block layout takes precedence over the older signature, so the wall and roof sections of A104 decode as well as the building sections. New tests: `ViewPlaneTests`.
+
 The plane of a view is decoded from the view's own block (class 0x3F8): a point of the plane, the view scale, the vertical axis and the camera direction. An elevation is projected on the exact axes of the view, and a section is cut at its plane — the geometry between the viewer and the plane is removed, the polygons crossing it are clipped and the faces behind it are filled grey. On the Revit sample project the Longitudinal Section of A103 now shows the rooms, walls and the stair cut at the section line, and the Building Section of A104 cuts the house the same way. `BlockParser` decodes the plane, `Element.ViewOrigin`/`ViewDirection`/`ViewHorizontalDirection`/`ViewVerticalDirection` carry it and `ElevationPrinter.Collect` takes it as its `planeView`. New tests: `ViewPlaneTests`.
 
 A section fills its faces grey, so the cut mass reads as a section instead of the white of an elevation (the elevation keeps its white faces). Measured on the Revit sample project: the Longitudinal Section of A103 reads as a cut.

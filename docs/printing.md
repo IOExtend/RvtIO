@@ -96,7 +96,13 @@ scale, the vertical axis and the camera direction, so an elevation is projected 
 section is **cut at its plane**: the geometry between the viewer and the plane is removed, the polygons crossing the plane
 are clipped, and the faces behind it are filled grey. On the sample, the Longitudinal Section of A103 shows the rooms,
 walls and the stair cut at the section line. A view whose plane is not decoded falls back to the direction taken from its
-name (North, South, East, West, Section projected along the short axis of the building). A viewport whose view is not printed (a wall section at 1:20, a schedule) is
+name (North, South, East, West, Section projected along the short axis of the building).
+
+A detail section (1:10 to 1:50) is printed when its plane is decoded: the cut is drawn inside a window of about
+3.0 x 2.2 metres around the point of the plane, the area a wall or roof detail covers, and only when the viewport sits on
+the drawable part of the page (the file places some detail viewports outside it). The plane of a view is looked for in
+every chunk of the file, and the block layout (class 0x3F8) takes precedence over the older signature, so the details are
+found as well as the building sections. A viewport whose view is not printed (a wall section at 1:20, a schedule) is
 neither drawn nor titled, so a sheet shows only the views the printer can stand behind. A stair section (a view whose name holds "stair", 1:20 to 1:50)
 projects only the stairs, their railings and supports, so the page shows the stair rather than the whole building. Measured on the Revit sample project: the South view prints
 the two-storey facade with its balcony rail, columns and roof on sheet A103.

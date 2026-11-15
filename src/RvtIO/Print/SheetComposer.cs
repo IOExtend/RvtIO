@@ -279,8 +279,21 @@ public static class SheetComposer
             {
                 // An elevation or a section: the model faces projected on the view's plane when the reader decoded it
                 // (a section is then cut at its plane), otherwise on the plane of the direction taken from the name.
-                var elevation = ElevationPrinter.Collect(document, direction,
-                    name.Contains("stair", StringComparison.OrdinalIgnoreCase), document.GetElement(viewId));
+                Element? viewElement = document.GetElement(viewId);
+                // A detail section (1:10 to 1:50) shows the cut near the point of its plane: a window about three by
+                // two metres around it, the size a wall or roof detail covers. The detail is printed only when its
+                // viewport sits on the drawable part of the page: the file places some of them outside it.
+                bool detailSection = direction == "section" && scale < 100
+                    && viewElement?.ViewDirection is { Length: 3 };
+                double stripLeft = page.WidthMillimetres - 5
+                    - Math.Min(180, page.WidthMillimetres * 0.22) - 3;
+                (double Width, double Height)? detailWindow = detailSection ? (3000, 2200) : null;
+                bool detailOnPage = !detailSection || (centerX > 10 && centerX < stripLeft - 10
+                    && centerY > 10 && centerY < page.HeightMillimetres - 15);
+                var elevation = detailOnPage
+                    ? ElevationPrinter.Collect(document, direction,
+                        name.Contains("stair", StringComparison.OrdinalIgnoreCase), viewElement, detailWindow)
+                    : null;
                 if (elevation != null)
                 {
                     frameWidth = (elevation.MaxX - elevation.MinX) / scale

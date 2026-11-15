@@ -2532,6 +2532,14 @@ public partial class RvtFileReader
             BlockParser.CollectViewPlanes(chunk, state);
         foreach (var chunk in state.RecordChunks)
             BlockParser.CollectViewPlanes(chunk, state);
+        // The blocks of some views (a detail section, a wall section) sit in chunks that are neither a record nor a
+        // data chunk of the classified lists: every remaining chunk is scanned too, so their planes are found.
+        var planeChunks = new HashSet<byte[]>(ReferenceEqualityComparer.Instance);
+        foreach (var chunk in state.NonRecordChunks) planeChunks.Add(chunk);
+        foreach (var chunk in state.RecordChunks) planeChunks.Add(chunk);
+        foreach (var chunk in state.Chunks)
+            if (planeChunks.Add(chunk))
+                BlockParser.CollectViewPlanes(chunk, state);
 
         Lap("view planes");
         // a file read by its framing: the blocks of the partitions are its records, the chunks of Formats and Global are scanned

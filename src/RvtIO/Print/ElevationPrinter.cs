@@ -42,7 +42,11 @@ public static class ElevationPrinter
             // only a building section (1:100 or wider, with its scale decoded) is printed, and a stair section, which
             // projects its stairs alone.
             bool section = direction == "section";
-            if (section && (scale == 0 || scale < 100) && !name.Contains("stair", StringComparison.OrdinalIgnoreCase))
+            bool planeDecoded = element.ViewDirection is { Length: 3 };
+            // A section is printed when it is a building section (1:100 or wider), a stair section, or a detail section
+            // whose cutting plane the reader decoded: the detail is then cut at its plane inside a window around it.
+            if (section && (scale == 0 || scale < 100) && !name.Contains("stair", StringComparison.OrdinalIgnoreCase)
+                && !planeDecoded)
                 continue;
             views.Add(new ElevationView(element.Id, name, direction, scale));
         }
@@ -79,7 +83,7 @@ public static class ElevationPrinter
     ];
 
     internal static ElevationContent? Collect(RvtDocument document, string direction, bool stairsOnly = false,
-        Element? planeView = null)
+        Element? planeView = null, (double Width, double Height)? window = null)
     {
         double[] planeOrigin = [];
         bool cut = false;
@@ -151,11 +155,25 @@ public static class ElevationPrinter
                 var points = new List<(double X, double Y)>(corners.Count);
                 double depth = 0;
                 foreach (var corner in corners)
-                {
                     points.Add((corner[0] * H[0] + corner[1] * H[1] + corner[2] * H[2],
                         corner[0] * V[0] + corner[1] * V[1] + corner[2] * V[2]));
-                    depth += corner[0] * D[0] + corner[1] * D[1] + corner[2] * D[2];
+                if (window is { } detail && cut && planeOrigin.Length == 3)
+                {
+                    // A detail section shows the part of the cut near the point of its plane, the way a wall or roof
+                    // detail stands around the cut: the polygon is clipped to that window.
+                    double cx = planeOrigin[0] * H[0] + planeOrigin[1] * H[1] + planeOrigin[2] * H[2];
+                    double cy = planeOrigin[0] * V[0] + planeOrigin[1] * V[1] + planeOrigin[2] * V[2];
+                    points = ClipToWindow(points, cx - detail.Width / 2, cx + detail.Width / 2,
+                        cy - detail.Height / 2, cy + detail.Height / 2);
+                    if (points.Count < 3) continue;
+                    foreach (var point in points)
+                    {
+                        minX = Math.Min(minX, point.X); maxX = Math.Max(maxX, point.X);
+                        minY = Math.Min(minY, point.Y); maxY = Math.Max(maxY, point.Y);
+                    }
                 }
+                foreach (var corner in corners)
+                    depth += corner[0] * D[0] + corner[1] * D[1] + corner[2] * D[2];
                 // A sliver of a face adds a line to the page and nothing to the drawing.
                 double projected = 0;
                 for (int i = 0; i < points.Count; i++)
@@ -280,6 +298,35 @@ public static class ElevationPrinter
     /// millimetres of the page.</summary>
     internal const double LabelMarginMillimetres = 42;
 
+    /// <summary>The part of a projected polygon inside a rectangle: the detail window of a section.</summary>
+    private static List<(double X, double Y)> ClipToWindow(List<(double X, double Y)> polygon, double left,
+        double right, double bottom, double top)
+    {
+        var result = ClipHalfPlane(polygon, point => point.X >= left, point => point.X - left);
+        result = ClipHalfPlane(result, point => point.X <= right, point => right - point.X);
+        result = ClipHalfPlane(result, point => point.Y >= bottom, point => point.Y - bottom);
+        result = ClipHalfPlane(result, point => point.Y <= top, point => top - point.Y);
+        return result;
+    }
+
+    private static List<(double X, double Y)> ClipHalfPlane(List<(double X, double Y)> polygon,
+        Func<(double X, double Y), bool> inside, Func<(double X, double Y), double> distance)
+    {
+        var result = new List<(double X, double Y)>(polygon.Count + 2);
+        for (int i = 0; i < polygon.Count; i++)
+        {
+            var a = polygon[i];
+            var b = polygon[(i + 1) % polygon.Count];
+            double da = distance(a), db = distance(b);
+            if (inside(a)) result.Add(a);
+            if (inside(a) != inside(b))
+            {
+                double t = da / (da - db);
+                result.Add((a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t));
+            }
+        }
+        return result;
+    }
     /// <summary>The part of a polygon that stands behind the cutting plane (the side the view direction points
     /// to), the plane crossing a polygon adding the points where it crosses the plane.</summary>
     private static List<double[]> ClipBehind(List<double[]> polygon, double[] origin, double[] direction)

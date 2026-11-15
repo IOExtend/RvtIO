@@ -2077,16 +2077,13 @@ internal static class BlockParser
                 pos++;
                 continue;
             }
-            if (!state.ViewPlanes.ContainsKey(eid))
-            {
-                // The view's own block (class 0x3F8) stores the plane as its origin, the view scale, the vertical and
-                // the camera direction; the older signature below is kept for the blocks that store it as thirteen
-                // consecutive doubles.
-                if ((classIdx & 0xFFFF) == 0x03F8)
-                    TryFindViewPlaneBlock(chunk, pos + 16, pos + 16 + size, eid, state, classIdx);
-                if (!state.ViewPlanes.ContainsKey(eid))
-                    TryFindViewPlane(chunk, pos + 16, pos + 16 + size, eid, state);
-            }
+            // The view's own block (class 0x3F8) stores the plane as its origin, the view scale, the vertical and the
+            // camera direction; the older signature below is kept for the blocks that store it as thirteen consecutive
+            // doubles. The block layout wins: a wrong signature candidate must not hide the view's own plane.
+            bool found = (classIdx & 0xFFFF) == 0x03F8
+                && TryFindViewPlaneBlock(chunk, pos + 16, pos + 16 + size, eid, state);
+            if (!found && !state.ViewPlanes.ContainsKey(eid))
+                TryFindViewPlane(chunk, pos + 16, pos + 16 + size, eid, state);
             pos += 16 + size;
         }
     }
@@ -2094,10 +2091,8 @@ internal static class BlockParser
     /// <summary>The plane a view block (class 0x3F8) stores: a point of the plane (three doubles), the view scale
     /// (the reciprocal of the scale denominator), the vertical axis and the camera direction (three doubles each, axis
     /// aligned unit vectors). The scale double is found first and the other fields are read around it.</summary>
-    private static void TryFindViewPlaneBlock(byte[] d, int start, int end, uint eid, ParsingState state,
-        uint classIdx)
+    private static bool TryFindViewPlaneBlock(byte[] d, int start, int end, uint eid, ParsingState state)
     {
-        _ = classIdx;
         for (int i = start; i + 56 <= end; i++)
         {
             double scale = BitConverter.ToDouble(d, i);
@@ -2121,8 +2116,9 @@ internal static class BlockParser
             double dx = -cx, dy = -cy, dz = -cz;
             double hx = dy * vz - dz * vy, hy = dz * vx - dx * vz, hz = dx * vy - dy * vx;
             state.ViewPlanes[eid] = ([ox, oy, oz], [hx, hy, hz], [vx, vy, vz], [dx, dy, dz]);
-            return;
+            return true;
         }
+        return false;
     }
 
     private static bool AxisAlignedUnit(double x, double y, double z)
