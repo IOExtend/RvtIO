@@ -17,6 +17,7 @@ public static class SitePrinter
     /// </summary>
     internal sealed record SiteContent(
         List<List<(double X, double Y)>> Topography,
+        List<(double X1, double Y1, double X2, double Y2, double Z)> Contours,
         List<(double X, double Y, double Radius, string Type)> Plants,
         List<List<(double X, double Y)>> Entourage,
         double MinX, double MinY, double MaxX, double MaxY);
@@ -26,6 +27,7 @@ public static class SitePrinter
     internal static SiteContent? Collect(RvtDocument document)
     {
         var topography = new List<List<(double X, double Y)>>();
+        var topography3 = new List<List<double[]>>();
         double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
         void Grow(double x, double y)
         {
@@ -41,13 +43,17 @@ public static class SitePrinter
             {
                 if (face.OuterVertices is not { Count: >= 3 } vertices) continue;
                 var polygon = new List<(double X, double Y)>(vertices.Count);
+                var corners = new List<double[]>(vertices.Count);
                 foreach (var vertex in vertices)
                 {
                     double x = vertex[0] * FeetToMillimetres, y = vertex[1] * FeetToMillimetres;
+                    double z = vertex[2] * FeetToMillimetres;
                     polygon.Add((x, y));
+                    corners.Add([x, y, z]);
                     Grow(x, y);
                 }
                 topography.Add(polygon);
+                topography3.Add(corners);
                 if (topography.Count >= 20000) break;
             }
         }
@@ -98,8 +104,37 @@ public static class SitePrinter
             entourage.Add(polygon);
         }
 
+        // The contours of the terrain: the mesh is sliced at every half metre (a metre on a high site) and each slice
+        // is drawn as the lines a site plan prints, the way the reference shows the fall of the ground.
+        var contours = new List<(double X1, double Y1, double X2, double Y2, double Z)>();
+        if (topography3.Count > 0)
+        {
+            double zMin = topography3.Min(corners => corners.Min(corner => corner[2]));
+            double zMax = topography3.Max(corners => corners.Max(corner => corner[2]));
+            double step = zMax - zMin > 3000 ? 1000 : 500;
+            for (double level = Math.Ceiling(zMin / step) * step; level <= zMax && contours.Count < 20000; level += step)
+            {
+                foreach (var corners in topography3)
+                {
+                    if (corners.Count < 3) continue;
+                    var crossings = new List<(double X, double Y)>(2);
+                    for (int i = 0; i < corners.Count && crossings.Count < 2; i++)
+                    {
+                        double[] a = corners[i], b = corners[(i + 1) % corners.Count];
+                        if (a[2] == level || b[2] == level
+                            || (a[2] < level) == (b[2] < level)) continue;
+                        double t = (level - a[2]) / (b[2] - a[2]);
+                        crossings.Add((a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t));
+                    }
+                    if (crossings.Count == 2)
+                        contours.Add((crossings[0].X, crossings[0].Y, crossings[1].X, crossings[1].Y, level));
+                    if (contours.Count >= 20000) break;
+                }
+            }
+        }
+
         if (topography.Count == 0 && plants.Count == 0) return null;
-        return new SiteContent(topography, plants, entourage, minX, minY, maxX, maxY);
+        return new SiteContent(topography, contours, plants, entourage, minX, minY, maxX, maxY);
     }
 
     /// <summary>Draws the site with (MinX, MinY) at (originX, originY), one model unit per 1/scale.</summary>
@@ -133,6 +168,9 @@ public static class SitePrinter
             if (count != 1 || !edgeLines.TryGetValue(key, out var line)) continue;
             page.DrawLine(line.A.Item1, line.A.Item2, line.B.Item1, line.B.Item2, 0.15, 0.45);
         }
+        // The contours of the terrain go over the wash, under the planting.
+        foreach (var (x1, y1, x2, y2, _) in content.Contours)
+            page.DrawLine(ToX(x1), ToY(y1), ToX(x2), ToY(y2), 0.07, 0.62);
         foreach (var (x, y, radius, _) in content.Plants)
         {
             double pageX = ToX(x), pageY = ToY(y), r = radius / scale;
