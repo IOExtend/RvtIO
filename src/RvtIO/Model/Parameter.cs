@@ -149,6 +149,7 @@ namespace RvtIO.Model
                         double displayed = d * factor;
                         return $"{displayed:G6} {symbol}";
                     }
+                    return d.ToString("G", CultureInfo.InvariantCulture);
                 }
 
                 // Fallback: heuristic based on parameter or BIP name tokens
@@ -176,64 +177,84 @@ namespace RvtIO.Model
             return Value.ToString();
         }
 
+        private static readonly HashSet<string> LengthSpecCategories = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "length",
+            "barDiameter",
+            "cableTraySize",
+            "conduitSize",
+            "crackWidth",
+            "ductInsulationThickness",
+            "ductLiningThickness",
+            "ductSize",
+            "pipeInsulationThickness",
+            "pipeSize",
+            "pipeDimension",
+            "reinforcementCover",
+            "reinforcementLength",
+            "reinforcementSpacing",
+            "wireDiameter",
+            "displacement",
+            "sectionDimension",
+            "decimalSheetLength",
+            "sheetLength",
+        };
+
+        private static readonly HashSet<string> AreaSpecCategories = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "area",
+            "crossSection",
+        };
+
+        private static readonly HashSet<string> VolumeSpecCategories = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "volume",
+            "reinforcementVolume",
+        };
+
+        private static readonly HashSet<string> AngleSpecCategories = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "angle",
+        };
+
+        private static readonly HashSet<string> ScalarSpecCategories = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "number",
+            "integer",
+            "factor",
+            "ratio",
+            "unitless",
+            "fraction",
+            "slope",
+            "demandFactor",
+        };
+
         private static (string? symbol, double factor)? ResolveSpecDisplay(string specType)
         {
             string? cat = GetSpecCategory(specType);
             if (cat == null) return null;
 
-            if (cat.Equals("length", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("barDiameter", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("cableTraySize", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("conduitSize", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("crackWidth", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("ductInsulationThickness", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("ductLiningThickness", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("ductSize", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("pipeInsulationThickness", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("pipeSize", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("pipeDimension", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("reinforcementCover", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("reinforcementLength", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("reinforcementSpacing", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("wireDiameter", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("displacement", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("sectionDimension", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("decimalSheetLength", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("sheetLength", StringComparison.OrdinalIgnoreCase)
-                || cat.Contains("length", StringComparison.OrdinalIgnoreCase))
+            if (LengthSpecCategories.Contains(cat))
             {
                 return ("mm", 304.8);
             }
 
-            if (cat.Equals("area", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("crossSection", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("surfaceAreaPerUnitLength", StringComparison.OrdinalIgnoreCase)
-                || cat.Contains("area", StringComparison.OrdinalIgnoreCase))
+            if (AreaSpecCategories.Contains(cat))
             {
                 return ("m\u00B2", 0.09290304);
             }
 
-            if (cat.Equals("volume", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("reinforcementVolume", StringComparison.OrdinalIgnoreCase)
-                || cat.Contains("volume", StringComparison.OrdinalIgnoreCase))
+            if (VolumeSpecCategories.Contains(cat))
             {
                 return ("m\u00B3", 0.0283168466);
             }
 
-            if (cat.Equals("angle", StringComparison.OrdinalIgnoreCase)
-                || cat.Contains("angle", StringComparison.OrdinalIgnoreCase))
+            if (AngleSpecCategories.Contains(cat))
             {
                 return ("\u00B0", 180.0 / Math.PI);
             }
 
-            if (cat.Equals("number", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("integer", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("factor", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("ratio", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("unitless", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("fraction", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("slope", StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("demandFactor", StringComparison.OrdinalIgnoreCase))
+            if (ScalarSpecCategories.Contains(cat))
             {
                 return (null, 1.0);
             }

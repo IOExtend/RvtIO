@@ -166,4 +166,46 @@ public class ParameterValueFormattingTests
         };
         Assert.Equal($"{2.0 * 304.8:G6} mm", userOperationHeight.AsValueString());
     }
+
+    [Fact]
+    public void Parameter_AsValueString_UnsupportedCompositeSpecifications_RemainUnconverted()
+    {
+        // Composite dimensions (mass/length, force/length^3, mass/length^2) must not be converted to length or area
+        var massPerUnitLengthParam = new Parameter
+        {
+            StorageType = StorageType.Double,
+            Value = 2.0,
+            SpecType = "autodesk.spec.aec.structural:massPerUnitLength-2.0.0",
+            Definition = new Definition { Name = "Custom value" }
+        };
+        Assert.Equal("2", massPerUnitLengthParam.AsValueString());
+
+        var areaSpringCoeffParam = new Parameter
+        {
+            StorageType = StorageType.Double,
+            Value = 2.0,
+            SpecType = "autodesk.spec.aec.structural:areaSpringCoefficient-2.0.0",
+            Definition = new Definition { Name = "Custom value" }
+        };
+        Assert.Equal("2", areaSpringCoeffParam.AsValueString());
+
+        var massPerUnitAreaParam = new Parameter
+        {
+            StorageType = StorageType.Double,
+            Value = 2.0,
+            SpecType = "autodesk.spec.aec.structural:massPerUnitArea-2.0.0",
+            Definition = new Definition { Name = "Custom value" }
+        };
+        Assert.Equal("2", massPerUnitAreaParam.AsValueString());
+
+        // Even with names containing "Length" or "Area", explicit composite specs remain unconverted
+        var compositeWithLengthName = new Parameter
+        {
+            StorageType = StorageType.Double,
+            Value = 2.0,
+            SpecType = "autodesk.spec.aec.structural:massPerUnitLength-2.0.0",
+            Definition = new Definition { Name = "Structural Mass Per Unit Length" }
+        };
+        Assert.Equal("2", compositeWithLengthName.AsValueString());
+    }
 }
