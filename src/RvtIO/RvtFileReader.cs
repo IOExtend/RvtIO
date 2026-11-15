@@ -2524,6 +2524,11 @@ public partial class RvtFileReader
             BlockParser.CollectTextNotes(chunk, state);
 
         foreach (var chunk in state.NonRecordChunks)
+            BlockParser.CollectImageSizes(chunk, state);
+        foreach (var chunk in state.RecordChunks)
+            BlockParser.CollectImageSizes(chunk, state);
+
+        foreach (var chunk in state.NonRecordChunks)
             BlockParser.CollectViewPlanes(chunk, state);
         foreach (var chunk in state.RecordChunks)
             BlockParser.CollectViewPlanes(chunk, state);

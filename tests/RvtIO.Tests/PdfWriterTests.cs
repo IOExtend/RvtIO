@@ -140,6 +140,21 @@ public class PdfWriterTests
     }
 
     [Fact]
+    public void Image_IsWrittenAsAnXObject()
+    {
+        var document = new PdfDocument();
+        var image = new PdfRasterImage(2, 2, [255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255]);
+        document.AddPage(PdfPageSize.A4).DrawImage(image, 10, 20, 30, 40);
+
+        string pdf = Write(document);
+
+        Assert.Contains("/Subtype /Image", pdf);
+        Assert.Contains("/Width 2 /Height 2", pdf);
+        Assert.Contains("/XObject", pdf);
+        Assert.Contains("/Im0 Do", pdf);
+    }
+
+    [Fact]
     public void Compress_WritesFlateStreamsThatShrinkTheFile()
     {
         static PdfDocument Build(bool compress)

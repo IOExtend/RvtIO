@@ -29,6 +29,35 @@ public readonly record struct PdfPageSize(double WidthMillimetres, double Height
     public (double Width, double Height) InPoints => (WidthMillimetres * 72.0 / 25.4, HeightMillimetres * 72.0 / 25.4);
 }
 
+/// <summary>A raster image of the document, 8 bits per channel and three channels (red, green, blue), the form the
+/// PDF image object is written in.</summary>
+public sealed class PdfRasterImage
+{
+    /// <summary>Width in pixels.</summary>
+    public int Width { get; }
+
+    /// <summary>Height in pixels.</summary>
+    public int Height { get; }
+
+    /// <summary>The pixels, row by row from the top, three bytes each.</summary>
+    public byte[] Rgb { get; }
+
+    /// <summary>Creates an image.</summary>
+    /// <param name="width">Width in pixels.</param>
+    /// <param name="height">Height in pixels.</param>
+    /// <param name="rgb">The pixels, three bytes each.</param>
+    public PdfRasterImage(int width, int height, byte[] rgb)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
+        ArgumentNullException.ThrowIfNull(rgb);
+        if (rgb.Length < width * height * 3) throw new ArgumentException("The pixel buffer is too small.", nameof(rgb));
+        Width = width;
+        Height = height;
+        Rgb = rgb;
+    }
+}
+
 /// <summary>An ink colour, each component from 0 (none) to 1 (full).</summary>
 /// <param name="R">Red.</param>
 /// <param name="G">Green.</param>
@@ -75,6 +104,21 @@ public sealed class PdfDocument
 
     /// <summary>The pages, in the order they were added.</summary>
     public IReadOnlyList<PdfPage> Pages => _pages;
+
+    /// <summary>The images placed on the pages, in the order they were first drawn.</summary>
+    public IReadOnlyList<PdfRasterImage> Images => _images;
+
+    private readonly List<PdfRasterImage> _images = new();
+
+    /// <summary>Registers an image with the document (once) and returns it.</summary>
+    /// <summary>The index of an image in the document list, -1 when it is not there.</summary>
+    internal int ImageIndex(PdfRasterImage image) => _images.IndexOf(image);
+
+    internal PdfRasterImage Register(PdfRasterImage image)
+    {
+        if (!_images.Contains(image)) _images.Add(image);
+        return image;
+    }
 
     /// <summary>Adds a blank page of the given paper size.</summary>
     /// <param name="size">The page size; portrait, unless <see cref="PdfPageSize.Landscape"/> is used.</param>
@@ -225,6 +269,35 @@ public sealed class PdfPage
 
     /// <summary>Ends the clipping region started by <see cref="BeginClip"/>.</summary>
     public void EndClip() => _content.Append("Q\n");
+
+    /// <summary>The images of the page, in the order they were drawn.</summary>
+    internal List<PdfRasterImage> Images { get; } = new();
+
+    /// <summary>Draws a raster image with its lower-left corner at (x, y).</summary>
+    /// <param name="image">The image; it is registered with the document.</param>
+    /// <param name="x">Left edge, millimetres.</param>
+    /// <param name="y">Bottom edge, millimetres.</param>
+    /// <param name="widthMillimetres">Width, millimetres.</param>
+    /// <param name="heightMillimetres">Height, millimetres.</param>
+    public void DrawImage(PdfRasterImage image, double x, double y, double widthMillimetres,
+        double heightMillimetres)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(widthMillimetres);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(heightMillimetres);
+        var registered = _document.Register(image);
+        int index = Images.IndexOf(registered);
+        if (index < 0)
+        {
+            Images.Add(registered);
+            index = Images.Count - 1;
+        }
+        // The image space has its origin at the lower-left corner, so the image is flipped over its own height.
+        _content.Append("q ").Append(Number(Points(widthMillimetres))).Append(" 0 0 ")
+            .Append(Number(Points(heightMillimetres))).Append(' ')
+            .Append(Number(Points(x))).Append(' ').Append(Number(Points(y))).Append(" cm /Im")
+            .Append(index.ToString(System.Globalization.CultureInfo.InvariantCulture)).Append(" Do Q\n");
+    }
 
     /// <summary>Sets the dash pattern of the following strokes, in millimetres.</summary>
     /// <param name="dashMillimetres">Length of a dash.</param>

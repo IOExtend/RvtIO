@@ -187,6 +187,15 @@ internal static class BlockParser
             state.NativeParams[eid] = np;
         }
 
+        // An image symbol's own block (class 0x089A) holds the pixel size of the image: two u32 at data+0x80.
+        if ((classIdx & 0xFFFF) == 0x089A && dataSize >= 0x88 && !state.ImageSizes.ContainsKey(eid))
+        {
+            int width = BitConverter.ToInt32(chunk, dataStart + 0x80);
+            int height = BitConverter.ToInt32(chunk, dataStart + 0x84);
+            if (width is > 0 and < 20000 && height is > 0 and < 20000)
+                state.ImageSizes[eid] = (width, height);
+        }
+
         // A viewer's own block (class 0x05BF) holds the basis of the view it belongs to; the chunk-level collector
         // below finds those blocks, which the walk of the project's own block does not always reach.
 
@@ -2020,6 +2029,32 @@ internal static class BlockParser
             }
             sheets[eid] = (num, date);
             return;
+        }
+    }
+
+    /// <summary>Scans the blocks of a chunk for image-symbol blocks (class 0x089A) and records the pixel size of each
+    /// image.</summary>
+    internal static void CollectImageSizes(byte[] chunk, ParsingState state)
+    {
+        int pos = 0;
+        while (pos + 16 <= chunk.Length)
+        {
+            uint eid = BitConverter.ToUInt32(chunk, pos);
+            int size = BitConverter.ToInt32(chunk, pos + 8);
+            uint classIdx = BitConverter.ToUInt32(chunk, pos + 12);
+            if (eid == 0 || eid > 50_000_000 || size <= 0 || size > MaxBlockSize || pos + 16 + size > chunk.Length)
+            {
+                pos++;
+                continue;
+            }
+            if ((classIdx & 0xFFFF) == 0x089A && size >= 0x88 && !state.ImageSizes.ContainsKey(eid))
+            {
+                int width = BitConverter.ToInt32(chunk, pos + 16 + 0x80);
+                int height = BitConverter.ToInt32(chunk, pos + 16 + 0x84);
+                if (width is > 0 and < 20000 && height is > 0 and < 20000)
+                    state.ImageSizes[eid] = (width, height);
+            }
+            pos += 16 + size;
         }
     }
 

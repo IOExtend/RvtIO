@@ -12,3 +12,4 @@ artifacts/
 # Documentation site (DocFX output and generated API pages)
 _site/
 docs/api/
+output.json

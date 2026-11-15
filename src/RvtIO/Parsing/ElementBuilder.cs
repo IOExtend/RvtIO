@@ -2892,6 +2892,18 @@ internal static partial class ElementBuilder
         }
     }
 
+    /// <summary>The pixel size of an image symbol, from its own block.</summary>
+    private static void ApplyImageSizes(RevitFileInfo info, ParsingState? state)
+    {
+        if (state == null || state.ImageSizes.Count == 0) return;
+        foreach (var element in info.Elements)
+        {
+            if (!state.ImageSizes.TryGetValue((uint)element.Id, out var size)) continue;
+            element.ImageWidth = size.Width;
+            element.ImageHeight = size.Height;
+        }
+    }
+
     /// <summary>The view a viewport displays and the offset of that view on the sheet, from the 0x07C6 blocks.</summary>
     private static void ApplyViewports(RevitFileInfo info, ParsingState? state)
     {
@@ -6388,6 +6400,7 @@ internal static partial class ElementBuilder
         ApplyTextNotes(rvtInfo, state);
         ApplyViewports(rvtInfo, state);
         ApplyViewPlanes(rvtInfo, state);
+        ApplyImageSizes(rvtInfo, state);
         AddViewAndDatumDefaults(rvtInfo);
         AddCurtainQuantities(rvtInfo);
         EnrichTypeLevelBips(rvtInfo, state);

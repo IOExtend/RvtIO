@@ -145,7 +145,7 @@ public static class SheetComposer
                     ? ""
                     : "1:" + scales.OrderByDescending(pair => pair.Value).First().Key;
                 TitleBlockPrinter.Draw(page2, document, sheet, Math.Min(180, page.WidthMillimetres * 0.22),
-                    margin, scaleText);
+                    margin, scaleText, TitleLogo(document));
             }
         }
 
@@ -282,6 +282,29 @@ public static class SheetComposer
             for (int line = 0; line < lines.Length; line++)
                 page2.DrawText(lines[line], x, y - line * height * 1.25, height);
         }
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, PdfRasterImage?> Logos = new();
+
+    /// <summary>The logo of the title block family: the image symbol whose name holds "logo", decoded from the file.
+    /// </summary>
+    private static PdfRasterImage? TitleLogo(RvtDocument document)
+    {
+        if (document.SourcePath is not { Length: > 0 } path) return null;
+        return Logos.GetOrAdd(path, key =>
+        {
+            foreach (var element in document.Elements)
+            {
+                if (element.RootClassName != "ImageSymbol" || element.ImageWidth is not int width
+                    || element.ImageHeight is not int height) continue;
+                if (element.Name is not { Length: > 0 } name
+                    || !name.Contains("logo", StringComparison.OrdinalIgnoreCase)) continue;
+                var image = RvtRaster.FindPng(key, width, height);
+                if (image != null) return image;
+            }
+            // The image-symbol sizes are not decoded for every file: fall back to the widest logo-shaped PNG.
+            return RvtRaster.FindLogo(key);
+        });
     }
 
     /// <summary>Writes the planting schedule of the site: one row per kind of plant with its count, under the plan.

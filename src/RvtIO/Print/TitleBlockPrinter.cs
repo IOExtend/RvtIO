@@ -15,7 +15,7 @@ internal static class TitleBlockPrinter
     /// <summary>Draws the strip in the page margins: <paramref name="widthMillimetres"/> wide, from the lower border to
     /// the upper one.</summary>
     internal static void Draw(PdfPage page, RvtDocument document, Element sheet, double widthMillimetres,
-        double marginMillimetres, string scale)
+        double marginMillimetres, string scale, PdfRasterImage? logo = null)
     {
         double pageWidth = page.Size.WidthMillimetres, pageHeight = page.Size.HeightMillimetres;
         double left = pageWidth - marginMillimetres - widthMillimetres;
@@ -34,6 +34,20 @@ internal static class TitleBlockPrinter
         // The logo area at the top, then the consultant table.
         double logoHeight = Math.Min(35, height * 0.13);
         double logoBottom = top - logoHeight;
+        if (logo != null)
+        {
+            // The logo the title block family places, fitted into its area with its aspect preserved.
+            double available = widthMillimetres - 6;
+            double logoWidth = Math.Min(available, logoHeight * 0.55 * logo.Width / logo.Height);
+            double logoDrawHeight = logoWidth * logo.Height / logo.Width;
+            if (logoDrawHeight > logoHeight - 4)
+            {
+                logoDrawHeight = logoHeight - 4;
+                logoWidth = logoDrawHeight * logo.Width / logo.Height;
+            }
+            page.DrawImage(logo, left + (widthMillimetres - logoWidth) / 2, logoBottom + (logoHeight - logoDrawHeight) / 2,
+                logoWidth, logoDrawHeight);
+        }
         page.DrawLine(left, logoBottom, left + widthMillimetres, logoBottom, 0.25);
 
         double consultantHeight = Math.Min(55, height * 0.19);

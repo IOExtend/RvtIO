@@ -247,6 +247,14 @@ namespace RvtIO.Model
         [JsonIgnore]
         public double? TextFontSizePoints { get; set; }
 
+        /// <summary>The pixel width of an image symbol, when the reader decoded it.</summary>
+        [JsonIgnore]
+        public int? ImageWidth { get; set; }
+
+        /// <summary>The pixel height of an image symbol, when the reader decoded it.</summary>
+        [JsonIgnore]
+        public int? ImageHeight { get; set; }
+
         /// <summary>The origin of a view's plane (feet), [x, y, z]; null when the reader did not decode it.</summary>
         [JsonIgnore]
         public double[]? ViewOrigin { get; set; }

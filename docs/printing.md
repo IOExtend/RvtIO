@@ -46,6 +46,13 @@ left out until its renderer exists.
 The library API is `RvtIO.Print.PlanPrinter`: `Levels(document)` returns the printable levels, and
 `Render(document, levelId, scale, options)` returns a `PdfDocument` with one page.
 
+## Images
+
+The title block family's logo is read from the file: Revit keeps the placed image files in the partition streams, so the
+reader decodes the PNG it finds there (8 bits per channel, RGB, RGBA or palette) to an RGB raster and the PDF writer
+embeds it as an image object with Flate compression. The logo is fitted into the logo area of the title block strip with
+its aspect preserved. The API is `PdfRasterImage` and `PdfPage.DrawImage`.
+
 ## Printing a site plan
 
 A view named "Site" or "Site Plan" is drawn from the site itself, not from the walls of a level: the topography is a

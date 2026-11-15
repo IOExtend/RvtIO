@@ -28,6 +28,7 @@ internal static class PdfSerializer
         int firstPage = font != null ? FirstPageWithFont : FirstPageWithoutFont;
         int PageId(int index) => firstPage + index * 2;
         int ContentId(int index) => firstPage + index * 2 + 1;
+        int ImageId(int index) => firstPage + pages.Count * 2 + index;
 
         var offsets = new List<long>();
         long position = 0;
@@ -117,9 +118,15 @@ internal static class PdfSerializer
             PdfPage page = pages[i];
             var (width, height) = page.Size.InPoints;
             string fonts = font != null ? $"/F1 {HelveticaId} 0 R /F2 {Type0Id} 0 R" : $"/F1 {HelveticaId} 0 R";
+            var xobjects = new StringBuilder();
+            for (int k = 0; k < page.Images.Count; k++)
+                xobjects.Append($"/Im{k} {ImageId(document.ImageIndex(page.Images[k]))} 0 R ");
+            string resources = xobjects.Length == 0
+                ? $"/Resources << /Font << {fonts} >> >>"
+                : $"/Resources << /Font << {fonts} >> /XObject << {xobjects.ToString().TrimEnd()} >> >>";
             BeginObject(PageId(i));
             Raw($"<< /Type /Page /Parent {PagesId} 0 R /MediaBox [0 0 {Number(width)} {Number(height)}] "
-                + $"/Resources << /Font << {fonts} >> >> /Contents {ContentId(i)} 0 R >>\n");
+                + resources + $" /Contents {ContentId(i)} 0 R >>\n");
             EndObject();
 
             byte[] content = Encoding.ASCII.GetBytes(page.Content);
@@ -128,6 +135,20 @@ internal static class PdfSerializer
             Raw($"<< /Length {payload.Length}" + (document.Compress ? " /Filter /FlateDecode" : string.Empty)
                 + " >>\nstream\n");
             WriteBytes(payload);
+            Raw("\nendstream\n");
+            EndObject();
+        }
+
+        // The images, after the pages: a page names them in its /XObject resources.
+        for (int k = 0; k < document.Images.Count; k++)
+        {
+            PdfRasterImage image = document.Images[k];
+            byte[] pixels = document.Compress ? Zlib(image.Rgb) : image.Rgb;
+            BeginObject(ImageId(k));
+            Raw($"<< /Type /XObject /Subtype /Image /Width {image.Width} /Height {image.Height} "
+                + "/ColorSpace /DeviceRGB /BitsPerComponent 8"
+                + (document.Compress ? " /Filter /FlateDecode" : string.Empty) + $" /Length {pixels.Length} >>\nstream\n");
+            WriteBytes(pixels);
             Raw("\nendstream\n");
             EndObject();
         }
