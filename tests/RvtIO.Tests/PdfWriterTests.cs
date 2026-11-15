@@ -50,7 +50,7 @@ public class PdfWriterTests
 
         // 0.5 mm = 1.4173 pt
         Assert.Contains("1.4173 w", pdf);
-        Assert.Contains("10 20 m 30 40 l S", pdf);
+        Assert.Contains("28.3465 56.6929 m 85.0394 113.3858 l S", pdf);
     }
 
     [Fact]
@@ -62,7 +62,7 @@ public class PdfWriterTests
         string pdf = Write(document);
 
         Assert.Contains("0.5 g", pdf);
-        Assert.Contains("5 6 7 8 re B", pdf);
+        Assert.Contains("14.1732 17.0079 19.8425 22.6772 re B", pdf);
     }
 
     [Fact]
@@ -74,7 +74,7 @@ public class PdfWriterTests
 
         string pdf = Write(document);
 
-        Assert.Contains("0 0 m 10 0 l 10 10 l h B", pdf);
+        Assert.Contains("0 0 m 28.3465 0 l 28.3465 28.3465 l h B", pdf);
     }
 
     [Fact]
@@ -100,8 +100,8 @@ public class PdfWriterTests
         string pdf = Write(document);
 
         // 10 mm font size; four characters at the 0.5 em width estimate = 20 mm wide
-        Assert.Contains("90 50 Td (AAAA)", pdf);
-        Assert.Contains("80 50 Td (AAAA)", pdf);
+        Assert.Contains("255.1181 141.7323 Td (AAAA)", pdf);
+        Assert.Contains("226.7717 141.7323 Td (AAAA)", pdf);
     }
 
     [Fact]

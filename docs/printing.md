@@ -40,6 +40,18 @@ left out until its renderer exists.
 The library API is `RvtIO.Print.PlanPrinter`: `Levels(document)` returns the printable levels, and
 `Render(document, levelId, scale, options)` returns a `PdfDocument` with one page.
 
+## Composing a sheet
+
+`rvtio print project.rvt sheets.pdf --sheet A102` composes a sheet the way Revit prints it: the page is the size the
+title block spans (the extent of the title block instance's type, snapped to A4 to A0), every placed viewport draws its
+view at the offset the file stores for it, each view is labelled with its name and scale, and the sheet's own text notes
+are written at their positions.
+
+Measured on the Revit sample project (rac_basic_sample_project.rvt, six sheets A001 and A101 to A105): all six pages are
+841 x 594 mm (A1, the size of the "A1 metric" title block), and sheet A102 draws "Level 1" at (180, 453) mm and
+"Level 2" at (530, 453) mm at 1:100, the positions the reference PDF export shows. The linework of the title block family
+and the fills of rooms are not decoded yet, so the sheet border, the stamp and the room colours are still absent.
+
 ## Printing a sheet
 
 ```sh

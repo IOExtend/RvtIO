@@ -68,6 +68,9 @@ See [sheets and viewports](sheets.md) for what is decoded, what the limits are a
 | `PlanPrinter` | `Levels(document)` lists the levels a plan can be printed for; `Render(document, levelId, scale, options)` returns a `PdfDocument` with the plan of one level: walls with their stored width, column footprints, clipped grids. |
 | `PlanPrintOptions` | `PaperSize` (null picks the smallest paper that holds the drawing), `MarginMillimetres`, `FallbackWallWidthMillimetres`, `DrawFrame`. |
 | `PlanLevel`, `PlanView` | A printable level (id, name, elevation) and a printable plan view (id, name, level, scale). |
+| `SheetComposer` | `Sheets(document)` lists the numbered sheets with the page their title block spans; `Render(document, sheetId, options)` and `RenderSheets` compose pages: each placed viewport draws its plan at the stored offset and view scale, labelled with the view name and scale, and the sheet's own text notes are written. |
+| `SheetComposeOptions` | `PaperSize` (null takes the title block extent, snapped to A4-A0), `DrawViewLabels`, `ViewMarginMillimetres`. |
+| `ComposedSheet` | A composed sheet: id, number, name, page, placed viewport count, text count. |
 | `SheetPrinter` | `Sheets(document)` lists the sheets with page-sized decoded linework; `Render(document, sheetId, options)` and `RenderSheets` print one page per sheet from the lines the sheet owns, on the paper the linework spans. |
 | `SheetPrintOptions` | `PaperSize` (null uses the linework extent, snapped to A4-A0), `MarginMillimetres`, `PaperToleranceMillimetres`, `DrawSheetFields`. |
 | `PrintableSheet` | A printable sheet: id, number, name, linework extent, curve and text counts. |

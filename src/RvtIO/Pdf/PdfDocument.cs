@@ -116,8 +116,8 @@ public sealed class PdfPage
     public void DrawLine(double x1, double y1, double x2, double y2, double widthMillimetres = 0.25, double gray = 0)
     {
         Stroke(widthMillimetres, gray);
-        _content.Append(Number(x1)).Append(' ').Append(Number(y1)).Append(" m ")
-                .Append(Number(x2)).Append(' ').Append(Number(y2)).Append(" l S\n");
+        _content.Append(Number(Points(x1))).Append(' ').Append(Number(Points(y1))).Append(" m ")
+                .Append(Number(Points(x2))).Append(' ').Append(Number(Points(y2))).Append(" l S\n");
     }
 
     /// <summary>Draws a circular arc of the given width, approximated by cubic Bézier segments.</summary>
@@ -142,7 +142,7 @@ public sealed class PdfPage
         double angle = startDegrees * Math.PI / 180;
         double x0 = centerX + radius * Math.Cos(angle), y0 = centerY + radius * Math.Sin(angle);
         Stroke(widthMillimetres, gray);
-        _content.Append(Number(x0)).Append(' ').Append(Number(y0)).Append(" m ");
+        _content.Append(Number(Points(x0))).Append(' ').Append(Number(Points(y0))).Append(" m ");
         for (int i = 0; i < segments; i++)
         {
             double next = angle + step;
@@ -151,9 +151,9 @@ public sealed class PdfPage
             double x2 = centerX + radius * (Math.Cos(next) + handle * Math.Sin(next));
             double y2 = centerY + radius * (Math.Sin(next) - handle * Math.Cos(next));
             double x3 = centerX + radius * Math.Cos(next), y3 = centerY + radius * Math.Sin(next);
-            _content.Append(Number(x1)).Append(' ').Append(Number(y1)).Append(' ')
-                    .Append(Number(x2)).Append(' ').Append(Number(y2)).Append(' ')
-                    .Append(Number(x3)).Append(' ').Append(Number(y3)).Append(" c ");
+            _content.Append(Number(Points(x1))).Append(' ').Append(Number(Points(y1))).Append(' ')
+                    .Append(Number(Points(x2))).Append(' ').Append(Number(Points(y2))).Append(' ')
+                    .Append(Number(Points(x3))).Append(' ').Append(Number(Points(y3))).Append(" c ");
             angle = next;
         }
         _content.Append("S\n");
@@ -175,12 +175,26 @@ public sealed class PdfPage
         if (fillGray is double fill) Fill(fill);
         for (int i = 0; i < points.Count; i++)
         {
-            _content.Append(Number(points[i].X)).Append(' ').Append(Number(points[i].Y))
+            _content.Append(Number(Points(points[i].X))).Append(' ').Append(Number(Points(points[i].Y)))
                     .Append(i == 0 ? " m " : " l ");
         }
         if (closed) _content.Append("h ");
         _content.Append(stroke && fillGray != null ? "B\n" : stroke ? "S\n" : "f\n");
     }
+
+    /// <summary>Starts a clipping region: everything drawn until <see cref="EndClip"/> is cut to the rectangle.</summary>
+    /// <param name="x">Left edge, millimetres.</param>
+    /// <param name="y">Bottom edge, millimetres.</param>
+    /// <param name="width">Width, millimetres.</param>
+    /// <param name="height">Height, millimetres.</param>
+    public void BeginClip(double x, double y, double width, double height)
+    {
+        _content.Append("q ").Append(Number(Points(x))).Append(' ').Append(Number(Points(y))).Append(' ')
+            .Append(Number(Points(width))).Append(' ').Append(Number(Points(height))).Append(" re W n\n");
+    }
+
+    /// <summary>Ends the clipping region started by <see cref="BeginClip"/>.</summary>
+    public void EndClip() => _content.Append("Q\n");
 
     /// <summary>Draws an optionally filled rectangle.</summary>
     /// <param name="x">Left x in millimetres.</param>
@@ -196,8 +210,8 @@ public sealed class PdfPage
         bool stroke = widthMillimetres > 0;
         if (stroke) Stroke(widthMillimetres, 0);
         if (fillGray is double fill) Fill(fill);
-        _content.Append(Number(x)).Append(' ').Append(Number(y)).Append(' ')
-                .Append(Number(width)).Append(' ').Append(Number(height)).Append(" re ");
+        _content.Append(Number(Points(x))).Append(' ').Append(Number(Points(y))).Append(' ')
+                .Append(Number(Points(width))).Append(' ').Append(Number(Points(height))).Append(" re ");
         _content.Append(stroke && fillGray != null ? "B\n" : stroke ? "S\n" : "f\n");
     }
 
@@ -236,7 +250,7 @@ public sealed class PdfPage
                 _ => x,
             };
             _content.Append("BT /F2 ").Append(Number(fontPoints)).Append(" Tf ")
-                    .Append(Number(anchor)).Append(' ').Append(Number(y)).Append(" Td <")
+                    .Append(Number(Points(anchor))).Append(' ').Append(Number(Points(y))).Append(" Td <")
                     .Append(encoded).Append("> Tj ET\n");
             return;
         }
@@ -254,10 +268,13 @@ public sealed class PdfPage
             _ => x,
         };
         _content.Append("BT /F1 ").Append(Number(fontPoints)).Append(" Tf ")
-                .Append(Number(asciiAnchor)).Append(' ').Append(Number(y)).Append(" Td (")
+                .Append(Number(Points(asciiAnchor))).Append(' ').Append(Number(Points(y))).Append(" Td (")
                 .Append(text.Replace("\\", "\\\\").Replace("(", "\\(").Replace(")", "\\)"))
                 .Append(") Tj ET\n");
     }
+
+    /// <summary>Millimetres to the PDF user space unit (1/72 inch), which the page box and the content share.</summary>
+    private static double Points(double millimetres) => millimetres * 72.0 / 25.4;
 
     private void Stroke(double widthMillimetres, double gray)
     {

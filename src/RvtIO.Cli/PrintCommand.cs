@@ -86,12 +86,23 @@ internal static class PrintCommand
         IReadOnlyList<PlanLevel> levels = PlanPrinter.Levels(document);
         IReadOnlyList<PlanView> views = PlanPrinter.Views(document);
         IReadOnlyList<PrintableSheet> sheets = SheetPrinter.Sheets(document);
+        IReadOnlyList<ComposedSheet> composed = SheetComposer.Sheets(document);
         if (listSheets)
         {
-            foreach (PrintableSheet sheet in sheets)
-                output.WriteLine($"{sheet.SheetId}\t{sheet.Number ?? ""}\t{sheet.Name ?? ""}\t"
-                    + $"{sheet.WidthMillimetres:0}x{sheet.HeightMillimetres:0} mm\t{sheet.CurveCount} curves\t{sheet.TextCount} texts");
-            if (sheets.Count == 0) error.WriteLine("No sheet with decoded linework was found.");
+            if (composed.Count > 0)
+            {
+                foreach (ComposedSheet sheet in composed)
+                    output.WriteLine($"{sheet.SheetId}\t{sheet.Number}\t{sheet.Name ?? ""}\t"
+                        + $"{sheet.Page.WidthMillimetres:0}x{sheet.Page.HeightMillimetres:0} mm\t"
+                        + $"{sheet.ViewportCount} views\t{sheet.TextCount} texts");
+            }
+            else
+            {
+                foreach (PrintableSheet sheet in sheets)
+                    output.WriteLine($"{sheet.SheetId}\t{sheet.Number ?? ""}\t{sheet.Name ?? ""}\t"
+                        + $"{sheet.WidthMillimetres:0}x{sheet.HeightMillimetres:0} mm\t{sheet.CurveCount} curves\t{sheet.TextCount} texts");
+                if (sheets.Count == 0) error.WriteLine("No sheet with decoded linework was found.");
+            }
             return RvtExitCodes.Success;
         }
         if (listLevels)
@@ -118,8 +129,23 @@ internal static class PrintCommand
             if (sheetTexts.Count > 0)
             {
                 var sheetIds = new List<int>();
+                var composedIds = new List<int>();
                 foreach (string text in sheetTexts)
                 {
+                    ComposedSheet? composedMatch = null;
+                    foreach (ComposedSheet sheet in composed)
+                    {
+                        if (int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int id) && id == sheet.SheetId)
+                            composedMatch = sheet;
+                        else if (string.Equals(sheet.Number, text, StringComparison.OrdinalIgnoreCase))
+                            composedMatch = sheet;
+                        if (composedMatch != null) break;
+                    }
+                    if (composedMatch != null)
+                    {
+                        composedIds.Add(composedMatch.SheetId);
+                        continue;
+                    }
                     PrintableSheet? match = null;
                     foreach (PrintableSheet sheet in sheets)
                     {
@@ -136,7 +162,9 @@ internal static class PrintCommand
                     }
                     sheetIds.Add(match.SheetId);
                 }
-                pdf = SheetPrinter.RenderSheets(document, sheetIds, new SheetPrintOptions { PaperSize = paper });
+                pdf = composedIds.Count == sheetTexts.Count
+                    ? SheetComposer.RenderSheets(document, composedIds, new SheetComposeOptions { PaperSize = paper })
+                    : SheetPrinter.RenderSheets(document, sheetIds, new SheetPrintOptions { PaperSize = paper });
             }
             else if (viewTexts.Count > 0)
             {

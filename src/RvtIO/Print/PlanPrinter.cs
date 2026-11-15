@@ -27,8 +27,8 @@ public sealed class PlanPrintOptions
 /// <param name="ElevationFeet">The stored elevation in feet, null when the reader did not decode it.</param>
 public sealed record PlanLevel(int LevelId, string? Name, double? ElevationFeet);
 
-/// <summary>A view a plan can be printed for: a named view whose name or stored elevation matches a printable level.
-/// The scale is the view's own view scale.</summary>
+/// <summary>A view a plan can be printed for: a named plan view whose name or stored elevation matches a printable
+/// level. The scale is the view's own view scale.</summary>
 /// <param name="ViewId">The element id of the view.</param>
 /// <param name="Name">The view name.</param>
 /// <param name="LevelId">The level the plan of the view is drawn from.</param>
@@ -38,13 +38,23 @@ public sealed record PlanView(int ViewId, string Name, int LevelId, int Scale);
 /// <summary>
 /// Prints plans to PDF pages from the data the reader decodes: walls as their location line with the stored thickness,
 /// walls cut at the openings of their hosted doors and windows, columns as their stored footprint, grids as their
-/// location lines, with a frame and a title. This is the first view renderer of the sheet printing work: it draws the
-/// model geometry, not Revit's generated linework, so floors, stairs, annotations, room fills, dimensions, tags and the
-/// title block are not on the page yet (see the notes in docs/printing.md).
+/// location lines, with a frame and a title. This is the view renderer of the sheet printing work: it draws the model
+/// geometry, not Revit's generated linework, so floors, stairs, annotations, room fills, dimensions, tags and the title
+/// block are not on the page yet (see the notes in docs/printing.md).
 /// </summary>
 public static class PlanPrinter
 {
     private const double FeetToMillimetres = 304.8;
+
+    /// <summary>The plan content of a level in model millimetres: the walls, columns and grids to draw and the
+    /// extents they span.</summary>
+    internal sealed record PlanContent(
+        List<(int Id, double X1, double Y1, double X2, double Y2, double Width)> Walls,
+        List<(double X, double Y, double Width, double Height)> Columns,
+        List<(double X1, double Y1, double X2, double Y2)> Grids,
+        Dictionary<int, List<(double From, double To)>> Gaps,
+        List<(int HostId, double From, double To)> WindowGaps,
+        double MinX, double MinY, double MaxX, double MaxY);
 
     /// <summary>The levels a plan can be printed for: those that own at least one wall or column with a location line,
     /// by elevation and then name.</summary>
@@ -77,9 +87,8 @@ public static class PlanPrinter
         return levels;
     }
 
-    /// <summary>The views a plan can be printed for: named views whose name or stored elevation matches a printable
-    /// level (a view named like its level, or a level plan whose stored elevation equals the level's). A section or an
-    /// elevation is left out until its renderer exists.</summary>
+    /// <summary>The views a plan can be printed for: a named plan view whose name matches a printable level (or whose
+    /// stored elevation equals the level's). A section or an elevation is left out until its renderer exists.</summary>
     /// <param name="document">The opened document.</param>
     public static IReadOnlyList<PlanView> Views(RvtDocument document)
     {
@@ -187,9 +196,9 @@ public static class PlanPrinter
         return pdf;
     }
 
-    /// <summary>Draws the plan of a level as one page of the document.</summary>
-    private static void AddPlanPage(PdfDocument pdf, RvtDocument document, int levelId, int scale, string? title,
-        PlanPrintOptions options)
+    /// <summary>Collects what the plan of a level draws: its walls (cut at the openings of their doors and windows),
+    /// columns and grids, and the extents they span in model millimetres. Null when the level has nothing to draw.</summary>
+    internal static PlanContent? CollectLevel(RvtDocument document, int levelId)
     {
         var walls = new List<(int Id, double X1, double Y1, double X2, double Y2, double Width)>();
         var columns = new List<(double X, double Y, double Width, double Height)>();
@@ -209,7 +218,7 @@ public static class PlanPrinter
                 if (element.Location is not { CurveType: "Line" } line) continue;
                 double x1 = line.StartPoint[0] * FeetToMillimetres, y1 = line.StartPoint[1] * FeetToMillimetres;
                 double x2 = line.EndPoint[0] * FeetToMillimetres, y2 = line.EndPoint[1] * FeetToMillimetres;
-                double width = WidthOf(element) ?? options.FallbackWallWidthMillimetres;
+                double width = WidthOf(element) ?? 100;
                 walls.Add((element.Id, x1, y1, x2, y2, width));
                 Grow(x1, y1); Grow(x2, y2);
                 continue;
@@ -226,11 +235,10 @@ public static class PlanPrinter
             }
         }
 
-        if (walls.Count == 0 && columns.Count == 0)
-            throw new InvalidOperationException("The level has no wall or column with a location line to draw.");
+        if (walls.Count == 0 && columns.Count == 0) return null;
 
         // Openings: the cut loop of a hosted door or window, transformed to the model, gives the stretch of its wall to
-        // leave out. The plan then draws the wall in the pieces between its openings, with a jamb at every cut.
+        // leave out.
         var wallById = new Dictionary<int, (int Id, double X1, double Y1, double X2, double Y2, double Width)>();
         foreach (var wall in walls) wallById[wall.Id] = wall;
         var gaps = new Dictionary<int, List<(double From, double To)>>();
@@ -267,8 +275,6 @@ public static class PlanPrinter
             if (insert.CategoryId == (int)BuiltInCategory.OST_Windows) windowGaps.Add((wall.Id, from, to));
         }
 
-        // Grids are clipped to the extent of the level: a grid line can run far beyond the building, and an unclipped
-        // one would put the whole plan into the corner of an oversized page.
         var grids = new List<(double X1, double Y1, double X2, double Y2)>();
         double gridMargin = Math.Max((maxX - minX + maxY - minY) * 0.06, 1000);
         foreach (var element in document.Elements)
@@ -282,41 +288,30 @@ public static class PlanPrinter
                 grids.Add((gx1, gy1, gx2, gy2));
         }
 
-        double contentWidth = (maxX - minX) / scale;
-        double contentHeight = (maxY - minY) / scale;
-        PdfPageSize paper = options.PaperSize ?? SmallestPaper(contentWidth + 2 * options.MarginMillimetres,
-            contentHeight + 2 * options.MarginMillimetres);
-        double usableWidth = paper.WidthMillimetres - 2 * options.MarginMillimetres;
-        double usableHeight = paper.HeightMillimetres - 2 * options.MarginMillimetres;
-        double effectiveScale = scale;
-        if (contentWidth > usableWidth || contentHeight > usableHeight)
-        {
-            double factor = Math.Min(usableWidth / Math.Max(contentWidth, 1e-9),
-                                     usableHeight / Math.Max(contentHeight, 1e-9));
-            effectiveScale = scale / factor;
-        }
-        double offsetX = (paper.WidthMillimetres - (maxX - minX) / effectiveScale) / 2;
-        double offsetY = (paper.HeightMillimetres - (maxY - minY) / effectiveScale) / 2;
+        return new PlanContent(walls, columns, grids, gaps, windowGaps, minX, minY, maxX, maxY);
+    }
 
-        PdfPage page = pdf.AddPage(paper);
-        if (options.DrawFrame)
-        {
-            double m = options.MarginMillimetres;
-            page.DrawRectangle(m, m, paper.WidthMillimetres - 2 * m, paper.HeightMillimetres - 2 * m, 0.25);
-        }
+    /// <summary>Draws collected plan content on a page: the model point (content.MinX, content.MinY) goes to
+    /// (originX, originY), one model unit is 1/scale.</summary>
+    internal static void DrawContent(PdfPage page, PlanContent content, double scale, double originX, double originY)
+    {
+        double ToX(double x) => (x - content.MinX) / scale + originX;
+        double ToY(double y) => (y - content.MinY) / scale + originY;
 
-        // Grids first and light, then walls, then the filled column footprints on top of both.
-        foreach (var grid in grids)
+        foreach (var grid in content.Grids)
             page.DrawLine(ToX(grid.X1), ToY(grid.Y1), ToX(grid.X2), ToY(grid.Y2), 0.18, 0.45);
 
-        foreach (var wall in walls)
+        var wallById = new Dictionary<int, (int Id, double X1, double Y1, double X2, double Y2, double Width)>();
+        foreach (var wall in content.Walls) wallById[wall.Id] = wall;
+
+        foreach (var wall in content.Walls)
         {
             double dx = wall.X2 - wall.X1, dy = wall.Y2 - wall.Y1;
             double length = Math.Sqrt(dx * dx + dy * dy);
             if (length < 1e-9) continue;
             double ux = dx / length, uy = dy / length;
             double nx = -uy * wall.Width / 2, ny = ux * wall.Width / 2;
-            foreach (var (from, to) in SplitWall(length, gaps.TryGetValue(wall.Id, out var list) ? list : null))
+            foreach (var (from, to) in SplitWall(length, content.Gaps.TryGetValue(wall.Id, out var list) ? list : null))
             {
                 double ax = wall.X1 + ux * from, ay = wall.Y1 + uy * from;
                 double bx = wall.X1 + ux * to, by = wall.Y1 + uy * to;
@@ -328,7 +323,7 @@ public static class PlanPrinter
         }
 
         // A window is a light line across its opening on the wall axis, the glass of the plan.
-        foreach (var (hostId, from, to) in windowGaps)
+        foreach (var (hostId, from, to) in content.WindowGaps)
         {
             if (!wallById.TryGetValue(hostId, out var wall)) continue;
             double dx = wall.X2 - wall.X1, dy = wall.Y2 - wall.Y1;
@@ -339,8 +334,40 @@ public static class PlanPrinter
                 ToX(wall.X1 + ux * to), ToY(wall.Y1 + uy * to), 0.15, 0.35);
         }
 
-        foreach (var column in columns)
-            page.DrawRectangle(ToX(column.X), ToY(column.Y), column.Width / effectiveScale, column.Height / effectiveScale, 0.2, 1);
+        foreach (var column in content.Columns)
+            page.DrawRectangle(ToX(column.X), ToY(column.Y), column.Width / scale, column.Height / scale, 0.2, 1);
+    }
+
+    /// <summary>Draws the plan of a level as one page of the document.</summary>
+    private static void AddPlanPage(PdfDocument pdf, RvtDocument document, int levelId, int scale, string? title,
+        PlanPrintOptions options)
+    {
+        PlanContent content = CollectLevel(document, levelId)
+            ?? throw new InvalidOperationException("The level has no wall or column with a location line to draw.");
+        double contentWidth = (content.MaxX - content.MinX) / scale;
+        double contentHeight = (content.MaxY - content.MinY) / scale;
+        PdfPageSize paper = options.PaperSize ?? SmallestPaper(contentWidth + 2 * options.MarginMillimetres,
+            contentHeight + 2 * options.MarginMillimetres);
+        double usableWidth = paper.WidthMillimetres - 2 * options.MarginMillimetres;
+        double usableHeight = paper.HeightMillimetres - 2 * options.MarginMillimetres;
+        double effectiveScale = scale;
+        if (contentWidth > usableWidth || contentHeight > usableHeight)
+        {
+            double factor = Math.Min(usableWidth / Math.Max(contentWidth, 1e-9),
+                                     usableHeight / Math.Max(contentHeight, 1e-9));
+            effectiveScale = scale / factor;
+        }
+        double offsetX = (paper.WidthMillimetres - (content.MaxX - content.MinX) / effectiveScale) / 2;
+        double offsetY = (paper.HeightMillimetres - (content.MaxY - content.MinY) / effectiveScale) / 2;
+
+        PdfPage page = pdf.AddPage(paper);
+        if (options.DrawFrame)
+        {
+            double m = options.MarginMillimetres;
+            page.DrawRectangle(m, m, paper.WidthMillimetres - 2 * m, paper.HeightMillimetres - 2 * m, 0.25);
+        }
+
+        DrawContent(page, content, effectiveScale, offsetX, offsetY);
 
         // A title inside the frame: the level or view name and the scale. Drawn only when a font with the name's
         // characters was found; the standard font cannot write Cyrillic.
@@ -351,9 +378,6 @@ public static class PlanPrinter
             page.DrawText($"1:{scale}", margin + 3, paper.HeightMillimetres - margin - 15, 3.5,
                 PdfTextAlignment.Left, 0.35);
         }
-
-        double ToX(double x) => (x - minX) / effectiveScale + offsetX;
-        double ToY(double y) => (y - minY) / effectiveScale + offsetY;
     }
 
     /// <summary>The stretches of a wall that are not an opening: [0, length] minus the gaps, in order.</summary>

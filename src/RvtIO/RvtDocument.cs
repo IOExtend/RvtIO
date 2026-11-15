@@ -169,6 +169,10 @@ public class RvtDocument
     {
         foreach (var elem in _info.Elements)
         {
+            // A level, a view, a grid, a room or a sheet carries its own name: a type lookup must not replace it (a
+            // level whose ELEM_TYPE_PARAM resolves to a wall type was renamed to that type, e.g. "8mm Head").
+            if (elem.Category is "OST_Levels" or "OST_Views" or "OST_Grids" or "OST_Rooms" or "OST_Sheets"
+                or "OST_Areas" or "OST_TextNotes") continue;
             int typeId = elem.FamilyTypeId;
             if (typeId <= 0) continue;
             if (!_elemById.TryGetValue(typeId, out var typeElem)) continue;
