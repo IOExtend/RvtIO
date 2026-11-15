@@ -12,6 +12,7 @@ RvtIO is a .NET library and command line tool that reads Autodesk Revit projects
 - Writes compact JSON or a full JSON dump with every parameter and geometry.
 - Returns the triangle meshes of the model elements, with one shared mesh per family symbol for repeated instances (`ElementMeshes`).
 - Lists the sheets of a file and the viewports placed on them (`SheetCatalog`), with the sheet number, name, issue date, by-lines, the viewports of each sheet and the elements each sheet owns. Page size, view placement and 2D content are not decoded yet; the catalog reports each limit.
+- Prints the plan of a level to PDF (`rvtio print`, `PlanPrinter`): walls with their stored width, column footprints and grids, with a PDF writer built in. Openings, floors, text and the sheet layout are the next part of the printing work.
 
 ## Install
 
@@ -71,6 +72,14 @@ rvtio sheets project.rvt sheets.json
 ```
 
 The catalog has the sheet number, name, issue date, by-lines and scale, the viewports of each sheet and the elements each sheet owns. Page size, view placement, the displayed view and 2D content are not decoded; every limit is reported in the catalog itself. See [sheets and viewports](docs/sheets.md).
+
+Print the plan of a level to PDF — walls with their stored width, column footprints and grids, on the smallest paper that holds the drawing at the scale:
+
+```sh
+rvtio print project.rvt plan.pdf --level "Уровень 1" --scale 100
+```
+
+`--list-levels` prints the levels that can be printed. Openings, floors, annotations, text and the sheet layout are not drawn yet; see [printing a plan](docs/printing.md).
 
 Export the state of one project phase:
 

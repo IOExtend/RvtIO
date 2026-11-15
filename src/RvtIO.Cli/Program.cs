@@ -56,6 +56,8 @@ internal static partial class Program
           --list-category <categoryId> <out.csv>  list the elements of one category
           sheets <file.rvt|file.rfa> [output.json] [--r22-layout]
                                             write the sheet catalog (sheets, viewports, limits not decoded) as JSON
+          print <file.rvt> <out.pdf> [--level <id|name>] [--scale <n>] [--paper A4|A3|A2|A1|A0] [--list-levels]
+                                            render the plan of one level to a one-page PDF (walls, columns, grids)
 
         Developer options (measurement and comparison dumps, not a stable interface):
           --dev-external-dump <path>        text dump of the model for CompoundStructure layers
@@ -143,6 +145,7 @@ internal static partial class Program
         if (args[0] == "save-as") return RvtIO.Cli.SaveAsCommand.Run(args[1..], Console.Out, Console.Error);
         if (args[0] == "coverage") return RvtIO.Cli.CoverageCommand.Run(args[1..], Console.Out, Console.Error);
         if (args[0] == "sheets") return RvtIO.Cli.SheetsCommand.Run(args[1..], Console.Out, Console.Error);
+        if (args[0] == "print") return RvtIO.Cli.PrintCommand.Run(args[1..], Console.Out, Console.Error);
         if (args[0] == "--rebar-dump") return RvtIO.RebarDump.Run(args[1..]);
         if (args[0] == "--parse-block") return ParseBlock(args);
 

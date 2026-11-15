@@ -55,6 +55,16 @@ extension and label helpers carry the ids and names stored in the file format.
 
 See [sheets and viewports](sheets.md) for what is decoded, what the limits are and why no page coordinate is exposed yet.
 
+## Printing
+
+| Type | Use |
+|---|---|
+| `PlanPrinter` | `Levels(document)` lists the levels a plan can be printed for; `Render(document, levelId, scale, options)` returns a `PdfDocument` with the plan of one level: walls with their stored width, column footprints, clipped grids. |
+| `PlanPrintOptions` | `PaperSize` (null picks the smallest paper that holds the drawing), `MarginMillimetres`, `FallbackWallWidthMillimetres`, `DrawFrame`. |
+| `PlanLevel` | A printable level: element id, name and stored elevation. |
+
+See [printing a plan](printing.md) for what is drawn, what is not, and the roadmap to sheet printing.
+
 ## PDF output
 
 | Type | Use |
