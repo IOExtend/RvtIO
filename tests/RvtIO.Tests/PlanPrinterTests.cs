@@ -195,7 +195,7 @@ public class PlanPrinterTests
     {
         using var stream = new MemoryStream();
         pdf.Save(stream);
-        return System.Text.Encoding.ASCII.GetString(stream.ToArray());
+        return PdfTestContent.Read(stream.ToArray());
     }
 
     private static int Count(string text, string value)

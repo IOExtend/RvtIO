@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.IO.Compression;
 using System.Text;
 
 namespace RvtIO.Pdf;
@@ -92,16 +93,21 @@ internal static class PdfSerializer
             EndObject();
 
             byte[] file = font.File_;
+            byte[] fontPayload = document.Compress ? Zlib(file) : file;
             BeginObject(FontFileId);
-            Raw($"<< /Length {file.Length} /Length1 {file.Length} >>\nstream\n");
-            WriteBytes(file);
+            Raw($"<< /Length {fontPayload.Length} /Length1 {file.Length}"
+                + (document.Compress ? " /Filter /FlateDecode" : string.Empty) + " >>\nstream\n");
+            WriteBytes(fontPayload);
             Raw("\nendstream\n");
             EndObject();
 
             BeginObject(ToUnicodeId);
             string cmap = ToUnicode(document, font);
-            Raw($"<< /Length {Encoding.ASCII.GetByteCount(cmap)} >>\nstream\n");
-            Raw(cmap);
+            byte[] cmapBytes = Encoding.ASCII.GetBytes(cmap);
+            byte[] cmapPayload = document.Compress ? Zlib(cmapBytes) : cmapBytes;
+            Raw($"<< /Length {cmapPayload.Length}"
+                + (document.Compress ? " /Filter /FlateDecode" : string.Empty) + " >>\nstream\n");
+            WriteBytes(cmapPayload);
             Raw("\nendstream\n");
             EndObject();
         }
@@ -116,10 +122,12 @@ internal static class PdfSerializer
                 + $"/Resources << /Font << {fonts} >> >> /Contents {ContentId(i)} 0 R >>\n");
             EndObject();
 
-            string content = page.Content;
+            byte[] content = Encoding.ASCII.GetBytes(page.Content);
+            byte[] payload = document.Compress ? Zlib(content) : content;
             BeginObject(ContentId(i));
-            Raw($"<< /Length {Encoding.ASCII.GetByteCount(content)} >>\nstream\n");
-            Raw(content);
+            Raw($"<< /Length {payload.Length}" + (document.Compress ? " /Filter /FlateDecode" : string.Empty)
+                + " >>\nstream\n");
+            WriteBytes(payload);
             Raw("\nendstream\n");
             EndObject();
         }
@@ -131,6 +139,15 @@ internal static class PdfSerializer
             Raw(offset.ToString("D10", CultureInfo.InvariantCulture) + " 00000 n \n");
         Raw($"trailer\n<< /Size {offsets.Count + 1} /Root {CatalogId} 0 R >>\n");
         Raw($"startxref\n{xref}\n%%EOF\n");
+    }
+
+    /// <summary>Zlib (RFC 1950) wrapping of the payload, which the PDF /FlateDecode filter reads.</summary>
+    private static byte[] Zlib(byte[] data)
+    {
+        using var output = new MemoryStream();
+        using (var zlib = new ZLibStream(output, CompressionLevel.SmallestSize, leaveOpen: true))
+            zlib.Write(data, 0, data.Length);
+        return output.ToArray();
     }
 
     private static string ToUnicode(PdfDocument document, PdfTrueTypeFont font)

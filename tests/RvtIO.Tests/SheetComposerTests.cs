@@ -136,7 +136,7 @@ public class SheetComposerTests
         PdfDocument pdf = SheetComposer.Render(document, 100);
         using var stream = new MemoryStream();
         pdf.Save(stream);
-        string content = System.Text.Encoding.ASCII.GetString(stream.ToArray());
+        string content = PdfTestContent.Read(stream.ToArray());
 
         Assert.Contains(" l S", content);
         Assert.Contains(" re S", content);

@@ -147,7 +147,7 @@ public static class ElevationPrinter
         foreach (var view in Views(document)) views[view.ViewId] = view;
         if (!views.TryGetValue(viewId, out var elevation))
             throw new InvalidOperationException($"View {viewId} is not a compass elevation (see ElevationPrinter.Views).");
-        var pdf = new PdfDocument { Font = PdfFonts.TryFind(out _) };
+        var pdf = new PdfDocument { Font = PdfFonts.TryFind(out _), Compress = true };
         AddElevationPage(pdf, document, elevation, options);
         return pdf;
     }
@@ -227,13 +227,19 @@ public static class ElevationPrinter
         if (content.Levels.Count > 0)
         {
             page.SetDash(4, 1.5);
+            double lastLabelY = double.NegativeInfinity;
             foreach (var (y, label) in content.Levels)
             {
                 double pageY = ToY(y);
                 if (pageY < ToY(content.MinY) - 1 || pageY > ToY(content.MaxY) + 1) continue;
                 page.DrawLine(ToX(content.MinX), pageY, ToX(content.MaxX), pageY, 0.15, 0.55);
-                if (label.Length > 0)
-                    page.DrawText(label, ToX(content.MinX) + 1, pageY + 1, 2.5, PdfTextAlignment.Left, 0.35);
+                // Two levels a few millimetres apart (Ceiling over Level 1) would print their names on top of each
+                // other; the upper one keeps its label.
+                if (label.Length > 0 && pageY - lastLabelY >= 4)
+                {
+                    page.DrawText(label, ToX(content.MinX) + 1, pageY + 0.8, 2.2, PdfTextAlignment.Left, 0.35);
+                    lastLabelY = pageY;
+                }
             }
             page.ResetDash();
         }

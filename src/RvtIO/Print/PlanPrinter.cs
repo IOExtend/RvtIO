@@ -168,7 +168,7 @@ public static class PlanPrinter
             levelId = best;
         }
 
-        var pdf = new PdfDocument { Font = PdfFonts.TryFind(out _) };
+        var pdf = new PdfDocument { Font = PdfFonts.TryFind(out _), Compress = true };
         AddPlanPage(pdf, document, levelId.Value, scale, document.GetElement(levelId.Value)?.Name, options);
         return pdf;
     }
@@ -193,7 +193,7 @@ public static class PlanPrinter
         options ??= new PlanPrintOptions();
         var views = new Dictionary<int, PlanView>();
         foreach (var view in Views(document)) views[view.ViewId] = view;
-        var pdf = new PdfDocument { Font = PdfFonts.TryFind(out _) };
+        var pdf = new PdfDocument { Font = PdfFonts.TryFind(out _), Compress = true };
         foreach (int viewId in viewIds)
         {
             if (!views.TryGetValue(viewId, out var view))

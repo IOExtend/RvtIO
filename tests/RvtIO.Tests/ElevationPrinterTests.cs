@@ -105,7 +105,7 @@ public class ElevationPrinterTests
         ElevationPrinter.DrawContent(page, content, 100, 10, 10);
         using var stream = new MemoryStream();
         pdf.Save(stream);
-        string text = System.Text.Encoding.ASCII.GetString(stream.ToArray());
+        string text = PdfTestContent.Read(stream.ToArray());
 
         Assert.Contains(" l ", text);
         Assert.Contains(" B", text);
@@ -143,7 +143,7 @@ public class ElevationPrinterTests
         PdfDocument pdf = SheetComposer.Render(document, 100);
         using var stream = new MemoryStream();
         pdf.Save(stream);
-        string text = System.Text.Encoding.ASCII.GetString(stream.ToArray());
+        string text = PdfTestContent.Read(stream.ToArray());
 
         Assert.Contains(" l ", text);
     }

@@ -24,7 +24,7 @@ public static class ViewPrinter
         foreach (var view in PlanPrinter.Views(document)) plans[view.ViewId] = view;
         var elevations = new Dictionary<int, ElevationView>();
         foreach (var view in ElevationPrinter.Views(document)) elevations[view.ViewId] = view;
-        var pdf = new PdfDocument { Font = PdfFonts.TryFind(out _) };
+        var pdf = new PdfDocument { Font = PdfFonts.TryFind(out _), Compress = true };
         foreach (int viewId in viewIds)
         {
             if (plans.TryGetValue(viewId, out var plan))

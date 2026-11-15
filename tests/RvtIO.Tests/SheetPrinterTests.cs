@@ -91,7 +91,7 @@ public class SheetPrinterTests
         PdfDocument pdf = SheetPrinter.Render(document, 100);
         using var stream = new MemoryStream();
         pdf.Save(stream);
-        string content = System.Text.Encoding.ASCII.GetString(stream.ToArray());
+        string content = PdfTestContent.Read(stream.ToArray());
 
         int lines = 0, at = 0;
         while ((at = content.IndexOf(" l S", at, StringComparison.Ordinal)) >= 0) { lines++; at += 4; }

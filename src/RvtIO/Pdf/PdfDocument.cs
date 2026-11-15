@@ -53,6 +53,11 @@ public sealed class PdfDocument
     /// </summary>
     public PdfTrueTypeFont? Font { get; set; }
 
+    /// <summary>True writes the page content streams, the embedded font and the ToUnicode map with Flate compression;
+    /// false (the default) writes them raw, which keeps a small document readable in a text editor but makes a many-page
+    /// drawing set tens of megabytes.</summary>
+    public bool Compress { get; set; }
+
     /// <summary>The characters drawn with <see cref="Font"/>, which the font's width array and ToUnicode map hold.</summary>
     internal HashSet<char> UsedCharacters { get; } = new();
 

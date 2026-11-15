@@ -115,6 +115,25 @@ public class PdfWriterTests
     }
 
     [Fact]
+    public void Compress_WritesFlateStreamsThatShrinkTheFile()
+    {
+        static PdfDocument Build(bool compress)
+        {
+            var document = new PdfDocument { Compress = compress };
+            PdfPage page = document.AddPage(PdfPageSize.A4);
+            for (int i = 0; i < 500; i++)
+                page.DrawLine(10, 10 + i * 0.1, 100, 10 + i * 0.1, 0.2);
+            return document;
+        }
+
+        string raw = Write(Build(false));
+        string packed = Write(Build(true));
+
+        Assert.Contains("/Filter /FlateDecode", packed);
+        Assert.True(packed.Length < raw.Length, $"{packed.Length} is not smaller than {raw.Length}");
+    }
+
+    [Fact]
     public void TwoPages_HaveTwoContentStreams()
     {
         var document = new PdfDocument();

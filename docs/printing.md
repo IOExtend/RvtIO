@@ -26,12 +26,15 @@ output path (also a level or view that is not printable), 2 the file cannot be r
 nothing to draw.
 
 A view can be printed instead of a level, at the view's own view scale; plans and compass elevations are both accepted
-(one page per view, in the order given):
+(one page per view, in the order given). `--all-views` prints every printable view and `--all-sheets` every numbered
+sheet:
 
 ```sh
 rvtio print project.rvt views.pdf --view "Уровень 1"
 rvtio print project.rvt views.pdf --view "Уровень 1,Уровень 2"   # one page each
 rvtio print project.rvt --list-views
+rvtio print project.rvt all.pdf --all-views     # every plan and compass elevation
+rvtio print project.rvt sheets.pdf --all-sheets  # every numbered sheet
 ```
 
 `--list-views` prints the id, name, scale and level of every printable plan view and the id, name, scale and direction

@@ -21,7 +21,7 @@ internal static class PrintCommand
         var sheetTexts = new List<string>();
         int scale = 100;
         PdfPageSize? paper = null;
-        bool listLevels = false, listViews = false, listSheets = false;
+        bool listLevels = false, listViews = false, listSheets = false, allViews = false, allSheets = false;
         for (int i = 0; i < args.Length; i++)
         {
             string arg = args[i];
@@ -35,6 +35,12 @@ internal static class PrintCommand
                     break;
                 case "--list-sheets":
                     listSheets = true;
+                    break;
+                case "--all-views":
+                    allViews = true;
+                    break;
+                case "--all-sheets":
+                    allSheets = true;
                     break;
                 case "--level" or "--view" or "--sheet" or "--scale" or "--paper":
                     if (i + 1 >= args.Length) return Usage(error, arg + " requires a value.");
@@ -129,7 +135,29 @@ internal static class PrintCommand
         try
         {
             PdfDocument pdf;
-            if (sheetTexts.Count > 0)
+            if (allSheets)
+            {
+                if (composed.Count == 0)
+                {
+                    error.WriteLine("No numbered sheet was found; nothing to compose.");
+                    return RvtExitCodes.DecodeError;
+                }
+                pdf = SheetComposer.RenderSheets(document, composed.Select(sheet => sheet.SheetId).ToList(),
+                    new SheetComposeOptions { PaperSize = paper });
+            }
+            else if (allViews)
+            {
+                var ids = new List<int>();
+                foreach (PlanView view in views) ids.Add(view.ViewId);
+                foreach (ElevationView view in elevations) ids.Add(view.ViewId);
+                if (ids.Count == 0)
+                {
+                    error.WriteLine("No printable view was found; nothing to print.");
+                    return RvtExitCodes.DecodeError;
+                }
+                pdf = ViewPrinter.Render(document, ids, new PlanPrintOptions { PaperSize = paper });
+            }
+            else if (sheetTexts.Count > 0)
             {
                 var sheetIds = new List<int>();
                 var composedIds = new List<int>();
@@ -266,7 +294,8 @@ internal static class PrintCommand
     {
         error.WriteLine(problem);
         error.WriteLine("Usage: rvtio print <file.rvt> <out.pdf> [--level <id|name>] [--view <id|name>] [--sheet <id|number>] "
-            + "[--scale <n>] [--paper A4|A3|A2|A1|A0] [--list-levels] [--list-views] [--list-sheets]");
+            + "[--all-views] [--all-sheets] [--scale <n>] [--paper A4|A3|A2|A1|A0] "
+            + "[--list-levels] [--list-views] [--list-sheets]");
         return RvtExitCodes.Usage;
     }
 }

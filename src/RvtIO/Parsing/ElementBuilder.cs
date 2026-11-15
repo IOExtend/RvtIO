@@ -2878,6 +2878,20 @@ internal static partial class ElementBuilder
         }
     }
 
+    /// <summary>The plane of a view decoded from its own block: origin and the three axes.</summary>
+    private static void ApplyViewPlanes(RevitFileInfo info, ParsingState? state)
+    {
+        if (state == null || state.ViewPlanes.Count == 0) return;
+        foreach (var element in info.Elements)
+        {
+            if (!state.ViewPlanes.TryGetValue((uint)element.Id, out var plane)) continue;
+            element.ViewOrigin = plane.Origin;
+            element.ViewHorizontalDirection = plane.Horiz;
+            element.ViewVerticalDirection = plane.Vert;
+            element.ViewDirection = plane.ViewDir;
+        }
+    }
+
     /// <summary>The view a viewport displays and the offset of that view on the sheet, from the 0x07C6 blocks.</summary>
     private static void ApplyViewports(RevitFileInfo info, ParsingState? state)
     {
@@ -6373,6 +6387,7 @@ internal static partial class ElementBuilder
         ApplySheetParams(rvtInfo, state);
         ApplyTextNotes(rvtInfo, state);
         ApplyViewports(rvtInfo, state);
+        ApplyViewPlanes(rvtInfo, state);
         AddViewAndDatumDefaults(rvtInfo);
         AddCurtainQuantities(rvtInfo);
         EnrichTypeLevelBips(rvtInfo, state);

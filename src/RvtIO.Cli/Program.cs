@@ -57,9 +57,10 @@ internal static partial class Program
           sheets <file.rvt|file.rfa> [output.json] [--r22-layout]
                                             write the sheet catalog (sheets, viewports, limits not decoded) as JSON
           print <file.rvt> <out.pdf> [--level <id|name>] [--view <id|name>] [--sheet <id|number>] [--scale <n>]
-                                            [--paper A4|A3|A2|A1|A0] [--list-levels] [--list-views] [--list-sheets]
-                                            render the plan of one level, one or more plan views at their own scales, or
-                                            one or more sheets as their decoded linework, to PDF
+                                            [--all-views] [--all-sheets] [--paper A4|A3|A2|A1|A0]
+                                            [--list-levels] [--list-views] [--list-sheets]
+                                            render the plan of one level, one or more views (plans and elevations) or all of
+                                            them, or one or more sheets, to PDF
 
         Developer options (measurement and comparison dumps, not a stable interface):
           --dev-external-dump <path>        text dump of the model for CompoundStructure layers

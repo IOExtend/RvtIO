@@ -247,6 +247,22 @@ namespace RvtIO.Model
         [JsonIgnore]
         public double? TextFontSizePoints { get; set; }
 
+        /// <summary>The origin of a view's plane (feet), [x, y, z]; null when the reader did not decode it.</summary>
+        [JsonIgnore]
+        public double[]? ViewOrigin { get; set; }
+
+        /// <summary>The horizontal axis of a view's plane, a unit vector; null when not decoded.</summary>
+        [JsonIgnore]
+        public double[]? ViewHorizontalDirection { get; set; }
+
+        /// <summary>The vertical axis of a view's plane, a unit vector; null when not decoded.</summary>
+        [JsonIgnore]
+        public double[]? ViewVerticalDirection { get; set; }
+
+        /// <summary>The direction a view looks at, a unit vector; null when not decoded.</summary>
+        [JsonIgnore]
+        public double[]? ViewDirection { get; set; }
+
         /// <summary>For a viewport: the element id of the view it displays; null when the reader did not decode it.</summary>
         [JsonIgnore]
         public int? ViewportViewId { get; set; }

@@ -47,7 +47,7 @@ public class SheetTextTests
         PdfDocument pdf = SheetPrinter.Render(RvtDocument.FromInfo(info), 100);
         using var stream = new MemoryStream();
         pdf.Save(stream);
-        string content = System.Text.Encoding.ASCII.GetString(stream.ToArray());
+        string content = PdfTestContent.Read(stream.ToArray());
 
         Assert.Contains("/Type0", content);
         Assert.Contains("BT /F2", content);

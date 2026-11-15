@@ -124,7 +124,7 @@ public static class SheetPrinter
         options ??= new SheetPrintOptions();
         var byId = new Dictionary<int, Element>();
         foreach (var element in document.Elements) byId.TryAdd(element.Id, element);
-        var pdf = new PdfDocument { Font = PdfFonts.TryFind(out _) };
+        var pdf = new PdfDocument { Font = PdfFonts.TryFind(out _), Compress = true };
         foreach (int sheetId in sheetIds)
         {
             if (!byId.TryGetValue(sheetId, out var sheet)

@@ -2021,6 +2021,63 @@ internal static class BlockParser
     }
 
     /// <summary>
+    /// Scans the blocks of a chunk for the plane of a view: the schema stores m_horzDir (a horizontal unit vector), the
+    /// view origin, the view scale, m_vertDir (a vertical unit vector) and m_viewDir (a horizontal unit vector) as
+    /// thirteen consecutive doubles. The block walk of the project's own data does not always reach them, so they are
+    /// found by signature and kept under the element id of the block.
+    /// </summary>
+    internal static void CollectViewPlanes(byte[] chunk, ParsingState state)
+    {
+        int pos = 0;
+        while (pos + 16 <= chunk.Length)
+        {
+            uint eid = BitConverter.ToUInt32(chunk, pos);
+            int size = BitConverter.ToInt32(chunk, pos + 8);
+            uint classIdx = BitConverter.ToUInt32(chunk, pos + 12);
+            if (eid == 0 || eid > 50_000_000 || size <= 0 || size > MaxBlockSize || pos + 16 + size > chunk.Length)
+            {
+                pos++;
+                continue;
+            }
+            if (!state.ViewPlanes.ContainsKey(eid))
+                TryFindViewPlane(chunk, pos + 16, pos + 16 + size, eid, state);
+            pos += 16 + size;
+        }
+    }
+
+    private static void TryFindViewPlane(byte[] d, int start, int end, uint eid, ParsingState state)
+    {
+        for (int i = start; i + 13 * 8 <= end; i++)
+        {
+            double hx = BitConverter.ToDouble(d, i), hy = BitConverter.ToDouble(d, i + 8);
+            double hz = BitConverter.ToDouble(d, i + 16);
+            if (!double.IsFinite(hx) || !double.IsFinite(hy) || !double.IsFinite(hz)) continue;
+            double hn = Math.Sqrt(hx * hx + hy * hy + hz * hz);
+            if (hn is < 0.999 or > 1.001 || Math.Abs(hz) > 0.01) continue;
+            double ox = BitConverter.ToDouble(d, i + 24), oy = BitConverter.ToDouble(d, i + 32);
+            double oz = BitConverter.ToDouble(d, i + 40);
+            if (!double.IsFinite(ox) || !double.IsFinite(oy) || !double.IsFinite(oz)
+                || Math.Abs(ox) > 1e5 || Math.Abs(oy) > 1e5 || Math.Abs(oz) > 1e5) continue;
+            double scale = BitConverter.ToDouble(d, i + 48);
+            if (!double.IsFinite(scale) || scale < 1 || scale > 1000
+                || Math.Abs(scale - Math.Round(scale)) > 1e-6) continue;
+            double vx = BitConverter.ToDouble(d, i + 56), vy = BitConverter.ToDouble(d, i + 64);
+            double vz = BitConverter.ToDouble(d, i + 72);
+            if (!double.IsFinite(vx) || !double.IsFinite(vy) || !double.IsFinite(vz)) continue;
+            double vn = Math.Sqrt(vx * vx + vy * vy + vz * vz);
+            if (vn is < 0.999 or > 1.001 || Math.Abs(vx) > 0.01 || Math.Abs(vy) > 0.01) continue;
+            double dx = BitConverter.ToDouble(d, i + 80), dy = BitConverter.ToDouble(d, i + 88);
+            double dz = BitConverter.ToDouble(d, i + 96);
+            if (!double.IsFinite(dx) || !double.IsFinite(dy) || !double.IsFinite(dz)) continue;
+            double dn = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+            if (dn is < 0.999 or > 1.001 || Math.Abs(dz) > 0.01) continue;
+            if (Math.Abs(hx * dx + hy * dy + hz * dz) > 0.01) continue;
+            state.ViewPlanes[eid] = ([ox, oy, oz], [hx, hy, hz], [vx, vy, vz], [dx, dy, dz]);
+            return;
+        }
+    }
+
+    /// <summary>
     /// Scans a chunk for text-note blocks (class 0x0F83, little-endian 83 0F at the class field) and records the text
     /// and position of every note whose block the block walk did not reach. The two class bytes are rare in text, so
     /// the scan follows them instead of stepping through every byte.

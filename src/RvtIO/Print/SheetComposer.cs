@@ -95,7 +95,7 @@ public static class SheetComposer
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(sheetIds);
         options ??= new SheetComposeOptions();
-        var pdf = new PdfDocument { Font = PdfFonts.TryFind(out _) };
+        var pdf = new PdfDocument { Font = PdfFonts.TryFind(out _), Compress = true };
         var plans = new Dictionary<int, PlanView>();
         foreach (var view in PlanPrinter.Views(document)) plans[view.ViewId] = view;
         foreach (int sheetId in sheetIds)

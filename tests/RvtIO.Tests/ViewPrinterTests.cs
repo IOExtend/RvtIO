@@ -110,6 +110,6 @@ public class ViewPrinterTests
         Assert.Equal(PdfPageSize.A4.Landscape, pdf.Pages[0].Size);
         using var stream = new MemoryStream();
         pdf.Save(stream);
-        Assert.Contains(" l ", System.Text.Encoding.ASCII.GetString(stream.ToArray()));
+        Assert.Contains(" l ", PdfTestContent.Read(stream.ToArray()));
     }
 }
