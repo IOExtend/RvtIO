@@ -54,6 +54,7 @@ public static class PlanPrinter
         List<(double X1, double Y1, double X2, double Y2, string Name)> Grids,
         Dictionary<int, List<(double From, double To)>> Gaps,
         List<(int HostId, double From, double To)> WindowGaps,
+        List<(int HostId, double From, double To)> DoorGaps,
         List<List<(double X, double Y)>> FloorLoops,
         List<List<(double X, double Y)>> OpeningLoops,
         List<(List<(double X, double Y)> Polygon, string Name, double AreaSquareFeet)> Rooms,
@@ -252,6 +253,7 @@ public static class PlanPrinter
         foreach (var wall in walls) wallById[wall.Id] = wall;
         var gaps = new Dictionary<int, List<(double From, double To)>>();
         var windowGaps = new List<(int HostId, double From, double To)>();
+        var doorGaps = new List<(int HostId, double From, double To)>();
         foreach (var insert in document.Elements)
         {
             if (insert.CategoryId is not ((int)BuiltInCategory.OST_Doors or (int)BuiltInCategory.OST_Windows)) continue;
@@ -282,6 +284,7 @@ public static class PlanPrinter
             if (!gaps.TryGetValue(wall.Id, out var list)) gaps[wall.Id] = list = new List<(double From, double To)>();
             list.Add((from, to));
             if (insert.CategoryId == (int)BuiltInCategory.OST_Windows) windowGaps.Add((wall.Id, from, to));
+            else doorGaps.Add((wall.Id, from, to));
         }
 
         // The floors of the level are drawn as their sketch loops, light under the walls, and every door or window cut
@@ -361,8 +364,8 @@ public static class PlanPrinter
         const double annotation = 1000;
         minX -= annotation; minY -= annotation; maxX += annotation; maxY += annotation;
 
-        return new PlanContent(walls, columns, grids, gaps, windowGaps, floorLoops, openingLoops, rooms, minX, minY,
-            maxX, maxY);
+        return new PlanContent(walls, columns, grids, gaps, windowGaps, doorGaps, floorLoops, openingLoops, rooms,
+            minX, minY, maxX, maxY);
     }
 
     /// <summary>Draws collected plan content on a page: the model point (content.MinX, content.MinY) goes to
@@ -435,6 +438,31 @@ public static class PlanPrinter
                     page.DrawText($"{room.AreaSquareFeet * 0.092903:0} m²", ToX(cx), ToY(cy) - 2.2, 1.8,
                         PdfTextAlignment.Center, 0.45);
             }
+        }
+
+        // A door is drawn as its leaf and the quarter arc it sweeps: the leaf stands at one jamb, perpendicular to the
+        // wall and on the side of the building the door opens into.
+        double centerX = (content.MinX + content.MaxX) / 2, centerY = (content.MinY + content.MaxY) / 2;
+        foreach (var door in content.DoorGaps)
+        {
+            if (!wallById.TryGetValue(door.HostId, out var wall)) continue;
+            double dx = wall.X2 - wall.X1, dy = wall.Y2 - wall.Y1;
+            double length = Math.Sqrt(dx * dx + dy * dy);
+            if (length < 1e-6) continue;
+            double ux = dx / length, uy = dy / length;
+            double nx = -uy, ny = ux;
+            double width = door.To - door.From;
+            double hx = wall.X1 + ux * door.From, hy = wall.Y1 + uy * door.From;
+            double ex = wall.X1 + ux * door.To, ey = wall.Y1 + uy * door.To;
+            double midX = (hx + ex) / 2, midY = (hy + ey) / 2;
+            double side = (centerX - midX) * nx + (centerY - midY) * ny >= 0 ? 1 : -1;
+            double tipX = hx + nx * side * width, tipY = hy + ny * side * width;
+            page.DrawLine(ToX(hx), ToY(hy), ToX(tipX), ToY(tipY), 0.18);
+            double a0 = Math.Atan2(tipY - hy, tipX - hx) * 180 / Math.PI;
+            double a1 = Math.Atan2(ey - hy, ex - hx) * 180 / Math.PI;
+            while (a1 < a0) a1 += 360;
+            if (a1 - a0 > 270) a1 -= 360;
+            page.DrawArc(ToX(hx), ToY(hy), width / scale, a0, a1, 0.15, 0.4);
         }
 
         DimChains(page, content, ToX, ToY);

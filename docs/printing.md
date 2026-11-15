@@ -105,6 +105,7 @@ stays empty.
 | Grids | the stored location lines, clipped to the extent of the level (a grid line can run far beyond the building), with a white bubble and the grid name at both ends |
 | Floors | the sketch loops of the floors of the level, light under the walls |
 | Rooms | the floor face of the room's decoded boundary, filled with a colour by the room name and labelled with the name and its area in m² |
+| Doors | the leaf at one jamb, perpendicular to the wall on the side the door opens into, and the quarter arc it sweeps |
 | Dimensions | a chain between neighbouring grid lines above and to the right of the building, with the distance in millimetres |
 | Room legend | below the plan: a colour swatch and the name of every kind of room on it |
 

@@ -172,8 +172,9 @@ public class PlanPrinterTests
         string content = Content(pdf);
 
         // The 10 m wall is cut into two stretches of 4 m and 5 m, each with two sides and two caps: eight lines where an
-        // uncut wall draws four.
-        Assert.Equal(8, Count(content, " l S"));
+        // uncut wall draws four. The door adds its leaf (a line) and the quarter arc it sweeps (a cubic curve).
+        Assert.Equal(9, Count(content, " l S"));
+        Assert.Contains(" c ", content);
     }
 
     [Fact]

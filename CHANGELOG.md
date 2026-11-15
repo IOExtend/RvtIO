@@ -16,6 +16,8 @@ Elevations print as pages too: `rvtio print --view South` and `RvtIO.Print.Eleva
 
 Elevations print: `RvtIO.Print.ElevationPrinter` projects every planar face of the model on the vertical plane of a compass view (North, South, East, West, taken from the view name until the view plane is decoded), paints it white from far to near and outlines the faces that look at the viewer; plants, topography and site surfaces are left out. `SheetComposer` draws such a viewport on its sheet. Measured on the Revit sample project: the South elevation prints on A103, the two-storey facade with balcony rail, columns and roof; a section is not printed yet.
 
+A door is drawn as its leaf and the quarter arc it sweeps: the leaf stands at one jamb, perpendicular to the wall, on the side of the building the door opens into (the side of the level centre), and the arc joins it to the other jamb.
+
 A plan also prints its dimension chains: between neighbouring grid lines a horizontal chain above the building and a vertical chain to its right, each with a tick and the distance in millimetres (rotated for the vertical chain), and a room legend below the plan with a colour swatch and the name of every kind of room. The PDF page gained rotated text for the vertical chain.
 
 A room is filled with a light colour by its name — a bath blue, a bedroom cyan, a living room green, a kitchen tan, a laundry brown, a hall yellow, a mechanical room plant green, a master bath magenta — which is what the reference export shows; the PDF page gained full RGB fills for them. An elevation notes the height of every level next to its name (Level 2 3000, Roof Line 6000).
