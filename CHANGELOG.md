@@ -20,6 +20,8 @@ Only a building section is printed (1:100 or wider): a detail section (1:10 to 1
 
 A stair section (a view whose name holds "stair", 1:20 to 1:50) is printed from the stairs alone: only the stairs, their railings and supports are projected, so the sheet shows the stair instead of the whole building. Measured on the Revit sample project: A105 carries its Stair Section and Main Stair Detail beside the East elevation.
 
+A section fills its faces grey, so the cut mass reads as a section instead of the white of an elevation (the elevation keeps its white faces). Measured on the Revit sample project: the Longitudinal Section of A103 reads as a cut.
+
 A section view prints as well: a view named "Section" is projected along the short axis of the building, the way a longitudinal section looks (the cutting plane itself is not decoded yet, so this is a projection, not a true cut). Measured on the Revit sample project: A103 now carries both the South elevation and the Longitudinal Section.
 
 Elevations print as pages too: `rvtio print --view South` and `RvtIO.Print.ElevationPrinter.Render` put one elevation on a page fitted to it, and `RvtIO.Print.ViewPrinter` prints a plan and an elevation into one document, one page each; `--list-views` lists elevations with their direction. A detail view of a plan (a DBViewPlan at 1:2 to 1:24) is no longer listed as the plan of its level.

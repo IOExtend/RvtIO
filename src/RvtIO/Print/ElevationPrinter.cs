@@ -238,7 +238,7 @@ public static class ElevationPrinter
             double m = options.MarginMillimetres;
             page.DrawRectangle(m, m, paper.WidthMillimetres - 2 * m, paper.HeightMillimetres - 2 * m, 0.25);
         }
-        DrawContent(page, content, scale, offsetX, offsetY);
+        DrawContent(page, content, scale, offsetX, offsetY, view.Direction == "section" ? 0.82 : 1);
         if (pdf.Font != null)
         {
             page.DrawText(view.Name, options.MarginMillimetres + 2, paper.HeightMillimetres - options.MarginMillimetres - 6, 4);
@@ -253,14 +253,16 @@ public static class ElevationPrinter
 
     /// <summary>Draws the projected elevation with (MinX, MinY) at (originX, originY), one model unit per 1/scale.</summary>
     internal static void DrawContent(PdfPage page, ElevationContent content, double scale, double originX,
-        double originY)
+        double originY, double faceFill = 1)
     {
         double ToX(double x) => (x - content.MinX) / scale + originX;
         double ToY(double y) => (y - content.MinY) / scale + originY;
         foreach (var (points, _, outline) in content.Faces)
         {
             var pagePoints = points.Select(point => (ToX(point.X), ToY(point.Y))).ToList();
-            page.DrawPolyline(pagePoints, outline ? 0.2 : 0, true, 1);
+            // A section fills its faces grey, so the cut mass reads as a section rather than as the white of an
+            // elevation.
+            page.DrawPolyline(pagePoints, outline ? 0.2 : 0, true, faceFill);
         }
 
         // Grids first, then the levels: both dashed and light, over the faces the way an elevation prints them.

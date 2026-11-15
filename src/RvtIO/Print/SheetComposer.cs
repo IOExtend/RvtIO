@@ -271,7 +271,8 @@ public static class SheetComposer
                     frameY = centerY - frameHeight / 2;
                     double m = options.ViewMarginMillimetres;
                     page2.BeginClip(frameX - m, frameY - m, frameWidth + 2 * m, frameHeight + 2 * m);
-                    ElevationPrinter.DrawContent(page2, elevation, scale, frameX, frameY);
+                    ElevationPrinter.DrawContent(page2, elevation, scale, frameX, frameY,
+                        direction == "section" ? 0.82 : 1);
                     page2.EndClip();
                 }
             }
