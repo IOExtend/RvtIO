@@ -40,6 +40,17 @@ left out until its renderer exists.
 The library API is `RvtIO.Print.PlanPrinter`: `Levels(document)` returns the printable levels, and
 `Render(document, levelId, scale, options)` returns a `PdfDocument` with one page.
 
+## Printing an elevation
+
+`rvtio print project.rvt elevations.pdf --view South` prints an elevation from the 3D geometry: every planar face of the
+model (walls, floors, roofs, columns, windows and doors) is projected on the vertical plane of the view, painted white
+from the farthest to the nearest and outlined when it faces the viewer. Plants, topography and site surfaces are left
+out: in an elevation they print as symbols, and their tessellated faces bury the building.
+
+The plane of the view itself is not decoded yet, so the direction is taken from the view name (North, South, East,
+West) and a section ("Longitudinal Section") is not printed. Measured on the Revit sample project: the South view prints
+the two-storey facade with its balcony rail, columns and roof on sheet A103.
+
 ## Composing a sheet
 
 `rvtio print project.rvt sheets.pdf --sheet A102` composes a sheet the way Revit prints it: the page is the size the

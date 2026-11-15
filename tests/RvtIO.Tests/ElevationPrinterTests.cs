@@ -1,0 +1,150 @@
+using RvtIO.BuiltIns;
+using RvtIO.Model;
+using RvtIO.Parsing;
+using RvtIO.Pdf;
+using RvtIO.Print;
+using Xunit;
+
+namespace RvtIO.Tests;
+
+/// <summary>The elevation printer (src/RvtIO/Print/ElevationPrinter): the direction from the view name, the projected
+/// faces of the model and the composer placing an elevation on a sheet.</summary>
+public class ElevationPrinterTests
+{
+    private const double FeetToMillimetres = 304.8;
+
+    private static void Add(Element element, BuiltInParameter id, StorageType storage, object value) =>
+        element.Parameters.Add(BipHelpers.MakeBipParam((int)id, id.ToString(), storage, value));
+
+    [Theory]
+    [InlineData("South", "south")]
+    [InlineData("North Elevation", "north")]
+    [InlineData("East", "east")]
+    [InlineData("West", "west")]
+    [InlineData("Longitudinal Section", null)]
+    [InlineData("Level 1", null)]
+    public void DirectionOf_ReadsTheCompassName(string name, string? expected) =>
+        Assert.Equal(expected, ElevationPrinter.DirectionOf(name));
+
+    private static Element ElevationView(int id, string name, int scale)
+    {
+        var view = new Element { Id = id, CategoryId = (int)BuiltInCategory.OST_Views, NativeRecordClass = 1016 };
+        Add(view, BuiltInParameter.VIEW_NAME, StorageType.String, name);
+        Add(view, BuiltInParameter.VIEW_SCALE, StorageType.Integer, scale);
+        return view;
+    }
+
+    private static Element WallWithFace(int id)
+    {
+        var face = new GeoFace
+        {
+            Origin = [0, 0, 0],
+            XVector = [1, 0, 0],
+            YVector = [0, 0, 1],
+            Normal = [0, 1, 0],
+            OuterVertices =
+            [
+                [0, 0, 0], [4, 0, 0], [4, 0, 3], [0, 0, 3],
+            ],
+        };
+        return new Element
+        {
+            Id = id,
+            CategoryId = (int)BuiltInCategory.OST_Walls,
+            Geometry = new GeometryData { Faces = [face] },
+        };
+    }
+
+    private static RvtDocument Document(params Element[] elements) =>
+        RvtDocument.FromInfo(new RevitFileInfo { Elements = elements.ToList() });
+
+    [Fact]
+    public void Views_ListsCompassElevationsWithTheirScale()
+    {
+        var document = Document(
+            ElevationView(400, "South", 100), ElevationView(401, "Longitudinal Section", 100),
+            ElevationView(402, "Level 1", 100));
+
+        ElevationView view = Assert.Single(ElevationPrinter.Views(document));
+
+        Assert.Equal(400, view.ViewId);
+        Assert.Equal("south", view.Direction);
+        Assert.Equal(100, view.Scale);
+    }
+
+    [Fact]
+    public void Collect_ProjectsTheVerticalFaceOnTheViewPlane()
+    {
+        var document = Document(WallWithFace(600));
+
+        var content = ElevationPrinter.Collect(document, "south");
+
+        Assert.NotNull(content);
+        Assert.Single(content!.Faces);
+        Assert.Equal(0, content.MinX, 3);
+        Assert.Equal(4 * FeetToMillimetres, content.MaxX, 3);
+        Assert.Equal(0, content.MinY, 3);
+        Assert.Equal(3 * FeetToMillimetres, content.MaxY, 3);
+        Assert.True(content.Faces[0].Outline);
+    }
+
+    [Fact]
+    public void Collect_ReturnsNullWithoutAFace()
+    {
+        Assert.Null(ElevationPrinter.Collect(Document(), "south"));
+    }
+
+    [Fact]
+    public void DrawContent_WritesTheProjectedPolygons()
+    {
+        var document = Document(WallWithFace(600));
+        var content = ElevationPrinter.Collect(document, "south")!;
+        var pdf = new PdfDocument();
+        PdfPage page = pdf.AddPage(PdfPageSize.A1.Landscape);
+
+        ElevationPrinter.DrawContent(page, content, 100, 10, 10);
+        using var stream = new MemoryStream();
+        pdf.Save(stream);
+        string text = System.Text.Encoding.ASCII.GetString(stream.ToArray());
+
+        Assert.Contains(" l ", text);
+        Assert.Contains(" B", text);
+    }
+
+    [Fact]
+    public void SheetComposer_DrawsAnElevationViewport()
+    {
+        var sheet = new Element { Id = 100, CategoryId = (int)BuiltInCategory.OST_Sheets };
+        Add(sheet, BuiltInParameter.SHEET_NUMBER, StorageType.String, "A103");
+        Add(sheet, BuiltInParameter.SHEET_NAME, StorageType.String, "Elevations");
+        var title = new Element
+        {
+            Id = 301,
+            CategoryId = (int)BuiltInCategory.OST_TitleBlocks,
+            SerializedOwnerDbViewId = 100,
+            TypeId = 300,
+        };
+        var type = new Element
+        {
+            Id = 300,
+            CategoryId = (int)BuiltInCategory.OST_TitleBlocks,
+            BoundingBox = [0, 0, 0, 841 / FeetToMillimetres, 594 / FeetToMillimetres, 0],
+        };
+        var viewport = new Element
+        {
+            Id = 700,
+            CategoryId = (int)BuiltInCategory.OST_Viewports,
+            SerializedOwnerDbViewId = 100,
+            ViewportViewId = 400,
+            ViewportOffset = [400 / FeetToMillimetres, 300 / FeetToMillimetres, 0],
+        };
+        var document = Document(sheet, title, type, viewport, ElevationView(400, "South", 100), WallWithFace(600));
+
+        PdfDocument pdf = SheetComposer.Render(document, 100);
+        using var stream = new MemoryStream();
+        pdf.Save(stream);
+        string text = System.Text.Encoding.ASCII.GetString(stream.ToArray());
+
+        Assert.Contains(" l ", text);
+    }
+}

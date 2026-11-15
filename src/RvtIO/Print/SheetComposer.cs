@@ -167,6 +167,23 @@ public static class SheetComposer
                     page2.EndClip();
                 }
             }
+            else if (placed && ElevationPrinter.DirectionOf(name) is string direction)
+            {
+                // An elevation: the model faces projected on the vertical plane of the direction. The view plane itself
+                // is not decoded, so the direction comes from the view name.
+                var elevation = ElevationPrinter.Collect(document, direction);
+                if (elevation != null)
+                {
+                    frameWidth = (elevation.MaxX - elevation.MinX) / scale;
+                    frameHeight = (elevation.MaxY - elevation.MinY) / scale;
+                    frameX = centerX - frameWidth / 2;
+                    frameY = centerY - frameHeight / 2;
+                    double m = options.ViewMarginMillimetres;
+                    page2.BeginClip(frameX - m, frameY - m, frameWidth + 2 * m, frameHeight + 2 * m);
+                    ElevationPrinter.DrawContent(page2, elevation, scale, frameX, frameY);
+                    page2.EndClip();
+                }
+            }
             if (options.DrawViewLabels && pdf.Font != null)
             {
                 double labelY = placed && frameHeight > 0 ? frameY - 5 : centerY;
