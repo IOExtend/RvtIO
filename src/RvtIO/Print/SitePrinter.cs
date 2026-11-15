@@ -168,9 +168,14 @@ public static class SitePrinter
             if (count != 1 || !edgeLines.TryGetValue(key, out var line)) continue;
             page.DrawLine(line.A.Item1, line.A.Item2, line.B.Item1, line.B.Item2, 0.15, 0.45);
         }
-        // The contours of the terrain go over the wash, under the planting.
-        foreach (var (x1, y1, x2, y2, _) in content.Contours)
-            page.DrawLine(ToX(x1), ToY(y1), ToX(x2), ToY(y2), 0.07, 0.62);
+        // The contours of the terrain go over the wash, under the planting; every fifth one is an index contour drawn
+        // heavier, the way a site plan reads the fall of the ground.
+        var contourLevels = content.Contours.Select(contour => contour.Z).Distinct().OrderBy(level => level).ToList();
+        foreach (var (x1, y1, x2, y2, level) in content.Contours)
+        {
+            bool index = contourLevels.IndexOf(level) % 5 == 0;
+            page.DrawLine(ToX(x1), ToY(y1), ToX(x2), ToY(y2), index ? 0.16 : 0.07, index ? 0.5 : 0.62);
+        }
         foreach (var (x, y, radius, _) in content.Plants)
         {
             double pageX = ToX(x), pageY = ToY(y), r = radius / scale;

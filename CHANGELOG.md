@@ -67,7 +67,7 @@ A room is tagged the way a plan tags it: the room number in a white circle at th
 
 The site plan shows the entourage (cars, people) as their footprints from above, the way the reference plan shows a car on the drive.
 
-A site plan prints the contours of the terrain: the topography mesh is sliced at every half metre (a metre on a high site) and the slices are drawn over the wash under the planting, the way the reference shows the fall of the ground. New test: SiteContourTests.
+A site plan prints the contours of the terrain: the topography mesh is sliced at every half metre (a metre on a high site) and the slices are drawn over the wash under the planting, every fifth one an index contour drawn heavier, the way the reference shows the fall of the ground. New test: SiteContourTests.
 
 The house stands dark on the site plan: the rooms of the level with most walls are filled grey under its walls, the way the reference export fills the building on A101.
 
