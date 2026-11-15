@@ -27,7 +27,8 @@ public class CompactUserParametersTests
         => new(id, text, number, elementId, integer, true, false);
 
     /// <summary>One instance of a family whose instance parameters cover each storage kind.</summary>
-    private static (RevitFileInfo Info, Element Instance) Sample(int yesNoValue = 1, int referenced = 77, string? referencedName = "Oak")
+    private static (RevitFileInfo Info, Element Instance) Sample(int yesNoValue = 1, int referenced = 77, string? referencedName = "Oak",
+        double? depth = 0.8202099737532809)
     {
         var state = new ParsingState();
         void Add(int id, ushort cls, TfBlockDeserializer.NativeParams np)
@@ -59,7 +60,7 @@ public class CompactUserParametersTests
         instance.NamedParams.Add(Named(12, integer: yesNoValue));
         instance.NamedParams.Add(Named(13, integer: 33615));
         instance.NamedParams.Add(Named(14, elementId: referenced));
-        instance.NamedParams.Add(Named(15, number: 0.8202099737532809));
+        if (depth is double raw) instance.NamedParams.Add(Named(15, number: raw));
         instance.NamedParams.Add(Named(16, text: "https://example.org"));
         instance.NamedParams.Add(Named(17, elementId: -1));   // an image parameter without an image (a stored image is left out, see CompactOwnValueRulesTests)
         instance.NamedParams.Add(Named(18, text: "line 1\r\nline 2"));
@@ -120,6 +121,37 @@ public class CompactUserParametersTests
         Assert.Equal(new CompactProperty("Dimensions", "Depth", "250"), properties.Single(p => p.Label == "Depth"));
         Assert.Equal(new CompactProperty("Identity Data", "Fire Rated", "Yes"), properties.Single(p => p.Label == "Fire Rated"));
         Assert.Equal(9, properties.Count);
+    }
+
+    [Fact]
+    public void UnknownNumericFormatIsDistinctFromStoredZeroAndUnsetValue()
+    {
+        var (info, element) = Sample(depth: 0);
+        var unknown = new CompactUserParameters(info, (_, _) => null);
+        Assert.Equal(0d, unknown.GetEntries(element).Single(e => e.ParameterId == 15).Raw);
+        Assert.DoesNotContain(unknown.GetProperties(element), p => p.Label == "Depth");
+        Assert.Equal("0", new CompactUserParameters(info, (_, raw) => raw.ToString(System.Globalization.CultureInfo.InvariantCulture))
+            .GetProperties(element).Single(p => p.Label == "Depth").Value);
+
+        var (unsetInfo, unsetElement) = Sample(depth: null);
+        Assert.Null(unsetInfo.UserParameters!.EntriesOf(unsetElement, includeUnvalidated: true).Single(e => e.Definition.Id == 15).Value);
+        Assert.DoesNotContain(new CompactUserParameters(unsetInfo, (_, _) => throw new InvalidOperationException("An unset value must not be formatted"))
+            .GetProperties(unsetElement), p => p.Label == "Depth");
+    }
+
+    [SkippableFact]
+    public void StructuralSample2022RecoversNumericFamilyParameterFormats()
+    {
+        var info = new RvtFileReader().Read(TestFileFixture.FindTestFile("rstbasicsampleproject.rvt"));
+        var settings = info.SerializedFormatSettings;
+        Assert.NotNull(settings);
+        foreach (string spec in new[] { "autodesk.spec.aec:length-1.0.0", "autodesk.spec.aec:angle-1.0.0",
+            "autodesk.spec.aec.piping:pipeSize-1.0.0", "autodesk.spec.aec.hvac:ductSize-1.0.0" })
+            Assert.NotNull(settings.Find(spec));
+        var element = info.Elements.Single(e => e.Id == 12344);
+        var source = new CompactUserParameters(info, (spec, raw) => CompactValueFormatter.Format(raw, spec, settings));
+        Assert.Equal(25 / 304.8, source.GetEntries(element).Single(e => e.Label == "Width").Raw!.Value, 12);
+        Assert.Equal(new CompactProperty("Dimensions", "Width", "25"), source.GetProperties(element).Single(p => p.Label == "Width"));
     }
 
     [Fact]

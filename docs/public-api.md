@@ -29,6 +29,12 @@ unresolved `ElementId` sentinels `-1`, uninitialized `0` without a resolved id-0
 non-integer built-in parameters, unstored reader placeholders and `Parameter.IsApproximate` estimates; stored `0`, `0.0`,
 `false`, `""`, valid resolved id-0 references such as project phase `0`, and valid negative `ElementId` option or category values are kept).
 
+Compact JSON formats numeric user parameters using the specification's document format options, unit conversion,
+accuracy, symbol and suppression settings. If the document settings, specification's format or required unit/symbol
+data cannot be recovered, the numeric property is omitted. This does not change raw parameter values in full JSON.
+An unavailable format does not mean zero or an unset value: a stored zero is formatted normally when its format is
+known, while a known unset bound user parameter is written as an empty string. A missing family value record is omitted.
+
 `Element.BoundingBox` is the axis-aligned outline stored in the element header, as the Revit API bounding box (null for elements with no stored outline, such as grids and levels). The tight box of the decoded geometry is `Element.Geometry.BoundingBox`; before 0.3.0 `Element.BoundingBox` held that decoded value, which also changes the result of `FilteredElementCollector.WhereBoundingBoxIsNotNull`.
 
 ## Built-in identifiers

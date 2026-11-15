@@ -78,6 +78,13 @@ internal static partial class TfBlockDeserializer
         (1238, "m_storedForgeSchemas", 14, 80, null, 1239),
         (2633, "m_itemSet", 14, 80, null, 2634),
         (2634, "m_bindingIds", 14, 80, 2634, 20),
+        // Nonempty basis maps precede ESSchemaStorage in upgraded projects (including the 2022 structural sample).
+        (501, "m_mIdToBasis", 14, 80, null, 502),
+        (502, "second", 14, 0, null, 503),
+        (503, "m_creationEpisode", 14, 0, null, 504),
+        (501, "m_mBasisToIdSet", 14, 80, null, 505),
+        (505, "second", 14, 0, null, 506),
+        (506, "m_sCommonBasisIds", 14, 80, 505, 20),
     ];
 
     /// <summary>Follows the exact own FIFO through the manager-owned UnitsTracking and returns its positive UnitsElem id.
