@@ -167,11 +167,73 @@ public class MultiOutputExportTests
             var (exit2, err2, _) = Run(rvt, option, "--scene", "scene.json");
             Assert.Equal(1, exit2);
             Assert.Contains($"{option} requires a path", err2);
+
+            // Empty string value
+            var (exit3, err3, _) = Run(rvt, option, "");
+            Assert.Equal(1, exit3);
+            Assert.Contains($"{option} requires a path", err3);
         }
         finally
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    [Fact]
+    public void MultiOutput_RvtDocumentFromInfo_DoesNotMutateSourceInfo()
+    {
+        var info = new RvtIO.Model.RevitFileInfo
+        {
+            Elements = new List<RvtIO.Model.Element>
+            {
+                new()
+                {
+                    Id = 101,
+                    Name = "Instance Wall",
+                    FamilyName = "Basic Wall",
+                    CategoryId = -2000011,
+                    References = new List<int> { 202 },
+                    Parameters = new List<RvtIO.Model.Parameter>
+                    {
+                        new()
+                        {
+                            Id = (int)RvtIO.BuiltIns.BuiltInParameter.SYMBOL_ID_PARAM,
+                            Definition = new RvtIO.Model.Definition { Name = "SYMBOL_ID_PARAM" },
+                            StorageType = RvtIO.Model.StorageType.ElementId,
+                            Value = null
+                        }
+                    }
+                },
+                new()
+                {
+                    Id = 202,
+                    Name = "Generic - 200mm",
+                    FamilyName = "Basic Wall Type",
+                    CategoryId = -2000011,
+                    Parameters = new List<RvtIO.Model.Parameter>()
+                }
+            }
+        };
+
+        int originalElemCount = info.Elements.Count;
+        int originalParamCount = info.Elements[0].Parameters.Count;
+        string originalName = info.Elements[0].Name;
+        object? originalSymbolValue = info.Elements[0].Parameters[0].Value;
+
+        var doc = RvtDocument.FromInfo(info);
+        Assert.NotNull(doc);
+
+        // Document element has synthesized params and resolved names
+        var docElem = doc.GetElement(101)!;
+        Assert.NotNull(docElem);
+        Assert.Equal("Generic - 200mm", docElem.Name);
+        Assert.True(docElem.Parameters.Count > originalParamCount);
+
+        // Source RevitFileInfo MUST be completely unchanged
+        Assert.Equal(originalElemCount, info.Elements.Count);
+        Assert.Equal(originalParamCount, info.Elements[0].Parameters.Count);
+        Assert.Equal(originalName, info.Elements[0].Name);
+        Assert.Equal(originalSymbolValue, info.Elements[0].Parameters[0].Value);
     }
 
     [Fact]
@@ -336,6 +398,32 @@ public class MultiOutputExportTests
             var (exitJson, errJson, _) = Run(rvt, json, "--compact-json");
             Assert.Equal(0, exitJson);
             Assert.True(File.Exists(json));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void MultiOutput_CompactAndFullJson_RunsInSingleRead()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "rvtio-multi-c-f-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string rvt = Path.Combine(directory, "model.rvt");
+            string compact = Path.Combine(directory, "compact.json");
+            string full = Path.Combine(directory, "full.json");
+            CliExitCodeTests.WriteSyntheticRvt(rvt);
+
+            var (exit, err, _) = Run(rvt, "--compact-json", compact, "--full-json", full);
+            Assert.Equal(0, exit);
+            Assert.True(File.Exists(compact));
+            Assert.True(File.Exists(full));
+            // Only a single Timing: read should be printed, never two reads
+            int readTimingCount = err.Split(new[] { "Timing: read" }, StringSplitOptions.None).Length - 1;
+            Assert.Equal(1, readTimingCount);
         }
         finally
         {

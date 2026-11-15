@@ -87,7 +87,7 @@ public partial class RvtFileReader
             var (wideInfo, wideState) = ParseModel(root, chunks, framedStreams, partitionStreams.Sum(s => s.Count),
                 r22View: false, partitionStreams, framedStreams, wideSchema, elemTable, elemWorksets, fileMetadata,
                 projectInfo, transmissionData, episodeTable, elemRecHistories, elemRecOwners, tfSchemas, ownPartitionWallParts,
-                staleCopiesRemoved, elemTableIsExact, previewBase64, previewMime, diag, LogPhase);
+                staleCopiesRemoved, incrementRoutedPartitions, elemTableIsExact, previewBase64, previewMime, diag, LogPhase);
             WideModel = wideInfo;
             WideState = wideState;
         }
@@ -108,7 +108,7 @@ public partial class RvtFileReader
         var (rvtInfo, state) = ParseModel(root, chunks, readFrames, partitionChunkCount,
             r22View, partitionStreams, framedStreams, wideSchema, elemTable, elemWorksets, fileMetadata,
             projectInfo, transmissionData, episodeTable, elemRecHistories, elemRecOwners, tfSchemas, ownPartitionWallParts,
-            staleCopiesRemoved, elemTableIsExact, previewBase64, previewMime, diag, LogPhase);
+            staleCopiesRemoved, incrementRoutedPartitions, elemTableIsExact, previewBase64, previewMime, diag, LogPhase);
         LastParsingState = state;
         return rvtInfo;
     }
@@ -133,6 +133,7 @@ public partial class RvtFileReader
         Dictionary<string, TfClassRegistry.TfClassDef>? tfSchemas,
         Dictionary<uint, OwnPartitionParts.WallParts>? ownPartitionWallParts,
         bool staleCopiesRemoved,
+        IReadOnlyDictionary<ulong, int>? incrementRoutedPartitions,
         bool elemTableIsExact,
         string? previewBase64,
         string? previewMime,

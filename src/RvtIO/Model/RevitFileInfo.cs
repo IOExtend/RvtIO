@@ -3,6 +3,9 @@ namespace RvtIO.Model
     /// <summary>Everything the reader decodes from one Revit file.</summary>
     public class RevitFileInfo
     {
+        /// <summary>A copy that shares all members with this instance; the caller replaces what it changes.</summary>
+        internal RevitFileInfo ShallowCopy() => (RevitFileInfo)MemberwiseClone();
+
         /// <summary>The basic file information.</summary>
         public FileMetadata Metadata { get; set; } = new();
         /// <summary>The project information.</summary>

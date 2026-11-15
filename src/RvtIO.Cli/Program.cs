@@ -158,6 +158,11 @@ internal static partial class Program
 
         string rvtPath = args[0];
         string? positionalOutput = args.Length >= 2 && !args[1].StartsWith("--") ? args[1] : null;
+        if (positionalOutput != null && string.IsNullOrWhiteSpace(positionalOutput))
+        {
+            Console.Error.WriteLine("Output destination path must not be empty.");
+            return 1;
+        }
 
         string? ifcPath = null;
         string? scenePath = null;
@@ -171,7 +176,7 @@ internal static partial class Program
             string arg = args[i];
             if (arg is "--ifc" or "--scene" or "--full-json" or "--json")
             {
-                if (i + 1 >= args.Length || args[i + 1].StartsWith("--", StringComparison.Ordinal))
+                if (i + 1 >= args.Length || args[i + 1].StartsWith("--", StringComparison.Ordinal) || string.IsNullOrWhiteSpace(args[i + 1]))
                 {
                     Console.Error.WriteLine($"{arg} requires a path.");
                     return 1;
@@ -187,7 +192,13 @@ internal static partial class Program
                 hasCompactJsonOption = true;
                 if (i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal))
                 {
-                    compactJsonPath = args[++i];
+                    string candidate = args[++i];
+                    if (string.IsNullOrWhiteSpace(candidate))
+                    {
+                        Console.Error.WriteLine("--compact-json requires a path.");
+                        return 1;
+                    }
+                    compactJsonPath = candidate;
                 }
             }
         }

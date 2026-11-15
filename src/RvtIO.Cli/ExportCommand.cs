@@ -26,8 +26,13 @@ internal static partial class Program
         if (fullJsonPath != null) exportOutputs.Add(("--full-json", fullJsonPath));
         if (scenePath != null) exportOutputs.Add(("--scene", scenePath));
 
-        foreach (var (_, outPath) in exportOutputs)
+        foreach (var (opt, outPath) in exportOutputs)
         {
+            if (string.IsNullOrWhiteSpace(outPath))
+            {
+                Console.Error.WriteLine($"{opt} requires a non-empty path.");
+                return 1;
+            }
             if (ExportReport.SameFile(outPath, rvtPath))
             {
                 Console.Error.WriteLine($"An export destination must not name the input file: '{outPath}'. Nothing was read or written.");
@@ -48,6 +53,8 @@ internal static partial class Program
         }
 
         bool needIfcLayout = ifcPath != null || scenePath != null;
+        bool multiJson = compactJsonPath != null && fullJsonPath != null;
+        bool needR22 = needIfcLayout || multiJson;
         bool hasJsonOutput = compactJsonPath != null || fullJsonPath != null;
         bool explicitR22 = args.Contains("--r22-layout");
         bool noR22 = args.Contains("--no-r22-layout");
@@ -58,9 +65,9 @@ internal static partial class Program
             ExternalDumpClassPrefix = externalDumpClassPrefix,
             SystemFamilyNameLocale = profile == RvtIO.Ifc.IfcProfile.Current ? "ENU" : null,
             SeparateFacesWithDistinctOpenings = profile == RvtIO.Ifc.IfcProfile.Current,
-            // IFC and Scene export read the geometry with the Revit 2022 readers; --no-r22-layout keeps the 64-bit schema path alone
-            R22Layout = (needIfcLayout && !noR22) || explicitR22,
-            PreserveWideLayout = needIfcLayout && hasJsonOutput && !explicitR22 && !noR22,
+            // IFC, Scene, and multi-JSON exports decode geometry with the Revit 2022 readers; --no-r22-layout keeps the 64-bit schema path alone
+            R22Layout = (needR22 && !noR22) || explicitR22,
+            PreserveWideLayout = (needIfcLayout || multiJson) && hasJsonOutput && !explicitR22 && !noR22,
             ResolveCurrentCopies = RvtIO.Cli.CurrentCopiesOption.Resolve(args),
         };
 
