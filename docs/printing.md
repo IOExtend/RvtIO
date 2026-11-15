@@ -64,8 +64,8 @@ strip.
 
 A view named "Site" or "Site Plan" is drawn from the site itself, not from the walls of a level: the topography is a
 light green wash with its outer edge inked (the edges shared by two mesh triangles are dropped), each planting is a
-circle with four spokes at its position and size, and the walls of the level with most walls stand on the same plan as
-the building footprint.
+circle with four spokes at its position and size, and the house stands on the same plan: the rooms of the level with most
+walls are filled dark under its walls, so the building reads as a mass, the way the reference fills it.
 
 Each kind of plant is tagged the way the planting schedule tags it (T1, T2, ... in the order of the schedule) on a leader
 line from the plant, a north arrow stands at the lower right of the site, and a planting schedule under the plan lists

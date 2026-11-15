@@ -232,12 +232,21 @@ public static class SheetComposer
                         var wallsOnly = new PlanPrinter.PlanContent(sitePlan.Walls, sitePlan.Columns,
                             new List<(double X1, double Y1, double X2, double Y2, string Name)>(),
                             sitePlan.Gaps, sitePlan.WindowGaps, sitePlan.DoorGaps,
-                            new List<List<(double X, double Y)>>(),
+                            sitePlan.FloorLoops,
                             new List<List<(double X, double Y)>>(),
                             new List<(List<(double X, double Y)> Polygon, string Name, string Number, double AreaSquareFeet)>(),
                             new List<List<(double X, double Y)>>(),
                             new List<(double MidX, double MidY, double Nx, double Ny, string Text)>(),
                             sitePlan.MinX, sitePlan.MinY, sitePlan.MaxX, sitePlan.MaxY);
+                        // The house is filled dark on a site plan, the way the reference fills the building: the rooms
+                        // of the level under its walls.
+                        foreach (var room in sitePlan.Rooms)
+                        {
+                            var polygon = room.Polygon.Select(point => (
+                                (point.X - site.MinX) / scale + frameX,
+                                (point.Y - site.MinY) / scale + frameY)).ToList();
+                            if (polygon.Count >= 3) page2.DrawPolyline(polygon, 0, true, 0.45);
+                        }
                         PlanPrinter.DrawContent(page2, wallsOnly, scale,
                             (sitePlan.MinX - site.MinX) / scale + frameX,
                             (sitePlan.MinY - site.MinY) / scale + frameY);

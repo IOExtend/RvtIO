@@ -415,13 +415,14 @@ public static class PlanPrinter
 
     /// <summary>Draws collected plan content on a page: the model point (content.MinX, content.MinY) goes to
     /// (originX, originY), one model unit is 1/scale.</summary>
-    internal static void DrawContent(PdfPage page, PlanContent content, double scale, double originX, double originY)
+    internal static void DrawContent(PdfPage page, PlanContent content, double scale, double originX,
+        double originY, double floorFill = 0.9)
     {
         double ToX(double x) => (x - content.MinX) / scale + originX;
         double ToY(double y) => (y - content.MinY) / scale + originY;
 
         foreach (var floor in content.FloorLoops)
-            page.DrawPolyline(floor.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0, true, 0.9);
+            page.DrawPolyline(floor.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0, true, floorFill);
 
         foreach (var room in content.Rooms)
             page.DrawPolyline(room.Polygon.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0, true,

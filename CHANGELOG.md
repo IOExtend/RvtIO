@@ -30,6 +30,8 @@ A door and a window carry their mark: the Mark parameter (103, 104, 202 ...) is 
 
 A room is tagged the way a plan tags it: the room number in a white circle at the centre of the footprint, the room name and its area in m2 beside it.
 
+The house stands dark on the site plan: the rooms of the level with most walls are filled grey under its walls, the way the reference export fills the building on A101.
+
 The planting of a site plan is tagged the way the planting schedule tags it: T1, T2, ... on leader lines from the plants (up to two tags per kind), a north arrow stands at the lower right of the site, and the schedule sits under the view title, clear of the plan.
 
 A site plan carries a planting schedule under the plan: one row per kind of plant with its count (Honey Locust, Hawthorn, Lombardy Poplar, Red Maple, Red Ash, Scarlet Oak on the sample).
