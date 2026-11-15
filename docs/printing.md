@@ -76,8 +76,9 @@ are written at their positions.
 
 Measured on the Revit sample project (rac_basic_sample_project.rvt, six sheets A001 and A101 to A105): all six pages are
 841 x 594 mm (A1, the size of the "A1 metric" title block), and sheet A102 draws "Level 1" at (180, 453) mm and
-"Level 2" at (530, 453) mm at 1:100, the positions the reference PDF export shows. The linework of the title block family is not decoded yet: the composer draws the page border and a plain stamp in the
-lower-right corner (sheet name, issue date, drawn by, checked by, sheet number) from the sheet's own parameters.
+"Level 2" at (530, 453) mm at 1:100, the positions the reference PDF export shows. The linework of the title block family is not decoded yet: the composer draws the page border and a title block strip
+on the right of the page, built from the sheet's own parameters: a logo area, the project area, a revision table
+(No. / Description / Date) and the sheet information (name, number, issue date, drawn by, checked by).
 
 ## Printing a sheet
 

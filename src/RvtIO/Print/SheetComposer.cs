@@ -120,36 +120,16 @@ public static class SheetComposer
         var (page, originX, originY) = PageOf(document, sheet, options);
         PdfPage page2 = pdf.AddPage(page);
 
-        // The title block family's linework is not decoded: the page border and the sheet number and name stand in for
-        // it, so a printed sheet still reads as a framed page of a set.
+        // The title block family's linework is not decoded: the page border and a title block strip on the right, built
+        // from the sheet's own fields, stand in for it, so a printed sheet reads as a framed page of a set.
         if (options.DrawPageFrame)
         {
             double margin = 5;
             page2.DrawRectangle(margin, margin, page.WidthMillimetres - 2 * margin,
                 page.HeightMillimetres - 2 * margin, 0.35);
             if (pdf.Font != null)
-            {
-                // A plain stamp in the lower-right corner: the project, the sheet number and the sheet name. The
-                // title block family's own graphic is not decoded, so this is a stand-in that keeps a printed page
-                // identifiable.
-                string number = sheet.LookupParameter(BuiltInParameter.SHEET_NUMBER)?.Value as string ?? "";
-                string name = sheet.LookupParameter(BuiltInParameter.SHEET_NAME)?.Value as string ?? "";
-                string project = document.ProjectInformation?.Name ?? "";
-                string date = sheet.LookupParameter(BuiltInParameter.SHEET_ISSUE_DATE)?.Value as string ?? "";
-                string drawn = sheet.LookupParameter(BuiltInParameter.SHEET_DRAWN_BY)?.Value as string ?? "";
-                string checkedBy = sheet.LookupParameter(BuiltInParameter.SHEET_CHECKED_BY)?.Value as string ?? "";
-                double stampWidth = 120, stampHeight = 38;
-                double left = page.WidthMillimetres - margin - stampWidth;
-                page2.DrawRectangle(left, margin, stampWidth, stampHeight, 0.35);
-                page2.DrawLine(left, margin + 12, left + stampWidth, margin + 12, 0.25);
-                page2.DrawLine(left + 82, margin + 12, left + 82, margin + 38, 0.25);
-                page2.DrawText(number, left + 2, margin + 2, 7);
-                if (name.Length > 0) page2.DrawText(name, left + 2, margin + 26, 4);
-                if (project.Length > 0) page2.DrawText(project, left + 2, margin + 32, 3, PdfTextAlignment.Left, 0.5);
-                if (date.Length > 0) page2.DrawText("Date " + date, left + 2, margin + 20, 2.6);
-                if (drawn.Length > 0) page2.DrawText("Drawn " + drawn, left + 2, margin + 15, 2.6);
-                if (checkedBy.Length > 0) page2.DrawText("Checked " + checkedBy, left + 84, margin + 20, 2.6);
-            }
+                TitleBlockPrinter.Draw(page2, document, sheet,
+                    Math.Min(180, page.WidthMillimetres * 0.22), margin);
         }
 
         foreach (var element in document.Elements)
