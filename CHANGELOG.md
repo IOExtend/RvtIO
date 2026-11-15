@@ -16,6 +16,8 @@ Elevations print as pages too: `rvtio print --view South` and `RvtIO.Print.Eleva
 
 Elevations print: `RvtIO.Print.ElevationPrinter` projects every planar face of the model on the vertical plane of a compass view (North, South, East, West, taken from the view name until the view plane is decoded), paints it white from far to near and outlines the faces that look at the viewer; plants, topography and site surfaces are left out. `SheetComposer` draws such a viewport on its sheet. Measured on the Revit sample project: the South elevation prints on A103, the two-storey facade with balcony rail, columns and roof; a section is not printed yet.
 
+A room is tagged the way a plan tags it: the room number in a white circle at the centre of the footprint, the room name and its area in m2 beside it.
+
 A plan draws the furniture too: the horizontal faces of the furniture, casework, plumbing fixtures and specialty equipment of the level are projected to the plan and outlined in light grey, duplicate outlines (a top and an underside) kept once. Measured on the Revit sample project: A102 shows the sofa, chairs, tables and kitchen counters of Level 1 and the beds and bathroom fittings of Level 2.
 
 A door is drawn as its leaf and the quarter arc it sweeps: the leaf stands at one jamb, perpendicular to the wall, on the side of the building the door opens into (the side of the level centre), and the arc joins it to the other jamb.

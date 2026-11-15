@@ -57,7 +57,7 @@ public static class PlanPrinter
         List<(int HostId, double From, double To)> DoorGaps,
         List<List<(double X, double Y)>> FloorLoops,
         List<List<(double X, double Y)>> OpeningLoops,
-        List<(List<(double X, double Y)> Polygon, string Name, double AreaSquareFeet)> Rooms,
+        List<(List<(double X, double Y)> Polygon, string Name, string Number, double AreaSquareFeet)> Rooms,
         List<List<(double X, double Y)>> Furniture,
         double MinX, double MinY, double MaxX, double MaxY);
 
@@ -305,7 +305,7 @@ public static class PlanPrinter
         }
         // Rooms: the floor face of a room's boundary is its footprint; it is filled light and labelled with its name
         // and area (m²), as a plan prints its rooms.
-        var rooms = new List<(List<(double X, double Y)> Polygon, string Name, double AreaSquareFeet)>();
+        var rooms = new List<(List<(double X, double Y)> Polygon, string Name, string Number, double AreaSquareFeet)>();
         foreach (var element in document.Elements)
         {
             if (element.CategoryId != (int)BuiltInCategory.OST_Rooms) continue;
@@ -327,7 +327,8 @@ public static class PlanPrinter
             }
             if (polygon == null) continue;
             double areaFeet = element.LookupParameter(BuiltInParameter.ROOM_AREA)?.Value is double value ? value : 0;
-            rooms.Add((polygon, element.Name ?? "", areaFeet));
+            string number = element.LookupParameter(BuiltInParameter.ROOM_NUMBER)?.Value as string ?? "";
+            rooms.Add((polygon, element.Name ?? "", number, areaFeet));
         }
 
         var openingLoops = new List<List<(double X, double Y)>>();
@@ -467,10 +468,21 @@ public static class PlanPrinter
                 foreach (var point in room.Polygon) { cx += point.X; cy += point.Y; }
                 cx /= room.Polygon.Count;
                 cy /= room.Polygon.Count;
-                page.DrawText(room.Name, ToX(cx), ToY(cy) + 1, 2.4, PdfTextAlignment.Center);
+                double pageX = ToX(cx), pageY = ToY(cy);
+                // The room tag: the number in a white circle, the name and the area beside it.
+                var circle = new List<(double X, double Y)>(24);
+                for (int i = 0; i < 24; i++)
+                {
+                    double angle = i * Math.PI * 2 / 24;
+                    circle.Add((pageX + 2.4 * Math.Cos(angle), pageY + 2.4 * Math.Sin(angle)));
+                }
+                page.DrawPolyline(circle, 0.15, true, 1);
+                if (room.Number.Length > 0)
+                    page.DrawText(room.Number, pageX, pageY - 1, 1.8, PdfTextAlignment.Center);
+                page.DrawText(room.Name, pageX + 3.6, pageY + 0.6, 2.2);
                 if (room.AreaSquareFeet > 0)
-                    page.DrawText($"{room.AreaSquareFeet * 0.092903:0} m²", ToX(cx), ToY(cy) - 2.2, 1.8,
-                        PdfTextAlignment.Center, 0.45);
+                    page.DrawText($"{room.AreaSquareFeet * 0.092903:0} m²", pageX + 3.6, pageY - 1.8, 1.8,
+                        PdfTextAlignment.Left, 0.45);
             }
         }
 

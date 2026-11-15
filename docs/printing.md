@@ -104,7 +104,7 @@ stays empty.
 | Columns | the stored bounding box footprint, as a filled rectangle |
 | Grids | the stored location lines, clipped to the extent of the level (a grid line can run far beyond the building), with a white bubble and the grid name at both ends |
 | Floors | the sketch loops of the floors of the level, light under the walls |
-| Rooms | the floor face of the room's decoded boundary, filled with a colour by the room name and labelled with the name and its area in m² |
+| Rooms | the floor face of the room's decoded boundary, filled with a colour by the room name and tagged with the room number in a circle, the name and the area in m² |
 | Doors | the leaf at one jamb, perpendicular to the wall on the side the door opens into, and the quarter arc it sweeps |
 | Furniture | the horizontal faces of the furniture, casework, plumbing fixtures and specialty equipment of the level, seen from above as light outlines |
 | Dimensions | a chain between neighbouring grid lines above and to the right of the building, with the distance in millimetres |

@@ -17,6 +17,7 @@ public class PlanPrinterTests
         var room = new Element { Id = 700, Name = "Living", CategoryId = (int)BuiltInCategory.OST_Rooms };
         Add(room, BuiltInParameter.ROOM_LEVEL_ID, StorageType.ElementId, 500);
         Add(room, BuiltInParameter.ROOM_AREA, StorageType.Double, 200.0);
+        Add(room, BuiltInParameter.ROOM_NUMBER, StorageType.String, "101");
         room.SerializedSpaceBoundary = new GeometryData
         {
             Faces =
@@ -38,6 +39,7 @@ public class PlanPrinterTests
         Assert.NotNull(content);
         var footprint = Assert.Single(content!.Rooms);
         Assert.Equal("Living", footprint.Name);
+        Assert.Equal("101", footprint.Number);
         Assert.Equal(5 * 304.8 * 4 * 304.8, Math.Abs(Area(footprint.Polygon)), 3);
     }
 
