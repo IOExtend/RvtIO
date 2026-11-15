@@ -38,4 +38,41 @@ public class SheetsCommandTests
 
     [Fact]
     public void WithUnknownOption_IsUsageError() => Assert.Equal(RvtExitCodes.Usage, Run("sheets", "--nope"));
+
+    [Fact]
+    public void WithSamePathOrHardLink_IsUsageError()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "rvtio-sheets-coll-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string rvt = Path.Combine(dir, "model.rvt");
+            CliExitCodeTests.WriteSyntheticRvt(rvt);
+            byte[] initialBytes = File.ReadAllBytes(rvt);
+
+            // Same path
+            Assert.Equal(RvtExitCodes.Usage, Run("sheets", rvt, rvt));
+            Assert.Equal(initialBytes, File.ReadAllBytes(rvt));
+
+            // Hard link (if supported on platform)
+            string link = Path.Combine(dir, "link.json");
+            bool linked = false;
+            if (OperatingSystem.IsWindows())
+            {
+                linked = CreateHardLink(link, rvt, IntPtr.Zero);
+            }
+            if (linked)
+            {
+                Assert.Equal(RvtExitCodes.Usage, Run("sheets", rvt, link));
+                Assert.Equal(initialBytes, File.ReadAllBytes(rvt));
+            }
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern bool CreateHardLink(string lpFileName, string lpExistingFileName, IntPtr lpSecurityAttributes);
 }

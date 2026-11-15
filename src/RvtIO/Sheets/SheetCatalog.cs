@@ -72,6 +72,7 @@ public sealed class SheetCatalog
         var sheetElements = new List<Element>();
         foreach (var element in info.Elements)
         {
+            if (!Compact.CompactUniverse.IsTableRow(element, info.ElemTableIsExact)) continue;
             if (element.LookupParameter(BuiltInParameter.SHEET_NUMBER) == null
                 && element.LookupParameter(BuiltInParameter.SHEET_NAME) == null) continue;
             sheetElements.Add(element);
@@ -101,6 +102,7 @@ public sealed class SheetCatalog
         var owned = new Dictionary<int, List<int>>();
         foreach (var element in info.Elements)
         {
+            if (!Compact.CompactUniverse.IsTableRow(element, info.ElemTableIsExact)) continue;
             if (element.OwnerViewId is not int owner || !sheetIds.Contains(owner) || owner == element.Id) continue;
             if (!owned.TryGetValue(owner, out var ids)) owned[owner] = ids = new List<int>();
             ids.Add(element.Id);
@@ -110,6 +112,7 @@ public sealed class SheetCatalog
         var viewportsBySheet = new Dictionary<int, List<int>>();
         foreach (var element in info.Elements)
         {
+            if (!Compact.CompactUniverse.IsTableRow(element, info.ElemTableIsExact)) continue;
             if (element.LookupParameter(BuiltInParameter.VIEWPORT_DETAIL_NUMBER) == null) continue;
             if (element.References is not { Count: > 0 } references) continue;
             int sheetId = 0;
