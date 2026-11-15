@@ -114,7 +114,7 @@ static class InspectBatchDump
                 superCatId = superElem.CategoryId; superCat = superElem.Category;
             }
 
-            int? workset = IntParam(e, BuiltInParameter.ELEM_PARTITION_PARAM);
+            int? workset = e.WorksetId ?? IntParam(e, BuiltInParameter.ELEM_PARTITION_PARAM);
             int? designOption = IntParam(e, BuiltInParameter.DESIGN_OPTION_ID);
             int? phaseCreated = IntParam(e, BuiltInParameter.PHASE_CREATED);
             int? phaseDemolished = IntParam(e, BuiltInParameter.PHASE_DEMOLISHED);

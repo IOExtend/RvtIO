@@ -2,8 +2,8 @@ using RvtIO.Model;
 
 namespace RvtIO.Ifc;
 
-/// <summary>Header data of the current profile exporter: the unit assignment and the project and building names.
-/// All of it applies only to <see cref="IfcProfile.Current"/>; the legacy profile keeps its own spelling.</summary>
+/// <summary>Header data and unit definitions of the exporter: the unit assignment, shared conversion-based unit builders,
+/// and the current-profile project and building names. Current-only rules keep <see cref="IfcProfile.Legacy"/> unchanged.</summary>
 public partial class IfcExporter
 {
     /// <summary>Radians per degree as the conversion based unit DEGREE prints it, not <c>Math.PI / 180</c> (which ends in ...295).</summary>
@@ -14,6 +14,32 @@ public partial class IfcExporter
     internal sealed record UnitAssignmentCurrent(
         int Length, int Degree, int Area, int Volume, int AssignmentIndex, int AssignmentId);
 
+    private static int AddConversionBasedUnit(
+        StepWriter w, string exponents, string unitType, string name, string measure, string factor, int baseUnitId)
+    {
+        int dimensionsId = w.Add("IFCDIMENSIONALEXPONENTS", exponents);
+        int measureWithUnitId = w.Add("IFCMEASUREWITHUNIT", $"{measure}({factor}),{R(baseUnitId)}");
+        return w.Add("IFCCONVERSIONBASEDUNIT", $"{R(dimensionsId)},.{unitType}UNIT.,'{name}',{R(measureWithUnitId)}");
+    }
+
+    private static int AddFootLengthUnit(StepWriter w, int metreUnitId) =>
+        AddConversionBasedUnit(w, "1,0,0,0,0,0,0", "LENGTH", "FOOT", "IFCLENGTHMEASURE",
+            StepWriter.Real(IfcLengthUnit.MetresPerFoot, "G17"), metreUnitId);
+
+    private static int AddSquareFootUnit(StepWriter w) =>
+        AddConversionBasedUnit(w, "2,0,0,0,0,0,0", "AREA", "SQUARE FOOT", "IFCAREAMEASURE",
+            StepWriter.Real(IfcLengthUnit.SquareMetresPerSquareFoot, "G17"),
+            w.Add("IFCSIUNIT", "*,.AREAUNIT.,$,.SQUARE_METRE."));
+
+    private static int AddCubicFootUnit(StepWriter w) =>
+        AddConversionBasedUnit(w, "3,0,0,0,0,0,0", "VOLUME", "CUBIC FOOT", "IFCVOLUMEMEASURE",
+            StepWriter.Real(IfcLengthUnit.CubicMetresPerCubicFoot, "G17"),
+            w.Add("IFCSIUNIT", "*,.VOLUMEUNIT.,$,.CUBIC_METRE."));
+
+    private static int AddDegreeUnit(StepWriter w) =>
+        AddConversionBasedUnit(w, "0,0,0,0,0,0,0", "PLANEANGLE", "DEGREE", "IFCPLANEANGLEMEASURE",
+            DegreeInRadiansCurrent, w.Add("IFCSIUNIT", "*,.PLANEANGLEUNIT.,$,.RADIAN."));
+
     /// <summary>A unit is created when the first measure of its kind is made; the created ones are assigned, in creation order,
     /// in <c>IfcProject.UnitsInContext</c> at the end of the export. The project units are millimetre, degree, square metre and
     /// cubic metre; the selected unit of a spec that has an SI unit of its own is written as <c>IfcSIUnit</c> (area, volume),
@@ -23,29 +49,17 @@ public partial class IfcExporter
     {
         if (family == IfcUnitFamily.Foot)
         {
-            // A project in feet: the length is the foot, a conversion based unit of the metre (the SI unit it refers to is
-            // not assigned); area and volume are the square and cubic foot, whose SI unit has no name.
-            int ConversionBased(int dimensionsId, string unitType, string name, string measure, double factor, int si) =>
-                w.Add("IFCCONVERSIONBASEDUNIT", $"{R(dimensionsId)},.{unitType}UNIT.,'{name}',{R(w.Add("IFCMEASUREWITHUNIT", $"{measure}({StepWriter.Real(factor, "G17")}),{R(si)}"))}");
-            int footLength = ConversionBased(w.Add("IFCDIMENSIONALEXPONENTS", "1,0,0,0,0,0,0"), "LENGTH", "FOOT", "IFCLENGTHMEASURE",
-                IfcLengthUnit.MetresPerFoot, lengthUnitId);
-            int radianFoot = w.Add("IFCSIUNIT", "*,.PLANEANGLEUNIT.,$,.RADIAN.");
-            int degreeFoot = w.Add("IFCCONVERSIONBASEDUNIT", $"{R(w.Add("IFCDIMENSIONALEXPONENTS", "0,0,0,0,0,0,0"))},.PLANEANGLEUNIT.,'DEGREE',"
-                + R(w.Add("IFCMEASUREWITHUNIT", $"IFCPLANEANGLEMEASURE({DegreeInRadiansCurrent}),{R(radianFoot)}")));
-            int areaSi = w.Add("IFCSIUNIT", "*,.AREAUNIT.,$,$");
-            int squareFoot = ConversionBased(w.Add("IFCDIMENSIONALEXPONENTS", "2,0,0,0,0,0,0"), "AREA", "SQUARE FOOT", "IFCAREAMEASURE",
-                IfcLengthUnit.SquareMetresPerSquareFoot, areaSi);
-            int volumeSi = w.Add("IFCSIUNIT", "*,.VOLUMEUNIT.,$,$");
-            int cubicFoot = ConversionBased(w.Add("IFCDIMENSIONALEXPONENTS", "3,0,0,0,0,0,0"), "VOLUME", "CUBIC FOOT", "IFCVOLUMEMEASURE",
-                IfcLengthUnit.CubicMetresPerCubicFoot, volumeSi);
+            // A project in feet: length, area and volume are conversion-based foot units referencing named
+            // SI base units (.METRE., .SQUARE_METRE., .CUBIC_METRE.) via IfcMeasureWithUnit factors.
+            int footLength = AddFootLengthUnit(w, lengthUnitId);
+            int degreeFoot = AddDegreeUnit(w);
+            int squareFoot = AddSquareFootUnit(w);
+            int cubicFoot = AddCubicFootUnit(w);
             int footIndex = w.EntityCount;
             int footAssignment = w.Add("IFCUNITASSIGNMENT", StepWriter.List(R(footLength), R(degreeFoot), R(squareFoot), R(cubicFoot)));
             return new UnitAssignmentCurrent(footLength, degreeFoot, squareFoot, cubicFoot, footIndex, footAssignment);
         }
-        int radian = w.Add("IFCSIUNIT", "*,.PLANEANGLEUNIT.,$,.RADIAN.");
-        int dimensions = w.Add("IFCDIMENSIONALEXPONENTS", "0,0,0,0,0,0,0");
-        int factor = w.Add("IFCMEASUREWITHUNIT", $"IFCPLANEANGLEMEASURE({DegreeInRadiansCurrent}),{R(radian)}");
-        int degree = w.Add("IFCCONVERSIONBASEDUNIT", $"{R(dimensions)},.PLANEANGLEUNIT.,'DEGREE',{R(factor)}");
+        int degree = AddDegreeUnit(w);
         int area = w.Add("IFCSIUNIT", "*,.AREAUNIT.,$,.SQUARE_METRE.");
         int volume = w.Add("IFCSIUNIT", "*,.VOLUMEUNIT.,$,.CUBIC_METRE.");
         int index = w.EntityCount;

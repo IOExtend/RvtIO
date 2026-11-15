@@ -11,8 +11,8 @@ projects through `InternalsVisibleTo`.
 | `RvtDocument` | Opens a file (`Open`), saves a verified lossless copy (`SaveAs`), and gives the elements, project information, file metadata and category lookups. |
 | `RvtFileReader` | Lower level read (`Read`) that returns the `RevitFileInfo` behind a document. |
 | `RvtReaderOptions` | Options of a read, including `DiagnosticOutput`, `ResolveCurrentCopies` (keeps only the current copy of an element that several partition streams hold; default true, set it to false to decode every copy), `RaiseLimits` and `Diagnostics`. `RevitLocalizationDirectory` is `[Obsolete]` and ignored: the texts are built in. |
-| `RvtReadDiagnostics`, `StreamRecord`, `ReaderLimitHit` | What a read collects when `RvtReaderOptions.Diagnostics` is set: the partition streams read and the streams cut by a limit. |
-| `ExportReport`, `SkipLog` | The machine-readable report of a run (`ToJson`) and the elements an export left out; see [the export report](export-report.md). |
+| `RvtReadDiagnostics`, `StreamRecord`, `ReaderLimitHit` | What a read collects when `RvtReaderOptions.Diagnostics` is set: the partition and metadata streams read (stored and inflated byte sizes and member decode counts) and the streams cut by a limit. |
+| `ExportReport`, `SkipLog`, `GeometryQualityClass`, `ElementGeometryQuality` | The machine-readable report of a run (`ToJson`), the per-element geometry quality classification and totals, and the elements an export left out; see [the export report](export-report.md). |
 | `RvtExitCodes`, `RvtInputException`, `RvtLimitException`, `RvtContainerCheck` | The exit codes 0 to 4 and 6 of the command line tool (code 5 is returned by `downgrade --check` and `save-as` when refused), the exceptions `RvtFileReader.Read` throws for a file it cannot read, and the check that raises them. |
 | `FilteredElementCollector` | Query over the elements of a document (`OfCategory`, `WhereElementIsNotElementType`, `Where`, ...). |
 
@@ -22,7 +22,18 @@ projects through `InternalsVisibleTo`.
 `TransmissionInfo`, `ExternalFileRef`, `ClassSchema`, `ClassField`, `MaterialLayer` and the geometry types (`GeometryData`,
 `GeoFace`, `GeoEdge`, `GeoSolid`, `GeoBrepSolid`, `GeoOpening`, `GeoInstance`, `LocationCurve`, `DimensionData`,
 `InstanceTransform`) are the data a read returns. `ParameterListConverter` is the `System.Text.Json` converter that writes
-the parameter lists of a `RevitFileInfo`.
+the parameter lists of a `RevitFileInfo`: full JSON keeps every `Parameter` entry (`Parameter.HasValue` is `Value != null`),
+including default slots synthesized for API parity, while `CompactJsonExporter`, `IfcExporter` and `RvtSceneReader` leave out
+parameters that carry no value in Revit (`Parameter.HasRevitValue` is `false` for `Double` with `|v| >= 1e29` or non-finite,
+unresolved `ElementId` sentinels `-1`, uninitialized `0` without a resolved id-0 target, or non-positive pointers on unhosted host-id parameters, `-1` placeholders on
+non-integer built-in parameters, unstored reader placeholders and `Parameter.IsApproximate` estimates; stored `0`, `0.0`,
+`false`, `""`, valid resolved id-0 references such as project phase `0`, and valid negative `ElementId` option or category values are kept).
+
+Compact JSON formats numeric user parameters using the specification's document format options, unit conversion,
+accuracy, symbol and suppression settings. If the document settings, specification's format or required unit/symbol
+data cannot be recovered, the numeric property is omitted. This does not change raw parameter values in full JSON.
+An unavailable format does not mean zero or an unset value: a stored zero is formatted normally when its format is
+known, while a known unset bound user parameter is written as an empty string. A missing family value record is omitted.
 
 `Element.BoundingBox` is the axis-aligned outline stored in the element header, as the Revit API bounding box (null for elements with no stored outline, such as grids and levels). The tight box of the decoded geometry is `Element.Geometry.BoundingBox`; before 0.3.0 `Element.BoundingBox` held that decoded value, which also changes the result of `FilteredElementCollector.WhereBoundingBoxIsNotNull`.
 
@@ -38,9 +49,9 @@ extension and label helpers carry the ids and names stored in the file format.
 
 | Type | Use |
 |---|---|
-| `IfcExporter` | Writes IFC from a `RevitFileInfo` (`Export`). Properties: `Profile`, `BaseQuantities`, `OpeningQuantitiesSwapped` (true writes the legacy Width and Height of door and window openings; default false), `OpeningQuantitiesInHostAxes` (the opposite of it, kept for compatibility), `ExportPhaseId`, `ExportAllPhases`, `RoomExportPhaseId`, `ExportRoomsOfAllPhases`, `RevitParameterGroups`, `Timestamp`, `SkipLog`, `ExportedProducts`, `DiagnosticOutput`. |
+| `IfcExporter` | Writes IFC from a `RevitFileInfo` (`Export`). Properties: `Profile`, `BaseQuantities`, `OpeningQuantitiesSwapped` (true writes the legacy Width and Height of door and window openings; default false), `OpeningQuantitiesInHostAxes` (the opposite of it, kept for compatibility), `ExportPhaseId`, `ExportAllPhases`, `RoomExportPhaseId`, `ExportRoomsOfAllPhases`, `RevitParameterGroups`, `LengthUnit`, `Timestamp`, `SkipLog`, `ExportedProducts`, `ExportedElementQualities`, `DiagnosticOutput`. |
 | `IfcProfile` | `Legacy` or `Current` (the default) output profile. |
-| `IfcUnitFamily` | The length unit family an export of the current profile declares, by the length format of the project: `Metre` for metres and for metres and centimetres, `Foot` for feet, feet and fractional inches and US survey feet, `Millimetre` for millimetres, for every other format and for an unreadable one. The legacy profile always declares millimetres. |
+| `IfcUnitFamily` | The length unit family an IFC export declares (`Millimetre`, `Metre` or `Foot`), chosen explicitly via `IfcExporter.LengthUnit` or derived in the current profile from the length format of the project (`Metre` for metres and for metres and centimetres, `Foot` for feet, feet and fractional inches and US survey feet, `Millimetre` for millimetres, for every other format and for an unreadable one; the legacy profile defaults to millimetres). |
 | `CompactJsonExporter` | `Export(rvtPath, outputPath, readerOptions, options)` reads a file and writes the compact JSON. |
 | `CompactJsonExportOptions` | `JsonClassNamePrefix`: text put in front of every class name in the `name` field. |
 

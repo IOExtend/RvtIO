@@ -98,7 +98,7 @@ internal static class StringScanner
             for (int i = lo2; i <= hi2; i++)
             {
                 uint eid = BitConverter.ToUInt32(d, i);
-                if (!elemSet.Contains(eid)) continue;
+                if (eid == 0 || !elemSet.Contains(eid)) continue;
                 if (!elemStrings.TryGetValue(eid, out var list))
                     elemStrings[eid] = list = new List<string>();
                 if (!seenPerEid.TryGetValue(eid, out var seen))

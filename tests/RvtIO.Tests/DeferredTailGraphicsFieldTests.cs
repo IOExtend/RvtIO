@@ -283,9 +283,9 @@ public class DeferredTailGraphicsFieldTests
     {
         var element = new Element { Id = 10, CategoryId = categoryId };
         element.Parameters.Add(new Parameter { Id = -1001552, StorageType = StorageType.Integer, Value = value });
-        element.NativeTableAddedParams = new() { (-1001552, new[] { "1794", "804" }, StorageType.Integer, value) };
+        element.NativeTableAddedParams = new() { (-1001552, new[] { "1794", "804" }, StorageType.Integer, value, false) };
         if (previous is null) element.NativeTableCreatedParams = new() { -1001552 };
-        else element.NativeTablePrevious = new() { [-1001552] = (previous.Value.Item2, previous.Value.Item1) };
+        else element.NativeTablePrevious = new() { [-1001552] = (previous.Value.Item2, previous.Value.Item1, false) };
         return element;
     }
 

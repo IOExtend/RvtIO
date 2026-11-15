@@ -75,6 +75,21 @@ public class DerivedInstanceParamsTests
     }
 
     [Fact]
+    public void ArchitecturalColumn_BaseOffsetAndLength()
+    {
+        var column = new Element { Id = 1, CategoryId = -2000100, NativeMasterSymbolId = 5,
+            FamilyLevelRefs = (10, 1.0, 11, 0.5), InstanceIsVertical = true };
+        var info = new RevitFileInfo { Elements = [Level(10, 0), Level(11, 10), column] };
+
+        ElementBuilder.ApplyStructuralColumnParams(info);
+
+        Assert.Equal(1.0, Value(column, -1002065));
+        Assert.Equal(1.0, Value(column, -1001357));
+        Assert.Null(Value(column, -1150171));
+        Assert.Equal(9.5, Value(column, -1001375));
+    }
+
+    [Fact]
     public void RoomLevelNameAndComputationHeight()
     {
         var room = new Element { Id = 1, CategoryId = -2000160 };
@@ -590,5 +605,27 @@ public class DerivedInstanceParamsTests
         Assert.Null(Value(coped, -1012806));
         Assert.Null(Value(uncertified, -1012806));
         Assert.Null(Value(door, -1012806));
+    }
+
+    [Fact]
+    public void ApplyInstanceQuantities_ArchitecturalColumnAndPlumbing_SetsVolume()
+    {
+        SolidQuantities.Shell?[] shells =
+        [
+            null,
+            new SolidQuantities.Shell(3.5, 12.0, 6.0),
+            new SolidQuantities.Shell(4.0, 14.0, 7.0),
+        ];
+
+        var archCol = new Element { Id = 10, CategoryId = -2000100, NativeMasterSymbolId = 5, LevelSolidCounts = [0, 1, 1], LevelShells = shells };
+        var plumbing = new Element { Id = 11, CategoryId = -2001040, NativeMasterSymbolId = 5, LevelSolidCounts = [0, 1, 1], LevelShells = shells };
+        var classes = new Dictionary<uint, ushort> { [10] = 1794, [11] = 1794 };
+
+        ElementBuilder.ApplyInstanceQuantities(new RevitFileInfo { Elements = [archCol, plumbing] }, classes);
+
+        Assert.Equal(3.5, Value(archCol, -1012806));
+        Assert.Null(Value(archCol, -1012805));
+        Assert.Equal(3.5, Value(plumbing, -1012806));
+        Assert.Null(Value(plumbing, -1012805));
     }
 }

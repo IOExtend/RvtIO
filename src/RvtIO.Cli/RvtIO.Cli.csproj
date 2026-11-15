@@ -14,6 +14,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\RvtIO\RvtIO.csproj" />
+    <ProjectReference Include="..\RvtIO.Scene\RvtIO.Scene.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="RvtIO.Tests" />
   </ItemGroup>
 
 </Project>

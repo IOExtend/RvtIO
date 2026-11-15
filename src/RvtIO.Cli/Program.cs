@@ -10,10 +10,16 @@ internal static partial class Program
         Usage: rvtio <file.rvt|file.rfa> [output.ifc|output.json] [options]
                rvtio --help | --version
 
-        Reads a Revit file and writes IFC or JSON. A .ifc output path writes IFC; any other path writes JSON
-        (default output.json). Diagnostics go to standard error.
+        Reads a Revit file and writes IFC, JSON, or an IOScene scene. A .ifc output path writes IFC; any other path
+        writes JSON (default output.json). Pass multiple output options (--ifc, --scene, --compact-json, --full-json)
+        to write several formats from a single file read. Diagnostics go to standard error.
 
         Export options:
+          --ifc <file.ifc>                  write IFC output to the specified path
+          --scene <file.json>               write IOScene scene JSON to the specified path
+          --compact-json [file.json]        write compact JSON (optionally to the specified path)
+          --full-json <file.json>           write the full JSON dump to the specified path
+          --json <file.json>                write JSON to the specified path (compact by default, full if --json-full)
           --json-full                       write the full JSON dump (every parameter and the geometry) instead of the compact JSON
           --compact-json                    write the compact JSON, which is the default for a JSON output
           --json-class-prefix <text>        text put in front of the class names in the compact JSON "name" field
@@ -29,6 +35,8 @@ internal static partial class Program
                                             --ifc-room-phase says otherwise, rooms of other phases are left out. Default: the last phase for the
                                             current profile, every phase for the legacy profile (IFC only)
           --ifc-room-phase <last|all|id>    rooms to export: the last phase, every phase or one native phase id (IFC only)
+          --ifc-length-unit <mm|m|ft>       length unit family written to the IFC file: mm (millimetre), m (metre) or ft (foot); default: the
+                                            unit stored in the project for the current profile, mm for the legacy profile (IFC only)
           --ifc-timestamp <timestamp>       UTC timestamp for the STEP FILE_NAME header (ISO-8601 or Unix epoch seconds; IFC only)
           --revit-localization <dir>        deprecated, ignored: the system family names are built in
           --r22-layout                      read the Revit 2022 layout for a JSON export too (an IFC export does it by default)
@@ -97,7 +105,8 @@ internal static partial class Program
     // Options that take one value, and options that take two; every other option starting with "--" is a switch.
     private static readonly HashSet<string> OneValueOptions =
     [
-        "--ifc-profile", "--ifc-phase", "--ifc-room-phase", RvtIO.Cli.IfcTimestampOption.Name, "--json-class-prefix", "--revit-localization", "--inspect", "--diag-dump", "--find-str",
+        "--ifc", "--scene", "--full-json", "--json",
+        "--ifc-profile", "--ifc-phase", "--ifc-room-phase", RvtIO.Cli.IfcLengthUnitOption.Name, RvtIO.Cli.IfcTimestampOption.Name, "--json-class-prefix", "--revit-localization", "--inspect", "--diag-dump", "--find-str",
         "--sketch-owner-dump", "--dev-external-dump", "--dev-external-dump-prefix", "--dev-candidates", "--dev-trace", "--dev-facts",
         "--dev-fact-names", "--dev-user-params", "--dev-collisions", "--dev-solids", "--dev-native", "--class-census", "--episode-check",
         "--test-decoders", "--dump-chunks", "--block-dump", "--search-global", "--hex-search", "--chunk-dump", "--block-scan", "--rec-dump",
@@ -113,7 +122,7 @@ internal static partial class Program
         "--decode-blocks", "--decode-catc", "--wide", "--blocks", "--no-recover", "--no-d64", "--trim", "--dump-partial",
     ];
 
-    private static int Main(string[] args)
+    internal static int Main(string[] args)
     {
         if (args.Length < 1)
         {
@@ -153,7 +162,92 @@ internal static partial class Program
         }
 
         string rvtPath = args[0];
-        string outputPath = args.Length >= 2 && !args[1].StartsWith("--") ? args[1] : "output.json";
+        string? positionalOutput = args.Length >= 2 && !args[1].StartsWith("--") ? args[1] : null;
+        if (positionalOutput != null && string.IsNullOrWhiteSpace(positionalOutput))
+        {
+            Console.Error.WriteLine("Output destination path must not be empty.");
+            return 1;
+        }
+
+        string? ifcPath = null;
+        string? scenePath = null;
+        string? fullJsonPath = null;
+        string? explicitJsonPath = null;
+        string? compactJsonPath = null;
+        bool hasCompactJsonOption = false;
+
+        for (int i = 1; i < args.Length; i++)
+        {
+            string arg = args[i];
+            if (arg is "--ifc" or "--scene" or "--full-json" or "--json")
+            {
+                if (i + 1 >= args.Length || args[i + 1].StartsWith("--", StringComparison.Ordinal) || string.IsNullOrWhiteSpace(args[i + 1]))
+                {
+                    Console.Error.WriteLine($"{arg} requires a path.");
+                    return 1;
+                }
+                string path = args[++i];
+                if (arg == "--ifc") ifcPath = path;
+                else if (arg == "--scene") scenePath = path;
+                else if (arg == "--full-json") fullJsonPath = path;
+                else if (arg == "--json") explicitJsonPath = path;
+            }
+            else if (arg == "--compact-json")
+            {
+                hasCompactJsonOption = true;
+                if (i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal))
+                {
+                    string candidate = args[++i];
+                    if (string.IsNullOrWhiteSpace(candidate))
+                    {
+                        Console.Error.WriteLine("--compact-json requires a path.");
+                        return 1;
+                    }
+                    compactJsonPath = candidate;
+                }
+            }
+        }
+
+        bool jsonFull = args.Contains("--json-full");
+        if (jsonFull && hasCompactJsonOption)
+        {
+            Console.Error.WriteLine("--compact-json and --json-full exclude each other.");
+            return 1;
+        }
+
+        if (explicitJsonPath != null)
+        {
+            if (jsonFull) fullJsonPath ??= explicitJsonPath;
+            else compactJsonPath ??= explicitJsonPath;
+        }
+
+        if (positionalOutput != null)
+        {
+            if (positionalOutput.EndsWith(".ifc", StringComparison.OrdinalIgnoreCase))
+            {
+                ifcPath ??= positionalOutput;
+            }
+            else
+            {
+                if (jsonFull) fullJsonPath ??= positionalOutput;
+                else compactJsonPath ??= positionalOutput;
+            }
+        }
+
+        if (hasCompactJsonOption && compactJsonPath == null)
+        {
+            compactJsonPath = (positionalOutput != null && !positionalOutput.EndsWith(".ifc", StringComparison.OrdinalIgnoreCase))
+                ? positionalOutput
+                : "output.json";
+        }
+
+        bool anyExplicitOutput = ifcPath != null || scenePath != null || compactJsonPath != null || fullJsonPath != null;
+        if (!anyExplicitOutput)
+        {
+            if (jsonFull) fullJsonPath = "output.json";
+            else compactJsonPath = "output.json";
+        }
+
         string? externalDumpPath = null;
         string? externalDumpClassPrefix = null;
         string? diagDumpIds = null;
@@ -210,34 +304,35 @@ internal static partial class Program
             Console.Error.WriteLine(ifcTimestampError);
             return 1;
         }
-        // A JSON output is the compact data export (the properties collection); --json-full writes the full legacy dump
-        // (every parameter, geometry, all fields). --compact-json is kept as the explicit spelling of the default.
-        bool jsonFull = args.Contains("--json-full");
-        bool isIfcOutput = outputPath.EndsWith(".ifc", StringComparison.OrdinalIgnoreCase);
-        if (jsonFull && args.Contains("--compact-json"))
+        if (!RvtIO.Cli.IfcLengthUnitOption.TryParse(args, out IfcUnitFamily? ifcLengthUnit, out string? ifcLengthUnitError))
         {
-            Console.Error.WriteLine("--compact-json and --json-full exclude each other.");
+            Console.Error.WriteLine(ifcLengthUnitError);
             return 1;
         }
-        if ((jsonFull || args.Contains("--compact-json")) && isIfcOutput)
+        bool hasIfcOutput = ifcPath != null;
+        if ((jsonFull || hasCompactJsonOption) && positionalOutput != null && positionalOutput.EndsWith(".ifc", StringComparison.OrdinalIgnoreCase) && compactJsonPath == null && fullJsonPath == null)
         {
             Console.Error.WriteLine("--compact-json and --json-full write JSON: use a non-.ifc output path.");
             return 1;
         }
-        bool compactJson = !jsonFull && !isIfcOutput;
-        if (exportPhaseOption != null && !isIfcOutput)
+        if (exportPhaseOption != null && !hasIfcOutput)
         {
             Console.Error.WriteLine("--ifc-phase requires IFC output.");
             return 1;
         }
-        if (roomPhaseOption != null && !outputPath.EndsWith(".ifc", StringComparison.OrdinalIgnoreCase))
+        if (roomPhaseOption != null && !hasIfcOutput)
         {
             Console.Error.WriteLine("--ifc-room-phase requires IFC output.");
             return 1;
         }
-        if (ifcTimestamp != null && !isIfcOutput)
+        if (ifcTimestamp != null && !hasIfcOutput)
         {
             Console.Error.WriteLine("--ifc-timestamp requires IFC output.");
+            return 1;
+        }
+        if (ifcLengthUnit != null && !hasIfcOutput)
+        {
+            Console.Error.WriteLine("--ifc-length-unit requires IFC output.");
             return 1;
         }
         for (int i = 0; i < args.Length - 1; i++)
@@ -305,8 +400,9 @@ internal static partial class Program
         if (inspectBatchIdsFile != null && inspectBatchOutPath != null) return InspectBatch(rvtPath, inspectBatchIdsFile, inspectBatchOutPath);
         if (listCategoryOutPath != null) return ListCategory(rvtPath, listCategoryId, listCategoryOutPath);
 
-        return Export(new ExportArguments(args, rvtPath, outputPath, externalDumpPath, externalDumpClassPrefix, profile, isIfcOutput,
-            exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, compactJson, openingLegacyAxes, ifcTimestamp));
+        return Export(new ExportArguments(args, rvtPath, ifcPath, compactJsonPath, fullJsonPath, scenePath,
+            externalDumpPath, externalDumpClassPrefix, profile,
+            exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, openingLegacyAxes, ifcTimestamp, ifcLengthUnit));
     }
 
     /// <summary>The value after the last occurrence of <paramref name="option"/>, null when the option is absent or ends the arguments.</summary>
@@ -324,8 +420,24 @@ internal static partial class Program
         for (int i = 0; i < args.Length; i++)
         {
             string arg = args[i];
-            if (OneValueOptions.Contains(arg)) { i += 1; continue; }
-            if (TwoValueOptions.Contains(arg)) { i += 2; continue; }
+            if (arg == "--compact-json")
+            {
+                if (i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal))
+                    i += 1;
+                continue;
+            }
+            if (OneValueOptions.Contains(arg))
+            {
+                if (i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal))
+                    i += 1;
+                continue;
+            }
+            if (TwoValueOptions.Contains(arg))
+            {
+                if (i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal)) i += 1;
+                if (i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal)) i += 1;
+                continue;
+            }
             if (arg.StartsWith("--", StringComparison.Ordinal) && !SwitchOptions.Contains(arg)) return arg;
         }
         return null;

@@ -49,13 +49,22 @@ internal static class TestFiles
     /// <summary>A captured class block, TestData/&lt;name&gt; of the fixture folder (name includes the extension).</summary>
     public static Stream OpenBlock(string name) => File.OpenRead(FindRelative(Path.Combine("TestData", name)));
 
-    /// <summary>A file a test may write (diagnostic dumps): a folder of the system temporary directory, created on demand.</summary>
-    public static string Scratch(string fileName)
+    /// <summary>A file a test may write (diagnostic dumps): a folder of the system temporary directory, created on demand. Each test
+    /// process gets its own subfolder, so the net8.0 and net10.0 hosts of one run, and runs from other checkouts, never share a file.</summary>
+    public static string Scratch(string fileName) => Path.Combine(ScratchDirectory.Value, fileName);
+
+    private static readonly Lazy<string> ScratchDirectory = new(() =>
     {
-        string directory = Path.Combine(Path.GetTempPath(), "rvtio-tests");
+        string directory = Path.Combine(Path.GetTempPath(), "rvtio-tests", $"{Environment.ProcessId}-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
-        return Path.Combine(directory, fileName);
-    }
+        // The tests delete their own files, and a folder left empty goes too.
+        // shortcut: a folder that still holds diagnostic dumps stays (about 120 KB per run), prune old ones if that ever adds up.
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+        {
+            if (Directory.Exists(directory) && !Directory.EnumerateFileSystemEntries(directory).Any()) Directory.Delete(directory);
+        };
+        return directory;
+    });
 
     /// <summary>The existing file named by the environment variable, or a <see cref="SkipException"/> naming the variable.</summary>
     public static string FileFromEnvironment(string variable) =>

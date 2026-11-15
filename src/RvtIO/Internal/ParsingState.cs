@@ -121,6 +121,10 @@ internal class ParsingState
     /// <see cref="R22View"/> the segments hold only the records of channels 102 and 103, each rewritten into the Revit 2022 layout.</summary>
     public IReadOnlyList<Parsing.PartitionFraming.Framed?>? FramedPartitions { get; set; }
 
+    /// <summary>For multi-partition files whose partition headers and increment table decode: maps each multi-partition
+    /// element id to the partition number that holds its current copy (populated even when stale-copy pruning is disabled).</summary>
+    public IReadOnlyDictionary<ulong, int>? IncrementRoutedPartitions { get; set; }
+
     /// <summary>How many of the first <see cref="Chunks"/> are the chunks of the partition streams (the chunks of Formats and Global follow).</summary>
     public int PartitionChunkCount { get; set; }
 
@@ -197,7 +201,6 @@ internal class ParsingState
     public HashSet<uint> HostCutOutStepsFromLayoutSearch { get; } = new();
     public HashSet<uint> BlockOnlyIds { get; set; } = new();
     public Dictionary<uint, (string ForgeId, string? DisplayName)> ForgeParamDefs { get; set; } = new();
-    public string? DocGuid { get; set; }
     public List<byte[]> Chunks { get; set; } = new();
     public List<byte[]> RecordChunks { get; set; } = new();
     public List<byte[]> NonRecordChunks { get; set; } = new();

@@ -28,7 +28,8 @@ public partial class IfcExporter
     /// gets Height 0.8 and Width 2.1. Off by default: the opening of a door or window in a straight wall gets the quantities of the
     /// door or window as Revit has them, Width along the wall (the Width of the instance, else of its type), Height vertical (its
     /// Height) and Depth across the wall, whatever the direction of the wall in the model; an opening of a door or window that holds
-    /// no dimension is measured as the extents of its solid in the frame of the wall (CLI: --ifc-opening-legacy-axes).</summary>
+    /// no dimension is measured as the extents of its solid in the frame of the wall. Unfilled straight-wall openings use the same
+    /// geometric frame by default; true keeps their former model-frame quantities too (CLI: --ifc-opening-legacy-axes).</summary>
     public bool OpeningQuantitiesSwapped { get; init; }
 
     /// <summary>The opposite of <see cref="OpeningQuantitiesSwapped"/>, kept so that code written against the earlier opt-in keeps
@@ -695,11 +696,10 @@ public partial class IfcExporter
     /// metres.</summary>
     private const double FormerDepthClearanceM = 2.0e-4;
 
-    /// <summary>The quantities of an opening. The loop is measured in the model frame. Only the opening made from the cut loop of a
-    /// family symbol is measured in the frame of the wall; the door and window pass rewrites those from the decoded loop. A depth equal
-    /// to the width of the wall does not mark that opening: a wall opening and a door without cut loops reach through the wall as well,
-    /// and they keep the model frame. With <see cref="OpeningQuantitiesSwapped"/> the earlier selection stays: a filled opening whose
-    /// depth was the width of its wall without a clearance is measured in the frame of the wall.</summary>
+    /// <summary>The quantities of an opening. Unfilled straight-wall openings and openings filled by a door or window are measured
+    /// along the wall, across it and vertically by default. The door and window pass rewrites its openings from the decoded family
+    /// cut loop afterwards. Other openings keep the loop in the model frame. With <see cref="OpeningQuantitiesSwapped"/> the earlier
+    /// selection stays: only a filled opening whose depth was the width of its wall without a clearance is measured in the wall frame.</summary>
     private static List<QuantityValue> OpeningQuantitiesCurrent(
         QuantityContextCurrent context, int openingId, string[] openingArguments, ProfileExtrusion body)
     {
@@ -708,7 +708,9 @@ public partial class IfcExporter
         IReadOnlyList<double[]> loop = body.Loop?.Select(placement.Apply).ToList() ?? [];
         if (StraightWallHostCurrent(context, openingId) is { } host)
         {
-            if (context.OpeningsInHostAxes && FilledByDoorOrWindowCurrent(context, openingId)
+            // An unfilled cut has no nominal dimensions: measure the final solid, including its extrusion, in the host frame.
+            if (context.OpeningsInHostAxes
+                && (!context.FilledOpenings.Contains(openingId) || FilledByDoorOrWindowCurrent(context, openingId))
                 && HostAxisOpeningQuantitiesCurrent(placement, host.Wall, body) is { } alongTheWall)
             {
                 context.HostAxisOpenings.Add(openingId);
@@ -890,7 +892,8 @@ public partial class IfcExporter
             foreach (Element? owner in new[] { instance, type })
                 if (owner != null)
                     foreach (var parameter in owner.Parameters)
-                        if (parameter.Definition?.Name == name && !parameter.IsApproximate && parameter.Value is double named && named > 0
+                        if (parameter.Definition?.Name == name && !parameter.HasNoRevitValue && !parameter.IsApproximate
+                            && parameter.Value is double named && (!double.IsFinite(named) || Math.Abs(named) < 1e29) && named > 0
                             && owner.BoundingBoxDimensionParamIds?.Contains(parameter.Id) != true)
                             return named;
         foreach (int parameterId in parameterIds)
@@ -898,7 +901,8 @@ public partial class IfcExporter
             {
                 if (owner == null || owner.BoundingBoxDimensionParamIds?.Contains(parameterId) == true) continue;
                 foreach (var parameter in owner.Parameters)
-                    if (parameter.Id == parameterId && !parameter.IsApproximate && parameter.Value is double value
+                    if (parameter.Id == parameterId && !parameter.HasNoRevitValue && !parameter.IsApproximate
+                        && parameter.Value is double value && (!double.IsFinite(value) || Math.Abs(value) < 1e29)
                         && (value > 0 || zeroOfTheTypeCounts && value == 0 && ReferenceEquals(owner, type)))
                         return value;
             }
