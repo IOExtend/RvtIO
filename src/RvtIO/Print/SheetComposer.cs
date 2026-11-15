@@ -389,7 +389,8 @@ public static class SheetComposer
                 // The view title as Revit draws it: a circled detail number, the view name beside it, the scale below and
                 // a rule over the title.
                 string detail = element.LookupParameter(BuiltInParameter.VIEWPORT_DETAIL_NUMBER)?.Value as string ?? "";
-                double labelY = placed && frameHeight > 0 ? frameY - 5 : centerY;
+                // A title stays on the page even when its drawing reaches the lower border.
+                double labelY = placed && frameHeight > 0 ? Math.Max(frameY - 5, 10) : centerY;
                 double textX = frameX;
                 if (detail.Length > 0)
                 {

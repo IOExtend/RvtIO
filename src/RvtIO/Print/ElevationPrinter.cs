@@ -474,8 +474,8 @@ public static class ElevationPrinter
                 // Two levels a few millimetres apart (Ceiling over Level 1) would print their labels on top of each
                 // other; the label is pushed down instead.
                 double labelY = pageY;
-                if (labelY - lastLabelY < 5) labelY = lastLabelY + 5;
-                if (label.Length > 0 && labelY - lastLabelY >= 5)
+                if (labelY - lastLabelY < 6) labelY = lastLabelY + 6;
+                if (label.Length > 0 && labelY - lastLabelY >= 6)
                 {
                     page.DrawText(label, markerX + 4, labelY + 0.6, 2.2, PdfTextAlignment.Left, 0.4);
                     page.DrawText($"{y:0}", markerX + 4, labelY - 3.6, 2, PdfTextAlignment.Left, 0.4);
