@@ -705,6 +705,36 @@ public static class PlanPrinter
                     PdfTextAlignment.Center, 0.25);
             }
         }
+
+        // The same chains below and to the left of the building, the way the reference plan dimensions both sides.
+        double bottom = toY(wallMinY - 550);
+        if (xs.Count >= 2)
+        {
+            page.DrawLine(toX(xs[0]), bottom, toX(xs[^1]), bottom, 0.15, 0.3);
+            for (int i = 0; i < xs.Count; i++)
+            {
+                double x = toX(xs[i]);
+                page.DrawLine(x - 1.5, bottom - 1.5, x + 1.5, bottom + 1.5, 0.15, 0.3);
+                if (i == 0) continue;
+                double millimetres = xs[i] - xs[i - 1];
+                page.DrawText($"{millimetres:0}", (x + toX(xs[i - 1])) / 2, bottom - 3.4, 2.2,
+                    PdfTextAlignment.Center, 0.25);
+            }
+        }
+        double left = toX(wallMinX - 550);
+        if (ys.Count >= 2)
+        {
+            page.DrawLine(left, toY(ys[0]), left, toY(ys[^1]), 0.15, 0.3);
+            for (int i = 0; i < ys.Count; i++)
+            {
+                double y = toY(ys[i]);
+                page.DrawLine(left - 1.5, y - 1.5, left + 1.5, y + 1.5, 0.15, 0.3);
+                if (i == 0) continue;
+                double millimetres = ys[i] - ys[i - 1];
+                page.DrawTextRotated($"{millimetres:0}", left - 0.8, (y + toY(ys[i - 1])) / 2, 2.2, 90,
+                    PdfTextAlignment.Center, 0.25);
+            }
+        }
     }
 
     /// <summary>The colour a plan fills a room with, by the name of the room, the way the reference fills it: a bath

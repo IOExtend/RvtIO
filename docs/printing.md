@@ -161,7 +161,7 @@ stays empty.
 | Doors | the leaf at one jamb, perpendicular to the wall on the side the door opens into, and the quarter arc it sweeps |
 | Furniture | the horizontal faces of the furniture, casework, plumbing fixtures, specialty equipment, stairs and railings of the level, seen from above as light outlines |
 | Door and window marks | a door's Mark in a circle beside the opening, a window's type mark in a hexagon, each on a leader line from the opening |
-| Dimensions | a chain between neighbouring grid lines above and to the right of the building, with the distance in millimetres |
+| Dimensions | a chain between neighbouring grid lines on all four sides of the building, with the distance in millimetres, as the reference plan dimensions it |
 | Room legend | below the plan: a colour swatch and the name of every kind of room on it |
 
 The page is white with a frame at the margin, and the drawing is centred. The title (the level name and the scale) is
