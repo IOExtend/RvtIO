@@ -58,6 +58,7 @@ public static class PlanPrinter
         List<List<(double X, double Y)>> FloorLoops,
         List<List<(double X, double Y)>> OpeningLoops,
         List<(List<(double X, double Y)> Polygon, string Name, double AreaSquareFeet)> Rooms,
+        List<List<(double X, double Y)>> Furniture,
         double MinX, double MinY, double MaxX, double MaxY);
 
     /// <summary>The levels a plan can be printed for: those that own at least one wall or column with a location line,
@@ -359,13 +360,46 @@ public static class PlanPrinter
                 grids.Add((gx1, gy1, gx2, gy2, element.Name ?? ""));
         }
 
+        // The furniture, casework and plumbing of the level, as the outlines of their horizontal faces seen from above;
+        // an elevation (the underside) duplicates the top, so equal outlines are kept once.
+        var furniture = new List<List<(double X, double Y)>>();
+        var furnitureKeys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var element in document.Elements)
+        {
+            if (element.CategoryId is not ((int)BuiltInCategory.OST_Furniture or (int)BuiltInCategory.OST_Casework
+                or (int)BuiltInCategory.OST_PlumbingFixtures or (int)BuiltInCategory.OST_SpecialityEquipment))
+                continue;
+            if (LevelOf(element) != levelId || element.Geometry is not { Faces.Count: > 0 } geometry) continue;
+            foreach (var face in geometry.Faces)
+            {
+                if (Math.Abs(face.Normal[2]) < 0.9) continue;
+                if (face.OuterVertices is not { Count: >= 3 } vertices) continue;
+                double area = 0;
+                for (int i = 0; i < vertices.Count; i++)
+                {
+                    var a = vertices[i];
+                    var b = vertices[(i + 1) % vertices.Count];
+                    area += a[0] * b[1] - b[0] * a[1];
+                }
+                area = Math.Abs(area) / 2 * FeetToMillimetres * FeetToMillimetres;
+                if (area < 0.02 * 1e6 || area > 8 * 1e6) continue;
+                var polygon = vertices.Select(vertex => (vertex[0] * FeetToMillimetres,
+                    vertex[1] * FeetToMillimetres)).ToList();
+                double fMinX = polygon.Min(point => point.Item1), fMaxX = polygon.Max(point => point.Item1);
+                double fMinY = polygon.Min(point => point.Item2), fMaxY = polygon.Max(point => point.Item2);
+                string key = $"{fMinX:0}:{fMinY:0}:{fMaxX:0}:{fMaxY:0}";
+                if (!furnitureKeys.Add(key)) continue;
+                furniture.Add(polygon);
+            }
+        }
+
         // Room for the dimension chains and the grid bubbles around the building: the crop of a printed plan holds
         // them, so the page (or the viewport frame) is a little larger than the walls.
         const double annotation = 1000;
         minX -= annotation; minY -= annotation; maxX += annotation; maxY += annotation;
 
         return new PlanContent(walls, columns, grids, gaps, windowGaps, doorGaps, floorLoops, openingLoops, rooms,
-            minX, minY, maxX, maxY);
+            furniture, minX, minY, maxX, maxY);
     }
 
     /// <summary>Draws collected plan content on a page: the model point (content.MinX, content.MinY) goes to
@@ -439,6 +473,10 @@ public static class PlanPrinter
                         PdfTextAlignment.Center, 0.45);
             }
         }
+
+        foreach (var outline in content.Furniture)
+            page.DrawPolyline(outline.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0.12, true,
+                new PdfColor(0.55, 0.55, 0.55));
 
         // A door is drawn as its leaf and the quarter arc it sweeps: the leaf stands at one jamb, perpendicular to the
         // wall and on the side of the building the door opens into.

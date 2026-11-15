@@ -106,6 +106,7 @@ stays empty.
 | Floors | the sketch loops of the floors of the level, light under the walls |
 | Rooms | the floor face of the room's decoded boundary, filled with a colour by the room name and labelled with the name and its area in m² |
 | Doors | the leaf at one jamb, perpendicular to the wall on the side the door opens into, and the quarter arc it sweeps |
+| Furniture | the horizontal faces of the furniture, casework, plumbing fixtures and specialty equipment of the level, seen from above as light outlines |
 | Dimensions | a chain between neighbouring grid lines above and to the right of the building, with the distance in millimetres |
 | Room legend | below the plan: a colour swatch and the name of every kind of room on it |
 
