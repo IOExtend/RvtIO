@@ -292,9 +292,12 @@ public static class SheetComposer
                 // two metres around it, the size a wall or roof detail covers. The detail is printed only when its
                 // viewport sits on the drawable part of the page: the file places some of them outside it.
                 // A stair section is printed whole like a building section, not as a windowed detail; a stair detail
-                // (1:20) shows the stair in its enclosure, so it is not limited to the stairs alone.
+                // (1:20) shows the stair in its enclosure, so it is not limited to the stairs alone. It takes the right
+                // part of the sheet, the way the reference places it.
                 bool stairSection = name.Contains("stair", StringComparison.OrdinalIgnoreCase);
                 bool stairsOnly = stairSection && scale >= 50;
+                double stripLeftForStair = page.WidthMillimetres - 5
+                    - Math.Min(180, page.WidthMillimetres * 0.22) - 3;
                 bool detailSection = direction == "section" && scale < 100 && !stairSection
                     && viewElement?.ViewDirection is { Length: 3 };
                 double stripLeft = page.WidthMillimetres - 5
@@ -330,7 +333,12 @@ public static class SheetComposer
                         frameHeight /= factor;
                         drawScale *= factor;
                     }
-                    if (centerX < 10 || centerX > stripLeft - 10 || centerY < 10
+                    if (stairSection && scale < 50)
+                    {
+                        centerX = stripLeftForStair - 20 - frameWidth / 2;
+                        centerY = page.HeightMillimetres - 40 - frameHeight / 2;
+                    }
+                    else if (centerX < 10 || centerX > stripLeft - 10 || centerY < 10
                         || centerY > page.HeightMillimetres - 15)
                     {
                         centerX = 40 + frameWidth / 2 + relocated * Math.Min(300, drawableWidth / 2);
