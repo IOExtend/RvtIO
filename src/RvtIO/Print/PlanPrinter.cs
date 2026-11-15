@@ -27,11 +27,20 @@ public sealed class PlanPrintOptions
 /// <param name="ElevationFeet">The stored elevation in feet, null when the reader did not decode it.</param>
 public sealed record PlanLevel(int LevelId, string? Name, double? ElevationFeet);
 
+/// <summary>A view a plan can be printed for: a named view whose name or stored elevation matches a printable level.
+/// The scale is the view's own view scale.</summary>
+/// <param name="ViewId">The element id of the view.</param>
+/// <param name="Name">The view name.</param>
+/// <param name="LevelId">The level the plan of the view is drawn from.</param>
+/// <param name="Scale">The view scale denominator, 100 for 1:100.</param>
+public sealed record PlanView(int ViewId, string Name, int LevelId, int Scale);
+
 /// <summary>
-/// Prints a plan of one level to a PDF page from the data the reader decodes: walls as their location line with the
-/// stored thickness, columns as their stored footprint, grids as their location lines. This is the first view renderer
-/// of the sheet printing work: it draws the model geometry, not Revit's generated linework, so openings, annotations,
-/// room fills, dimensions, tags and the title block are not on the page yet (see the notes in docs/printing.md).
+/// Prints plans to PDF pages from the data the reader decodes: walls as their location line with the stored thickness,
+/// walls cut at the openings of their hosted doors and windows, columns as their stored footprint, grids as their
+/// location lines, with a frame and a title. This is the first view renderer of the sheet printing work: it draws the
+/// model geometry, not Revit's generated linework, so floors, stairs, annotations, room fills, dimensions, tags and the
+/// title block are not on the page yet (see the notes in docs/printing.md).
 /// </summary>
 public static class PlanPrinter
 {
@@ -68,10 +77,52 @@ public static class PlanPrinter
         return levels;
     }
 
+    /// <summary>The views a plan can be printed for: named views whose name or stored elevation matches a printable
+    /// level (a view named like its level, or a level plan whose stored elevation equals the level's). A section or an
+    /// elevation is left out until its renderer exists.</summary>
+    /// <param name="document">The opened document.</param>
+    public static IReadOnlyList<PlanView> Views(RvtDocument document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        IReadOnlyList<PlanLevel> levels = Levels(document);
+        var views = new List<PlanView>();
+        foreach (var element in document.Elements)
+        {
+            // Only a plan view draws as a plan: a section or an elevation named like a level must not be printed as one.
+            if (element.RootClassName != "DBViewPlan" && element.NativeRecordClass != 1005) continue;
+            if (element.LookupParameter(BuiltInParameter.VIEW_NAME)?.Value is not string name || name.Length == 0)
+                continue;
+            int? levelId = null;
+            foreach (var level in levels)
+            {
+                if (string.Equals(level.Name, name, StringComparison.OrdinalIgnoreCase)) { levelId = level.LevelId; break; }
+            }
+            if (levelId == null && element.LookupParameter(BuiltInParameter.LEVEL_ELEV)?.Value is double elevation)
+            {
+                foreach (var level in levels)
+                {
+                    if (level.ElevationFeet is double levelElevation && Math.Abs(levelElevation - elevation) < 1e-6)
+                    {
+                        levelId = level.LevelId;
+                        break;
+                    }
+                }
+            }
+            if (levelId == null) continue;
+            int scale = element.LookupParameter(BuiltInParameter.VIEW_SCALE)?.Value is int value && value > 0 ? value : 100;
+            views.Add(new PlanView(element.Id, name, levelId.Value, scale));
+        }
+        views.Sort((left, right) =>
+        {
+            int order = string.CompareOrdinal(left.Name, right.Name);
+            return order != 0 ? order : left.ViewId.CompareTo(right.ViewId);
+        });
+        return views;
+    }
+
     /// <summary>Prints the plan of a level to a one-page PDF document.</summary>
     /// <param name="document">The opened document.</param>
-    /// <param name="levelId">The level to print; null prints the level with the most walls and columns (the first of
-    /// <see cref="Levels"/> when several levels tie).</param>
+    /// <param name="levelId">The level to print; null prints the level with the most walls and columns.</param>
     /// <param name="scale">The view scale denominator: 100 prints 1:100, one model metre to ten millimetres of paper.
     /// </param>
     /// <param name="options">The paper and margin; null uses the defaults.</param>
@@ -99,8 +150,47 @@ public static class PlanPrinter
             if (best == null) throw new InvalidOperationException("The document has no level with a wall or column.");
             levelId = best;
         }
-        string? levelName = document.GetElement(levelId.Value)?.Name;
 
+        var pdf = new PdfDocument { Font = PdfFonts.TryFind(out _) };
+        AddPlanPage(pdf, document, levelId.Value, scale, document.GetElement(levelId.Value)?.Name, options);
+        return pdf;
+    }
+
+    /// <summary>Prints one view to a one-page PDF document, at the view's own scale.</summary>
+    /// <param name="document">The opened document.</param>
+    /// <param name="viewId">The element id of the view; it must be one of <see cref="Views"/>.</param>
+    /// <param name="options">The paper and margin; null uses the defaults.</param>
+    /// <exception cref="InvalidOperationException">No printable plan view has that id.</exception>
+    public static PdfDocument RenderView(RvtDocument document, int viewId, PlanPrintOptions? options = null) =>
+        RenderViews(document, [viewId], options);
+
+    /// <summary>Prints several views, one page each, to one PDF document at every view's own scale.</summary>
+    /// <param name="document">The opened document.</param>
+    /// <param name="viewIds">The element ids of the views; each must be one of <see cref="Views"/>.</param>
+    /// <param name="options">The paper and margin; null uses the defaults.</param>
+    /// <exception cref="InvalidOperationException">A view id is not a printable plan view.</exception>
+    public static PdfDocument RenderViews(RvtDocument document, IReadOnlyList<int> viewIds, PlanPrintOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(viewIds);
+        options ??= new PlanPrintOptions();
+        var views = new Dictionary<int, PlanView>();
+        foreach (var view in Views(document)) views[view.ViewId] = view;
+        var pdf = new PdfDocument { Font = PdfFonts.TryFind(out _) };
+        foreach (int viewId in viewIds)
+        {
+            if (!views.TryGetValue(viewId, out var view))
+                throw new InvalidOperationException($"View {viewId} is not a printable plan view (see PlanPrinter.Views).");
+            AddPlanPage(pdf, document, view.LevelId, view.Scale, view.Name, options);
+        }
+        if (pdf.Pages.Count == 0) throw new InvalidOperationException("No view was given to print.");
+        return pdf;
+    }
+
+    /// <summary>Draws the plan of a level as one page of the document.</summary>
+    private static void AddPlanPage(PdfDocument pdf, RvtDocument document, int levelId, int scale, string? title,
+        PlanPrintOptions options)
+    {
         var walls = new List<(int Id, double X1, double Y1, double X2, double Y2, double Width)>();
         var columns = new List<(double X, double Y, double Width, double Height)>();
         double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
@@ -145,15 +235,11 @@ public static class PlanPrinter
         foreach (var wall in walls) wallById[wall.Id] = wall;
         var gaps = new Dictionary<int, List<(double From, double To)>>();
         var windowGaps = new List<(int HostId, double From, double To)>();
-        int debugOpenings = 0, debugCutouts = 0, debugHosted = 0;
         foreach (var insert in document.Elements)
         {
             if (insert.CategoryId is not ((int)BuiltInCategory.OST_Doors or (int)BuiltInCategory.OST_Windows)) continue;
-            debugOpenings++;
             if (insert.OwnSingleFamilyCutout is not { } cutout || cutout.Transform is not { Length: 12 } matrix) continue;
-            debugCutouts++;
             if (!wallById.TryGetValue(cutout.HostId, out var wall)) continue;
-            debugHosted++;
             double dx = wall.X2 - wall.X1, dy = wall.Y2 - wall.Y1;
             double length = Math.Sqrt(dx * dx + dy * dy);
             if (length < 1e-6) continue;
@@ -196,10 +282,6 @@ public static class PlanPrinter
                 grids.Add((gx1, gy1, gx2, gy2));
         }
 
-        if (Environment.GetEnvironmentVariable("RVTIO_PRINT_DEBUG") is { Length: > 0 } debugPath)
-            File.WriteAllText(debugPath, $"walls={walls.Count} doorsWindows={debugOpenings} cutouts={debugCutouts} "
-                + $"hosted={debugHosted} gaps={gaps.Count} windows={windowGaps.Count}");
-
         double contentWidth = (maxX - minX) / scale;
         double contentHeight = (maxY - minY) / scale;
         PdfPageSize paper = options.PaperSize ?? SmallestPaper(contentWidth + 2 * options.MarginMillimetres,
@@ -216,8 +298,6 @@ public static class PlanPrinter
         double offsetX = (paper.WidthMillimetres - (maxX - minX) / effectiveScale) / 2;
         double offsetY = (paper.HeightMillimetres - (maxY - minY) / effectiveScale) / 2;
 
-        PdfTrueTypeFont? font = PdfFonts.TryFind(out _);
-        var pdf = new PdfDocument { Font = font };
         PdfPage page = pdf.AddPage(paper);
         if (options.DrawFrame)
         {
@@ -262,16 +342,15 @@ public static class PlanPrinter
         foreach (var column in columns)
             page.DrawRectangle(ToX(column.X), ToY(column.Y), column.Width / effectiveScale, column.Height / effectiveScale, 0.2, 1);
 
-        // A title inside the frame: the level and the scale, in the level's own name. Drawn only when a font with the
-        // name's characters was found; the standard font cannot write Cyrillic.
-        if (font != null && levelName != null)
+        // A title inside the frame: the level or view name and the scale. Drawn only when a font with the name's
+        // characters was found; the standard font cannot write Cyrillic.
+        if (pdf.Font != null && !string.IsNullOrEmpty(title))
         {
             double margin = options.MarginMillimetres;
-            page.DrawText(levelName, margin + 3, paper.HeightMillimetres - margin - 8, 4.5);
-            page.DrawText($"1:{scale}", margin + 3, paper.HeightMillimetres - margin - 15, 3.5, PdfTextAlignment.Left, 0.35);
+            page.DrawText(title, margin + 3, paper.HeightMillimetres - margin - 8, 4.5);
+            page.DrawText($"1:{scale}", margin + 3, paper.HeightMillimetres - margin - 15, 3.5,
+                PdfTextAlignment.Left, 0.35);
         }
-
-        return pdf;
 
         double ToX(double x) => (x - minX) / effectiveScale + offsetX;
         double ToY(double y) => (y - minY) / effectiveScale + offsetY;

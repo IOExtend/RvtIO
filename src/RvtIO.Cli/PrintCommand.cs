@@ -6,19 +6,21 @@ using RvtIO.Print;
 namespace RvtIO.Cli;
 
 /// <summary>
-/// <c>rvtio print &lt;file.rvt&gt; &lt;out.pdf&gt; [--level &lt;id|name&gt;] [--scale &lt;n&gt;] [--paper A4|A3|A2|A1|A0]</c>:
-/// renders the plan of one level to a one-page PDF (see <see cref="PlanPrinter"/>). <c>--list-levels</c> prints the
-/// levels that can be printed instead. Exit codes: 0 written, 1 usage error or an output path that cannot be written,
-/// 2 the file cannot be read, 3 a reader limit cut a stream, 4 the level has nothing to draw.
+/// <c>rvtio print &lt;file.rvt&gt; &lt;out.pdf&gt; [--level &lt;id|name&gt;] [--view &lt;id|name&gt;] [--scale &lt;n&gt;]
+/// [--paper A4|A3|A2|A1|A0]</c>: renders the plan of one level, or one or more plan views at their own scales, to a PDF
+/// (see <see cref="PlanPrinter"/>). <c>--list-levels</c> and <c>--list-views</c> print what can be printed instead.
+/// Exit codes: 0 written, 1 usage error or an output path that cannot be written (also a level or view that is not
+/// printable), 2 the file cannot be read, 3 a reader limit cut a stream, 4 nothing to draw.
 /// </summary>
 internal static class PrintCommand
 {
     internal static int Run(string[] args, TextWriter output, TextWriter error)
     {
         string? file = null, outputPath = null, levelText = null;
+        var viewTexts = new List<string>();
         int scale = 100;
         PdfPageSize? paper = null;
-        bool listLevels = false;
+        bool listLevels = false, listViews = false;
         for (int i = 0; i < args.Length; i++)
         {
             string arg = args[i];
@@ -27,10 +29,14 @@ internal static class PrintCommand
                 case "--list-levels":
                     listLevels = true;
                     break;
-                case "--level" or "--scale" or "--paper":
+                case "--list-views":
+                    listViews = true;
+                    break;
+                case "--level" or "--view" or "--scale" or "--paper":
                     if (i + 1 >= args.Length) return Usage(error, arg + " requires a value.");
                     string value = args[++i];
                     if (arg == "--level") levelText = value;
+                    else if (arg == "--view") viewTexts.AddRange(value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
                     else if (arg == "--scale")
                     {
                         if (!int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out scale) || scale <= 0)
@@ -48,7 +54,8 @@ internal static class PrintCommand
             }
         }
         if (file == null) return Usage(error, "print requires the file.");
-        if (!listLevels && outputPath == null) return Usage(error, "print requires the output PDF path.");
+        bool listing = listLevels || listViews;
+        if (!listing && outputPath == null) return Usage(error, "print requires the output PDF path.");
         if (outputPath != null && SamePath(file, outputPath))
         {
             error.WriteLine("The output path is the input file. Nothing was read or written.");
@@ -72,6 +79,7 @@ internal static class PrintCommand
         }
 
         IReadOnlyList<PlanLevel> levels = PlanPrinter.Levels(document);
+        IReadOnlyList<PlanView> views = PlanPrinter.Views(document);
         if (listLevels)
         {
             foreach (PlanLevel level in levels)
@@ -80,58 +88,84 @@ internal static class PrintCommand
                     ? (feet * 304.8).ToString("0", CultureInfo.InvariantCulture) + " mm" : "elevation not decoded";
                 output.WriteLine($"{level.LevelId}\t{level.Name ?? "(unnamed)"}\t{elevation}");
             }
-            if (levels.Count == 0) error.WriteLine("No level with a wall or column was found.");
+            if (!listViews) return RvtExitCodes.Success;
+        }
+        if (listViews)
+        {
+            foreach (PlanView view in views)
+                output.WriteLine($"{view.ViewId}\t{view.Name}\t1:{view.Scale}\tlevel {view.LevelId}");
+            if (views.Count == 0) error.WriteLine("No printable plan view was found.");
             return RvtExitCodes.Success;
         }
 
-        if (levels.Count == 0)
-        {
-            error.WriteLine("No level with a wall or column was found; nothing to print.");
-            return RvtExitCodes.DecodeError;
-        }
-
-        int? levelId = null;
-        if (levelText != null)
-        {
-            foreach (PlanLevel level in levels)
-            {
-                if (int.TryParse(levelText, NumberStyles.None, CultureInfo.InvariantCulture, out int id) && id == level.LevelId)
-                    levelId = level.LevelId;
-                else if (string.Equals(level.Name, levelText, StringComparison.OrdinalIgnoreCase))
-                    levelId = level.LevelId;
-                if (levelId != null) break;
-            }
-            if (levelId == null)
-            {
-                error.WriteLine($"No printable level is named or numbered '{levelText}'. --list-levels shows them.");
-                return RvtExitCodes.Usage;
-            }
-        }
-
-        PdfDocument pdf;
         try
         {
-            pdf = PlanPrinter.Render(document, levelId, scale, new PlanPrintOptions { PaperSize = paper });
+            PdfDocument pdf;
+            if (viewTexts.Count > 0)
+            {
+                var viewIds = new List<int>();
+                foreach (string text in viewTexts)
+                {
+                    PlanView? match = null;
+                    foreach (PlanView view in views)
+                    {
+                        if (int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int id) && id == view.ViewId)
+                            match = view;
+                        else if (string.Equals(view.Name, text, StringComparison.OrdinalIgnoreCase))
+                            match = view;
+                        if (match != null) break;
+                    }
+                    if (match == null)
+                    {
+                        error.WriteLine($"No printable plan view is named or numbered '{text}'. --list-views shows them.");
+                        return RvtExitCodes.Usage;
+                    }
+                    viewIds.Add(match.ViewId);
+                }
+                pdf = PlanPrinter.RenderViews(document, viewIds, new PlanPrintOptions { PaperSize = paper });
+            }
+            else
+            {
+                if (levels.Count == 0)
+                {
+                    error.WriteLine("No level with a wall or column was found; nothing to print.");
+                    return RvtExitCodes.DecodeError;
+                }
+                int? levelId = null;
+                if (levelText != null)
+                {
+                    foreach (PlanLevel level in levels)
+                    {
+                        if (int.TryParse(levelText, NumberStyles.None, CultureInfo.InvariantCulture, out int id) && id == level.LevelId)
+                            levelId = level.LevelId;
+                        else if (string.Equals(level.Name, levelText, StringComparison.OrdinalIgnoreCase))
+                            levelId = level.LevelId;
+                        if (levelId != null) break;
+                    }
+                    if (levelId == null)
+                    {
+                        error.WriteLine($"No printable level is named or numbered '{levelText}'. --list-levels shows them.");
+                        return RvtExitCodes.Usage;
+                    }
+                }
+                pdf = PlanPrinter.Render(document, levelId, scale, new PlanPrintOptions { PaperSize = paper });
+            }
+
+            pdf.Save(outputPath!);
+            PdfPageSize page = pdf.Pages[0].Size;
+            error.WriteLine($"[print] {pdf.Pages.Count} page(s), first {page.WidthMillimetres:0} x {page.HeightMillimetres:0} mm -> {outputPath}");
+            return RvtExitCodes.Success;
         }
         catch (InvalidOperationException exception)
         {
             error.WriteLine(exception.Message);
             return RvtExitCodes.DecodeError;
         }
-
-        try
-        {
-            pdf.Save(outputPath!);
-        }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             error.WriteLine($"Cannot write {outputPath}: {exception.Message}");
             return RvtExitCodes.Usage;
         }
-
-        PdfPageSize page = pdf.Pages[0].Size;
-        error.WriteLine($"[print] plan 1:{scale}, {page.WidthMillimetres:0} x {page.HeightMillimetres:0} mm -> {outputPath}");
-        return RvtExitCodes.Success;
     }
 
     private static PdfPageSize? Paper(string name) => name.ToUpperInvariant() switch
@@ -154,7 +188,8 @@ internal static class PrintCommand
     private static int Usage(TextWriter error, string problem)
     {
         error.WriteLine(problem);
-        error.WriteLine("Usage: rvtio print <file.rvt> <out.pdf> [--level <id|name>] [--scale <n>] [--paper A4|A3|A2|A1|A0] [--list-levels]");
+        error.WriteLine("Usage: rvtio print <file.rvt> <out.pdf> [--level <id|name>] [--view <id|name>] [--scale <n>] "
+            + "[--paper A4|A3|A2|A1|A0] [--list-levels] [--list-views]");
         return RvtExitCodes.Usage;
     }
 }

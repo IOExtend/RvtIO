@@ -22,8 +22,20 @@ rvtio print project.rvt plan.pdf --level "Уровень 1" --scale 200 --paper 
 columns is printed. `--scale` is the view scale denominator: 100 prints 1:100, one model metre to ten millimetres of
 paper. `--paper` takes A4, A3, A2, A1 or A0; without it the smallest landscape paper that holds the drawing at the scale
 is chosen, and a drawing larger than A0 is scaled down to fit. Exit codes: 0 written, 1 usage error or an unwritable
-output path (also a level name that is not printable), 2 the file cannot be read, 3 a reader limit cut a stream, 4 the
-level has nothing to draw.
+output path (also a level or view that is not printable), 2 the file cannot be read, 3 a reader limit cut a stream, 4
+nothing to draw.
+
+A view can be printed instead of a level, at the view's own view scale:
+
+```sh
+rvtio print project.rvt views.pdf --view "Уровень 1"
+rvtio print project.rvt views.pdf --view "Уровень 1,Уровень 2"   # one page each
+rvtio print project.rvt --list-views
+```
+
+`--list-views` prints the id, name, scale and level of every printable plan view. A plan view is a `DBViewPlan` of the
+file whose name matches a printable level (or whose stored elevation equals the level's); a section or an elevation is
+left out until its renderer exists.
 
 The library API is `RvtIO.Print.PlanPrinter`: `Levels(document)` returns the printable levels, and
 `Render(document, levelId, scale, options)` returns a `PdfDocument` with one page.
