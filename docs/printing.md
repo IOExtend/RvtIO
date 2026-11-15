@@ -40,6 +40,26 @@ left out until its renderer exists.
 The library API is `RvtIO.Print.PlanPrinter`: `Levels(document)` returns the printable levels, and
 `Render(document, levelId, scale, options)` returns a `PdfDocument` with one page.
 
+## Printing a sheet
+
+```sh
+rvtio print project.rvt sheets.pdf --sheet 516334
+rvtio print project.rvt sheets.pdf --sheet 245623,516334   # one page each
+rvtio print project.rvt --list-sheets
+```
+
+A sheet is printed from the linework the reader decodes: the location curves of the elements the sheet owns (the page
+border, the title block frame and its rules, the tables drawn as lines), at their sheet coordinates. The page is the size
+those curves span, snapped to A4, A3, A2, A1 or A0 when it is within 8 mm of one (a sheet whose curves span
+210 x 297 mm prints on A4); otherwise the page is the extent plus a margin. The sheet number and name are written in the
+upper-left corner with the embedded font.
+
+`--list-sheets` prints the id, number, name, extent, curve count and text count of every sheet with a page-sized
+linework (a frame smaller than 50 mm is the drawing frame of an embedded family document, not a sheet).
+
+A printed sheet as linework only: the text of its title block and notes is not decoded yet, and a placed view is not
+composed into the page (its viewport has no decoded position), so the drawing area of a sheet stays empty.
+
 ## What is drawn
 
 | Content | Source |

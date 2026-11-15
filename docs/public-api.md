@@ -61,7 +61,10 @@ See [sheets and viewports](sheets.md) for what is decoded, what the limits are a
 |---|---|
 | `PlanPrinter` | `Levels(document)` lists the levels a plan can be printed for; `Render(document, levelId, scale, options)` returns a `PdfDocument` with the plan of one level: walls with their stored width, column footprints, clipped grids. |
 | `PlanPrintOptions` | `PaperSize` (null picks the smallest paper that holds the drawing), `MarginMillimetres`, `FallbackWallWidthMillimetres`, `DrawFrame`. |
-| `PlanLevel` | A printable level: element id, name and stored elevation. |
+| `PlanLevel`, `PlanView` | A printable level (id, name, elevation) and a printable plan view (id, name, level, scale). |
+| `SheetPrinter` | `Sheets(document)` lists the sheets with page-sized decoded linework; `Render(document, sheetId, options)` and `RenderSheets` print one page per sheet from the lines the sheet owns, on the paper the linework spans. |
+| `SheetPrintOptions` | `PaperSize` (null uses the linework extent, snapped to A4-A0), `MarginMillimetres`, `PaperToleranceMillimetres`, `DrawSheetFields`. |
+| `PrintableSheet` | A printable sheet: id, number, name, linework extent, curve and text counts. |
 
 See [printing a plan](printing.md) for what is drawn, what is not, and the roadmap to sheet printing.
 

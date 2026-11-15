@@ -18,9 +18,10 @@ internal static class PrintCommand
     {
         string? file = null, outputPath = null, levelText = null;
         var viewTexts = new List<string>();
+        var sheetTexts = new List<string>();
         int scale = 100;
         PdfPageSize? paper = null;
-        bool listLevels = false, listViews = false;
+        bool listLevels = false, listViews = false, listSheets = false;
         for (int i = 0; i < args.Length; i++)
         {
             string arg = args[i];
@@ -32,11 +33,15 @@ internal static class PrintCommand
                 case "--list-views":
                     listViews = true;
                     break;
-                case "--level" or "--view" or "--scale" or "--paper":
+                case "--list-sheets":
+                    listSheets = true;
+                    break;
+                case "--level" or "--view" or "--sheet" or "--scale" or "--paper":
                     if (i + 1 >= args.Length) return Usage(error, arg + " requires a value.");
                     string value = args[++i];
                     if (arg == "--level") levelText = value;
                     else if (arg == "--view") viewTexts.AddRange(value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+                    else if (arg == "--sheet") sheetTexts.AddRange(value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
                     else if (arg == "--scale")
                     {
                         if (!int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out scale) || scale <= 0)
@@ -54,7 +59,7 @@ internal static class PrintCommand
             }
         }
         if (file == null) return Usage(error, "print requires the file.");
-        bool listing = listLevels || listViews;
+        bool listing = listLevels || listViews || listSheets;
         if (!listing && outputPath == null) return Usage(error, "print requires the output PDF path.");
         if (outputPath != null && SamePath(file, outputPath))
         {
@@ -80,6 +85,15 @@ internal static class PrintCommand
 
         IReadOnlyList<PlanLevel> levels = PlanPrinter.Levels(document);
         IReadOnlyList<PlanView> views = PlanPrinter.Views(document);
+        IReadOnlyList<PrintableSheet> sheets = SheetPrinter.Sheets(document);
+        if (listSheets)
+        {
+            foreach (PrintableSheet sheet in sheets)
+                output.WriteLine($"{sheet.SheetId}\t{sheet.Number ?? ""}\t{sheet.Name ?? ""}\t"
+                    + $"{sheet.WidthMillimetres:0}x{sheet.HeightMillimetres:0} mm\t{sheet.CurveCount} curves\t{sheet.TextCount} texts");
+            if (sheets.Count == 0) error.WriteLine("No sheet with decoded linework was found.");
+            return RvtExitCodes.Success;
+        }
         if (listLevels)
         {
             foreach (PlanLevel level in levels)
@@ -101,7 +115,30 @@ internal static class PrintCommand
         try
         {
             PdfDocument pdf;
-            if (viewTexts.Count > 0)
+            if (sheetTexts.Count > 0)
+            {
+                var sheetIds = new List<int>();
+                foreach (string text in sheetTexts)
+                {
+                    PrintableSheet? match = null;
+                    foreach (PrintableSheet sheet in sheets)
+                    {
+                        if (int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int id) && id == sheet.SheetId)
+                            match = sheet;
+                        else if (string.Equals(sheet.Number, text, StringComparison.OrdinalIgnoreCase))
+                            match = sheet;
+                        if (match != null) break;
+                    }
+                    if (match == null)
+                    {
+                        error.WriteLine($"No printable sheet is named or numbered '{text}'. --list-sheets shows them.");
+                        return RvtExitCodes.Usage;
+                    }
+                    sheetIds.Add(match.SheetId);
+                }
+                pdf = SheetPrinter.RenderSheets(document, sheetIds, new SheetPrintOptions { PaperSize = paper });
+            }
+            else if (viewTexts.Count > 0)
             {
                 var viewIds = new List<int>();
                 foreach (string text in viewTexts)
@@ -188,8 +225,8 @@ internal static class PrintCommand
     private static int Usage(TextWriter error, string problem)
     {
         error.WriteLine(problem);
-        error.WriteLine("Usage: rvtio print <file.rvt> <out.pdf> [--level <id|name>] [--view <id|name>] [--scale <n>] "
-            + "[--paper A4|A3|A2|A1|A0] [--list-levels] [--list-views]");
+        error.WriteLine("Usage: rvtio print <file.rvt> <out.pdf> [--level <id|name>] [--view <id|name>] [--sheet <id|number>] "
+            + "[--scale <n>] [--paper A4|A3|A2|A1|A0] [--list-levels] [--list-views] [--list-sheets]");
         return RvtExitCodes.Usage;
     }
 }

@@ -79,7 +79,14 @@ Print the plan of a level to PDF — walls with their stored width, column footp
 rvtio print project.rvt plan.pdf --level "Уровень 1" --scale 100
 ```
 
-`--list-levels` prints the levels that can be printed. Openings, floors, annotations, text and the sheet layout are not drawn yet; see [printing a plan](docs/printing.md).
+`--list-levels` prints the levels that can be printed. A sheet prints from its decoded linework (page border, title block frame, rules) on the paper it spans:
+
+```sh
+rvtio print project.rvt sheets.pdf --sheet 516334
+rvtio print project.rvt --list-sheets
+```
+
+Openings cut the walls; floors, annotations and the text of a title block are not drawn yet; see [printing a plan](docs/printing.md).
 
 Export the state of one project phase:
 
