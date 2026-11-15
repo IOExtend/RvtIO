@@ -130,12 +130,28 @@ namespace RvtIO.Model
                 if (UnitSymbol != null && ConversionFactor.HasValue && ConversionFactor.Value != 0)
                 {
                     double displayed = d * ConversionFactor.Value;
-                    return $"{displayed:G6} {UnitSymbol}";
+                    return string.IsNullOrWhiteSpace(UnitSymbol)
+                        ? displayed.ToString("G6", CultureInfo.InvariantCulture)
+                        : $"{displayed:G6} {UnitSymbol}";
+                }
+
+                // If the parameter has a scalar measurement spec (e.g. Number, Integer, Ratio),
+                // respect the spec and format as a plain dimensionless scalar.
+                if (SpecType != null && IsScalarSpec(SpecType))
+                {
+                    return d.ToString("G", CultureInfo.InvariantCulture);
                 }
 
                 // Fallback: heuristic based on parameter or BIP name
                 string? name = Definition?.Name;
                 string? bip = Definition?.BuiltInParameter;
+
+                // Dimensionless coefficients, scales, ratios, and factors must not be inferred as dimensional lengths/areas/volumes
+                if (IsScalarOrCoefficient(name) || IsScalarOrCoefficient(bip))
+                {
+                    return d.ToString("G", CultureInfo.InvariantCulture);
+                }
+
                 bool Matches(string token) =>
                     (name != null && name.Contains(token, StringComparison.OrdinalIgnoreCase))
                     || (bip != null && bip.Contains(token, StringComparison.OrdinalIgnoreCase));
@@ -154,6 +170,25 @@ namespace RvtIO.Model
                 return d.ToString("G", CultureInfo.InvariantCulture);
             }
             return Value.ToString();
+        }
+
+        private static bool IsScalarSpec(string specType) =>
+            specType.Contains("number", StringComparison.OrdinalIgnoreCase)
+            || specType.Contains("integer", StringComparison.OrdinalIgnoreCase)
+            || specType.Contains("factor", StringComparison.OrdinalIgnoreCase)
+            || specType.Contains("ratio", StringComparison.OrdinalIgnoreCase)
+            || specType.Contains("unitless", StringComparison.OrdinalIgnoreCase)
+            || specType.Contains("fraction", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsScalarOrCoefficient(string? token)
+        {
+            if (string.IsNullOrEmpty(token)) return false;
+            return token.Contains("SCALE", StringComparison.OrdinalIgnoreCase)
+                || token.Contains("FACTOR", StringComparison.OrdinalIgnoreCase)
+                || token.Contains("RATIO", StringComparison.OrdinalIgnoreCase)
+                || token.Contains("COEFFICIENT", StringComparison.OrdinalIgnoreCase)
+                || token.Contains("PERCENT", StringComparison.OrdinalIgnoreCase)
+                || token.Contains("MULTIPLIER", StringComparison.OrdinalIgnoreCase);
         }
     }
 }
