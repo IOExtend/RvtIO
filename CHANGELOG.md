@@ -41,6 +41,8 @@ A stair detail (1:20) prints the stair in its enclosure (the whole cut, not the 
 
 A sheet places a view the file puts off the page (a stair section stored at x = 0, a detail outside the sheet) in the free space of the sheet, draws a view larger than its place at a scale that fits, and keeps every drawing inside the page; a stair section prints whole like a building section, not as a windowed detail. The site beyond a quarter of the building's breadth is dropped from the faded background, so a far tree does not shrink the building. Measured on the Revit sample project: A105 shows its Stair Section (cut) above the East elevation.
 
+The entourage (cars, people, the wind turbines of the site) is part of the faded background, not of the building: it no longer stretches the frame of an elevation. An elevation or a building section keeps to the third of the page its place holds, so the two views of A104 no longer merge into one band, and a detail viewport the file puts against the border is skipped. Measured on the Revit sample project: A104 shows the West elevation above the Building Section, both in their faded site.
+
 An elevation prints the site as its faded background: the plants, topography and site surfaces are projected as light shapes without outlines behind the building (faces of at least 0.5 m2, so the ground mesh does not bury the drawing), the way the reference export fades them. On the sample, A103's South elevation and Longitudinal Section now stand in their trees and ground.
 
 A section fills its faces grey, so the cut mass reads as a section instead of the white of an elevation (the elevation keeps its white faces). Measured on the Revit sample project: the Longitudinal Section of A103 reads as a cut.

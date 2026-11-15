@@ -149,7 +149,7 @@ public static class ElevationPrinter
         foreach (var element in document.Elements)
         {
             if (element.CategoryId is (int)BuiltInCategory.OST_Planting or (int)BuiltInCategory.OST_Topography
-                or (int)BuiltInCategory.OST_Site)
+                or (int)BuiltInCategory.OST_Site or (int)BuiltInCategory.OST_Entourage)
             {
                 if (element.Geometry is { Faces.Count: > 0 } siteGeometry)
                 {
@@ -204,8 +204,8 @@ public static class ElevationPrinter
                         corner[0] * V[0] + corner[1] * V[1] + corner[2] * V[2]));
                 if (window is { } detail && cut && planeOrigin.Length == 3)
                 {
-                    // A detail section shows the part of the cut near the point of its plane, the way a wall or roof
-                    // detail stands around the cut: the polygon is clipped to that window.
+                    // A detail section shows the part of the cut around the point of its plane, at the height its kind
+                    // stands at (a roof detail high, a foundation detail low).
                     double cx = planeOrigin[0] * H[0] + planeOrigin[1] * H[1] + planeOrigin[2] * H[2];
                     double cy = planeOrigin[0] * V[0] + planeOrigin[1] * V[1] + planeOrigin[2] * V[2];
                     points = ClipToWindow(points, cx - detail.Width / 2, cx + detail.Width / 2,
@@ -246,7 +246,7 @@ public static class ElevationPrinter
         {
             double breadth = maxX - minX, heightExtent = maxY - minY;
             double keepLeft = minX - breadth * 0.25, keepRight = maxX + breadth * 0.25;
-            double keepBottom = minY - heightExtent * 0.15, keepTop = maxY + heightExtent * 0.15;
+            double keepBottom = minY - heightExtent * 0.08, keepTop = maxY + heightExtent * 0.08;
             context.RemoveAll(shape => shape.Points.Any(point => point.X < keepLeft || point.X > keepRight
                 || point.Y < keepBottom || point.Y > keepTop));
             minX -= breadth * 0.02;
@@ -295,6 +295,13 @@ public static class ElevationPrinter
         grids.Sort((left, right) => left.X.CompareTo(right.X));
         if (grids.Count > 0) maxY += 4500;
         context.Sort((left, right) => right.Depth.CompareTo(left.Depth));
+        // A detail window carries no level lines or grid bubbles: it is a detail of the construction, not a drawing of
+        // the levels.
+        if (window != null)
+        {
+            distinctLevels.Clear();
+            grids.Clear();
+        }
         return new ElevationContent(faces, distinctLevels, grids, context, minX, minY, maxX, maxY);
     }
 

@@ -152,6 +152,7 @@ public static class SheetComposer
         // The drawings already put on the page: two sections the file places on top of each other are separated.
         var placedRects = new List<(double X, double Y, double Width, double Height)>();
 
+
         foreach (var element in document.Elements)
         {
             if (element.OwnerViewId != sheet.Id) continue;
@@ -303,9 +304,9 @@ public static class SheetComposer
                 double stripLeft = page.WidthMillimetres - 5
                     - Math.Min(180, page.WidthMillimetres * 0.22) - 3;
                 (double Width, double Height)? detailWindow = detailSection ? (3000, 2200) : null;
-                bool detailOnPage = !detailSection || (centerX > 10 && centerX < stripLeft - 10
-                    && centerY > 10 && centerY < page.HeightMillimetres - 15);
-
+                // A detail whose viewport the file puts against the border or outside the page is not printed.
+                bool detailOnPage = !detailSection || (centerX > 40 && centerX < stripLeft - 40
+                    && centerY > 40 && centerY < page.HeightMillimetres - 40);
                 var elevation = detailOnPage
                     ? ElevationPrinter.Collect(document, direction, stairsOnly, viewElement, detailWindow)
                     : null;
@@ -320,11 +321,16 @@ public static class SheetComposer
                     // space of the sheet.
                     double drawableWidth = Math.Max(60, stripLeft - 20);
                     double drawableHeight = Math.Max(60, page.HeightMillimetres - 30);
-                    // A stair detail (1:20) takes the right part of the sheet, not the whole drawing area.
+                    // A stair detail (1:20) takes the right part of the sheet, not the whole drawing area; any other
+                    // elevation or section keeps to the third of the page its place holds, so two of them never merge.
                     if (stairSection && scale < 50)
                     {
                         drawableWidth = Math.Min(drawableWidth, stripLeft * 0.55);
                         drawableHeight = Math.Min(drawableHeight, page.HeightMillimetres * 0.6);
+                    }
+                    else
+                    {
+                        drawableHeight = Math.Min(drawableHeight, page.HeightMillimetres * 0.30);
                     }
                     if (frameWidth > drawableWidth || frameHeight > drawableHeight)
                     {
