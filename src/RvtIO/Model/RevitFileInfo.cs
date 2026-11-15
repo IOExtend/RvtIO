@@ -62,6 +62,12 @@ namespace RvtIO.Model
         [System.Text.Json.Serialization.JsonIgnore]
         internal int[]? SerializedProjectPhaseIds { get; set; }
 
+        [System.Text.Json.Serialization.JsonIgnore]
+        internal bool SerializedHasZeroProjectPhase { get; set; }
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        internal bool SerializedHasZeroDimensionStyle { get; set; }
+
         /// <summary>DocumentHistory.m_detachGUID of Global/History: the document GUID that
         /// is combined with project-level ids and level ids to form export ids.</summary>
         [System.Text.Json.Serialization.JsonIgnore]

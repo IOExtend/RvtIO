@@ -190,7 +190,7 @@ internal static partial class Program
             exporter.Export(ifcModel, ifcPath);
             Console.Error.WriteLine($"Timing: export {swExport.Elapsed.TotalSeconds:F1}s");
             Console.Error.WriteLine($"IFC written to {ifcPath}");
-            report.SetExport("ifc", exporter.ExportedProducts, skipLog);
+            report.SetExport("ifc", exporter.ExportedProducts, skipLog, exporter.ExportedElementQualities);
         }
 
         if (compactJsonPath != null)
