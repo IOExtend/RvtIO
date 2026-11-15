@@ -58,6 +58,8 @@ public static class ElevationPrinter
     /// faces that get an outline.</summary>
     internal sealed record ElevationContent(
         List<(List<(double X, double Y)> Points, double Depth, bool Outline)> Faces,
+        List<(double Y, string Label)> Levels,
+        List<(double X, string Name)> Grids,
         double MinX, double MinY, double MaxX, double MaxY);
 
     /// <summary>Projects the model geometry on the vertical plane of a direction. Null when the model has no face.</summary>
@@ -105,11 +107,37 @@ public static class ElevationPrinter
         if (faces.Count == 0) return null;
         // Far to near: painter's algorithm, so a nearer wall hides the one behind it.
         faces.Sort((left, right) => right.Depth.CompareTo(left.Depth));
-        return new ElevationContent(faces, minX, minY, maxX, maxY);
+
+        // The levels of the model and the grids that stand across the view are drawn dashed, as an elevation prints
+        // them, with the level name and the grid bubble.
+        var levels = new List<(double Y, string Label)>();
+        foreach (var element in document.Elements)
+        {
+            if (element.CategoryId != (int)BuiltInCategory.OST_Levels) continue;
+            if (element.LookupParameter(BuiltInParameter.LEVEL_ELEV)?.Value is not double elevation) continue;
+            levels.Add((elevation * FeetToMillimetres, element.Name ?? ""));
+        }
+        levels.Sort((left, right) => left.Y.CompareTo(right.Y));
+        var grids = new List<(double X, string Name)>();
+        foreach (var element in document.Elements)
+        {
+            if (element.CategoryId != (int)BuiltInCategory.OST_Grids) continue;
+            if (element.Location is not { CurveType: "Line" } line) continue;
+            double dx = line.EndPoint[0] - line.StartPoint[0], dy = line.EndPoint[1] - line.StartPoint[1];
+            double length = Math.Sqrt(dx * dx + dy * dy);
+            if (length < 1e-9) continue;
+            if (Math.Abs(dx / length * H[0] + dy / length * H[1]) > 0.2) continue;
+            double x = (line.StartPoint[0] * H[0] + line.StartPoint[1] * H[1]) * FeetToMillimetres;
+            grids.Add((x, element.Name ?? ""));
+        }
+        grids.Sort((left, right) => left.X.CompareTo(right.X));
+        if (grids.Count > 0) maxY += 4500;
+        return new ElevationContent(faces, levels, grids, minX, minY, maxX, maxY);
     }
 
     /// <summary>Draws the projected elevation with (MinX, MinY) at (originX, originY), one model unit per 1/scale.</summary>
-    internal static void DrawContent(PdfPage page, ElevationContent content, double scale, double originX, double originY)
+    internal static void DrawContent(PdfPage page, ElevationContent content, double scale, double originX,
+        double originY)
     {
         double ToX(double x) => (x - content.MinX) / scale + originX;
         double ToY(double y) => (y - content.MinY) / scale + originY;
@@ -117,6 +145,40 @@ public static class ElevationPrinter
         {
             var pagePoints = points.Select(point => (ToX(point.X), ToY(point.Y))).ToList();
             page.DrawPolyline(pagePoints, outline ? 0.2 : 0, true, 1);
+        }
+
+        // Grids first, then the levels: both dashed and light, over the faces the way an elevation prints them.
+        if (content.Grids.Count > 0)
+        {
+            page.SetDash(2, 1.5);
+            double top = ToY(content.MaxY) - 8;
+            foreach (var (x, name) in content.Grids)
+            {
+                double pageX = ToX(x);
+                page.DrawLine(pageX, ToY(content.MinY), pageX, top, 0.18, 0.55);
+                var circle = new List<(double X, double Y)>(24);
+                for (int i = 0; i < 24; i++)
+                {
+                    double angle = i * Math.PI * 2 / 24;
+                    circle.Add((pageX + 3.5 * Math.Cos(angle), top + 3.5 + 3.5 * Math.Sin(angle)));
+                }
+                page.DrawPolyline(circle, 0.18, true, 1);
+                if (name.Length > 0) page.DrawText(name, pageX, top + 2.4, 2.8, PdfTextAlignment.Center);
+            }
+            page.ResetDash();
+        }
+        if (content.Levels.Count > 0)
+        {
+            page.SetDash(4, 1.5);
+            foreach (var (y, label) in content.Levels)
+            {
+                double pageY = ToY(y);
+                if (pageY < ToY(content.MinY) - 1 || pageY > ToY(content.MaxY) + 1) continue;
+                page.DrawLine(ToX(content.MinX), pageY, ToX(content.MaxX), pageY, 0.15, 0.55);
+                if (label.Length > 0)
+                    page.DrawText(label, ToX(content.MinX) + 1, pageY + 1, 2.5, PdfTextAlignment.Left, 0.35);
+            }
+            page.ResetDash();
         }
     }
 }

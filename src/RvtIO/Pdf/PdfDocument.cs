@@ -199,6 +199,16 @@ public sealed class PdfPage
     /// <summary>Ends the clipping region started by <see cref="BeginClip"/>.</summary>
     public void EndClip() => _content.Append("Q\n");
 
+    /// <summary>Sets the dash pattern of the following strokes, in millimetres.</summary>
+    /// <param name="dashMillimetres">Length of a dash.</param>
+    /// <param name="gapMillimetres">Length of the gap after it.</param>
+    public void SetDash(double dashMillimetres, double gapMillimetres) =>
+        _content.Append('[').Append(Number(Points(dashMillimetres))).Append(' ')
+            .Append(Number(Points(gapMillimetres))).Append("] 0 d\n");
+
+    /// <summary>Clears the dash pattern.</summary>
+    public void ResetDash() => _content.Append("[] 0 d\n");
+
     /// <summary>Draws an optionally filled rectangle.</summary>
     /// <param name="x">Left x in millimetres.</param>
     /// <param name="y">Bottom y in millimetres.</param>
