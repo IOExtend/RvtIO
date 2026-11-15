@@ -449,10 +449,13 @@ public static class PlanPrinter
             {
                 double ax = wall.X1 + ux * from, ay = wall.Y1 + uy * from;
                 double bx = wall.X1 + ux * to, by = wall.Y1 + uy * to;
-                page.DrawLine(ToX(ax + nx), ToY(ay + ny), ToX(bx + nx), ToY(by + ny), 0.2);
-                page.DrawLine(ToX(ax - nx), ToY(ay - ny), ToX(bx - nx), ToY(by - ny), 0.2);
-                page.DrawLine(ToX(ax + nx), ToY(ay + ny), ToX(ax - nx), ToY(ay - ny), 0.2);
-                page.DrawLine(ToX(bx + nx), ToY(by + ny), ToX(bx - nx), ToY(by - ny), 0.2);
+                // The wall is poche: the stretch between its two sides is filled, the way a printed plan fills a cut
+                // wall, and the four edges are inked over it.
+                page.DrawPolyline(
+                [
+                    (ToX(ax + nx), ToY(ay + ny)), (ToX(bx + nx), ToY(by + ny)),
+                    (ToX(bx - nx), ToY(by - ny)), (ToX(ax - nx), ToY(ay - ny)),
+                ], 0.2, true, new PdfColor(0.72, 0.72, 0.72));
             }
         }
 

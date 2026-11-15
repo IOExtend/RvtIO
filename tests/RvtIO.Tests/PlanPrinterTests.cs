@@ -183,8 +183,10 @@ public class PlanPrinterTests
         PdfDocument pdf = PlanPrinter.Render(document, levelId: 1);
         string content = Content(pdf);
 
-        // 10 m long, 1 ft = 304.8 mm wide: two sides 304.8 mm apart and two end caps.
-        Assert.Equal(4, Count(content, " l S"));
+        // 10 m long, 1 ft = 304.8 mm wide: the stretch between the two sides is poche, filled and inked as one
+        // polygon.
+        Assert.Equal(1, Count(content, " h B"));
+        Assert.Contains("0.72 0.72 0.72 rg", content);
     }
 
     [Fact]
@@ -213,9 +215,10 @@ public class PlanPrinterTests
         PdfDocument pdf = PlanPrinter.Render(document, levelId: 1);
         string content = Content(pdf);
 
-        // The 10 m wall is cut into two stretches of 4 m and 5 m, each with two sides and two caps: eight lines where an
-        // uncut wall draws four. The door adds its leaf (a line) and the quarter arc it sweeps (a cubic curve).
-        Assert.Equal(9, Count(content, " l S"));
+        // The 10 m wall is cut into two poche stretches of 4 m and 5 m; the door adds its leaf (a line) and the quarter
+        // arc it sweeps (a cubic curve).
+        Assert.Equal(2, Count(content, " h B"));
+        Assert.Equal(1, Count(content, " l S"));
         Assert.Contains(" c ", content);
     }
 
@@ -240,9 +243,10 @@ public class PlanPrinterTests
         PdfDocument pdf = PlanPrinter.Render(document, levelId: 1);
         string content = Content(pdf);
 
-        // The grid is drawn (one more line), clipped to the level's extent; the page stays the one the wall alone
-        // would choose and does not grow to the kilometres the raw grid line spans.
-        Assert.Equal(5, Count(content, " l S"));
+        // The grid is drawn (one line), clipped to the level's extent; the page stays the one the wall alone would
+        // choose and does not grow to the kilometres the raw grid line spans.
+        Assert.Equal(1, Count(content, " l S"));
+        Assert.Equal(1, Count(content, " h B"));
         Assert.Equal(PdfPageSize.A4.Landscape, pdf.Pages[0].Size);
     }
 

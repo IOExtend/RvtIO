@@ -34,6 +34,8 @@ The stairs and railings of a level are outlined with the furniture (their horizo
 
 A plan draws the furniture too: the horizontal faces of the furniture, casework, plumbing fixtures and specialty equipment of the level are projected to the plan and outlined in light grey, duplicate outlines (a top and an underside) kept once. Measured on the Revit sample project: A102 shows the sofa, chairs, tables and kitchen counters of Level 1 and the beds and bathroom fittings of Level 2.
 
+A wall is poche: the stretch between its two sides is filled grey under the outline, the way a printed plan fills a cut wall, instead of two thin lines.
+
 A door is drawn as its leaf and the quarter arc it sweeps: the leaf stands at one jamb, perpendicular to the wall, on the side of the building the door opens into (the side of the level centre), and the arc joins it to the other jamb.
 
 A plan also prints its dimension chains: between neighbouring grid lines a horizontal chain above the building and a vertical chain to its right, each with a tick and the distance in millimetres (rotated for the vertical chain), and a room legend below the plan with a colour swatch and the name of every kind of room. The PDF page gained rotated text for the vertical chain.
