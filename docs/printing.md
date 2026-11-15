@@ -104,7 +104,9 @@ stays empty.
 | Columns | the stored bounding box footprint, as a filled rectangle |
 | Grids | the stored location lines, clipped to the extent of the level (a grid line can run far beyond the building), with a white bubble and the grid name at both ends |
 | Floors | the sketch loops of the floors of the level, light under the walls |
-| Rooms | the floor face of the room's decoded boundary, filled light and labelled with the room name and its area in m² |
+| Rooms | the floor face of the room's decoded boundary, filled with a colour by the room name and labelled with the name and its area in m² |
+| Dimensions | a chain between neighbouring grid lines above and to the right of the building, with the distance in millimetres |
+| Room legend | below the plan: a colour swatch and the name of every kind of room on it |
 
 The page is white with a frame at the margin, and the drawing is centred. The title (the level name and the scale) is
 written with an embedded TrueType font found on the machine (Arial, Segoe UI or Tahoma on Windows, DejaVu Sans on Linux,

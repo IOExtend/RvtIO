@@ -118,6 +118,18 @@ public class PdfWriterTests
     }
 
     [Fact]
+    public void RotatedText_WritesATextMatrix()
+    {
+        var document = new PdfDocument();
+        document.AddPage(PdfPageSize.A4).DrawTextRotated("3000", 100, 50, 3, 90);
+
+        string pdf = Write(document);
+
+        Assert.Contains(" Tm ", pdf);
+        Assert.Contains("0 1 -1 0", pdf);
+    }
+
+    [Fact]
     public void Text_RejectsCharactersOutsideTheStandardFont()
     {
         var document = new PdfDocument();

@@ -318,6 +318,67 @@ public sealed class PdfPage
     /// <summary>Millimetres to the PDF user space unit (1/72 inch), which the page box and the content share.</summary>
     private static double Points(double millimetres) => millimetres * 72.0 / 25.4;
 
+    /// <summary>Draws one line of text rotated about its anchor. With <see cref="PdfDocument.Font"/> set the text uses
+    /// the embedded font; without it the standard Helvetica font is used and the text must be printable ASCII.</summary>
+    /// <param name="text">The text.</param>
+    /// <param name="x">Anchor x in millimetres.</param>
+    /// <param name="y">Baseline y in millimetres.</param>
+    /// <param name="heightMillimetres">Font size in millimetres.</param>
+    /// <param name="degrees">Rotation, counter-clockwise from the horizontal.</param>
+    /// <param name="alignment">Where the anchor sits along the line.</param>
+    /// <param name="gray">Ink from 0 (black) to 1 (white).</param>
+    public void DrawTextRotated(string text, double x, double y, double heightMillimetres, double degrees,
+        PdfTextAlignment alignment = PdfTextAlignment.Left, double gray = 0)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(heightMillimetres);
+        double fontPoints = heightMillimetres * 72.0 / 25.4;
+        Fill(gray);
+        double angle = degrees * Math.PI / 180;
+        double cos = Math.Cos(angle), sin = Math.Sin(angle);
+        string encoded;
+        double width = 0;
+        if (_document.Font is { } font)
+        {
+            var builder = new StringBuilder(text.Length * 4);
+            foreach (char character in text)
+            {
+                int glyph = font.GlyphOf(character);
+                _document.UsedCharacters.Add(character);
+                width += font.AdvanceOf(glyph) / (double)font.UnitsPerEm * heightMillimetres;
+                builder.Append(glyph.ToString("X4", CultureInfo.InvariantCulture));
+            }
+            encoded = builder.ToString();
+        }
+        else
+        {
+            foreach (char character in text)
+                if (character < ' ' || character > '~')
+                    throw new ArgumentException(
+                        $"The standard PDF font holds printable ASCII only; '{character}' needs an embedded font.",
+                        nameof(text));
+            width = text.Length * heightMillimetres * 0.5;
+            encoded = string.Concat(text.Select(character => ((int)character).ToString("X4")));
+            // The standard font is not a CID font: rotate it with a text matrix and a plain string.
+        }
+        double anchor = alignment switch
+        {
+            PdfTextAlignment.Center => -width / 2,
+            PdfTextAlignment.Right => -width,
+            _ => 0,
+        };
+        // The text matrix places the glyphs along the rotated x axis; the anchor is applied along that axis.
+        double tx = x + cos * anchor, ty = y + sin * anchor;
+        _content.Append("BT /").Append(_document.Font != null ? "F2" : "F1").Append(' ')
+            .Append(Number(fontPoints)).Append(" Tf ")
+            .Append(Number(cos)).Append(' ').Append(Number(sin)).Append(' ')
+            .Append(Number(-sin)).Append(' ').Append(Number(cos)).Append(' ')
+            .Append(Number(Points(tx))).Append(' ').Append(Number(Points(ty))).Append(" Tm ");
+        if (_document.Font != null) _content.Append('<').Append(encoded).Append("> Tj ET\n");
+        else _content.Append('(').Append(text.Replace("\\", "\\\\").Replace("(", "\\(").Replace(")", "\\)"))
+            .Append(") Tj ET\n");
+    }
+
     private void Stroke(double widthMillimetres, double gray)
     {
         if (widthMillimetres > 0)

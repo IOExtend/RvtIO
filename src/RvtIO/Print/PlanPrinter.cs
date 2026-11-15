@@ -356,6 +356,11 @@ public static class PlanPrinter
                 grids.Add((gx1, gy1, gx2, gy2, element.Name ?? ""));
         }
 
+        // Room for the dimension chains and the grid bubbles around the building: the crop of a printed plan holds
+        // them, so the page (or the viewport frame) is a little larger than the walls.
+        const double annotation = 1000;
+        minX -= annotation; minY -= annotation; maxX += annotation; maxY += annotation;
+
         return new PlanContent(walls, columns, grids, gaps, windowGaps, floorLoops, openingLoops, rooms, minX, minY,
             maxX, maxY);
     }
@@ -432,6 +437,8 @@ public static class PlanPrinter
             }
         }
 
+        DimChains(page, content, ToX, ToY);
+
         foreach (var opening in content.OpeningLoops)
             page.DrawPolyline(opening.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0.18, true);
 
@@ -494,6 +501,79 @@ public static class PlanPrinter
         }
         page.DrawPolyline(points, 0.18, true, 1);
         page.DrawText(name, x, y - 1.4, 3, PdfTextAlignment.Center);
+    }
+
+    /// <summary>Draws the dimension chains between the grid lines: a horizontal chain across the top of the plan and a
+    /// vertical chain down its right side, each between neighbouring grids with the distance in millimetres.</summary>
+    private static void DimChains(PdfPage page, PlanContent content, Func<double, double> toX,
+        Func<double, double> toY)
+    {
+        if (page.Owner.Font == null) return;
+        var xs = new List<double>();
+        var ys = new List<double>();
+        foreach (var grid in content.Grids)
+        {
+            double dx = grid.X2 - grid.X1, dy = grid.Y2 - grid.Y1;
+            if (Math.Abs(dx) < Math.Abs(dy)) xs.Add((grid.X1 + grid.X2) / 2);
+            else ys.Add((grid.Y1 + grid.Y2) / 2);
+        }
+        static List<double> Dedupe(List<double> values)
+        {
+            values.Sort();
+            var result = new List<double>();
+            foreach (double value in values)
+                if (result.Count == 0 || Math.Abs(value - result[^1]) > 1) result.Add(value);
+            return result;
+        }
+        xs = Dedupe(xs);
+        ys = Dedupe(ys);
+
+        // The chains stand just outside the building itself, not at the edge of the annotation margin.
+        double wallMinX = double.MaxValue, wallMinY = double.MaxValue;
+        double wallMaxX = double.MinValue, wallMaxY = double.MinValue;
+        foreach (var wall in content.Walls)
+        {
+            wallMinX = Math.Min(wallMinX, Math.Min(wall.X1, wall.X2));
+            wallMaxX = Math.Max(wallMaxX, Math.Max(wall.X1, wall.X2));
+            wallMinY = Math.Min(wallMinY, Math.Min(wall.Y1, wall.Y2));
+            wallMaxY = Math.Max(wallMaxY, Math.Max(wall.Y1, wall.Y2));
+        }
+        foreach (var column in content.Columns)
+        {
+            wallMinX = Math.Min(wallMinX, column.X);
+            wallMaxX = Math.Max(wallMaxX, column.X + column.Width);
+            wallMinY = Math.Min(wallMinY, column.Y);
+            wallMaxY = Math.Max(wallMaxY, column.Y + column.Height);
+        }
+        if (wallMinX > wallMaxX) return;
+        double top = toY(wallMaxY + 550);
+        if (xs.Count >= 2)
+        {
+            page.DrawLine(toX(xs[0]), top, toX(xs[^1]), top, 0.15, 0.3);
+            for (int i = 0; i < xs.Count; i++)
+            {
+                double x = toX(xs[i]);
+                page.DrawLine(x - 1.5, top - 1.5, x + 1.5, top + 1.5, 0.15, 0.3);
+                if (i == 0) continue;
+                double millimetres = xs[i] - xs[i - 1];
+                page.DrawText($"{millimetres:0}", (x + toX(xs[i - 1])) / 2, top + 1.2, 2.2,
+                    PdfTextAlignment.Center, 0.25);
+            }
+        }
+        double right = toX(wallMaxX + 550);
+        if (ys.Count >= 2)
+        {
+            page.DrawLine(right, toY(ys[0]), right, toY(ys[^1]), 0.15, 0.3);
+            for (int i = 0; i < ys.Count; i++)
+            {
+                double y = toY(ys[i]);
+                page.DrawLine(right - 1.5, y - 1.5, right + 1.5, y + 1.5, 0.15, 0.3);
+                if (i == 0) continue;
+                double millimetres = ys[i] - ys[i - 1];
+                page.DrawTextRotated($"{millimetres:0}", right - 1.2, (y + toY(ys[i - 1])) / 2, 2.2, 90,
+                    PdfTextAlignment.Center, 0.25);
+            }
+        }
     }
 
     /// <summary>A light colour for a room by its name: a bath is blue, a bedroom cyan, a living room green, a kitchen

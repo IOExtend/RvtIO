@@ -15,6 +15,10 @@ public sealed class SheetComposeOptions
     /// <summary>True (the default) writes the name and scale of every placed view under its frame.</summary>
     public bool DrawViewLabels { get; set; } = true;
 
+    /// <summary>True (the default) writes the room legend of a plan under its frame: a colour swatch and the room name
+    /// for every kind of room on the plan.</summary>
+    public bool DrawRoomLegend { get; set; } = true;
+
     /// <summary>The margin around a view frame that its content may still be drawn in, in millimetres.</summary>
     public double ViewMarginMillimetres { get; set; } = 3;
 
@@ -179,6 +183,9 @@ public static class SheetComposer
                     page2.BeginClip(frameX - m, frameY - m, frameWidth + 2 * m, frameHeight + 2 * m);
                     PlanPrinter.DrawContent(page2, content, viewScale, frameX, frameY);
                     page2.EndClip();
+                    if (options.DrawRoomLegend && pdf.Font != null && content.Rooms.Count > 0)
+                        DrawRoomLegend(page2, content.Rooms.Select(room => room.Name), Math.Max(frameX, 8),
+                            frameY - 16);
                 }
             }
             else if (placed && ElevationPrinter.DirectionOf(name) is string direction)
@@ -217,6 +224,29 @@ public static class SheetComposer
             string[] lines = text.Split('\n');
             for (int line = 0; line < lines.Length; line++)
                 page2.DrawText(lines[line], x, y - line * height * 1.25, height);
+        }
+    }
+
+    /// <summary>Writes the room legend: a title and one row per kind of room, a colour swatch and the name. The rows
+    /// start at (x, y) and go down.</summary>
+    private static void DrawRoomLegend(PdfPage page, IEnumerable<string> names, double x, double y)
+    {
+        var seen = new List<string>();
+        foreach (string name in names)
+        {
+            if (name.Length == 0) continue;
+            if (!seen.Any(existing => string.Equals(existing, name, StringComparison.OrdinalIgnoreCase)))
+                seen.Add(name);
+        }
+        if (seen.Count == 0) return;
+        page.DrawText("Room Legend", x, y, 3.5);
+        double row = y - 6;
+        foreach (string name in seen)
+        {
+            page.DrawPolyline([(x, row), (x + 4, row), (x + 4, row + 4), (x, row + 4)], 0.15, true,
+                PlanPrinter.RoomFill(name));
+            page.DrawText(name, x + 6, row + 0.8, 2.8);
+            row -= 5.5;
         }
     }
 
