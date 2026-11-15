@@ -18,6 +18,8 @@ Elevations print: `RvtIO.Print.ElevationPrinter` projects every planar face of t
 
 A room is tagged the way a plan tags it: the room number in a white circle at the centre of the footprint, the room name and its area in m2 beside it.
 
+A site plan carries a planting schedule under the plan: one row per kind of plant with its count (Honey Locust, Hawthorn, Lombardy Poplar, Red Maple, Red Ash, Scarlet Oak on the sample).
+
 A site view prints as a site plan: the topography as a light green wash with its outer edge inked (the edges shared by two mesh triangles are dropped), the planting as a circle with four spokes at its position and size, and the building footprint as the walls of the level with most walls. Measured on the Revit sample project: A101 is no longer empty.
 
 The stairs and railings of a level are outlined with the furniture (their horizontal tread and handrail faces), so a plan shows the stair runs and the railing lines.

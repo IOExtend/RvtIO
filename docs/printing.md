@@ -53,6 +53,8 @@ light green wash with its outer edge inked (the edges shared by two mesh triangl
 circle with four spokes at its position and size, and the walls of the level with most walls stand on the same plan as
 the building footprint.
 
+A planting schedule under the plan lists every kind of plant with its count.
+
 ## Printing an elevation
 
 `rvtio print project.rvt elevations.pdf --view South` prints an elevation from the 3D geometry: every planar face of the

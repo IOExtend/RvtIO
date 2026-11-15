@@ -227,6 +227,7 @@ public static class SheetComposer
                             (sitePlan.MinY - site.MinY) / scale + frameY);
                     }
                     page2.EndClip();
+                    if (pdf.Font != null) DrawPlantingSchedule(page2, document, Math.Max(frameX, 8), frameY - 6);
                 }
             }
             else if (placed && ElevationPrinter.DirectionOf(name) is string direction)
@@ -265,6 +266,31 @@ public static class SheetComposer
             string[] lines = text.Split('\n');
             for (int line = 0; line < lines.Length; line++)
                 page2.DrawText(lines[line], x, y - line * height * 1.25, height);
+        }
+    }
+
+    /// <summary>Writes the planting schedule of the site: one row per kind of plant with its count, under the plan.
+    /// </summary>
+    private static void DrawPlantingSchedule(PdfPage page, RvtDocument document, double x, double y)
+    {
+        var groups = new SortedDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var element in document.Elements)
+        {
+            if (element.CategoryId != (int)BuiltInCategory.OST_Planting) continue;
+            string name = element.Name ?? "";
+            if (name.Length == 0) continue;
+            groups[name] = groups.TryGetValue(name, out int count) ? count + 1 : 1;
+        }
+        if (groups.Count == 0) return;
+        page.DrawText("Planting Schedule", x, y, 3.5);
+        page.DrawText("Type", x, y - 5, 2.4, PdfTextAlignment.Left, 0.4);
+        page.DrawText("Count", x + 40, y - 5, 2.4, PdfTextAlignment.Right, 0.4);
+        double row = y - 9;
+        foreach (var (name, count) in groups)
+        {
+            page.DrawText(name, x, row, 2.4);
+            page.DrawText(count.ToString(), x + 40, row, 2.4, PdfTextAlignment.Right);
+            row -= 4.5;
         }
     }
 
