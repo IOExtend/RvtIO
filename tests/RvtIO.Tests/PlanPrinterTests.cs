@@ -59,15 +59,28 @@ public class PlanPrinterTests
                 },
             ],
         };
+        var stair = new Element { Id = 801, Name = "Stair", CategoryId = (int)BuiltInCategory.OST_Stairs };
+        Add(stair, BuiltInParameter.LEVEL_PARAM, StorageType.ElementId, 500);
+        stair.Geometry = new GeometryData
+        {
+            Faces =
+            [
+                new GeoFace
+                {
+                    Normal = [0, 0, 1],
+                    OuterVertices = [[3, 0, 1], [4, 0, 1], [4, 1, 1], [3, 1, 1]],
+                },
+            ],
+        };
         var document = RvtDocument.FromInfo(new RevitFileInfo
         {
-            Elements = { Level(500, "Level 1", 0), Wall(600, 500, 0, 0, 10, 0), table },
+            Elements = { Level(500, "Level 1", 0), Wall(600, 500, 0, 0, 10, 0), table, stair },
         });
 
         var content = PlanPrinter.CollectLevel(document, 500);
 
         Assert.NotNull(content);
-        Assert.Single(content!.Furniture);
+        Assert.Equal(2, content!.Furniture.Count);
     }
 
     private static double Area(List<(double X, double Y)> points)

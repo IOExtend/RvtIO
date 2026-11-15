@@ -18,6 +18,8 @@ Elevations print: `RvtIO.Print.ElevationPrinter` projects every planar face of t
 
 A room is tagged the way a plan tags it: the room number in a white circle at the centre of the footprint, the room name and its area in m2 beside it.
 
+The stairs and railings of a level are outlined with the furniture (their horizontal tread and handrail faces), so a plan shows the stair runs and the railing lines.
+
 A plan draws the furniture too: the horizontal faces of the furniture, casework, plumbing fixtures and specialty equipment of the level are projected to the plan and outlined in light grey, duplicate outlines (a top and an underside) kept once. Measured on the Revit sample project: A102 shows the sofa, chairs, tables and kitchen counters of Level 1 and the beds and bathroom fittings of Level 2.
 
 A door is drawn as its leaf and the quarter arc it sweeps: the leaf stands at one jamb, perpendicular to the wall, on the side of the building the door opens into (the side of the level centre), and the arc joins it to the other jamb.

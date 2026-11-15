@@ -368,7 +368,8 @@ public static class PlanPrinter
         foreach (var element in document.Elements)
         {
             if (element.CategoryId is not ((int)BuiltInCategory.OST_Furniture or (int)BuiltInCategory.OST_Casework
-                or (int)BuiltInCategory.OST_PlumbingFixtures or (int)BuiltInCategory.OST_SpecialityEquipment))
+                or (int)BuiltInCategory.OST_PlumbingFixtures or (int)BuiltInCategory.OST_SpecialityEquipment
+                or (int)BuiltInCategory.OST_Stairs or (int)BuiltInCategory.OST_StairsRailing))
                 continue;
             if (LevelOf(element) != levelId || element.Geometry is not { Faces.Count: > 0 } geometry) continue;
             foreach (var face in geometry.Faces)
