@@ -108,7 +108,10 @@ public static class PlanPrinter
             {
                 if (string.Equals(level.Name, name, StringComparison.OrdinalIgnoreCase)) { levelId = level.LevelId; break; }
             }
-            if (levelId == null && element.LookupParameter(BuiltInParameter.LEVEL_ELEV)?.Value is double elevation)
+            // The elevation fallback is for a level plan named differently from its level ("Level 1 - Plan"); a site
+            // view, a section or a 3D view shares the level elevation but is not the plan of that level.
+            if (levelId == null && name.Contains("level", StringComparison.OrdinalIgnoreCase)
+                && element.LookupParameter(BuiltInParameter.LEVEL_ELEV)?.Value is double elevation)
             {
                 foreach (var level in levels)
                 {
