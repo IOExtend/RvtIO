@@ -65,8 +65,11 @@ internal static class TitleBlockPrinter
         double projectHeight = Math.Min(40, height * 0.14);
         double projectTop = infoTop + projectHeight;
         page.DrawLine(left, projectTop, left + widthMillimetres, projectTop, 0.25);
-        if (project.Length > 0) page.DrawText(project, left + 3, infoTop + projectHeight - 9, 4);
-        else page.DrawText("Project", left + 3, infoTop + projectHeight - 9, 2.2, PdfTextAlignment.Left, 0.45);
+        string organization = document.ProjectInformation?.OrganizationName ?? "";
+        if (organization.Length > 0)
+            page.DrawText(organization, left + 3, projectTop - 5, 2.8, PdfTextAlignment.Left, 0.35);
+        if (project.Length > 0) page.DrawText(project, left + 3, infoTop + projectHeight - 12, 4.5);
+        else page.DrawText("Project", left + 3, infoTop + projectHeight - 12, 2.2, PdfTextAlignment.Left, 0.45);
         if (projectNumber.Length > 0) page.DrawText(projectNumber, left + 3, infoTop + 3, 3.5);
 
         // The revision table fills what is left between the consultant table and the project area.

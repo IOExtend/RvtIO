@@ -25,7 +25,50 @@ public class RvtDocument
     public string? SourcePath => _sourcePath;
 
     /// <summary>Project information (name, number, client, address, etc.).</summary>
-    public ProjectInfo ProjectInformation => _info.ProjectInfo;
+    public ProjectInfo ProjectInformation => _projectInfo ??= FillProjectInformation(_info.ProjectInfo);
+
+    private ProjectInfo? _projectInfo;
+
+    /// <summary>The project information the stream did not carry is read from the project information element, whose
+    /// parameters hold the same fields.</summary>
+    private ProjectInfo FillProjectInformation(ProjectInfo info)
+    {
+        if (info.Name is { Length: > 0 } && info.Number is { Length: > 0 }) return info;
+        foreach (var element in _info.Elements)
+        {
+            if (element.CategoryId != (int)BuiltInCategory.OST_ProjectInformation) continue;
+            info.Name = FirstNonEmpty(info.Name, ValueOf(element, BuiltInParameter.PROJECT_NAME));
+            info.Number = FirstNonEmpty(info.Number,
+                ValueOf(element, BuiltInParameter.PROJECT_NUMBER));
+            info.Client = FirstNonEmpty(info.Client, ValueOf(element, BuiltInParameter.CLIENT_NAME));
+            info.Address = FirstNonEmpty(info.Address,
+                ValueOf(element, BuiltInParameter.PROJECT_ADDRESS));
+            info.Status = FirstNonEmpty(info.Status, ValueOf(element, BuiltInParameter.PROJECT_STATUS));
+            info.IssueDate = FirstNonEmpty(info.IssueDate,
+                ValueOf(element, BuiltInParameter.PROJECT_ISSUE_DATE));
+            info.OrganizationName = FirstNonEmpty(info.OrganizationName,
+                ValueOf(element, BuiltInParameter.PROJECT_ORGANIZATION_NAME));
+            break;
+        }
+        return info;
+    }
+
+    /// <summary>The value of a parameter, found by the identifier of the built-in parameter whether the parameter
+    /// carries a definition or only its id.</summary>
+    private static string? ValueOf(Element element, BuiltInParameter parameter)
+    {
+        int id = (int)parameter;
+        foreach (var p in element.Parameters)
+        {
+            int parameterId = p.Definition?.Id is int definitionId && definitionId != 0 ? definitionId : p.Id;
+            if (parameterId != id) continue;
+            if (p.Value is string text && text.Length > 0) return text;
+        }
+        return null;
+    }
+
+    private static string? FirstNonEmpty(string? current, string? candidate) =>
+        current is { Length: > 0 } ? current : candidate is { Length: > 0 } ? candidate : current;
 
     /// <summary>Transmission data with external file references.</summary>
     public TransmissionInfo? TransmissionData => _info.TransmissionData;

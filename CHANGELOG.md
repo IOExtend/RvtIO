@@ -60,6 +60,8 @@ A rendering view prints its image: the JPEG Revit stores in the block of the ima
 
 The logo of the title block family is printed: the reader finds the PNG among the file's partition streams and decodes it (RGB, RGBA or palette, 8 bits per channel) to a raster, and the PDF writer embeds it (Flate, RGB) in the logo area of the strip, aspect preserved. New API: `PdfRasterImage` and `PdfPage.DrawImage`. Measured on the Revit sample project: the Autodesk logo appears on every sheet.
 
+The project information is read from the project information element when the project information stream does not carry it: RvtDocument.ProjectInformation now reports Name, Number, Client, Address, Status, Issue Date and Organization ("Sample House", "001-00", "Autodesk" on the sample), and the title block strip prints the organization, the project name and its number above the sheet information, as the reference export does.
+
 The title block strip now follows the reference layout: a logo area, a two-column consultant table (Consultant / Address / Phone / Fax / e-mail, empty fields), the revision table (No. / Description / Date), a project area and the sheet information rows.
 
 The title block strip notes the scale of the sheet (1:100 for A102, the most common scale of its placed views) beside its name, number, issue date, drawn-by and checked-by rows.
