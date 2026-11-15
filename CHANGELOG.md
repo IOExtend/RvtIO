@@ -30,6 +30,8 @@ A door carries its mark in a circle beside the opening and a window its type mar
 
 A door and a window carry their mark: the Mark parameter (103, 104, 202 ...) is written in a small circle beside the opening, on the side it opens into.
 
+A room is filled with the colour the reference plan uses for its kind (master bedroom blue violet, master bath magenta, bedroom cyan, linen teal, hall blue, entry hall yellow, living light green, kitchen tan, laundry brown, mech green, bath green), so the plans read like the reference export's.
+
 A room is tagged the way a plan tags it: the room number in a white circle at the centre of the footprint, the room name and its area in m2 beside it.
 
 The house stands dark on the site plan: the rooms of the level with most walls are filled grey under its walls, the way the reference export fills the building on A101.

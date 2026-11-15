@@ -707,25 +707,31 @@ public static class PlanPrinter
         }
     }
 
-    /// <summary>A light colour for a room by its name: a bath is blue, a bedroom cyan, a living room green, a kitchen
-    /// tan, a laundry brown, a hall yellow, a mechanical room the green of a plant room; anything else light grey.</summary>
+    /// <summary>The colour a plan fills a room with, by the name of the room, the way the reference fills it: a bath
+    /// green, a hall blue, a kitchen tan, a laundry brown, a living room light green, a mechanical room green, a master
+    /// bedroom blue violet, a master bath magenta, a bedroom cyan, an entry hall yellow, a linen teal; anything else light
+    /// grey.</summary>
     internal static PdfColor RoomFill(string name)
     {
         string lower = name.ToLowerInvariant();
         PdfColor color = lower switch
         {
-            _ when lower.Contains("master bath") => new PdfColor(0.86, 0.55, 0.86),
-            _ when lower.Contains("bath") => new PdfColor(0.55, 0.72, 0.9),
-            _ when lower.Contains("bedroom") => new PdfColor(0.6, 0.85, 0.9),
-            _ when lower.Contains("living") => new PdfColor(0.7, 0.85, 0.65),
-            _ when lower.Contains("kitchen") || lower.Contains("dining") => new PdfColor(0.85, 0.8, 0.6),
-            _ when lower.Contains("laundry") => new PdfColor(0.78, 0.62, 0.5),
-            _ when lower.Contains("hall") || lower.Contains("entry") => new PdfColor(0.95, 0.9, 0.55),
-            _ when lower.Contains("mech") || lower.Contains("plant") => new PdfColor(0.6, 0.8, 0.6),
+            _ when lower.Contains("master bath") => new PdfColor(0.75, 0.25, 0.7),
+            _ when lower.Contains("master bedroom") => new PdfColor(0.35, 0.35, 0.7),
+            _ when lower.Contains("entry") => new PdfColor(0.91, 0.86, 0.48),
+            _ when lower.Contains("hall") => new PdfColor(0.23, 0.43, 0.62),
+            _ when lower.Contains("bath") => new PdfColor(0.55, 0.65, 0.5),
+            _ when lower.Contains("bedroom") => new PdfColor(0.5, 0.78, 0.82),
+            _ when lower.Contains("linen") => new PdfColor(0.37, 0.66, 0.66),
+            _ when lower.Contains("living") => new PdfColor(0.75, 0.8, 0.55),
+            _ when lower.Contains("kitchen") || lower.Contains("dining") => new PdfColor(0.79, 0.75, 0.62),
+            _ when lower.Contains("laundry") => new PdfColor(0.55, 0.37, 0.29),
+            _ when lower.Contains("mech") || lower.Contains("plant") => new PdfColor(0.31, 0.56, 0.31),
+            _ when lower.Contains("deck") || lower.Contains("porch") => new PdfColor(0.85, 0.85, 0.8),
             _ when lower.Contains("garage") || lower.Contains("carport") => new PdfColor(0.8, 0.8, 0.8),
             _ => new PdfColor(0.92, 0.92, 0.92),
         };
-        return color.Lighten(0.35);
+        return color.Lighten(0.2);
     }
 
     /// <summary>The signed area of a polygon (shoelace); its magnitude is the area and its sign the winding.</summary>

@@ -139,7 +139,7 @@ stays empty.
 | Columns | the stored bounding box footprint, as a filled rectangle |
 | Grids | the stored location lines, clipped to the extent of the level (a grid line can run far beyond the building), with a white bubble and the grid name at both ends |
 | Floors | the sketch loops of the floors of the level, light under the walls |
-| Rooms | the floor face of the room's decoded boundary, filled with a colour by the room name and tagged with the room number in a circle, the name and the area in m² |
+| Rooms | the floor face of the room's decoded boundary, filled with the colour the reference plan uses for that kind of room (master bedroom blue violet, master bath magenta, bedroom cyan, linen teal, hall blue, entry hall yellow, living light green, kitchen tan, laundry brown, mech green, bath green) and tagged with the room number in a circle, the name and the area in m² |
 | Doors | the leaf at one jamb, perpendicular to the wall on the side the door opens into, and the quarter arc it sweeps |
 | Furniture | the horizontal faces of the furniture, casework, plumbing fixtures, specialty equipment, stairs and railings of the level, seen from above as light outlines |
 | Door and window marks | a door's Mark in a circle beside the opening, a window's type mark in a hexagon, each on a leader line from the opening |
