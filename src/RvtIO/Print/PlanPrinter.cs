@@ -51,7 +51,7 @@ public static class PlanPrinter
     internal sealed record PlanContent(
         List<(int Id, double X1, double Y1, double X2, double Y2, double Width)> Walls,
         List<(double X, double Y, double Width, double Height)> Columns,
-        List<(double X1, double Y1, double X2, double Y2)> Grids,
+        List<(double X1, double Y1, double X2, double Y2, string Name)> Grids,
         Dictionary<int, List<(double From, double To)>> Gaps,
         List<(int HostId, double From, double To)> WindowGaps,
         List<List<(double X, double Y)>> FloorLoops,
@@ -309,7 +309,7 @@ public static class PlanPrinter
             if (points.Count >= 3) openingLoops.Add(points);
         }
 
-        var grids = new List<(double X1, double Y1, double X2, double Y2)>();
+        var grids = new List<(double X1, double Y1, double X2, double Y2, string Name)>();
         double gridMargin = Math.Max((maxX - minX + maxY - minY) * 0.06, 1000);
         foreach (var element in document.Elements)
         {
@@ -319,7 +319,7 @@ public static class PlanPrinter
             double gx2 = line.EndPoint[0] * FeetToMillimetres, gy2 = line.EndPoint[1] * FeetToMillimetres;
             if (ClipToBox(ref gx1, ref gy1, ref gx2, ref gy2,
                     minX - gridMargin, minY - gridMargin, maxX + gridMargin, maxY + gridMargin))
-                grids.Add((gx1, gy1, gx2, gy2));
+                grids.Add((gx1, gy1, gx2, gy2, element.Name ?? ""));
         }
 
         return new PlanContent(walls, columns, grids, gaps, windowGaps, floorLoops, openingLoops, minX, minY, maxX, maxY);
@@ -336,7 +336,12 @@ public static class PlanPrinter
             page.DrawPolyline(floor.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0, true, 0.9);
 
         foreach (var grid in content.Grids)
+        {
             page.DrawLine(ToX(grid.X1), ToY(grid.Y1), ToX(grid.X2), ToY(grid.Y2), 0.18, 0.45);
+            if (page.Owner.Font == null || grid.Name.Length == 0) continue;
+            Bubble(page, ToX(grid.X1), ToY(grid.Y1), grid.Name);
+            Bubble(page, ToX(grid.X2), ToY(grid.Y2), grid.Name);
+        }
 
         var wallById = new Dictionary<int, (int Id, double X1, double Y1, double X2, double Y2, double Width)>();
         foreach (var wall in content.Walls) wallById[wall.Id] = wall;
@@ -418,6 +423,21 @@ public static class PlanPrinter
             page.DrawText($"1:{scale}", margin + 3, paper.HeightMillimetres - margin - 15, 3.5,
                 PdfTextAlignment.Left, 0.35);
         }
+    }
+
+    /// <summary>A grid bubble: a white circle with the grid name centred in it, as a plan prints the end of a grid
+    /// line.</summary>
+    private static void Bubble(PdfPage page, double x, double y, string name)
+    {
+        const double radius = 3.5;
+        var points = new List<(double X, double Y)>(24);
+        for (int i = 0; i < 24; i++)
+        {
+            double angle = i * Math.PI * 2 / 24;
+            points.Add((x + radius * Math.Cos(angle), y + radius * Math.Sin(angle)));
+        }
+        page.DrawPolyline(points, 0.18, true, 1);
+        page.DrawText(name, x, y - 1.4, 3, PdfTextAlignment.Center);
     }
 
     /// <summary>The stretches of a wall that are not an opening: [0, length] minus the gaps, in order.</summary>

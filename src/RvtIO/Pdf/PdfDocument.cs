@@ -106,6 +106,9 @@ public sealed class PdfPage
 
     internal string Content => _content.ToString();
 
+    /// <summary>The document the page belongs to: the font and the used characters live there.</summary>
+    internal PdfDocument Owner => _document;
+
     /// <summary>Draws a line of the given width.</summary>
     /// <param name="x1">Start x in millimetres.</param>
     /// <param name="y1">Start y in millimetres.</param>
@@ -231,7 +234,9 @@ public sealed class PdfPage
         if (string.IsNullOrEmpty(text)) return;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(heightMillimetres);
         double fontPoints = heightMillimetres * 72.0 / 25.4;
-        Stroke(0, gray);
+        // Text is painted with the non-stroking colour, so set the fill (not the stroke) colour: after a white-filled
+        // bubble or floor the fill could still be white and the text would disappear.
+        Fill(gray);
         if (_document.Font is { } font)
         {
             var encoded = new StringBuilder(text.Length * 4);
