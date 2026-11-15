@@ -201,7 +201,6 @@ internal class ParsingState
     public HashSet<uint> HostCutOutStepsFromLayoutSearch { get; } = new();
     public HashSet<uint> BlockOnlyIds { get; set; } = new();
     public Dictionary<uint, (string ForgeId, string? DisplayName)> ForgeParamDefs { get; set; } = new();
-    public string? DocGuid { get; set; }
     public List<byte[]> Chunks { get; set; } = new();
     public List<byte[]> RecordChunks { get; set; } = new();
     public List<byte[]> NonRecordChunks { get; set; } = new();

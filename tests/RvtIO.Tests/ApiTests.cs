@@ -656,6 +656,23 @@ public class ReferenceApiTests : IClassFixture<MeshFileFixture>
     }
 
     [SkippableFact]
+    public void EveryUniqueIdIsTheOneOfTheElementHistory()
+    {
+        // An element without an ElemRec history and its episode has no UniqueId (and no export id); every other UniqueId is
+        // the episode GUID and original id its export id is made of.
+        Assert.All(_doc.Elements, element =>
+        {
+            if (element.UniqueId is not { } uniqueId)
+            {
+                Assert.Null(element.SerializedExportId);
+                return;
+            }
+            Assert.Equal(Parsing.ElementExportIds.ExportId(Guid.Parse(uniqueId[..36]), Convert.ToUInt32(uniqueId[37..], 16)),
+                element.SerializedExportId);
+        });
+    }
+
+    [SkippableFact]
     public void Level355_UniqueId_Episode0()
     {
         var elem = _doc.GetElement(355)!;

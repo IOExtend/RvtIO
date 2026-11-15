@@ -8563,8 +8563,13 @@ internal static partial class ElementBuilder
         }
     }
 
-    /// <summary>Build UniqueId for an element. Revit UniqueId format: {episodeGUID}-{elemId:x8}</summary>
-    private static string? BuildUniqueId(uint elemId, ParsingState state)
+    /// <summary>
+    /// UniqueId of an element from an external dump's episode index ({episodeGUID}-{elemId:x8}); null otherwise.
+    /// <see cref="ApplyExportIds"/> later sets the UniqueId of every element whose ElemRec history and episode are read
+    /// exactly. An element without them has no UniqueId: its creation episode is not in the file, and any other episode
+    /// GUID gives a wrong id.
+    /// </summary>
+    internal static string? BuildUniqueId(uint elemId, ParsingState state)
     {
         if (state.EpisodeGuids.Count > 0
             && state.ElemEpisodeNumbers.TryGetValue(elemId, out int episodeNum)
@@ -8574,10 +8579,6 @@ internal static partial class ElementBuilder
             if (!string.IsNullOrEmpty(episodeGuid))
                 return $"{episodeGuid}-{elemId:x8}";
         }
-
-        // Fallback to document GUID
-        if (state.DocGuid != null)
-            return $"{state.DocGuid}-{elemId:x8}";
 
         return null;
     }

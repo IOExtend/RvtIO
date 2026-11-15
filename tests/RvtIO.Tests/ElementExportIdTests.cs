@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using OpenMcdf;
 using RvtIO.Ifc;
+using RvtIO.Internal;
 using RvtIO.Model;
 using RvtIO.Parsing;
 using Xunit;
@@ -52,6 +53,66 @@ public class ElementExportIdTests
     {
         Assert.Equal("d45b1816-cbcc-4dc6-b0bb-007467f3c600-000405a0",
             ElementExportIds.UniqueId(Guid.Parse("d45b1816-cbcc-4dc6-b0bb-007467f3c600"), 263584u));
+    }
+
+    [Fact]
+    public void BuildUniqueId_IsNullForAnElementWithoutAnEpisodeOfItsOwn()
+    {
+        // The episode list of the file, a UniqueId of another element in the element's own strings, and no ElemRec row for
+        // element 7: none of them says which episode created element 7, so it gets no UniqueId rather than a wrong one.
+        const string otherEpisode = "aaaaaaaa-1111-2222-3333-444455556666";
+        var state = new ParsingState
+        {
+            EpisodeGuids = [otherEpisode, "bbbbbbbb-1111-2222-3333-444455556666"],
+            HistoryEpisodeGuids = [otherEpisode, "bbbbbbbb-1111-2222-3333-444455556666"],
+            EpisodeTableX = 2,
+            ElemRecHistories = new() { [5] = new ElemRecHistory(5, 0) },
+            ElemStrings = new() { [7] = [$"{otherEpisode}-00000005"] },
+        };
+
+        Assert.Null(ElementBuilder.BuildUniqueId(7, state));
+    }
+
+    [Fact]
+    public void BuildUniqueId_TakesTheEpisodeAnExternalDumpGivesTheElement()
+    {
+        var state = new ParsingState
+        {
+            EpisodeGuids = ["aaaaaaaa-1111-2222-3333-444455556666", "bbbbbbbb-1111-2222-3333-444455556666"],
+            ElemEpisodeNumbers = new() { [7] = 1, [8] = 2 },
+        };
+
+        Assert.Equal("bbbbbbbb-1111-2222-3333-444455556666-00000007", ElementBuilder.BuildUniqueId(7, state));
+        Assert.Null(ElementBuilder.BuildUniqueId(8, state)); // index beyond the dump's list
+    }
+
+    [Fact]
+    public void ApplyExportIds_GivesTheUniqueIdOfTheElementHistoryAndNoneWithout()
+    {
+        var episodes = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
+        var state = new ParsingState
+        {
+            HistoryEpisodeGuids = episodes.Select(g => g.ToString("D")).ToList(),
+            EpisodeTableX = 3,
+            // 5: created in the last episode; 6: renumbered from 4 in the first; 9: a creation date beyond the list.
+            ElemRecHistories = new() { [5] = new(5, 0), [6] = new(4, 2), [9] = new(9, 3) },
+        };
+        var created = new Element { Id = 5 };
+        var renumbered = new Element { Id = 6 };
+        var outsideList = new Element { Id = 9 };
+        var withoutRow = new Element { Id = 12 };
+
+        var (applied, replaced) = ElementBuilder.ApplyExportIds([created, renumbered, outsideList, withoutRow], state);
+
+        Assert.Equal((2, 0), (applied, replaced));
+        Assert.Equal($"{episodes[2]:D}-00000005", created.UniqueId);
+        Assert.Equal(ElementExportIds.ExportId(episodes[2], 5), created.SerializedExportId);
+        Assert.Equal($"{episodes[0]:D}-00000004", renumbered.UniqueId);
+        Assert.Equal(ElementExportIds.ExportId(episodes[0], 6), renumbered.SerializedHandleExportId);
+        Assert.Null(outsideList.UniqueId);
+        Assert.Null(outsideList.SerializedExportId);
+        Assert.Null(withoutRow.UniqueId);
+        Assert.Null(withoutRow.SerializedExportId);
     }
 
     [Fact]
