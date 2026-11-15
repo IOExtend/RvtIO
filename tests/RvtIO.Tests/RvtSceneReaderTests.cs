@@ -392,6 +392,42 @@ public class RvtSceneReaderTests
     }
 
     [Fact]
+    public void DocumentWithUntriangulatedInstanceFaceAndPlacedSymbol_ReportsPartialGeometry()
+    {
+        // An element that places a family symbol but whose own geometry record has an untriangulated face
+        var symbol = new Element
+        {
+            Id = Symbol,
+            Geometry = new GeometryData
+            {
+                Faces = [new GeoFace { OuterVertices = [[0, 0, 0], [1, 0, 0], [0, 1, 0]], Normal = [0, 0, 1], GeometryNode = 1 }],
+            },
+        };
+        var instance = new Element
+        {
+            Id = Wall,
+            UniqueId = "doc-00000064",
+            CategoryId = -2000011,
+            Category = "OST_Walls",
+            Geometry = new GeometryData
+            {
+                ExactMappedInstances = [new GeoInstance { SymbolId = Symbol, Transform = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0] }],
+                UntriangulatedFaces = 1,
+            },
+            Parameters = [new Parameter { Id = -1012100, Value = 1 }],
+            SerializedCreatedPhaseId = 1,
+        };
+        var doc = RvtDocument.FromInfo(new RevitFileInfo { Elements = [symbol, instance] });
+        var result = RvtSceneReader.Read(doc, new RvtSceneOptions { ModelKey = "model.rvt" });
+
+        var diag = Assert.Single(result.Diagnostics, d => d.Code == "partial-geometry");
+        Assert.Equal(SceneSeverity.Warning, diag.Severity);
+        Assert.Equal("doc-00000064", diag.SourceId);
+        Assert.Contains("1 faces not triangulated", diag.Message);
+        Assert.Equal(1, result.Coverage[MeshCoverage.Partial]);
+    }
+
+    [Fact]
     public void UndecodedDocumentKeepsItsElementsAndReportsAnError()
     {
         var meshes = new MeshSet

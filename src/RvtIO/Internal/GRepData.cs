@@ -42,6 +42,10 @@ internal record GRepData
     /// solid-only cleanup must not remove coplanar triangulation facets.</summary>
     public bool IsOpenSurface { get; set; }
 
+    /// <summary>Faces left out because the triangulation of their trim loops ran out of its work budget (see
+    /// GRepParserV2.TrimWorkBudget); they have no polygon here rather than one without their trim.</summary>
+    public int UntriangulatedFaces { get; set; }
+
     /// <summary>
     /// 3x4 transform matrix [r00,r01,r02,tx, r10,r11,r12,ty, r20,r21,r22,tz]
     /// mapping from local to world coordinates. Null if identity or not found.

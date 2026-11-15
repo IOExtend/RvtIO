@@ -399,7 +399,8 @@ public partial class IfcExporter
             return GeometryQualityClass.Approximated;
         if (geo.PlacedSymbolBox)
             return GeometryQualityClass.BoxOnly;
-        bool approximated = geo.PlacedSymbolClipped || geo.UnresolvedSymbol || geo.GhostNodes is { Count: > 0 };
+        bool approximated = geo.PlacedSymbolClipped || geo.UnresolvedSymbol || geo.GhostNodes is { Count: > 0 }
+            || geo.UntriangulatedFaces > 0;
         if (geo.ExactMappedInstances is { Count: > 0 } mapped)
         {
             foreach (var inst in mapped)
@@ -411,7 +412,8 @@ public partial class IfcExporter
                 }
                 if (symGeo.PlacedSymbolBox)
                     return GeometryQualityClass.BoxOnly;
-                if (symGeo.PlacedSymbolClipped || symGeo.UnresolvedSymbol || symGeo.GhostNodes is { Count: > 0 })
+                if (symGeo.PlacedSymbolClipped || symGeo.UnresolvedSymbol || symGeo.GhostNodes is { Count: > 0 }
+                    || symGeo.UntriangulatedFaces > 0)
                     approximated = true;
             }
         }
@@ -7392,7 +7394,7 @@ public partial class IfcExporter
             return element.ValidatedProxyTypeReferenceName;
         }
 
-        if (ifcType != "IFCSLAB" || element.CategoryId != -2000032)
+        if (ifcType != "IFCSLAB" || element.CategoryId is not (-2000032 or -2001300))
             return baselineReferenceValue;
 
         if (element.ValidatedFloorTypeReferenceIsBlocked)
@@ -68368,7 +68370,7 @@ public partial class IfcExporter
             return componentType.ValidatedStairComponentTypeName;
         if (ifcType == "IFCCURTAINWALL")
             return ResolveValidatedWallTypeName(element, elementsById.GetValueOrDefault(element.FamilyTypeId));
-        if (ifcType == "IFCSLAB" && element.CategoryId == -2000032)
+        if (ifcType == "IFCSLAB" && element.CategoryId is -2000032 or -2001300)
             return Own(FloorTypeReferenceName(element, currentProfile), element.ValidatedFloorTypeReferenceIsExplicit,
                 element.ValidatedFloorTypeReferenceIsBlocked);
         if (ifcType == "IFCCOVERING" && element.CategoryId == -2000038)
