@@ -418,6 +418,32 @@ public static class ElevationPrinter
     }
 
     /// <summary>Draws the projected elevation with (MinX, MinY) at (originX, originY), one model unit per 1/scale.</summary>
+    /// <summary>The section marks of a plan: the trace of every section plane on the plan, so a plan shows where it is
+    /// cut, the way the reference plans show their section marks. The point is the origin of the plane, the direction
+    /// the trace runs, and the name of the view the mark belongs to, all in millimetres.
+    /// </summary>
+    internal static List<(double X, double Y, double Dx, double Dy, string Name)> SectionMarks(RvtDocument document)
+    {
+        var marks = new List<(double X, double Y, double Dx, double Dy, string Name)>();
+        foreach (var view in document.Elements)
+        {
+            if (view.CategoryId != (int)BuiltInCategory.OST_Views) continue;
+            string name = view.Name ?? "";
+            if (!name.Contains("section", StringComparison.OrdinalIgnoreCase)) continue;
+            if (view.ViewOrigin is not { Length: 3 } origin || view.ViewDirection is not { Length: 3 } direction
+                || view.ViewVerticalDirection is not { Length: 3 } vertical) continue;
+            if (Math.Abs(vertical[2]) < 0.9) continue;
+            // The trace of the plane runs along the horizontal in-plane axis: the cross product of the view direction
+            // and the vertical of the view.
+            double dx = direction[1] * vertical[2] - direction[2] * vertical[1];
+            double dy = direction[2] * vertical[0] - direction[0] * vertical[2];
+            double length = Math.Sqrt(dx * dx + dy * dy);
+            if (length < 0.2) continue;
+            marks.Add((origin[0] * FeetToMillimetres, origin[1] * FeetToMillimetres, dx / length, dy / length, name));
+        }
+        return marks;
+    }
+
     internal static void DrawContent(PdfPage page, ElevationContent content, double scale, double originX,
         double originY, double faceFill = 1)
     {

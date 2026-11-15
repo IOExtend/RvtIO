@@ -221,7 +221,8 @@ public static class SheetComposer
                     frameY = centerY - frameHeight / 2;
                     double m = options.ViewMarginMillimetres;
                     page2.BeginClip(frameX - m, frameY - m, frameWidth + 2 * m, frameHeight + 2 * m);
-                    PlanPrinter.DrawContent(page2, content, viewScale, frameX, frameY);
+                    PlanPrinter.DrawContent(page2, content, viewScale, frameX, frameY, 0.9,
+                        ElevationPrinter.SectionMarks(document));
                     page2.EndClip();
                     if (options.DrawRoomLegend && pdf.Font != null && content.Rooms.Count > 0)
                         DrawRoomLegend(page2, content.Rooms.Select(room => room.Name), Math.Max(frameX, 8),

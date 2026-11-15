@@ -428,7 +428,8 @@ public static class PlanPrinter
     }
 
     internal static void DrawContent(PdfPage page, PlanContent content, double scale, double originX,
-        double originY, double floorFill = 0.9)
+        double originY, double floorFill = 0.9,
+        IReadOnlyList<(double X, double Y, double Dx, double Dy, string Name)>? sectionMarks = null)
     {
         double ToX(double x) => (x - content.MinX) / scale + originX;
         double ToY(double y) => (y - content.MinY) / scale + originY;
@@ -570,6 +571,8 @@ public static class PlanPrinter
 
         foreach (var column in content.Columns)
             page.DrawRectangle(ToX(column.X), ToY(column.Y), column.Width / scale, column.Height / scale, 0.2, 1);
+
+        if (sectionMarks is { Count: > 0 }) DrawSectionMarks(page, content, scale, originX, originY, sectionMarks);
     }
 
     /// <summary>Draws the plan of a level as one page of the document.</summary>
@@ -634,6 +637,59 @@ public static class PlanPrinter
         Corner(x + radius, y + height - radius, Math.PI / 2);
         Corner(x + radius, y + radius, Math.PI);
         return points;
+    }
+
+    /// <summary>Draws the section marks of a plan: the trace of each section plane across the drawing, a tick at both
+    /// ends and a bubble with the letter of the view, as a plan shows where it is cut.</summary>
+    private static void DrawSectionMarks(PdfPage page, PlanContent content, double scale, double originX,
+        double originY, IReadOnlyList<(double X, double Y, double Dx, double Dy, string Name)> marks)
+    {
+        double ToX(double x) => (x - content.MinX) / scale + originX;
+        double ToY(double y) => (y - content.MinY) / scale + originY;
+        // The trace runs across the building, not across the site: its ends are the bounds of the walls.
+        double modelMinX = content.MinX, modelMaxX = content.MaxX;
+        double modelMinY = content.MinY, modelMaxY = content.MaxY;
+        if (content.Walls.Count > 0)
+        {
+            modelMinX = content.Walls.Min(wall => Math.Min(wall.X1, wall.X2));
+            modelMaxX = content.Walls.Max(wall => Math.Max(wall.X1, wall.X2));
+            modelMinY = content.Walls.Min(wall => Math.Min(wall.Y1, wall.Y2));
+            modelMaxY = content.Walls.Max(wall => Math.Max(wall.Y1, wall.Y2));
+        }
+        double minX = ToX(modelMinX) - 12, maxX = ToX(modelMaxX) + 12;
+        double minY = ToY(modelMinY) - 12, maxY = ToY(modelMaxY) + 12;
+        int index = 0;
+        foreach (var mark in marks)
+        {
+            double px = ToX(mark.X), py = ToY(mark.Y);
+            double dx = mark.Dx, dy = -mark.Dy;
+            // The trace is cut to the drawing: the two ends are where it leaves the bounds of the plan.
+            double tMin = double.NegativeInfinity, tMax = double.PositiveInfinity;
+            bool inside(double value, double direction, double low, double high)
+            {
+                if (Math.Abs(direction) < 1e-9) return value >= low && value <= high;
+                double a = (low - value) / direction, b = (high - value) / direction;
+                if (a > b) (a, b) = (b, a);
+                tMin = Math.Max(tMin, a);
+                tMax = Math.Min(tMax, b);
+                return tMin <= tMax;
+            }
+            if (!inside(px, dx, minX, maxX) || !inside(py, dy, minY, maxY)) continue;
+            double x1 = px + dx * tMin, y1 = py + dy * tMin;
+            double x2 = px + dx * tMax, y2 = py + dy * tMax;
+            if (Math.Abs(x2 - x1) + Math.Abs(y2 - y1) < 10) continue;
+            page.DrawLine(x1, y1, x2, y2, 0.22, 0.2);
+            index++;
+            string label = mark.Name.Length > 0 ? mark.Name[..1].ToUpperInvariant() : index.ToString();
+            foreach (var (x, y, otherX, otherY) in new[] { (x1, y1, x2, y2), (x2, y2, x1, y1) })
+            {
+                double angle = Math.Atan2(y - otherY, x - otherX);
+                // A short tick across the trace and the bubble at its end.
+                page.DrawLine(x - Math.Sin(angle) * 1.4, y + Math.Cos(angle) * 1.4, x + Math.Sin(angle) * 1.4,
+                    y - Math.Cos(angle) * 1.4, 0.22, 0.2);
+                Bubble(page, x, y, label);
+            }
+        }
     }
 
     private static void Bubble(PdfPage page, double x, double y, string name)
