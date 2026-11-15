@@ -78,8 +78,22 @@ public static class ElevationPrinter
         (int)BuiltInCategory.OST_StairsSupports, (int)BuiltInCategory.OST_Lines,
     ];
 
-    internal static ElevationContent? Collect(RvtDocument document, string direction, bool stairsOnly = false)
+    internal static ElevationContent? Collect(RvtDocument document, string direction, bool stairsOnly = false,
+        Element? planeView = null)
     {
+        double[] planeOrigin = [];
+        bool cut = false;
+        double[] H, V, D;
+        if (planeView is { ViewOrigin: { Length: 3 } origin, ViewDirection: { Length: 3 } dir,
+            ViewVerticalDirection: { Length: 3 } vert, ViewHorizontalDirection: { Length: 3 } horiz })
+        {
+            (H, V, D) = (horiz, vert, dir);
+            planeOrigin = origin;
+            // A section is cut at its plane: only what stands behind it is drawn.
+            cut = direction == "section";
+        }
+        else
+        {
         if (direction == "section")
         {
             // A section is not decoded to its cutting plane yet: it is projected along the short axis of the building,
@@ -99,7 +113,7 @@ public static class ElevationPrinter
             }
             direction = wallMaxX - wallMinX >= wallMaxY - wallMinY ? "south" : "east";
         }
-        (double[] H, double[] V, double[] D) = direction switch
+        (H, V, D) = direction switch
         {
             "south" => (new[] { 1.0, 0, 0 }, new[] { 0.0, 0, 1 }, new[] { 0.0, 1, 0 }),
             "north" => (new[] { -1.0, 0, 0 }, new[] { 0.0, 0, 1 }, new[] { 0.0, -1, 0 }),
@@ -109,6 +123,7 @@ public static class ElevationPrinter
                 new[] { 0.5773503, 0.5773503, -0.5773503 }),
             _ => (new[] { 0.0, -1, 0 }, new[] { 0.0, 0, 1 }, new[] { 1.0, 0, 0 }),
         };
+        }
         var faces = new List<(List<(double X, double Y)> Points, double Depth, bool Outline)>();
         double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
         foreach (var element in document.Elements)
@@ -124,14 +139,22 @@ public static class ElevationPrinter
             {
                 if (face.OuterVertices is not { Count: >= 3 } vertices) continue;
                 if (face.CurvedSurface) continue;
-                var points = new List<(double X, double Y)>(vertices.Count);
-                double depth = 0;
+                var corners = new List<double[]>(vertices.Count);
                 foreach (var vertex in vertices)
+                    corners.Add([vertex[0] * FeetToMillimetres, vertex[1] * FeetToMillimetres,
+                        vertex[2] * FeetToMillimetres]);
+                if (cut && planeOrigin.Length == 3)
                 {
-                    double x = vertex[0] * FeetToMillimetres, y = vertex[1] * FeetToMillimetres;
-                    double z = vertex[2] * FeetToMillimetres;
-                    points.Add((x * H[0] + y * H[1] + z * H[2], z));
-                    depth += x * D[0] + y * D[1] + z * D[2];
+                    corners = ClipBehind(corners, planeOrigin, D);
+                    if (corners.Count < 3) continue;
+                }
+                var points = new List<(double X, double Y)>(corners.Count);
+                double depth = 0;
+                foreach (var corner in corners)
+                {
+                    points.Add((corner[0] * H[0] + corner[1] * H[1] + corner[2] * H[2],
+                        corner[0] * V[0] + corner[1] * V[1] + corner[2] * V[2]));
+                    depth += corner[0] * D[0] + corner[1] * D[1] + corner[2] * D[2];
                 }
                 // A sliver of a face adds a line to the page and nothing to the drawing.
                 double projected = 0;
@@ -142,7 +165,7 @@ public static class ElevationPrinter
                     projected += a.X * b.Y - b.X * a.Y;
                 }
                 if (Math.Abs(projected) / 2 < 2000) continue;
-                depth /= vertices.Count;
+                depth /= corners.Count;
                 double facing = Math.Abs(face.Normal[0] * D[0] + face.Normal[1] * D[1] + face.Normal[2] * D[2]);
                 foreach (var (x, y) in points)
                 {
@@ -215,9 +238,9 @@ public static class ElevationPrinter
 
     /// <summary>Draws one elevation as a page of the document.</summary>
     internal static void AddElevationPage(PdfDocument pdf, RvtDocument document, ElevationView view,
-        PlanPrintOptions options)
+        PlanPrintOptions options, Element? planeView = null)
     {
-        ElevationContent content = Collect(document, view.Direction)
+        ElevationContent content = Collect(document, view.Direction, false, planeView)
             ?? throw new InvalidOperationException($"The model has no face to project for the {view.Name} elevation.");
         double width = (content.MaxX - content.MinX) / view.Scale + LabelMarginMillimetres;
         double height = (content.MaxY - content.MinY) / view.Scale;
@@ -256,6 +279,28 @@ public static class ElevationPrinter
     /// <summary>The width reserved to the right of an elevation for the level markers and their labels, in
     /// millimetres of the page.</summary>
     internal const double LabelMarginMillimetres = 42;
+
+    /// <summary>The part of a polygon that stands behind the cutting plane (the side the view direction points
+    /// to), the plane crossing a polygon adding the points where it crosses the plane.</summary>
+    private static List<double[]> ClipBehind(List<double[]> polygon, double[] origin, double[] direction)
+    {
+        var result = new List<double[]>(polygon.Count + 2);
+        for (int i = 0; i < polygon.Count; i++)
+        {
+            double[] a = polygon[i], b = polygon[(i + 1) % polygon.Count];
+            double da = (a[0] - origin[0]) * direction[0] + (a[1] - origin[1]) * direction[1]
+                + (a[2] - origin[2]) * direction[2];
+            double db = (b[0] - origin[0]) * direction[0] + (b[1] - origin[1]) * direction[1]
+                + (b[2] - origin[2]) * direction[2];
+            if (da >= 0) result.Add(a);
+            if (da >= 0 != db >= 0)
+            {
+                double t = da / (da - db);
+                result.Add([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]);
+            }
+        }
+        return result;
+    }
 
     /// <summary>Draws the projected elevation with (MinX, MinY) at (originX, originY), one model unit per 1/scale.</summary>
     internal static void DrawContent(PdfPage page, ElevationContent content, double scale, double originX,

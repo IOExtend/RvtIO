@@ -91,10 +91,12 @@ the drawing, the level name above and its height in millimetres below (Roof Line
 Level 1 0, Level 1 Living Rm. -550, Foundation -800 on the sample). Each height is printed once even though the project
 holds many level elements at the same height, and the drawing reserves a label margin on the right.
 
-The plane of the view itself is not decoded yet, so the direction is taken from the view name (North, South, East,
-West). A view named "Section" is projected along the short axis of the building, the way a longitudinal section looks; it
-is a projection, not a true cut through the model: its faces are filled grey, so the cut mass reads as a section
-rather than as the white of an elevation. A viewport whose view is not printed (a wall section at 1:20, a schedule) is
+The plane of a view is decoded from the view's own block (class 0x3F8): the block stores a point of the plane, the view
+scale, the vertical axis and the camera direction, so an elevation is projected on the exact axes of the view and a
+section is **cut at its plane**: the geometry between the viewer and the plane is removed, the polygons crossing the plane
+are clipped, and the faces behind it are filled grey. On the sample, the Longitudinal Section of A103 shows the rooms,
+walls and the stair cut at the section line. A view whose plane is not decoded falls back to the direction taken from its
+name (North, South, East, West, Section projected along the short axis of the building). A viewport whose view is not printed (a wall section at 1:20, a schedule) is
 neither drawn nor titled, so a sheet shows only the views the printer can stand behind. A stair section (a view whose name holds "stair", 1:20 to 1:50)
 projects only the stairs, their railings and supports, so the page shows the stair rather than the whole building. Measured on the Revit sample project: the South view prints
 the two-storey facade with its balcony rail, columns and roof on sheet A103.

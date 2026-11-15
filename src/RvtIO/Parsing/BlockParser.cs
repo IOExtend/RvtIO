@@ -2078,9 +2078,58 @@ internal static class BlockParser
                 continue;
             }
             if (!state.ViewPlanes.ContainsKey(eid))
-                TryFindViewPlane(chunk, pos + 16, pos + 16 + size, eid, state);
+            {
+                // The view's own block (class 0x3F8) stores the plane as its origin, the view scale, the vertical and
+                // the camera direction; the older signature below is kept for the blocks that store it as thirteen
+                // consecutive doubles.
+                if ((classIdx & 0xFFFF) == 0x03F8)
+                    TryFindViewPlaneBlock(chunk, pos + 16, pos + 16 + size, eid, state, classIdx);
+                if (!state.ViewPlanes.ContainsKey(eid))
+                    TryFindViewPlane(chunk, pos + 16, pos + 16 + size, eid, state);
+            }
             pos += 16 + size;
         }
+    }
+
+    /// <summary>The plane a view block (class 0x3F8) stores: a point of the plane (three doubles), the view scale
+    /// (the reciprocal of the scale denominator), the vertical axis and the camera direction (three doubles each, axis
+    /// aligned unit vectors). The scale double is found first and the other fields are read around it.</summary>
+    private static void TryFindViewPlaneBlock(byte[] d, int start, int end, uint eid, ParsingState state,
+        uint classIdx)
+    {
+        _ = classIdx;
+        for (int i = start; i + 56 <= end; i++)
+        {
+            double scale = BitConverter.ToDouble(d, i);
+            if (!double.IsFinite(scale) || scale <= 0) continue;
+            double denominator = 1 / scale;
+            if (denominator < 2 || denominator > 1000 || Math.Abs(denominator - Math.Round(denominator)) > 1e-3)
+                continue;
+            if (i - 32 < start || Math.Abs(BitConverter.ToDouble(d, i - 32)) > 1e-9) continue;
+            double ox = BitConverter.ToDouble(d, i - 24), oy = BitConverter.ToDouble(d, i - 16),
+                oz = BitConverter.ToDouble(d, i - 8);
+            if (!double.IsFinite(ox) || !double.IsFinite(oy) || !double.IsFinite(oz)
+                || Math.Abs(ox) > 1e6 || Math.Abs(oy) > 1e6 || Math.Abs(oz) > 1e6) continue;
+            double vx = BitConverter.ToDouble(d, i + 8), vy = BitConverter.ToDouble(d, i + 16),
+                vz = BitConverter.ToDouble(d, i + 24);
+            if (Math.Abs(vx) > 1e-6 || Math.Abs(vy) > 1e-6 || Math.Abs(vz - 1) > 1e-6) continue;
+            double cx = BitConverter.ToDouble(d, i + 32), cy = BitConverter.ToDouble(d, i + 40),
+                cz = BitConverter.ToDouble(d, i + 48);
+            if (!double.IsFinite(cx) || !double.IsFinite(cy) || !double.IsFinite(cz)) continue;
+            if (!AxisAlignedUnit(cx, cy, cz)) continue;
+            // The stored vector points from the model toward the camera; the view direction looks the other way.
+            double dx = -cx, dy = -cy, dz = -cz;
+            double hx = dy * vz - dz * vy, hy = dz * vx - dx * vz, hz = dx * vy - dy * vx;
+            state.ViewPlanes[eid] = ([ox, oy, oz], [hx, hy, hz], [vx, vy, vz], [dx, dy, dz]);
+            return;
+        }
+    }
+
+    private static bool AxisAlignedUnit(double x, double y, double z)
+    {
+        static bool Component(double value) => Math.Abs(value) < 1e-6 || Math.Abs(Math.Abs(value) - 1) < 1e-6;
+        if (!Component(x) || !Component(y) || !Component(z)) return false;
+        return Math.Abs(Math.Abs(x) + Math.Abs(y) + Math.Abs(z) - 1) < 1e-6;
     }
 
     private static void TryFindViewPlane(byte[] d, int start, int end, uint eid, ParsingState state)

@@ -277,9 +277,10 @@ public static class SheetComposer
             else if (placed && ElevationPrinter.Views(document).Any(view => view.ViewId == viewId)
                 && ElevationPrinter.DirectionOf(name) is string direction)
             {
-                // An elevation: the model faces projected on the vertical plane of the direction. The view plane itself
-                // is not decoded, so the direction comes from the view name.
-                var elevation = ElevationPrinter.Collect(document, direction);
+                // An elevation or a section: the model faces projected on the view's plane when the reader decoded it
+                // (a section is then cut at its plane), otherwise on the plane of the direction taken from the name.
+                var elevation = ElevationPrinter.Collect(document, direction,
+                    name.Contains("stair", StringComparison.OrdinalIgnoreCase), document.GetElement(viewId));
                 if (elevation != null)
                 {
                     frameWidth = (elevation.MaxX - elevation.MinX) / scale
