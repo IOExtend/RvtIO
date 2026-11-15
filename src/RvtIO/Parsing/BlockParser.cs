@@ -2208,7 +2208,7 @@ internal static class BlockParser
         for (int o = 0; o + 0xCF <= d.Length; o++)
         {
             uint eid = BitConverter.ToUInt32(d, o + 0x24);
-            if (!knownIds.Contains(eid) || hvac.ContainsKey(eid)) continue;
+            if (eid == 0 || !knownIds.Contains(eid) || hvac.ContainsKey(eid)) continue;
             double cool = BitConverter.ToDouble(d, o + 0x57);
             double heat = BitConverter.ToDouble(d, o + 0xAF);
             if (!(cool > 250 && cool < 330 && heat > 250 && heat < 330)) continue;

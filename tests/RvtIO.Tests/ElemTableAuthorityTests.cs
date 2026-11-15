@@ -52,11 +52,15 @@ public class ElemTableAuthorityTests
     [Fact]
     public void NonrepresentableIdsAndNegativePartitionSentinelsDoNotBecomePublicElementsOrWorksets()
     {
-        byte[] bytes = Table(3);
+        byte[] bytes = Table(4);
         BitConverter.GetBytes(0u).CopyTo(bytes, 6);
-        BitConverter.GetBytes(uint.MaxValue).CopyTo(bytes, 62);
-        BitConverter.GetBytes(-1).CopyTo(bytes, 54);
-        var result = Parse(bytes); Assert.Single(result); Assert.True(result.ContainsKey(12346));
+        BitConverter.GetBytes(-1).CopyTo(bytes, 6 + 20);
+        BitConverter.GetBytes(12346u).CopyTo(bytes, 6 + 28);
+        BitConverter.GetBytes(-1).CopyTo(bytes, 6 + 28 + 20);
+        BitConverter.GetBytes((uint)int.MaxValue + 1u).CopyTo(bytes, 6 + 56);
+        BitConverter.GetBytes(uint.MaxValue).CopyTo(bytes, 6 + 84);
+        var result = Parse(bytes);
+        Assert.Equal([0u, 12346u], result.Keys.Order().ToArray());
         Assert.Empty(ElemTableReader.LastWorksets);
     }
 
@@ -67,7 +71,7 @@ public class ElemTableAuthorityTests
         var bytes = PagedGzipStream.Read(root, "Global", "ElemTable"); Assert.NotNull(bytes);
         var exact = ElementExportIds.ParseElemTable(bytes); Assert.NotNull(exact);
         var actual = ElemTableReader.Read(root);
-        Assert.Equal(exact.Keys.Where(ElementIdEncoding.IsSupported).Order(), actual.Keys.Order());
+        Assert.Equal(exact.Keys.Where(id => ElementIdEncoding.IsSupported(id) || id == 0).Order(), actual.Keys.Order());
         Assert.All(actual.Values, value => Assert.Equal(0u, value));
     }
 
@@ -75,14 +79,14 @@ public class ElemTableAuthorityTests
     public void ReentrantDiagnosticsCannotReplaceTheCurrentReadersWorksetMap()
     {
         string path = TestFileFixture.FindTestFile("TESTFILE.rvt");
-        Dictionary<uint, ElemRecHistory> expected;
+        Dictionary<uint, uint> expectedWorksets;
         using (var root = RootStorage.OpenRead(path))
-            expected = ElementExportIds.ParseElemTable(PagedGzipStream.Read(root, "Global", "ElemTable")!)!;
+            _ = ElemTableReader.Read(root, out expectedWorksets, out _, out _);
         using var diagnostic = new ReentrantDiagnostic(() => Parse(Table(1)));
         var reader = new RvtFileReader(new RvtReaderOptions { DiagnosticOutput = diagnostic });
         _ = reader.Read(path);
         Assert.True(diagnostic.Triggered);
-        Assert.Equal(expected.Keys.Where(ElementIdEncoding.IsSupported).Order(), reader.LastParsingState!.ElemWorksets.Keys.Order());
+        Assert.Equal(expectedWorksets.Keys.Order(), reader.LastParsingState!.ElemWorksets.Keys.Order());
     }
 
     [Theory]
@@ -128,6 +132,23 @@ public class ElemTableAuthorityTests
         state.HeaderBoundingBoxes[100] = new ElementHeaderBox(false, null);
         ElementBuilder.ApplyHeaderBoundingBoxes(info, state);
         Assert.Null(element.BoundingBox);
+    }
+
+    [Fact]
+    public void ApplyWorksets_AssignsWorksetIdAndParameter()
+    {
+        var elem1 = new Element { Id = 101 };
+        var elem2 = new Element { Id = 102 };
+        var info = new RevitFileInfo { Elements = [elem1, elem2] };
+        var state = new ParsingState();
+        state.ElemWorksets[(uint)elem1.Id] = 55;
+
+        typeof(ElementBuilder).GetMethod("ApplyWorksets", BindingFlags.NonPublic | BindingFlags.Static)!
+            .Invoke(null, [info, state]);
+
+        Assert.Equal(55, elem1.WorksetId);
+        Assert.Equal(55, elem1.Parameters.FirstOrDefault(p => p.Id == -1002053)?.Value);
+        Assert.Null(elem2.WorksetId);
     }
 
     private static Dictionary<uint, uint> Parse(byte[] bytes)
