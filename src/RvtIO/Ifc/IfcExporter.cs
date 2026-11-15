@@ -7392,7 +7392,7 @@ public partial class IfcExporter
             return element.ValidatedProxyTypeReferenceName;
         }
 
-        if (ifcType != "IFCSLAB" || element.CategoryId != -2000032)
+        if (ifcType != "IFCSLAB" || element.CategoryId is not (-2000032 or -2001300))
             return baselineReferenceValue;
 
         if (element.ValidatedFloorTypeReferenceIsBlocked)
@@ -68368,7 +68368,7 @@ public partial class IfcExporter
             return componentType.ValidatedStairComponentTypeName;
         if (ifcType == "IFCCURTAINWALL")
             return ResolveValidatedWallTypeName(element, elementsById.GetValueOrDefault(element.FamilyTypeId));
-        if (ifcType == "IFCSLAB" && element.CategoryId == -2000032)
+        if (ifcType == "IFCSLAB" && element.CategoryId is -2000032 or -2001300)
             return Own(FloorTypeReferenceName(element, currentProfile), element.ValidatedFloorTypeReferenceIsExplicit,
                 element.ValidatedFloorTypeReferenceIsBlocked);
         if (ifcType == "IFCCOVERING" && element.CategoryId == -2000038)

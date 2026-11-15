@@ -4434,6 +4434,7 @@ internal static partial class ElementBuilder
         ParsingState? hostState = null)
     {
         const int FloorsCategoryId = -2000032;
+        const int StructuralFoundationCategoryId = -2001300;
         var occurrences = new Dictionary<int, int>();
         foreach (Element element in elements)
         {
@@ -4446,7 +4447,7 @@ internal static partial class ElementBuilder
 
         foreach (Element instance in elements)
         {
-            if (instance.CategoryId != FloorsCategoryId
+            if (instance.CategoryId is not (FloorsCategoryId or StructuralFoundationCategoryId)
                 || !nativeParams.TryGetValue(
                     (uint)instance.Id, out var instanceNativeParams)
                 || !instanceNativeParams.Fields.TryGetValue(
@@ -4455,7 +4456,7 @@ internal static partial class ElementBuilder
                 || serializedTypeId == instance.Id
                 || !elementsById.TryGetValue(
                     serializedTypeId, out Element? typeElement)
-                || typeElement.CategoryId != FloorsCategoryId)
+                || typeElement.CategoryId is not (FloorsCategoryId or StructuralFoundationCategoryId))
                 continue;
 
             ExactIfcStringParameterResult explicitReference =
