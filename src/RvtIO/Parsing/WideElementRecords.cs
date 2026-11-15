@@ -123,6 +123,13 @@ internal static class WideElementRecords
     internal static Index? BuildIndex(
         IReadOnlyList<IReadOnlyList<byte[]>> streams, FileSchema schema, IReadOnlySet<uint> wanted,
         Action<uint, byte[], int, int, int>? onRootBlock = null, IReadOnlyList<PartitionFraming.Framed?>? framed = null)
+        => BuildIndexWithPartitions(streams, schema, wanted,
+            onRootBlock == null ? null : (id, buf, off, size, cls, _) => onRootBlock(id, buf, off, size, cls), framed);
+
+    /// <summary>Same as <see cref="BuildIndex"/>, passing the framed partition number (or null when unframed) to <paramref name="onRootBlock"/>.</summary>
+    internal static Index? BuildIndexWithPartitions(
+        IReadOnlyList<IReadOnlyList<byte[]>> streams, FileSchema schema, IReadOnlySet<uint> wanted,
+        Action<uint, byte[], int, int, int, int?>? onRootBlock, IReadOnlyList<PartitionFraming.Framed?>? framed = null)
     {
         if (framed != null && framed.Count != streams.Count) throw new ArgumentException("one framing entry per stream", nameof(framed));
         var header = schema.ByName("ElementHeader");
@@ -190,7 +197,7 @@ internal static class WideElementRecords
             // payload (class id first) of every Element-derived block whose stream holds the header record of its id
             if (rootBlocks != null)
                 foreach (var (blockId, offset, size, cls) in rootBlocks)
-                    if (recordIds.Contains(blockId)) onRootBlock!(blockId, buf, offset, size, cls);
+                    if (recordIds.Contains(blockId)) onRootBlock!(blockId, buf, offset, size, cls, frame?.Partition);
             foreach (var (id, cls) in blockClasses)
             {
                 if (!recordIds.Contains(id)) continue;

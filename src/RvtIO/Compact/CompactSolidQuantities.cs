@@ -43,6 +43,12 @@ internal sealed class CompactSolidQuantities
         });
         var info = reader.Read(path);
         var state = reader.LastParsingState ?? throw new InvalidOperationException("The reader kept no parsing state.");
+        return From(info, state, wantsSolids);
+    }
+
+    /// <summary>Extracts quantities directly from an already-decoded Revit 2022 layout model.</summary>
+    internal static CompactSolidQuantities From(RevitFileInfo info, ParsingState state, Func<int, bool>? wantsSolids)
+    {
         var result = new CompactSolidQuantities();
         foreach (var element in info.Elements)
         {

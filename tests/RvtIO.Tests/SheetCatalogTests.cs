@@ -95,6 +95,26 @@ public class SheetCatalogTests
     }
 
     [Fact]
+    public void Extract_ExcludesDiscoveredElementsWhenElemTableIsExact()
+    {
+        var validSheet = Sheet(100, "A101", "Ground floor");
+        var discoveredSheet = Sheet(101, "A102", "Deleted floor");
+        discoveredSheet.IsDiscovered = true;
+
+        var info = new RevitFileInfo
+        {
+            Elements = [validSheet, discoveredSheet],
+            ElemTableIsExact = true
+        };
+
+        var catalog = SheetCatalog.Extract(info);
+
+        var sheet = Assert.Single(catalog.Sheets);
+        Assert.Equal(100, sheet.ElementId);
+        Assert.Equal("A101", sheet.Number);
+    }
+
+    [Fact]
     public void Extract_LinksViewportsToTheirSheet()
     {
         var sheet = Sheet(100, "A101");

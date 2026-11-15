@@ -20,6 +20,9 @@ internal static partial class GRepParserV2
 
     [ThreadStatic] private static bool t_coarseTessellation;
 
+    /// <summary>Faces of the geometry being built that were left out because their trim triangulation ran out of its budget.</summary>
+    [ThreadStatic] private static int t_untriangulatedFaces;
+
     private static double ChordTolerance => TessellationChordToleranceFeet * (t_coarseTessellation ? 16 : 1);
 
     private sealed class DecodeStop : Exception { }
@@ -2362,8 +2365,19 @@ internal static partial class GRepParserV2
     private static GRepData? BuildGeometry(Cur c)
     {
         t_coarseTessellation = false;
-        try { return BuildGeometryCore(c); }
-        finally { t_coarseTessellation = false; }
+        int enclosingUntriangulated = t_untriangulatedFaces;
+        t_untriangulatedFaces = 0;
+        try
+        {
+            var geometry = BuildGeometryCore(c);
+            if (geometry != null) geometry.UntriangulatedFaces = t_untriangulatedFaces;
+            return geometry;
+        }
+        finally
+        {
+            t_coarseTessellation = false;
+            t_untriangulatedFaces = enclosingUntriangulated;
+        }
     }
 
     private static GRepData? BuildGeometryCore(Cur c)
@@ -4627,19 +4641,37 @@ internal static partial class GRepParserV2
         ];
     }
 
-    /// <summary>Triangulates one exact UV outer loop with zero or more inner loops.</summary>
+
+    /// <summary>Triangulates one exact UV outer loop with zero or more inner loops. Null when the loops do not triangulate, or
+    /// when the triangulation would spend more than <paramref name="budget"/>, by default one near-linear in the vertices.</summary>
     internal static List<List<double[]>>? TriangulateTrimRings(
-        IReadOnlyList<List<double[]>> sourceRings)
+        IReadOnlyList<List<double[]>> sourceRings, TrimWorkBudget? budget = null)
     {
         if (sourceRings.Count == 0) return null;
+        try
+        {
+            return TriangulateTrimRingsWithin(sourceRings,
+                budget ?? TrimWorkBudget.ForVertices(sourceRings.Sum(ring => ring.Count)));
+        }
+        catch (TrimWorkExceeded)
+        {
+            return null;
+        }
+    }
 
+    private static List<List<double[]>>? TriangulateTrimRingsWithin(
+        IReadOnlyList<List<double[]>> sourceRings, TrimWorkBudget budget)
+    {
         static bool Same(double[] first, double[] second) =>
             first[0] == second[0] && first[1] == second[1];
-        static decimal Orientation(double[] first, double[] second, double[] point) =>
-            ((decimal)second[0] - (decimal)first[0])
-                * ((decimal)point[1] - (decimal)first[1])
-            - ((decimal)second[1] - (decimal)first[1])
-                * ((decimal)point[0] - (decimal)first[0]);
+        decimal Orientation(double[] first, double[] second, double[] point)
+        {
+            budget.Spend();
+            return ((decimal)second[0] - (decimal)first[0])
+                    * ((decimal)point[1] - (decimal)first[1])
+                - ((decimal)second[1] - (decimal)first[1])
+                    * ((decimal)point[0] - (decimal)first[0]);
+        }
         static decimal SignedArea(IReadOnlyList<double[]> ring)
         {
             decimal twiceArea = 0;
@@ -4663,38 +4695,40 @@ internal static partial class GRepParserV2
             if (clean.Count > 1 && Same(clean[0], clean[^1])) clean.RemoveAt(clean.Count - 1);
             return clean;
         }
-        static List<double[]> SimplifyCollinear(IReadOnlyList<double[]> source)
+        List<double[]> SimplifyCollinear(IReadOnlyList<double[]> source)
         {
             var clean = source.Select(point => (double[])point.Clone()).ToList();
-            bool changed = true;
-            while (changed && clean.Count > 3)
+            // Removing a vertex changes the neighbours of only the two beside it, so the scan for the next removable vertex
+            // resumes at the one before (at the start after the last, the start's predecessor): the first removable vertex,
+            // as a rescan from the start finds it, without the quadratic rescans.
+            int index = 0;
+            while (index < clean.Count && clean.Count > 3)
             {
-                changed = false;
-                for (int index = 0; index < clean.Count; index++)
+                var previous = clean[(index - 1 + clean.Count) % clean.Count];
+                var current = clean[index];
+                var next = clean[(index + 1) % clean.Count];
+                if (Orientation(previous, current, next) != 0
+                    || (decimal)current[0] < Math.Min((decimal)previous[0], (decimal)next[0])
+                    || (decimal)current[0] > Math.Max((decimal)previous[0], (decimal)next[0])
+                    || (decimal)current[1] < Math.Min((decimal)previous[1], (decimal)next[1])
+                    || (decimal)current[1] > Math.Max((decimal)previous[1], (decimal)next[1]))
                 {
-                    var previous = clean[(index - 1 + clean.Count) % clean.Count];
-                    var current = clean[index];
-                    var next = clean[(index + 1) % clean.Count];
-                    if (Orientation(previous, current, next) != 0
-                        || (decimal)current[0] < Math.Min((decimal)previous[0], (decimal)next[0])
-                        || (decimal)current[0] > Math.Max((decimal)previous[0], (decimal)next[0])
-                        || (decimal)current[1] < Math.Min((decimal)previous[1], (decimal)next[1])
-                        || (decimal)current[1] > Math.Max((decimal)previous[1], (decimal)next[1]))
-                        continue;
-                    clean.RemoveAt(index);
-                    changed = true;
-                    break;
+                    index++;
+                    continue;
                 }
+                bool last = index == clean.Count - 1;
+                clean.RemoveAt(index);
+                index = last ? 0 : Math.Max(0, index - 1);
             }
             return clean;
         }
-        static bool OnSegment(double[] point, double[] first, double[] second) =>
+        bool OnSegment(double[] point, double[] first, double[] second) =>
             Orientation(first, second, point) == 0
             && (decimal)point[0] >= Math.Min((decimal)first[0], (decimal)second[0])
             && (decimal)point[0] <= Math.Max((decimal)first[0], (decimal)second[0])
             && (decimal)point[1] >= Math.Min((decimal)first[1], (decimal)second[1])
             && (decimal)point[1] <= Math.Max((decimal)first[1], (decimal)second[1]);
-        static bool Intersects(double[] firstA, double[] secondA,
+        bool Intersects(double[] firstA, double[] secondA,
             double[] firstB, double[] secondB)
         {
             decimal ab1 = Orientation(firstA, secondA, firstB);
@@ -4706,21 +4740,6 @@ internal static partial class GRepParserV2
             if (ba1 == 0 && OnSegment(firstA, firstB, secondB)) return true;
             if (ba2 == 0 && OnSegment(secondA, firstB, secondB)) return true;
             return (ab1 < 0) != (ab2 < 0) && (ba1 < 0) != (ba2 < 0);
-        }
-        static bool StrictlyInside(double[] point, IReadOnlyList<double[]> ring)
-        {
-            int winding = 0;
-            for (int index = 0; index < ring.Count; index++)
-            {
-                var first = ring[index];
-                var second = ring[(index + 1) % ring.Count];
-                decimal orientation = Orientation(first, second, point);
-                if (orientation == 0 && OnSegment(point, first, second)) return false;
-                if (first[1] <= point[1] && point[1] < second[1] && orientation > 0) winding++;
-                else if (second[1] <= point[1] && point[1] < first[1]
-                    && orientation < 0) winding--;
-            }
-            return winding != 0;
         }
 
         var ringData = sourceRings.Select(Clean)
@@ -4737,8 +4756,9 @@ internal static partial class GRepParserV2
             outer.Reverse();
             outerData.Original.Reverse();
         }
+        var outerBands = new TrimEdgeBands([outer], budget, Orientation, OnSegment);
         var holeData = ringData.Skip(1)
-            .Where(hole => StrictlyInside(hole.Simplified[0], outer)).ToList();
+            .Where(hole => outerBands.RingsStrictlyContaining(hole.Simplified[0]).Count > 0).ToList();
         foreach (var hole in holeData)
             if (SignedArea(hole.Simplified) > 0)
             {
@@ -4747,9 +4767,11 @@ internal static partial class GRepParserV2
             }
         var holes = holeData.Select(hole => hole.Simplified).ToList();
 
-        bool InsideRegion(double[] point) => StrictlyInside(point, outer)
-            && holes.All(hole => !StrictlyInside(point, hole));
         var allBoundaryRings = new[] { outer }.Concat(holes).ToList();
+        // Inside the outer ring (0) and inside no hole.
+        var regionBands = new TrimEdgeBands(allBoundaryRings, budget, Orientation, OnSegment);
+        bool InsideRegion(double[] point) =>
+            regionBands.RingsStrictlyContaining(point) is [0];
         var bridges = new List<(double[] First, double[] Second)>();
         var polygon = outer.Select(point => (double[])point.Clone()).ToList();
         foreach (var hole in holes.OrderByDescending(ring => ring.Max(point => point[0]))
@@ -4759,43 +4781,43 @@ internal static partial class GRepParserV2
                 .OrderByDescending(index => hole[index][0])
                 .ThenBy(index => hole[index][1]).First();
             var holePoint = hole[holeIndex];
-            int outerIndex = -1;
-            double bestDistance = double.PositiveInfinity;
-            for (int candidateIndex = 0; candidateIndex < polygon.Count; candidateIndex++)
-            {
-                var candidate = polygon[candidateIndex];
-                if (Same(candidate, holePoint)) continue;
-                bool blocked = false;
-                foreach (var ring in allBoundaryRings)
-                {
-                    for (int edgeIndex = 0; edgeIndex < ring.Count; edgeIndex++)
+            // The nearest candidate that passes, on equal distances the first in the polygon: tried nearest first, the first
+            // that passes is that one, and most holes need one or two tries instead of a test of every candidate.
+            budget.Spend(polygon.Count);
+            var candidates = new PriorityQueue<int, (double Distance, int Index)>(
+                Enumerable.Range(0, polygon.Count)
+                    .Where(candidateIndex => !Same(polygon[candidateIndex], holePoint))
+                    .Select(candidateIndex =>
                     {
+                        double dx = polygon[candidateIndex][0] - holePoint[0];
+                        double dy = polygon[candidateIndex][1] - holePoint[1];
+                        return (candidateIndex, (dx * dx + dy * dy, candidateIndex));
+                    })
+                    .Where(candidate => candidate.Item2.Item1 < double.PositiveInfinity));
+            int outerIndex = -1;
+            while (candidates.TryDequeue(out int candidateIndex, out _))
+            {
+                budget.Spend();
+                var candidate = polygon[candidateIndex];
+                // Only an edge that meets the vertical range of the bridge can cross it.
+                bool blocked = regionBands.AnyEdge(Math.Min(holePoint[1], candidate[1]), Math.Max(holePoint[1], candidate[1]),
+                    (ringIndex, edgeIndex) =>
+                    {
+                        var ring = allBoundaryRings[ringIndex];
                         var first = ring[edgeIndex];
                         var second = ring[(edgeIndex + 1) % ring.Count];
-                        if (Same(first, holePoint) || Same(second, holePoint)
-                            || Same(first, candidate) || Same(second, candidate))
-                            continue;
-                        if (Intersects(holePoint, candidate, first, second))
-                        {
-                            blocked = true;
-                            break;
-                        }
-                    }
-                    if (blocked) break;
-                }
+                        return !(Same(first, holePoint) || Same(second, holePoint)
+                                || Same(first, candidate) || Same(second, candidate))
+                            && Intersects(holePoint, candidate, first, second);
+                    });
                 if (blocked || bridges.Any(bridge => Intersects(
                         holePoint, candidate, bridge.First, bridge.Second)))
                     continue;
                 var midpoint = new[] { (holePoint[0] + candidate[0]) / 2,
                     (holePoint[1] + candidate[1]) / 2 };
                 if (!InsideRegion(midpoint)) continue;
-                double dx = candidate[0] - holePoint[0], dy = candidate[1] - holePoint[1];
-                double distance = dx * dx + dy * dy;
-                if (distance < bestDistance)
-                {
-                    bestDistance = distance;
-                    outerIndex = candidateIndex;
-                }
+                outerIndex = candidateIndex;
+                break;
             }
             if (outerIndex < 0) return null;
             var outerPoint = polygon[outerIndex];
@@ -4808,49 +4830,119 @@ internal static partial class GRepParserV2
             bridges.Add((holePoint, outerPoint));
         }
 
+        // Ear clipping takes on each pass the first ear of the ring from its start, the lowest polygon index that remains.
+        // Whether a vertex is an ear changes only when a neighbour goes, or the point that blocked its triangle goes, so only
+        // those vertices are tested again, in polygon order, ahead of the vertices not tested yet: the same ears in the same
+        // order as a scan of the whole ring on each pass. A grid of the remaining points finds those in a triangle.
         var triangles = new List<List<double[]>>();
-        int guard = polygon.Count * polygon.Count;
-        while (polygon.Count > 3 && guard-- > 0)
+        int count = polygon.Count;
+        var nextOf = new int[count];
+        var previousOf = new int[count];
+        for (int index = 0; index < count; index++)
         {
-            bool removed = false;
-            for (int index = 0; index < polygon.Count; index++)
-            {
-                var previous = polygon[(index - 1 + polygon.Count) % polygon.Count];
-                var current = polygon[index];
-                var next = polygon[(index + 1) % polygon.Count];
-                if (Orientation(previous, current, next) <= 0) continue;
-                bool contains = polygon.Where((_, pointIndex) => pointIndex != index
-                        && pointIndex != (index - 1 + polygon.Count) % polygon.Count
-                        && pointIndex != (index + 1) % polygon.Count)
-                    .Any(point => Orientation(previous, current, point) > 0
-                        && Orientation(current, next, point) > 0
-                        && Orientation(next, previous, point) > 0);
-                if (contains) continue;
-                var centroid = new[] { (previous[0] + current[0] + next[0]) / 3,
-                    (previous[1] + current[1] + next[1]) / 3 };
-                if (!InsideRegion(centroid)) continue;
-                triangles.Add([(double[])previous.Clone(), (double[])current.Clone(),
-                    (double[])next.Clone()]);
-                polygon.RemoveAt(index);
-                removed = true;
-                break;
-            }
-            if (!removed) return null;
+            nextOf[index] = (index + 1) % count;
+            previousOf[index] = (index - 1 + count) % count;
         }
-        if (polygon.Count != 3 || Orientation(polygon[0], polygon[1], polygon[2]) <= 0)
+        int start = 0;
+        var remaining = new TrimPointTree(polygon, budget);
+        var gone = new bool[count];
+        var tests = new int[count];
+        var waiting = new List<(int Vertex, int Test)>?[count];
+        var retest = new PriorityQueue<int, int>();
+        var queued = new bool[count];
+        int untested = 0;
+        void Retest(int vertex)
+        {
+            if (vertex >= untested || queued[vertex]) return;
+            queued[vertex] = true;
+            retest.Enqueue(vertex, vertex);
+        }
+        int NextCandidate()
+        {
+            while (retest.TryPeek(out int vertex, out _) && gone[vertex])
+            {
+                retest.Dequeue();
+                queued[vertex] = false;
+            }
+            bool hasRetest = retest.TryPeek(out int lowest, out _);
+            if (untested < polygon.Count && (!hasRetest || untested < lowest))
+            {
+                int vertex = untested;
+                untested = nextOf[vertex] > vertex ? nextOf[vertex] : polygon.Count;
+                return vertex;
+            }
+            if (!hasRetest) return -1;
+            retest.Dequeue();
+            queued[lowest] = false;
+            return lowest;
+        }
+        bool IsEar(int index)
+        {
+            tests[index]++;
+            int previousIndex = previousOf[index], nextIndex = nextOf[index];
+            var previous = polygon[previousIndex];
+            var current = polygon[index];
+            var next = polygon[nextIndex];
+            if (Orientation(previous, current, next) <= 0) return false;
+            int blocker = remaining.FirstInTriangle(previous, current, next,
+                pointIndex => pointIndex != index && pointIndex != previousIndex && pointIndex != nextIndex
+                    && Orientation(previous, current, polygon[pointIndex]) > 0
+                    && Orientation(current, next, polygon[pointIndex]) > 0
+                    && Orientation(next, previous, polygon[pointIndex]) > 0);
+            if (blocker >= 0)
+            {
+                (waiting[blocker] ??= new List<(int, int)>()).Add((index, tests[index]));
+                return false;
+            }
+            var centroid = new[] { (previous[0] + current[0] + next[0]) / 3,
+                (previous[1] + current[1] + next[1]) / 3 };
+            return InsideRegion(centroid);
+        }
+        int guard = polygon.Count * polygon.Count;
+        while (count > 3 && guard-- > 0)
+        {
+            int ear;
+            while ((ear = NextCandidate()) >= 0 && !IsEar(ear)) { }
+            if (ear < 0) return null;
+            int previousIndex = previousOf[ear], nextIndex = nextOf[ear];
+            triangles.Add([(double[])polygon[previousIndex].Clone(), (double[])polygon[ear].Clone(),
+                (double[])polygon[nextIndex].Clone()]);
+            remaining.Remove(ear);
+            gone[ear] = true;
+            nextOf[previousIndex] = nextIndex;
+            previousOf[nextIndex] = previousIndex;
+            if (ear == start) start = nextIndex;
+            count--;
+            Retest(previousIndex);
+            Retest(nextIndex);
+            if (waiting[ear] is { } blocked)
+                foreach (var (vertex, test) in blocked)
+                    if (!gone[vertex] && tests[vertex] == test) Retest(vertex);
+        }
+        if (count != 3 || Orientation(polygon[start], polygon[nextOf[start]], polygon[nextOf[nextOf[start]]]) <= 0)
             return null;
-        triangles.Add(polygon.Select(point => (double[])point.Clone()).ToList());
+        triangles.Add([(double[])polygon[start].Clone(), (double[])polygon[nextOf[start]].Clone(),
+            (double[])polygon[nextOf[nextOf[start]]].Clone()]);
 
         // Ear clipping operates on the topologically equivalent ring with intermediate collinear UV
-        // samples removed.
+        // samples removed. A grid of the original samples finds those on each edge.
         var boundaryChains = new Dictionary<(double, double, double, double), List<double[]>>();
         foreach (var ring in new[] { outerData }.Concat(holeData))
         {
+            var samples = new TrimPointTree(ring.Original, budget);
             for (int index = 0; index < ring.Simplified.Count; index++)
             {
                 var first = ring.Simplified[index];
                 var second = ring.Simplified[(index + 1) % ring.Simplified.Count];
-                var chain = ring.Original.Where(point => OnSegment(point, first, second))
+                var onEdge = new List<int>();
+                samples.FirstInTriangle(first, second, second,
+                    sample =>
+                    {
+                        if (OnSegment(ring.Original[sample], first, second)) onEdge.Add(sample);
+                        return false;
+                    });
+                onEdge.Sort();
+                var chain = onEdge.Select(sample => ring.Original[sample])
                     .OrderBy(point => (point[0] - first[0]) * (point[0] - first[0])
                         + (point[1] - first[1]) * (point[1] - first[1]))
                     .Select(point => (double[])point.Clone()).ToList();
@@ -4882,18 +4974,23 @@ internal static partial class GRepParserV2
     }
 
     /// <summary>
-    /// Partitions a Face's exact UV loops into independent trim regions before triangulation.
+    /// Partitions a Face's exact UV loops into independent trim regions before triangulation. Null when a region does not
+    /// triangulate, or when the triangulation of the regions would spend more than a budget near-linear in the vertices.
+    /// </summary>
+    internal static List<List<double[]>>? TriangulateTrimRegions(IReadOnlyList<List<double[]>> sourceRings) =>
+        TriangulateTrimRegions(sourceRings, out _);
+
+    /// <summary>
+    /// Partitions a Face's exact UV loops into independent trim regions before triangulation. Null when a region does not
+    /// triangulate, or when the triangulation ran out of <paramref name="budget"/> (by default one near-linear in the vertices),
+    /// which <paramref name="outOfBudget"/> tells apart.
     /// </summary>
     internal static List<List<double[]>>? TriangulateTrimRegions(
-        IReadOnlyList<List<double[]>> sourceRings)
+        IReadOnlyList<List<double[]>> sourceRings, out bool outOfBudget, TrimWorkBudget? budget = null)
     {
+        outOfBudget = false;
         static bool Same(double[] first, double[] second) =>
             first[0] == second[0] && first[1] == second[1];
-        static decimal Orientation(double[] first, double[] second, double[] point) =>
-            ((decimal)second[0] - (decimal)first[0])
-                * ((decimal)point[1] - (decimal)first[1])
-            - ((decimal)second[1] - (decimal)first[1])
-                * ((decimal)point[0] - (decimal)first[0]);
         static decimal SignedArea(IReadOnlyList<double[]> ring)
         {
             decimal twiceArea = 0;
@@ -4905,28 +5002,6 @@ internal static partial class GRepParserV2
                     - (decimal)second[0] * (decimal)first[1];
             }
             return twiceArea / 2;
-        }
-        static bool OnSegment(double[] point, double[] first, double[] second) =>
-            Orientation(first, second, point) == 0
-            && (decimal)point[0] >= Math.Min((decimal)first[0], (decimal)second[0])
-            && (decimal)point[0] <= Math.Max((decimal)first[0], (decimal)second[0])
-            && (decimal)point[1] >= Math.Min((decimal)first[1], (decimal)second[1])
-            && (decimal)point[1] <= Math.Max((decimal)first[1], (decimal)second[1]);
-        static bool StrictlyInside(double[] point, IReadOnlyList<double[]> ring)
-        {
-            int winding = 0;
-            for (int index = 0; index < ring.Count; index++)
-            {
-                var first = ring[index];
-                var second = ring[(index + 1) % ring.Count];
-                decimal orientation = Orientation(first, second, point);
-                if (orientation == 0 && OnSegment(point, first, second)) return false;
-                if (first[1] <= point[1] && point[1] < second[1]
-                    && orientation > 0) winding++;
-                else if (second[1] <= point[1] && point[1] < first[1]
-                    && orientation < 0) winding--;
-            }
-            return winding != 0;
         }
 
         var rings = sourceRings.Select(source =>
@@ -4945,58 +5020,88 @@ internal static partial class GRepParserV2
             .ToList();
         if (rings.Count == 0) return null;
 
-        var parent = Enumerable.Repeat(-1, rings.Count).ToArray();
-        for (int child = 0; child < rings.Count; child++)
+        budget ??= TrimWorkBudget.ForVertices(rings.Sum(ring => ring.Count));
+        decimal Orientation(double[] first, double[] second, double[] point)
         {
-            decimal parentArea = decimal.MaxValue;
-            for (int candidate = 0; candidate < rings.Count; candidate++)
+            budget.Spend();
+            return ((decimal)second[0] - (decimal)first[0])
+                    * ((decimal)point[1] - (decimal)first[1])
+                - ((decimal)second[1] - (decimal)first[1])
+                    * ((decimal)point[0] - (decimal)first[0]);
+        }
+        bool OnSegment(double[] point, double[] first, double[] second) =>
+            Orientation(first, second, point) == 0
+            && (decimal)point[0] >= Math.Min((decimal)first[0], (decimal)second[0])
+            && (decimal)point[0] <= Math.Max((decimal)first[0], (decimal)second[0])
+            && (decimal)point[1] >= Math.Min((decimal)first[1], (decimal)second[1])
+            && (decimal)point[1] <= Math.Max((decimal)first[1], (decimal)second[1]);
+
+        try
+        {
+            // The parent of a ring is the smallest ring that strictly contains its first point, on equal areas the first.
+            var areas = rings.Select(ring => decimal.Abs(SignedArea(ring))).ToArray();
+            var bands = new TrimEdgeBands(rings, budget, Orientation, OnSegment);
+            var parent = Enumerable.Repeat(-1, rings.Count).ToArray();
+            for (int child = 0; child < rings.Count; child++)
             {
-                if (candidate == child
-                    || !StrictlyInside(rings[child][0], rings[candidate]))
-                    continue;
-                decimal area = decimal.Abs(SignedArea(rings[candidate]));
-                if (area < parentArea)
+                decimal parentArea = decimal.MaxValue;
+                foreach (int candidate in bands.RingsStrictlyContaining(rings[child][0]))
                 {
-                    parentArea = area;
-                    parent[child] = candidate;
+                    if (candidate == child) continue;
+                    if (areas[candidate] < parentArea
+                        || (areas[candidate] == parentArea && candidate < parent[child]))
+                    {
+                        parentArea = areas[candidate];
+                        parent[child] = candidate;
+                    }
                 }
             }
-        }
 
-        int Depth(int index)
-        {
-            int depth = 0;
-            var seen = new HashSet<int> { index };
-            while (parent[index] >= 0)
+            int Depth(int index)
             {
-                index = parent[index];
-                if (!seen.Add(index)) return int.MaxValue;
-                depth++;
+                int depth = 0;
+                var seen = new HashSet<int> { index };
+                while (parent[index] >= 0)
+                {
+                    index = parent[index];
+                    if (!seen.Add(index)) return int.MaxValue;
+                    depth++;
+                }
+                return depth;
             }
-            return depth;
-        }
 
-        var result = new List<List<double[]>>();
-        for (int outer = 0; outer < rings.Count; outer++)
-        {
-            int depth = Depth(outer);
-            if (depth == int.MaxValue) return null;
-            if ((depth & 1) != 0) continue;
-            var region = new List<List<double[]>> { rings[outer] };
-            region.AddRange(Enumerable.Range(0, rings.Count)
-                .Where(index => parent[index] == outer)
-                .Select(index => rings[index]));
-            var triangles = TriangulateTrimRings(region);
-            if (triangles == null) return null;
-            result.AddRange(triangles);
+            var result = new List<List<double[]>>();
+            for (int outer = 0; outer < rings.Count; outer++)
+            {
+                int depth = Depth(outer);
+                if (depth == int.MaxValue) return null;
+                if ((depth & 1) != 0) continue;
+                var region = new List<List<double[]>> { rings[outer] };
+                region.AddRange(Enumerable.Range(0, rings.Count)
+                    .Where(index => parent[index] == outer)
+                    .Select(index => rings[index]));
+                var triangles = TriangulateTrimRings(region, budget);
+                if (triangles == null)
+                {
+                    outOfBudget = budget.Exhausted;
+                    return null;
+                }
+                result.AddRange(triangles);
+            }
+            return result.Count > 0 ? result : null;
         }
-        return result.Count > 0 ? result : null;
+        catch (TrimWorkExceeded)
+        {
+            outOfBudget = true;
+            return null;
+        }
     }
 
     /// <summary>
     /// Tessellates the exact UV trim region while retaining the Edge-authored boundary.
     /// Surface.Envelope describes the underlying analytic surface and may include regions outside a
-    /// Face; the EdgeLoop is authoritative.
+    /// Face; the EdgeLoop is authoritative. Null when the loops do not triangulate (the caller then draws the untrimmed grid);
+    /// empty, with the face counted as untriangulated, when their triangulation ran out of its work budget.
     /// </summary>
     private static List<List<double[]>>? TessellateTrimmedGrid(
         List<(double U1, double V1, double U2, double V2)> edges,
@@ -5032,7 +5137,16 @@ internal static partial class GRepParserV2
         {
             var trimRings = rings.Select(ring => ring.Select(point =>
                 new[] { point[0], point[1] }).ToList()).ToList();
-            sourcePolygons = TriangulateTrimRegions(trimRings);
+            sourcePolygons = TriangulateTrimRegions(trimRings, out bool outOfBudget);
+            if (outOfBudget)
+            {
+                // Valid loops can be adversarial for the triangulation; the face is left out and counted rather than drawn
+                // as its untrimmed surface grid, which would fill its holes and pass its outer trim.
+                t_untriangulatedFaces++;
+                DiagnosticSink.WriteLine($"trim triangulation: a face of {trimRings.Count} loops and "
+                    + $"{trimRings.Sum(ring => ring.Count)} vertices ran out of its work budget and is left out");
+                return [];
+            }
         }
         if (sourcePolygons == null || sourcePolygons.Count == 0) return null;
 

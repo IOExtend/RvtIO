@@ -33,6 +33,20 @@ Only `Read(path)` reports the diagnostics of the read (`read-cut`, `failed-membe
 `RvtSceneResult` holds the `Document`, the `Diagnostics` and counts: elements, elements with geometry, elements by
 coverage, geometries, instances and symbol placements.
 
+### Command Line
+
+You can also export a scene document directly using `rvtio` via `--scene <path>`:
+
+```sh
+rvtio project.rvt --scene project.scene.json
+```
+
+It can be combined with other outputs to export IFC, JSON, and scene JSON from a single read of the RVT file:
+
+```sh
+rvtio project.rvt --ifc project.ifc --compact-json project.compact.json --scene project.scene.json
+```
+
 ## What the scene holds
 
 | Scene | From |
@@ -45,7 +59,7 @@ coverage, geometries, instances and symbol placements.
 | `Name`, `Category`, `TypeName` | `Element.Name`; the English name of the built-in category (else `Element.Category`); the name of the type element. |
 | `SceneGeometry`, `SceneInstance` | A symbol placed whole is one geometry per mesh in the frame of its family, and each placement is one instance per mesh with the placement's transform. A mirrored placement keeps its transform as it is: the winding of the triangles is not changed. A mesh of an element's own is a geometry used once, with vertices relative to the lowest corner of the element's meshes, which is the translation of its instances. All lengths are feet x 0.3048, in the internal coordinates of the document, Z up. |
 | `SceneMaterial` | One per material element that a mesh uses: its name and its colour (`MATERIAL_PARAM_COLOR`, alpha from `MATERIAL_PARAM_TRANSPARENCY`), else a neutral grey. |
-| `ScenePropertySet` | `revit:instance`: the parameters of the element. `revit:type`: the parameters of its type, one set shared by every element of the type. A parameter without a value is left out, and so is one whose value the reader only estimates (`Parameter.IsApproximate`), such as the fixed thermal values of a wall. |
+| `ScenePropertySet` | `revit:instance`: the parameters of the element. `revit:type`: the parameters of its type, one set shared by every element of the type. A parameter that carries no value in Revit (`!parameter.HasRevitValue`, covering unset sentinels such as `Double` `>= 1e29`, `ElementId` `-1` or uninitialized `0` without a resolved id-0 target, and unhosted host-id pointers, as well as unstored default placeholders synthesized by the reader) is left out, and so is one whose value the reader only estimates (`Parameter.IsApproximate`), such as the fixed thermal values of a wall; stored `0`, `0.0`, `""`, valid resolved id-0 references such as project phase `0`, and valid negative `ElementId` option or category values are kept. |
 | `SceneProperty` | Name: `Definition.Name` (for a built-in parameter its enum name, such as `WALL_USER_HEIGHT_PARAM`). Key: `revit:bip:<id>` for a built-in parameter, none for the others. Value: text, the display string of the public parameter API (see below). |
 
 ### Property text

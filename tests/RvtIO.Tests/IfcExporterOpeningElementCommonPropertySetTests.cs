@@ -1066,6 +1066,66 @@ public class IfcExporterOpeningElementCommonPropertySetTests
         finally { Cleanup(path); }
     }
 
+    [Fact]
+    public void StandaloneWallOpening_CurrentPrecedingHostWall_ExportsVoidRelationWithoutOrphans()
+    {
+        var (info, wall, opening) = MainLoopWallOpening();
+        info.Elements.Remove(opening);
+        info.Elements.Insert(0, opening);
+        string path = TempIfcPath("opening-current-preceding-host");
+
+        try
+        {
+            new IfcExporter().Export(info, path);
+            string ifc = File.ReadAllText(path);
+
+            var openings = OpeningEntities(ifc);
+            var emittedOpening = Assert.Single(openings);
+            Assert.Equal(wall.Id.ToString(), emittedOpening.Tag);
+            Match wallMatch = Assert.Single(Regex.Matches(
+                ifc,
+                $@"#(\d+)=IFCWALL(?:STANDARDCASE)?\([^\r\n]*,'{wall.Id}'\);"));
+            int wallEntityId = int.Parse(wallMatch.Groups[1].Value);
+            Assert.Single(Regex.Matches(ifc, $@"=IFCRELVOIDSELEMENT\([^;]*,#{wallEntityId},#{emittedOpening.EntityId}\);"));
+            Assert.Equal(openings.Count, Regex.Matches(ifc, @"=IFCRELVOIDSELEMENT\(").Count);
+        }
+        finally { Cleanup(path); }
+    }
+
+    [Fact]
+    public void StandaloneWallOpening_CurrentPrefersVisibleSerializedHostOverHiddenWallReference()
+    {
+        var (info, wall, opening) = MainLoopWallOpening();
+        var hiddenWall = new Element
+        {
+            Id = 1500,
+            TypeId = 1001,
+            CategoryId = -2000011,
+            Category = "OST_Walls",
+        };
+        info.Elements.Add(hiddenWall);
+        opening.References = [hiddenWall.Id, wall.Id, 99];
+        opening.SerializedHostId = wall.Id;
+        string path = TempIfcPath("opening-current-serialized-host-over-hidden-ref");
+
+        try
+        {
+            new IfcExporter().Export(info, path);
+            string ifc = File.ReadAllText(path);
+
+            var openings = OpeningEntities(ifc);
+            var emittedOpening = Assert.Single(openings);
+            Assert.Equal(wall.Id.ToString(), emittedOpening.Tag);
+            Match wallMatch = Assert.Single(Regex.Matches(
+                ifc,
+                $@"#(\d+)=IFCWALL(?:STANDARDCASE)?\([^\r\n]*,'{wall.Id}'\);"));
+            int wallEntityId = int.Parse(wallMatch.Groups[1].Value);
+            Assert.Single(Regex.Matches(ifc, $@"=IFCRELVOIDSELEMENT\([^;]*,#{wallEntityId},#{emittedOpening.EntityId}\);"));
+            Assert.Equal(openings.Count, Regex.Matches(ifc, @"=IFCRELVOIDSELEMENT\(").Count);
+        }
+        finally { Cleanup(path); }
+    }
+
     private static (RevitFileInfo Info, Element Wall, Element Opening)
         MainLoopWallOpening()
     {

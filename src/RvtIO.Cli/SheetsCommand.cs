@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using RvtIO;
 using RvtIO.Sheets;
 
 namespace RvtIO.Cli;
@@ -48,7 +49,7 @@ internal static class SheetsCommand
             error.WriteLine(Usage);
             return RvtExitCodes.Usage;
         }
-        if (outputPath != null && SamePath(file, outputPath))
+        if (outputPath != null && ExportReport.SameFile(file, outputPath))
         {
             error.WriteLine("The output path is the input file. Nothing was read or written.");
             return RvtExitCodes.Usage;
@@ -78,12 +79,15 @@ internal static class SheetsCommand
         }
         else
         {
+            string temporary = outputPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try
             {
-                File.WriteAllText(outputPath, json + Environment.NewLine);
+                File.WriteAllText(temporary, json + Environment.NewLine, new System.Text.UTF8Encoding(false));
+                File.Move(temporary, outputPath, overwrite: true);
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
+                if (File.Exists(temporary)) File.Delete(temporary);
                 error.WriteLine($"Cannot write {outputPath}: {exception.Message}");
                 return RvtExitCodes.Usage;
             }
@@ -97,14 +101,6 @@ internal static class SheetsCommand
         error.WriteLine($"[sheets] {catalog.Sheets.Count} sheets, {catalog.Viewports.Count} viewports, "
             + $"{catalog.Issues.Count} limits not decoded -> {target}");
         return RvtExitCodes.Success;
-    }
-
-    /// <summary>True when both paths name the same existing file or the same full path.</summary>
-    private static bool SamePath(string left, string right)
-    {
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        try { return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), comparison); }
-        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException) { return false; }
     }
 
     private const string Usage = "Usage: rvtio sheets <file.rvt|file.rfa> [output.json] [--r22-layout]";

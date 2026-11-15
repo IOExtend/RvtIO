@@ -1,4 +1,6 @@
 using System.Text;
+using RvtIO.Compact;
+using RvtIO.Internal;
 using RvtIO.Parsing;
 using Xunit;
 
@@ -16,8 +18,10 @@ public class OwnDocumentSchemaTests
         [(3752,"second")]=20,[(1227,"m_modifyingUpdaterInfos")]=1228,[(1228,"first")]=1229,
         [(1228,"second")]=1230,[(1229,"m_value")]=30,[(2633,"m_itemSet")]=2634,[(2634,"m_bindingIds")]=20,
         [(24,"second")]=20,
+        [(501,"m_mIdToBasis")]=502,[(502,"second")]=503,[(503,"m_creationEpisode")]=504,
+        [(501,"m_mBasisToIdSet")]=505,[(505,"second")]=506,[(506,"m_sCommonBasisIds")]=20,
     };
-    private static readonly ushort[] AppInfos=[561,115,32,1365,4197,1227,2633,4030];
+    private static readonly ushort[] AppInfos=[561,115,32,1365,4197,1227,2633,501,4030];
     private static readonly (string Key,string Value)[] Entries =
     [ ("opaque#key-1.0.0","{\n\t\"typeid\":\"opaque#key-1.0.0\",\"v\":-0.0}"),
       ("я\U0001F600\uFFFD","unparsed \0 text \U0001F600\r\n") ];
@@ -33,6 +37,40 @@ public class OwnDocumentSchemaTests
         Assert.Equal(Entries[1],(Assert.Single(r.Parameters.Entries).Key,r.Parameters.Entries[0].Value));
         foreach(var key in Refs.Keys)
             Assert.Contains(r.Fields,x=>(x.Declaring,x.Name)==key && x.End>x.Start);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(3)]
+    public void BasisMapsHaveInlineElementEpisodeAndOriginalIdsAndCountedIdSets(int count)
+    {
+        var fixture = Fixture();
+        var tracker = Read(fixture.Data, out _)!.Objects.Single(o => o.ClassId == 501);
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+        writer.Write(1u); // document backreference
+        writer.Write((uint)count);
+        for (int i = 0; i < count; i++)
+        {
+            writer.Write(876493 + i); // element id
+            writer.Write(738); // creation episode
+            writer.Write(875644 + i); // original element id
+        }
+        writer.Write((uint)count);
+        for (int i = 0; i < count; i++)
+        {
+            writer.Write(738);
+            writer.Write(875644 + i);
+            writer.Write(2u);
+            writer.Write(876493 + i);
+            writer.Write(900000 + i);
+        }
+        byte[] data = [..fixture.Data[..tracker.Start], ..stream.ToArray(), ..fixture.Data[tracker.End..]];
+        var result = Read(data, out var failure);
+        Assert.True(result != null, failure);
+        Assert.Equal(data.Length, result!.End);
+        Assert.Equal(Entries[0], (result.Units.Entries[0].Key, result.Units.Entries[0].Value));
     }
     [Theory]
     [InlineData(false)]
@@ -101,6 +139,38 @@ public class OwnDocumentSchemaTests
             else continue;
             Assert.Null(Read(data,out _));
         }
+    }
+
+    [Theory]
+    [InlineData("autodesk.spec.aec:length-1.0.0", "millimeters-1.0.1", "mm-1.0.1", "mm", 1, "304.80 mm")]
+    [InlineData("autodesk.spec.aec:angle-1.0.0", "degrees-1.0.1", "degree-1.0.1", "°", Math.PI / 6, "30.00°")]
+    [InlineData("autodesk.spec.aec.piping:pipeSize-1.0.0", "millimeters-1.0.1", "mm-1.0.1", "mm", 1, "304.80 mm")]
+    [InlineData("autodesk.spec.aec.hvac:ductSize-1.0.0", "millimeters-1.0.1", "mm-1.0.1", "mm", 1, "304.80 mm")]
+    public void FormatsBehindNonemptyBasisMapsConvertNumericSpecifications(string spec, string unit, string symbol, string text,
+        double raw, string expected)
+    {
+        string symbolId = "autodesk.unit.symbol:" + symbol;
+        string label = "{\"constants\":[{\"id\":\"text\",\"value\":\"" + text
+            + "\"},{\"id\":\"placement\",\"value\":\"Suffix\"},{\"id\":\"space\",\"value\":"
+            + (text == "°" ? "false" : "true") + "}]}";
+        var recovered = Read(Fixture(entries: [(symbolId, label)]).Data, out var failure);
+        Assert.True(recovered != null, failure);
+        var state = new ParsingState();
+        RvtFileReader.RecordOwnDocumentSchemas(state, recovered, null);
+        var option = new TfBlockDeserializer.UnitFormatOption(spec, symbolId, "autodesk.unit.unit:" + unit,
+            .01, 0, 0, 0, 0, 0, 0, 0);
+        CompactFormatSettings Settings(TfBlockDeserializer.UnitFormatOption value)
+            => CompactFormatSettings.Create(new(77, -1, 1, 0, 0, new([value], 1, 0, 1, 1)),
+                state.OwnDocumentUnitConversions, state.OwnDocumentSchemas)!;
+
+        Assert.Equal(expected, CompactValueFormatter.Format(raw, spec, Settings(option)));
+        // These flags affect fractional layouts; decimal symbols keep their persisted spacing and leading zero.
+        Assert.Equal(expected, CompactValueFormatter.Format(raw, spec, Settings(option with { SuppressSpaces = 1, SuppressLeadingZeros = 1 })));
+        string suffix = text == "°" ? "°" : " mm";
+        Assert.Equal("0.00" + suffix, CompactValueFormatter.Format(0, spec, Settings(option)));
+        Assert.Equal("0" + suffix, CompactValueFormatter.Format(0, spec, Settings(option with { SuppressTrailingZeros = 1 })));
+        Assert.Equal("0.00" + suffix, CompactValueFormatter.Format(0, spec, Settings(option with { SuppressLeadingZeros = 1 })));
+        Assert.Null(CompactValueFormatter.Format(0, "unknown:spec-1.0.0", Settings(option)));
     }
 
     private static TfBlockDeserializer.DocumentSchemaPrefix? Read(byte[] data,out string? error)

@@ -37,8 +37,8 @@ internal static class PartitionFraming
 
     /// <summary>A partition stream read by its framing: the output of every segment in file order, and the records of the project's own block
     /// (the null-key map) in file order, without the chain terminators. The records of the keyed blocks (loaded family documents) are not listed.
-    /// <see cref="IdWidth"/> is the byte width of the owner the walk read.</summary>
-    internal sealed record Framed(IReadOnlyList<byte[]> Segments, List<ProjectItem> Items, int IdWidth)
+    /// <see cref="IdWidth"/> is the byte width of the owner the walk read; <see cref="Partition"/> is the partition stream number when known.</summary>
+    internal sealed record Framed(IReadOnlyList<byte[]> Segments, List<ProjectItem> Items, int IdWidth, int? Partition = null)
     {
         private long[]? starts;
 

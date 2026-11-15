@@ -104,6 +104,7 @@ public class RvtDocument
         }
 
         SynthesizeMissingParams();
+        Parameter.ResolveZeroElementIds(_info);
 
         ResolveElementNames();
 
@@ -289,8 +290,31 @@ public class RvtDocument
     /// <summary>
     /// Wrap an existing RevitFileInfo as a queryable Document.
     /// Useful when you already have the data from RvtFileReader.Read().
+    /// Creates an isolated view of elements so that synthesizing document-level
+    /// parameters and names does not mutate the input model in-place.
     /// </summary>
-    public static RvtDocument FromInfo(RevitFileInfo info) => new(info);
+    public static RvtDocument FromInfo(RevitFileInfo info)
+    {
+        ArgumentNullException.ThrowIfNull(info);
+        return new RvtDocument(CloneForDocument(info));
+    }
+
+    private static RevitFileInfo CloneForDocument(RevitFileInfo info)
+    {
+        var cloned = info.ShallowCopy();
+        cloned.Elements = new List<Element>(info.Elements.Count);
+        foreach (var elem in info.Elements)
+        {
+            var copy = elem.ShallowCopy();
+            copy.Parameters = new List<Parameter>(elem.Parameters.Count);
+            foreach (var p in elem.Parameters)
+            {
+                copy.Parameters.Add(p.ShallowCopy(p.Value));
+            }
+            cloned.Elements.Add(copy);
+        }
+        return cloned;
+    }
 
     /// <summary>Writes a verified lossless copy of this document's backing file to <paramref name="outputPath"/>.</summary>
     /// <exception cref="InvalidOperationException">This document was constructed via <see cref="FromInfo"/> and has no backing file path.</exception>

@@ -13,3 +13,16 @@ artifacts/
 _site/
 docs/api/
 output.json
+
+# Private test fixtures, customer models and vendor files never go into the repository
+test_files/
+*.rvt
+*.rfa
+*.rte
+*.rft
+*.rws
+
+# Local secrets and patch leftovers
+.env
+*.rej
+*.orig

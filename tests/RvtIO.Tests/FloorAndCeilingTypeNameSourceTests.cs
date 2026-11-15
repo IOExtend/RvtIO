@@ -284,6 +284,47 @@ public class ElementBuilderFloorTypeNameSourceTests
         Assert.False(instance.ValidatedFloorTypeReferenceIsExplicit);
     }
 
+    [Theory]
+    [InlineData(-2000032, -2001300, 1)] // instance: Floors (-2000032), type: StructuralFoundation (-2001300)
+    [InlineData(-2001300, -2001300, 1)] // instance: StructuralFoundation (-2001300), type: StructuralFoundation (-2001300)
+    public void FloorReferenceValidation_FoundationSlab_AppliesValidatedTypeAndReferenceNames(
+        int instanceCategory, int typeCategory, int discriminator)
+    {
+        var type = Floor(200, 0, "Foundation slab type");
+        type.CategoryId = typeCategory;
+        var instance = Floor(300, type.Id, "Foundation slab instance");
+        instance.CategoryId = instanceCategory;
+        var elements = new List<Element> { type, instance };
+        var state = new ParsingState();
+        state.SystemTypeRoots[(uint)type.Id] = (1, 1915, discriminator);
+        state.HostTypeCompoundStructures[(uint)type.Id] = (1, (ushort)1915,
+            [new RawCompoundStructureLayer(0, 0, 0, 1, 0, 0, 0)], "Authored foundation slab type");
+
+        ElementBuilder.ApplyValidatedFloorTypeReferenceNames(
+            elements, elements.ToDictionary(element => element.Id),
+            new Dictionary<uint, (int BlockCount, string? TerminalName)>
+            {
+                [(uint)type.Id] = (1, "Terminal foundation string"),
+            },
+            new Dictionary<uint, TfBlockDeserializer.NativeParams>
+            {
+                [(uint)instance.Id] = FloorNativeParams(type.Id),
+            },
+            state);
+
+        Assert.Equal("Authored foundation slab type", instance.ValidatedFloorOwnTypeName);
+        Assert.Equal("Terminal foundation string", instance.ValidatedFloorTypeReferenceName);
+        Assert.False(instance.ValidatedFloorTypeReferenceIsExplicit);
+
+        Assert.Equal("Authored foundation slab type", IfcExporter.FloorTypeReferenceName(instance, currentProfile: true));
+        Assert.Equal("Terminal foundation string", IfcExporter.FloorTypeReferenceName(instance, currentProfile: false));
+
+        Assert.Equal("Authored foundation slab type",
+            IfcExporter.ResolveQuantityTakeOffReferenceValue(instance, "IFCSLAB", "Competing string", currentProfile: true));
+        Assert.Equal("Terminal foundation string",
+            IfcExporter.ResolveQuantityTakeOffReferenceValue(instance, "IFCSLAB", "Competing string", currentProfile: false));
+    }
+
     [Fact]
     public void FloorReferenceValidation_OwnTypeNameIsForTheCurrentProfileOnly()
     {

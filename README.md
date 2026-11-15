@@ -63,7 +63,13 @@ Export IFC with Revit parameters as property sets:
 rvtio project.rvt project.parameters.ifc --ifc-revit-parameters
 ```
 
-A `.ifc` output path selects IFC. Any other output path selects JSON, which is compact by default. If the output path is omitted, the tool writes `output.json`. Diagnostics go to standard error.
+Export multiple formats in a single read:
+
+```sh
+rvtio project.rvt --ifc project.ifc --compact-json project.compact.json --scene project.scene.json
+```
+
+A `.ifc` output path selects IFC. Any other output path selects JSON, which is compact by default. When `--ifc`, `--compact-json`, `--full-json`, or `--scene` are specified, the model is read once and each requested format is exported sequentially. Positional output arguments remain fully backward compatible. Single-output and multi-output exports produce byte-identical files. On Revit 2023+ (own-schema) models, JSON formats retain their wide-schema representation by default (use `--r22-layout` to export JSON in Revit 2022 layout too), while IFC and Scene exports use the Revit 2022 geometry layout, sharing decoded quantities without reading the model again. If no output path is given, the tool writes `output.json`. Diagnostics go to standard error.
 
 List the sheets and the viewports placed on them:
 
@@ -98,9 +104,17 @@ rvtio project.rvt project.ifc --ifc-phase all
 
 An element is left out of the IFC when it is demolished in the export phase or an earlier one, or created in a later one. Without the option the current profile exports the last project phase and the legacy profile every phase; `all` keeps every element and room, and an id selects that phase (it must occur in the project's phase order, or the tool exits with code 1). Rooms follow the export phase unless `--ifc-room-phase` names another one. The compact and full JSON are not filtered. In the library the same choices are `IfcExporter.ExportPhaseId` and `IfcExporter.ExportAllPhases`.
 
-The IFC declares the length unit of the project and writes every length in it: millimetres, metres (also for the "metres and centimetres" format) or feet (also for feet and fractional inches and for US survey feet). A project in any other unit, such as centimetres or inches, and a project whose length unit cannot be read are written in millimetres; the diagnostics name the stored unit or the reason. The legacy profile always writes millimetres.
+The IFC declares the length unit of the project and writes every length in it: millimetres, metres (also for the "metres and centimetres" format) or feet (also for feet and fractional inches and for US survey feet). A project in any other unit, such as centimetres or inches, and a project whose length unit cannot be read are written in millimetres; the diagnostics name the stored unit or the reason. Without an explicit choice, the legacy profile always writes millimetres. To choose the IFC length unit explicitly (`mm`, `m` or `ft`; `IfcExporter.LengthUnit` in the library):
 
-The Width and Height quantities of the opening of a door or window are those of the door or window as Revit has them: for a door 0.8 wide and 2.1 high the opening gets Width 0.8 (along the wall) and Height 2.1 (vertical), and the Depth is the thickness of the wall, in a wall of any direction. The Width and Height are the instance values, else the type values; a side the door or window holds no value for is measured from the opening, vertical for Height and along the wall for Width. Where the cut loop of the door or window is decoded, the opening is measured by that loop, as Revit cuts it, which can be larger than the nominal size (a door 0.9 by 2.1 with a frame cut of 1.0 by 2.2 gets Width 1.0 and Height 2.2); the nominal size stays only where the cut loop is not decoded. This applies to openings in straight walls; the openings of curved walls and curtain walls, openings that nothing fills and openings of other elements are measured as before. Releases before this one named the sides of the cut loop by the frame they are measured in, which gave the same door Height 0.8 and Width 2.1. To write those values, restore the earlier reading:
+```sh
+rvtio project.rvt project.ifc --ifc-length-unit m
+rvtio project.rvt project.ifc --ifc-length-unit ft
+rvtio project.rvt project.ifc --ifc-length-unit mm
+```
+
+All IFC coordinates, areas, volumes and base quantities are scaled to the chosen unit; unknown unit names exit with code 1. Compact JSON keeps the formatted display units of the project and full JSON keeps Revit's internal units (feet, square feet, cubic feet, radians).
+
+The Width and Height quantities of the opening of a door or window are those of the door or window as Revit has them: for a door 0.8 wide and 2.1 high the opening gets Width 0.8 (along the wall) and Height 2.1 (vertical), and the Depth is the thickness of the wall, in a wall of any direction. The Width and Height are the instance values, else the type values; a side the door or window holds no value for is measured from the opening, vertical for Height and along the wall for Width. Where the cut loop of the door or window is decoded, the opening is measured by that loop, as Revit cuts it, which can be larger than the nominal size (a door 0.9 by 2.1 with a frame cut of 1.0 by 2.2 gets Width 1.0 and Height 2.2); the nominal size stays only where the cut loop is not decoded. This applies to openings in straight walls. Unfilled openings in straight walls are measured from their final extrusion in the same wall frame: Width along the wall, Height vertical and Depth across it. The openings of curved walls and curtain walls and openings of other fillers are measured as before. Releases before this one named the sides of the cut loop by the frame they are measured in, which gave the same door Height 0.8 and Width 2.1. To write those values, restore the earlier reading:
 
 ```sh
 rvtio project.rvt project.ifc --ifc-opening-legacy-axes
@@ -108,7 +122,9 @@ rvtio project.rvt project.ifc --ifc-opening-legacy-axes
 
 `--ifc-opening-host-axes`, the opt-in of the earlier release for the new reading, is still accepted and does nothing. In the library the option is `IfcExporter.OpeningQuantitiesSwapped`; `IfcExporter.OpeningQuantitiesInHostAxes` is kept and is the opposite of it.
 
-Use `--ifc-timestamp <timestamp>` (an ISO-8601 timestamp or Unix epoch seconds; `IfcExporter.Timestamp` in the library) to write a fixed UTC timestamp into the STEP `FILE_NAME` header so repeated exports of the same input are byte-for-byte identical. Use `--ifc-revit-parameter-groups` for one property set per parameter group. A file saved in several increments can hold an element in more than one partition stream; the tool keeps only its current copy (every copy is kept when the file's increment tables cannot be decoded). Use `--keep-all-copies` to decode every copy instead (the earlier behavior; `--resolve-current-copies` is still accepted and does nothing). Run `rvtio --help` for all options. Unknown options exit with code 1; options starting with `--dev-` are not a stable interface.
+Use `--ifc-timestamp <timestamp>` (an ISO-8601 timestamp or Unix epoch seconds; `IfcExporter.Timestamp` in the library) to write a fixed UTC timestamp into the STEP `FILE_NAME` header so repeated exports of the same input are byte-for-byte identical. Use `--ifc-revit-parameter-groups` for one property set per parameter group. In IFC (`--ifc-revit-parameters`, `--ifc-revit-parameter-groups`, and named property sets) and in `RvtIO.Scene`, parameters that carry no value in Revit (`!Parameter.HasRevitValue`) are left out: `Double` sentinels (`|v| >= 1e29` or non-finite), unresolved `ElementId` values (`-1`, uninitialized `0` without a resolved id-0 target, and non-positive pointers on unhosted host-id parameters, while valid resolved id-0 references such as project phase `0` and valid negative `ElementId` option and category values are kept), unstored reader placeholders (`0`, `0.0`, `""`), and `IsApproximate` estimates, while stored `0`, `0.0`, `false` and `""` are written. Compact JSON applies its own schedule-matching value gate; `--json-full` keeps every `Parameter` entry on `RevitFileInfo` (`Parameter.HasValue` remains `Value != null`).
+
+A file saved in several increments can hold an element in more than one partition stream; the tool keeps only its current copy (every copy is kept when the file's increment tables cannot be decoded). Use `--keep-all-copies` to decode every copy instead (the earlier behavior; `--resolve-current-copies` is still accepted and does nothing). Run `rvtio --help` for all options. Unknown options exit with code 1; options starting with `--dev-` are not a stable interface.
 
 ### Exit codes and the export report
 

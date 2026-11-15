@@ -3,6 +3,9 @@ namespace RvtIO.Model
     /// <summary>Everything the reader decodes from one Revit file.</summary>
     public class RevitFileInfo
     {
+        /// <summary>A copy that shares all members with this instance; the caller replaces what it changes.</summary>
+        internal RevitFileInfo ShallowCopy() => (RevitFileInfo)MemberwiseClone();
+
         /// <summary>The basic file information.</summary>
         public FileMetadata Metadata { get; set; } = new();
         /// <summary>The project information.</summary>
@@ -61,6 +64,12 @@ namespace RvtIO.Model
 
         [System.Text.Json.Serialization.JsonIgnore]
         internal int[]? SerializedProjectPhaseIds { get; set; }
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        internal bool SerializedHasZeroProjectPhase { get; set; }
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        internal bool SerializedHasZeroDimensionStyle { get; set; }
 
         /// <summary>DocumentHistory.m_detachGUID of Global/History: the document GUID that
         /// is combined with project-level ids and level ids to form export ids.</summary>

@@ -425,7 +425,7 @@ public class IfcExporterBaseQuantitiesCurrentTests
     }
 
     [Fact]
-    public void Pass_OpeningOfAWallWithoutAFiller_IsReadTheSameWay_AndAnExtrusionAcrossTheWallKeepsItsProfileAsTheLoop()
+    public void Pass_OpeningOfAWallWithoutAFiller_IsMeasuredAlongAcrossAndVerticallyForEitherExtrusionAxis()
     {
         var (w, owner, placement) = NewWriter();
         int wall = AddProduct(w, "IFCWALLSTANDARDCASE", "1ZGD7y6S5209$mGLi_sPlj", owner, placement);
@@ -438,10 +438,8 @@ public class IfcExporterBaseQuantitiesCurrentTests
 
         var lengths = Quantities(w, "IFCQUANTITYLENGTH");
         Assert.Equal(6, lengths.Count);
-        // Vertical extrusion: depth across (0.202), the loop in the plane of the wall is 0.8 along by 2.1 up.
-        AssertQuantities(lengths.Take(3).ToList(), ("Depth", 0.202), ("Height", 0.8), ("Width", 2.1));
-        // Extruded across the wall already: the loop is the profile, 2.1 along the model X axis by 0.8 up.
-        AssertQuantities(lengths.Skip(3).ToList(), ("Depth", 0.202), ("Height", 2.1), ("Width", 0.8));
+        AssertQuantities(lengths.Take(3).ToList(), ("Depth", 0.202), ("Height", 2.1), ("Width", 0.8));
+        AssertQuantities(lengths.Skip(3).ToList(), ("Depth", 0.202), ("Height", 0.8), ("Width", 2.1));
     }
 
     /// <summary>A wall placed with its X axis along <paramref name="direction"/>, and an opening placed in the wall frame whose
@@ -572,14 +570,13 @@ public class IfcExporterBaseQuantitiesCurrentTests
     }
 
     [Fact]
-    public void Pass_OpeningOfASkewedWall_HeightAndWidthAreTheProjectionsOfTheLengthOnTheModelAxes()
+    public void Pass_UnfilledOpeningOfASkewedWall_HeightIsVerticalAndWidthFollowsTheWall()
     {
         var (w, owner, _) = VerticalOpeningInWall("(1.,1.,0.)");
 
         Apply(w, owner);
 
-        double projection = 0.8 / Math.Sqrt(2);
-        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Depth", 0.202), ("Height", projection), ("Width", projection));
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Depth", 0.202), ("Height", 2.1), ("Width", 0.8));
     }
 
     private static IfcExporter HostAxes => new();
@@ -632,13 +629,27 @@ public class IfcExporterBaseQuantitiesCurrentTests
     }
 
     [Fact]
-    public void HostAxes_OpeningWithoutAFiller_IsMeasuredAsBefore()
+    public void HostAxes_OpeningWithoutAFiller_IsMeasuredAlongTheWall()
     {
         var (w, owner, _) = VerticalOpeningInWall("(0.,1.,0.)");
 
         Apply(w, owner, exporter: HostAxes);
 
         AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Depth", 0.202), ("Height", 2.1), ("Width", 0.8));
+    }
+
+    [Theory]
+    [InlineData("$")]
+    [InlineData("#999999")]
+    public void HostAxes_UnknownFillerIsNotTreatedAsAnUnfilledOpening(string filler)
+    {
+        var (w, owner, _) = VerticalOpeningInWall("(1.,0.,0.)");
+        int opening = Enumerable.Range(0, w.EntityCount).Select(w.EntityAt).Single(e => e.Type == "IFCOPENINGELEMENT").Id;
+        w.Add("IFCRELFILLSELEMENT", $"'f',#{owner},$,$,#{opening},{filler}");
+
+        Apply(w, owner);
+
+        AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Depth", 0.202), ("Height", 0.8), ("Width", 2.1));
     }
 
     [Fact]
@@ -959,7 +970,7 @@ public class IfcExporterBaseQuantitiesCurrentTests
         Apply(w, owner);
 
         AssertQuantities(Quantities(w, "IFCQUANTITYLENGTH"), ("Depth", 0.32145954232208834),
-            ("Height", 1.44 / Math.Sqrt(2)), ("Width", 1.44 / Math.Sqrt(2)));
+            ("Height", 2.1), ("Width", 1.44));
     }
 
     [Theory]

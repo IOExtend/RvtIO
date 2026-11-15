@@ -6,14 +6,14 @@ internal static partial class ElementBuilder
 {
     /// <summary>
     /// Categories whose Volume (HOST_VOLUME_COMPUTED) is the volume of the solids: structural
-    /// columns, framing and foundations, casework, windows, electrical fixtures, lighting devices
-    /// and fixtures, mechanical and speciality equipment, parking, baluster instances, generic
-    /// models.
+    /// columns, architectural columns, framing and foundations, casework, windows, electrical
+    /// fixtures, lighting devices and fixtures, mechanical, plumbing and speciality equipment,
+    /// parking, baluster instances, generic models.
     /// </summary>
     private static readonly HashSet<int> SolidVolumeCategories =
     [
         -2001330, -2001320, -2001300, -2001000, -2000014, -2001060, -2008087, -2001120, -2001140, -2001180, -2001350, -2000127,
-        -2000038, -2000151,
+        -2000038, -2000151, -2000100, -2001040,
     ];
 
     /// <summary>

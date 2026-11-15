@@ -44,8 +44,9 @@ the same number of records) and pins no measured count, because the counts grow 
 
 The attributes `[SkippableFact]` and `[SkippableTheory]` (`SkippableFact.cs`) report a test that throws `SkipException` as
 skipped; xunit 2.9.3 has no runtime skip of its own. `TestFiles.Find`, `FindRelative` and `OpenBlock` throw it, so a test
-needs no code of its own to skip. Tests that write diagnostic dumps write them to `rvtio-tests` in the system temporary
-folder (`TestFiles.Scratch`); no test uses a fixed absolute path.
+needs no code of its own to skip. Tests that write diagnostic dumps write them to `rvtio-tests/<process id>-<guid>` in the
+system temporary folder (`TestFiles.Scratch`), one folder per test process, so concurrent runs (both target frameworks of one
+`dotnet test`, or runs from other checkouts) never share a file; no test uses a fixed absolute path.
 
 ## What runs without the private files
 
