@@ -439,7 +439,12 @@ public static class ElevationPrinter
             double dy = direction[2] * vertical[0] - direction[0] * vertical[2];
             double length = Math.Sqrt(dx * dx + dy * dy);
             if (length < 0.2) continue;
-            marks.Add((origin[0] * FeetToMillimetres, origin[1] * FeetToMillimetres, dx / length, dy / length, name));
+            double x = origin[0] * FeetToMillimetres, y = origin[1] * FeetToMillimetres;
+            double ux = dx / length, uy = dy / length;
+            // A detail section that shares the plane of the building section marks the same cut: one mark is enough.
+            if (marks.Any(mark => Math.Abs(mark.X - x) < 50 && Math.Abs(mark.Y - y) < 50
+                && Math.Abs(mark.Dx * ux + mark.Dy * uy) > 0.99)) continue;
+            marks.Add((x, y, ux, uy, name));
         }
         return marks;
     }
