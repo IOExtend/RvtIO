@@ -496,6 +496,10 @@ internal class ParsingState
     /// (0xC3 = power, 0xC7 = occupancy, 0xCB = lighting schedule element id).</summary>
     public Dictionary<uint, (int Power, int Occupancy, int Lighting)> HvacScheduleRefs { get; set; } = new();
 
+    /// <summary>The view scale of a viewport decoded from its own record (the reciprocal is stored in the block).
+    /// Key = viewport element id.</summary>
+    public Dictionary<uint, int> ViewportScales { get; } = new();
+
     /// <summary>The pixel size of an image symbol decoded from its block (class 0x089A: two u32 at data+0x80).
     /// Key = element id.</summary>
     public Dictionary<uint, (int Width, int Height)> ImageSizes { get; set; } = new();

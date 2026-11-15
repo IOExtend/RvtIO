@@ -2201,6 +2201,11 @@ internal static class BlockParser
         if (!double.IsFinite(x) || !double.IsFinite(y) || !double.IsFinite(z)) return;
         if (Math.Abs(x) > 1e5 || Math.Abs(y) > 1e5 || viewId <= 0 || viewId > 50_000_000) return;
         state.ViewportPlacements[eid] = (viewId, x, y, z);
+        // The record also stores the reciprocal of the view scale (0.01 for 1:100, 0.05 for 1:20): a fallback for a
+        // view whose scale parameter is not decoded.
+        double reciprocal = BitConverter.ToDouble(d, payload + 0x87);
+        if (double.IsFinite(reciprocal) && reciprocal is > 0.0005 and < 0.6)
+            state.ViewportScales[eid] = (int)Math.Round(1 / reciprocal);
     }
 
     /// <summary>

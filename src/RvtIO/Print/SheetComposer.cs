@@ -159,7 +159,9 @@ public static class SheetComposer
             if (element.ViewportViewId is not int viewId) continue;
             Element? view = document.GetElement(viewId);
             string name = view?.Name ?? ("view " + viewId);
-            int scale = view?.LookupParameter(BuiltInParameter.VIEW_SCALE)?.Value is int value && value > 0 ? value : 100;
+            int scale = view?.LookupParameter(BuiltInParameter.VIEW_SCALE)?.Value is int value && value > 0
+                ? value
+                : element.ViewportScale ?? 100;
             double centerX = 0, centerY = 0;
             bool placed = false;
             int relocated = 0;

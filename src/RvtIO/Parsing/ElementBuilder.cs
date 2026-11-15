@@ -2892,6 +2892,17 @@ internal static partial class ElementBuilder
         }
     }
 
+    /// <summary>The view scale of a viewport, from its own record.</summary>
+    private static void ApplyViewportScales(RevitFileInfo info, ParsingState? state)
+    {
+        if (state == null || state.ViewportScales.Count == 0) return;
+        foreach (var element in info.Elements)
+        {
+            if (state.ViewportScales.TryGetValue((uint)element.Id, out int scale))
+                element.ViewportScale = scale;
+        }
+    }
+
     /// <summary>The pixel size of an image symbol, from its own block.</summary>
     private static void ApplyImageSizes(RevitFileInfo info, ParsingState? state)
     {
@@ -6401,6 +6412,7 @@ internal static partial class ElementBuilder
         ApplyViewports(rvtInfo, state);
         ApplyViewPlanes(rvtInfo, state);
         ApplyImageSizes(rvtInfo, state);
+        ApplyViewportScales(rvtInfo, state);
         AddViewAndDatumDefaults(rvtInfo);
         AddCurtainQuantities(rvtInfo);
         EnrichTypeLevelBips(rvtInfo, state);

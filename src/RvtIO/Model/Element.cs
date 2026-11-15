@@ -247,6 +247,11 @@ namespace RvtIO.Model
         [JsonIgnore]
         public double? TextFontSizePoints { get; set; }
 
+        /// <summary>The view scale of a viewport (the denominator), decoded from the viewport record; null when the
+        /// reader did not decode it.</summary>
+        [JsonIgnore]
+        public int? ViewportScale { get; set; }
+
         /// <summary>The pixel width of an image symbol, when the reader decoded it.</summary>
         [JsonIgnore]
         public int? ImageWidth { get; set; }
