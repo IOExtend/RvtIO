@@ -45,6 +45,8 @@ A room is filled with the colour the reference plan uses for its kind (master be
 
 A room is tagged the way a plan tags it: the room number in a white circle at the centre of the footprint, the room name and its area in m2 beside it.
 
+The site plan shows the entourage (cars, people) as their footprints from above, the way the reference plan shows a car on the drive.
+
 The house stands dark on the site plan: the rooms of the level with most walls are filled grey under its walls, the way the reference export fills the building on A101.
 
 The planting of a site plan is tagged the way the planting schedule tags it: T1, T2, ... on leader lines from the plants (up to two tags per kind), a north arrow stands at the lower right of the site, and the schedule sits under the view title, clear of the plan.

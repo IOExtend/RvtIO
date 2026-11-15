@@ -74,7 +74,8 @@ light green wash with its outer edge inked (the edges shared by two mesh triangl
 circle with four spokes at its position and size, and the house stands on the same plan: the rooms of the level with most
 walls are filled dark under its walls, so the building reads as a mass, the way the reference fills it.
 
-Each kind of plant is tagged the way the planting schedule tags it (T1, T2, ... in the order of the schedule) on a leader
+The cars and the people of the site (the entourage) print as their footprints seen from above, as the reference site plan
+shows a car on the drive. Each kind of plant is tagged the way the planting schedule tags it (T1, T2, ... in the order of the schedule) on a leader
 line from the plant, a north arrow stands at the lower right of the site, and a planting schedule under the plan lists
 every kind of plant with its count.
 

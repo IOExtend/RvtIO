@@ -18,6 +18,7 @@ public static class SitePrinter
     internal sealed record SiteContent(
         List<List<(double X, double Y)>> Topography,
         List<(double X, double Y, double Radius, string Type)> Plants,
+        List<List<(double X, double Y)>> Entourage,
         double MinX, double MinY, double MaxX, double MaxY);
 
     /// <summary>Projects the topography and the planting of the document on the plan. Null when the model has neither.
@@ -66,8 +67,39 @@ public static class SitePrinter
             Grow(x + radius, y + radius);
         }
 
+        // The cars and the people of the site (the entourage) print as their outlines seen from above, as the
+        // reference site plan shows a car on the drive.
+        var entourage = new List<List<(double X, double Y)>>();
+        foreach (var element in document.Elements)
+        {
+            if (element.CategoryId != (int)BuiltInCategory.OST_Entourage) continue;
+            double[]? box = element.BoundingBox ?? element.Geometry?.BoundingBox;
+            if (box is not { Length: 6 }) continue;
+            double x0 = box[0] * FeetToMillimetres, y0 = box[1] * FeetToMillimetres;
+            double x1 = box[3] * FeetToMillimetres, y1 = box[4] * FeetToMillimetres;
+            double width = x1 - x0, height = y1 - y0;
+            if (width <= 100 || height <= 100) continue;
+            var polygon = new List<(double X, double Y)>();
+            if (width * height >= 1_000_000)
+            {
+                // A car: its footprint as a rounded rectangle would be, a rectangle on the plan.
+                polygon.Add((x0, y0)); polygon.Add((x1, y0)); polygon.Add((x1, y1)); polygon.Add((x0, y1));
+            }
+            else
+            {
+                double cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, radius = Math.Max(width, height) / 2;
+                for (int i = 0; i < 12; i++)
+                {
+                    double angle = i * Math.PI * 2 / 12;
+                    polygon.Add((cx + radius * Math.Cos(angle), cy + radius * Math.Sin(angle)));
+                }
+            }
+            foreach (var point in polygon) Grow(point.X, point.Y);
+            entourage.Add(polygon);
+        }
+
         if (topography.Count == 0 && plants.Count == 0) return null;
-        return new SiteContent(topography, plants, minX, minY, maxX, maxY);
+        return new SiteContent(topography, plants, entourage, minX, minY, maxX, maxY);
     }
 
     /// <summary>Draws the site with (MinX, MinY) at (originX, originY), one model unit per 1/scale.</summary>
@@ -114,6 +146,9 @@ public static class SitePrinter
             page.DrawLine(pageX - r, pageY, pageX + r, pageY, 0.08, 0.45);
             page.DrawLine(pageX, pageY - r, pageX, pageY + r, 0.08, 0.45);
         }
+
+        foreach (var polygon in content.Entourage)
+            page.DrawPolyline(polygon.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0.15, true, 0.75);
 
         // The planting of the site is tagged the way the planting schedule tags it: T1 for the first kind of plant, T2
         // for the next, each on a leader line from the plant.
