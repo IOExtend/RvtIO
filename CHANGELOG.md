@@ -48,6 +48,8 @@ Plans draw the frames of the doors and windows whose cut loop is decoded and the
 
 A placed view is titled as Revit titles it: the viewport detail number in a circle, the view name beside it, the scale below and a rule over the title (1 Level 1 1:100, 2 Level 2 1:100 on A102).
 
+The title block strip now follows the reference layout: a logo area, a two-column consultant table (Consultant / Address / Phone / Fax / e-mail, empty fields), the revision table (No. / Description / Date), a project area and the sheet information rows.
+
 The title block strip notes the scale of the sheet (1:100 for A102, the most common scale of its placed views) beside its name, number, issue date, drawn-by and checked-by rows.
 
 A composed sheet now carries a title block strip on the right of the page: a logo area, the project area, a revision table (No. / Description / Date) and the sheet information rows (name, number, issue date, drawn by, checked by), all read from the sheet's parameters. The graphic of the title block family is still not decoded, so the strip is a stand-in. On A102: Plans, A102, 07/24/12, SM, JLH.
