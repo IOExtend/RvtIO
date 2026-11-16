@@ -55,6 +55,24 @@ public class ElevationPrinterTests
         };
     }
 
+    private static Element QuadWall(int id, double[][] vertices, double[] normal)
+    {
+        var face = new GeoFace
+        {
+            Origin = [0, 0, 0],
+            XVector = [1, 0, 0],
+            YVector = [0, 0, 1],
+            Normal = [normal[0], normal[1], normal[2]],
+            OuterVertices = vertices.Select(v => new[] { v[0], v[1], v[2] }).ToList(),
+        };
+        return new Element
+        {
+            Id = id,
+            CategoryId = (int)BuiltInCategory.OST_Walls,
+            Geometry = new GeometryData { Faces = [face] },
+        };
+    }
+
     private static RvtDocument Document(params Element[] elements) =>
         RvtDocument.FromInfo(new RevitFileInfo { Elements = elements.ToList() });
 
@@ -112,8 +130,85 @@ public class ElevationPrinterTests
         pdf.Save(stream);
         string text = PdfTestContent.Read(stream.ToArray());
 
+        // The face fills without stroking its loop ("f"); the shared edge set inks the outline (" l ").
+        // A single quad face keeps its four boundary edges.
         Assert.Contains(" l ", text);
-        Assert.Contains(" B", text);
+        Assert.Contains(" f\n", text);
+        Assert.Equal(4, content.Edges.Count);
+    }
+
+    [Fact]
+    public void Collect_RemovesTheSharedDiagonalOfCoplanarFaces()
+    {
+        // Two side-by-side quads in one plane: the shared edge is interior triangulation, not inked.
+        var document = Document(
+            QuadWall(600, [[0, 0, 0], [4, 0, 0], [4, 0, 3], [0, 0, 3]], [0, 1, 0]),
+            QuadWall(601, [[4, 0, 0], [8, 0, 0], [8, 0, 3], [4, 0, 3]], [0, 1, 0]));
+
+        var content = ElevationPrinter.Collect(document, "south")!;
+
+        Assert.Equal(2, content.Faces.Count);
+        Assert.Equal(6, content.Edges.Count);
+    }
+
+    [Fact]
+    public void Collect_KeepsTheCreaseBetweenDifferentPlanes()
+    {
+        // Two quads sharing an edge at 45 degrees: the crease is drawn once, not twice and not removed --
+        // but the leaning-back top of the tilted quad hides behind the front wall, leaving five segments.
+        var document = Document(
+            QuadWall(600, [[0, 0, 0], [4, 0, 0], [4, 0, 3], [0, 0, 3]], [0, 1, 0]),
+            QuadWall(601, [[0, 0, 0], [4, 0, 0], [4, 1, 1], [0, 1, 1]], [0, -0.7071, 0.7071]));
+
+        var content = ElevationPrinter.Collect(document, "south")!;
+
+        Assert.Equal(2, content.Faces.Count);
+        Assert.Equal(5, content.Edges.Count);
+    }
+
+    [Fact]
+    public void Collect_MergesOverlappingCoplanarEdges()
+    {
+        // Two overlapping coplanar quads: the shared stretch is inked once, not twice.
+        var document = Document(
+            QuadWall(600, [[0, 0, 0], [4, 0, 0], [4, 0, 3], [0, 0, 3]], [0, 1, 0]),
+            QuadWall(601, [[2, 0, 0], [6, 0, 0], [6, 0, 3], [2, 0, 3]], [0, 1, 0]));
+
+        var content = ElevationPrinter.Collect(document, "south")!;
+
+        Assert.Equal(2, content.Faces.Count);
+        Assert.Equal(6, content.Edges.Count);
+    }
+
+    [Fact]
+    public void DrawContent_ClipsEdgesToTheCropRect()
+    {
+        // A second wall far to the right of the crop rectangle contributes fills but no ink.
+        var document = Document(
+            QuadWall(600, [[0, 0, 0], [4, 0, 0], [4, 0, 3], [0, 0, 3]], [0, 1, 0]),
+            QuadWall(601, [[40, 0, 0], [44, 0, 0], [44, 0, 3], [40, 0, 3]], [0, 1, 0]));
+        var content = ElevationPrinter.Collect(document, "south")!;
+        Assert.Equal(8, content.Edges.Count);
+        var pdf = new PdfDocument();
+        PdfPage page = pdf.AddPage(PdfPageSize.A1.Landscape);
+
+        ElevationPrinter.DrawContent(page, content, 100, 10, 10, 1, null, (0, 0, 5000, 3000));
+        using var stream = new MemoryStream();
+        pdf.Save(stream);
+        string text = PdfTestContent.Read(stream.ToArray());
+
+        Assert.Equal(4, CountOccurrences(text, " l S"));
+    }
+
+    private static int CountOccurrences(string text, string value)
+    {
+        int count = 0, index = 0;
+        while ((index = text.IndexOf(value, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += value.Length;
+        }
+        return count;
     }
 
     [Fact]

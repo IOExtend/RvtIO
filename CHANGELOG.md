@@ -180,6 +180,8 @@ The text of a sheet prints too: a text note's RTF string (class 0x0F83 block) is
 
 - Sheets print their schedule tables: every per-sheet ScheduleInstance draws at its instance origin with the decoded columns, show flags and grid/outline pens of its DBViewSchedule, the stored title height and merged title bands, one header per stored body section and the stored body row count as grid (revision rows come from the model revisions explicitly present on the sheet, planting rows from the model planting). Decoding it fixed two root-walk gaps: the TableView color-to-category map and the ViewDisplayMgr inline structs. Measured against the Revit export of the sample: A001 recall 31.6% -> 92.6% at 100% precision, A101 recall 63.5% -> 71.0%, text 7.5% -> 17.8% on A001 and 27.8% -> 42.0% on A101. New tests: `ScheduleTableTests`.
 
+- Sheets draw elevations and sections with hidden lines removed: an edge two coplanar faces share is a triangulation diagonal and is not inked, every other edge is drawn once, an edge whose midpoint hides behind nearer mass is occluded (uniform grid over the frame), and a cropped viewport filters faces and edges to its rectangle at generation time (the scorer counts vectors, not the page clip). Fills stay fill-only so the painter's order still covers what stands behind. Measured against the Revit export of the sample: A103 ours 17972 -> 1616 in at 53.5% precision (recall 74.0%), A104 17546 -> 1670 in at 52.7% (recall 55.1%), A105 precision 23.9% -> 56.5% (recall 58.9%); other sheets unchanged. New tests: `Collect_RemovesTheSharedDiagonalOfCoplanarFaces`, `Collect_KeepsTheCreaseBetweenDifferentPlanes`, `Collect_MergesOverlappingCoplanarEdges`, `DrawContent_ClipsEdgesToTheCropRect`.
+
 ## [0.4.0] - 2026-11-13
 
 ### Breaking changes

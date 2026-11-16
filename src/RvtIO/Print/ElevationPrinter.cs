@@ -78,13 +78,15 @@ public static class ElevationPrinter
         return null;
     }
 
-    /// <summary>The projected faces of an elevation: the polygons in view millimetres, the frame extents and the
-    /// faces that get an outline.</summary>
+    /// <summary>The projected faces of an elevation: the polygons in view millimetres for the fills, the frame
+    /// extents, the faces that get an outline, and the visible edges to ink (shared coplanar diagonals removed,
+    /// duplicates drawn once).</summary>
     internal sealed record ElevationContent(
         List<(List<(double X, double Y)> Points, double Depth, bool Outline)> Faces,
         List<(double Y, string Label)> Levels,
         List<(double X, string Name)> Grids,
         List<(List<(double X, double Y)> Points, double Depth)> Context,
+        List<CollectedEdge> Edges,
         double MinX, double MinY, double MaxX, double MaxY);
 
     /// <summary>Projects the model geometry on the vertical plane of a direction. Null when the model has no face.</summary>
@@ -145,6 +147,11 @@ public static class ElevationPrinter
         // The plants, the topography and the site surfaces print as the faded background of an elevation, behind the
         // building, the way the reference export fades them.
         var context = new List<(List<(double X, double Y)> Points, double Depth)>();
+        // The outlined faces for the shared-edge pass below, with their 3D rings for midpoint depths.
+        var edgeFaces = new List<(List<(double X, double Y)> Points, List<double[]> Ring, double Depth, long Nx, long Ny, long Nz, long Off, int FaceIndex)>();
+        // Every face for the occlusion pass below: its largest corner depth, so an edge hidden behind nearer
+        // mass is not inked even though the painter's fills cover it only visually.
+        var faceMaxDepths = new List<double>();
         double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
         foreach (var element in document.Elements)
         {
@@ -198,7 +205,7 @@ public static class ElevationPrinter
                     if (corners.Count < 3) continue;
                 }
                 var points = new List<(double X, double Y)>(corners.Count);
-                double depth = 0;
+                double depth = 0, maxDepth = double.NegativeInfinity;
                 foreach (var corner in corners)
                     points.Add((corner[0] * H[0] + corner[1] * H[1] + corner[2] * H[2],
                         corner[0] * V[0] + corner[1] * V[1] + corner[2] * V[2]));
@@ -218,7 +225,10 @@ public static class ElevationPrinter
                     }
                 }
                 foreach (var corner in corners)
+                {
                     depth += corner[0] * D[0] + corner[1] * D[1] + corner[2] * D[2];
+                    maxDepth = Math.Max(maxDepth, corner[0] * D[0] + corner[1] * D[1] + corner[2] * D[2]);
+                }
                 // A sliver of a face adds a line to the page and nothing to the drawing.
                 double projected = 0;
                 for (int i = 0; i < points.Count; i++)
@@ -235,10 +245,27 @@ public static class ElevationPrinter
                     minX = Math.Min(minX, x); maxX = Math.Max(maxX, x);
                     minY = Math.Min(minY, y); maxY = Math.Max(maxY, y);
                 }
-                faces.Add((points, depth, facing > 0.5));
+                bool outline = facing > 0.5;
+                faces.Add((points, depth, outline));
+                faceMaxDepths.Add(maxDepth);
+                if (outline)
+                {
+                    // The plane of the face for edge sharing: a triangulation diagonal is the edge of two
+                    // coplanar faces, a crease or silhouette the edge of two different planes.
+                    double nx = face.Normal[0], ny = face.Normal[1], nz = face.Normal[2];
+                    double length = Math.Sqrt(nx * nx + ny * ny + nz * nz);
+                    if (length > 1e-12) { nx /= length; ny /= length; nz /= length; }
+                    var corner = corners[0];
+                    edgeFaces.Add((points, corners, depth,
+                        (long)Math.Round(nx * 1000), (long)Math.Round(ny * 1000), (long)Math.Round(nz * 1000),
+                        (long)Math.Round((nx * corner[0] + ny * corner[1] + nz * corner[2]) * 2.0),
+                        faces.Count - 1));
+                }
             }
         }
         if (faces.Count == 0) return null;
+        List<CollectedEdge> edges =
+            MergeOverlaps(OccludeEdges(faces, faceMaxDepths, DedupeEdges(edgeFaces, D)));
         // The site around the building is drawn, but it does not decide the frame: the building does, with a little
         // air around it for the trees and the ground. Context beyond that air (a tree far down the site) is dropped,
         // so the drawing stays the size of the building.
@@ -302,7 +329,220 @@ public static class ElevationPrinter
             distinctLevels.Clear();
             grids.Clear();
         }
-        return new ElevationContent(faces, distinctLevels, grids, context, minX, minY, maxX, maxY);
+        return new ElevationContent(faces, distinctLevels, grids, context, edges, minX, minY, maxX, maxY);
+    }
+
+    /// <summary>A projected edge for inking: its ends in view millimetres, the painter's depth of its face,
+    /// the depth of its midpoint for occlusion, the incident faces (FaceB is -1 when single) and its plane key
+    /// for coplanar merging.</summary>
+    internal sealed record CollectedEdge(double X1, double Y1, double X2, double Y2, double Depth, double MidDepth,
+        int FaceA, int FaceB, long Nx, long Ny, long Nz, long Off);
+
+    /// <summary>Visible edges of the projected faces: an edge shared by exactly two coplanar faces is a
+    /// triangulation diagonal inside a flat surface and is not inked; every other edge is drawn once, so a
+    /// crease shared by two faces is not inked twice. Endpoints quantize to 0.1 mm, plane normals to 0.001
+    /// and plane offsets to 0.5 mm. Each edge carries its 3D midpoint depth and its incident faces.</summary>
+    internal static List<CollectedEdge> DedupeEdges(
+        List<(List<(double X, double Y)> Points, List<double[]> Ring, double Depth, long Nx, long Ny, long Nz, long Off, int FaceIndex)> edgeFaces,
+        double[] viewDir)
+    {
+        var byEdge = new Dictionary<(long Ax, long Ay, long Bx, long By), List<int>>();
+        for (int f = 0; f < edgeFaces.Count; f++)
+        {
+            var points = edgeFaces[f].Points;
+            for (int i = 0; i < points.Count; i++)
+            {
+                var a = points[i];
+                var b = points[(i + 1) % points.Count];
+                long ax = (long)Math.Round(a.X * 10), ay = (long)Math.Round(a.Y * 10);
+                long bx = (long)Math.Round(b.X * 10), by = (long)Math.Round(b.Y * 10);
+                if (ax == bx && ay == by) continue;
+                var key = (ax < bx || (ax == bx && ay <= by)) ? (ax, ay, bx, by) : (bx, by, ax, ay);
+                if (!byEdge.TryGetValue(key, out var members)) byEdge[key] = members = new List<int>();
+                members.Add(f);
+            }
+        }
+        var edges = new List<CollectedEdge>();
+        var seen = new HashSet<(long Ax, long Ay, long Bx, long By)>();
+        for (int f = 0; f < edgeFaces.Count; f++)
+        {
+            var (points, ring, depth, nx, ny, nz, off, faceIndex) = edgeFaces[f];
+            // Window-clipped polygons lose the one-to-one vertex correspondence with the 3D ring;
+            // those small details fall back to the face-average depth.
+            bool hasRing = ring.Count == points.Count;
+            for (int i = 0; i < points.Count; i++)
+            {
+                var a = points[i];
+                var b = points[(i + 1) % points.Count];
+                long ax = (long)Math.Round(a.X * 10), ay = (long)Math.Round(a.Y * 10);
+                long bx = (long)Math.Round(b.X * 10), by = (long)Math.Round(b.Y * 10);
+                if (ax == bx && ay == by) continue;
+                var key = (ax < bx || (ax == bx && ay <= by)) ? (ax, ay, bx, by) : (bx, by, ax, ay);
+                if (!seen.Add(key)) continue;
+                var members = byEdge[key];
+                int other = members.Count == 2 ? (members[0] == f ? members[1] : members[0]) : -1;
+                int otherFace = -1;
+                if (other >= 0)
+                {
+                    var o = edgeFaces[other];
+                    if (o.Nx == nx && o.Ny == ny && o.Nz == nz && o.Off == off) continue;
+                    otherFace = o.FaceIndex;
+                }
+                double midDepth = depth;
+                if (hasRing)
+                {
+                    var ca = ring[i];
+                    var cb = ring[(i + 1) % ring.Count];
+                    midDepth = ((ca[0] + cb[0]) / 2) * viewDir[0] + ((ca[1] + cb[1]) / 2) * viewDir[1]
+                        + ((ca[2] + cb[2]) / 2) * viewDir[2];
+                }
+                edges.Add(new CollectedEdge(a.X, a.Y, b.X, b.Y, depth, midDepth, faceIndex, otherFace, nx, ny, nz, off));
+            }
+        }
+        edges.Sort((left, right) => right.Depth.CompareTo(left.Depth));
+        return edges;
+    }
+
+    /// <summary>Edges with their midpoint hidden behind nearer mass removed: an edge whose midpoint lies inside
+    /// another face strictly nearer the viewer (1 mm or more) is occluded. A uniform grid over the frame keeps
+    /// each edge to the faces overlapping its cell; the edge's own incident faces never occlude it.</summary>
+    internal static List<CollectedEdge> OccludeEdges(
+        List<(List<(double X, double Y)> Points, double Depth, bool Outline)> faces,
+        List<double> faceMaxDepths,
+        List<CollectedEdge> edges)
+    {
+        const int Cells = 128;
+        double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
+        foreach (var face in faces)
+            foreach (var (x, y) in face.Points)
+            {
+                minX = Math.Min(minX, x); minY = Math.Min(minY, y);
+                maxX = Math.Max(maxX, x); maxY = Math.Max(maxY, y);
+            }
+        if (!(maxX > minX) || !(maxY > minY) || faces.Count == 0 || edges.Count == 0) return edges;
+        double cellW = (maxX - minX) / Cells + 1e-9, cellH = (maxY - minY) / Cells + 1e-9;
+        var grid = new List<int>[Cells * Cells];
+        for (int f = 0; f < faces.Count; f++)
+        {
+            double fx0 = double.MaxValue, fy0 = double.MaxValue, fx1 = double.MinValue, fy1 = double.MinValue;
+            foreach (var (x, y) in faces[f].Points)
+            {
+                fx0 = Math.Min(fx0, x); fy0 = Math.Min(fy0, y);
+                fx1 = Math.Max(fx1, x); fy1 = Math.Max(fy1, y);
+            }
+            int gx0 = Math.Clamp((int)((fx0 - minX) / cellW), 0, Cells - 1);
+            int gx1 = Math.Clamp((int)((fx1 - minX) / cellW), 0, Cells - 1);
+            int gy0 = Math.Clamp((int)((fy0 - minY) / cellH), 0, Cells - 1);
+            int gy1 = Math.Clamp((int)((fy1 - minY) / cellH), 0, Cells - 1);
+            for (int gx = gx0; gx <= gx1; gx++)
+                for (int gy = gy0; gy <= gy1; gy++)
+                    (grid[gy * Cells + gx] ??= new List<int>()).Add(f);
+        }
+        var kept = new List<CollectedEdge>(edges.Count);
+        foreach (var edge in edges)
+        {
+            double mx = (edge.X1 + edge.X2) / 2, my = (edge.Y1 + edge.Y2) / 2;
+            int gx = Math.Clamp((int)((mx - minX) / cellW), 0, Cells - 1);
+            int gy = Math.Clamp((int)((my - minY) / cellH), 0, Cells - 1);
+            bool hidden = false;
+            var candidates = grid[gy * Cells + gx];
+            if (candidates != null)
+            {
+                foreach (int f in candidates)
+                {
+                    if (f == edge.FaceA || f == edge.FaceB) continue;
+                    if (faceMaxDepths[f] >= edge.MidDepth - 1.0) continue;
+                    if (PointInPolygon(mx, my, faces[f].Points)) { hidden = true; break; }
+                }
+            }
+            if (!hidden) kept.Add(edge);
+        }
+        kept.Sort((left, right) => right.Depth.CompareTo(left.Depth));
+        return kept;
+    }
+
+    /// <summary>Merges overlapping collinear edges on one plane into their union: stacked wall layers and
+    /// coincident faces ink the same stretch several times, while the reference draws it once. Only true
+    /// overlaps merge (touching ends stay separate); the plane key keeps different depths apart.</summary>
+    internal static List<CollectedEdge> MergeOverlaps(List<CollectedEdge> edges)
+    {
+        var groups = new Dictionary<(long Ang, long Off, long Nx, long Ny, long Nz, long Pln), List<CollectedEdge>>();
+        foreach (var edge in edges)
+        {
+            double dx = edge.X2 - edge.X1, dy = edge.Y2 - edge.Y1;
+            double len = Math.Sqrt(dx * dx + dy * dy);
+            if (!(len > 1e-9)) continue;
+            // The line orientation (0..180 degrees) and its offset from the origin, coarsened to the edge quantum.
+            double ang = Math.Atan2(dy, dx);
+            if (ang < 0) ang += Math.PI;
+            double off = edge.X1 * -dy / len + edge.Y1 * dx / len;
+            var key = ((long)Math.Round(ang * 360.0), (long)Math.Round(off * 10),
+                edge.Nx, edge.Ny, edge.Nz, edge.Off);
+            if (!groups.TryGetValue(key, out var list)) groups[key] = list = new List<CollectedEdge>();
+            list.Add(edge);
+        }
+        var merged = new List<CollectedEdge>(edges.Count);
+        foreach (var list in groups.Values)
+        {
+            if (list.Count == 1) { merged.Add(list[0]); continue; }
+            bool horizontal = Math.Abs(list[0].Y2 - list[0].Y1) <= Math.Abs(list[0].X2 - list[0].X1);
+            var spans = new List<(double Lo, double Hi, CollectedEdge Edge)>(list.Count);
+            foreach (var edge in list)
+            {
+                double lo = horizontal ? Math.Min(edge.X1, edge.X2) : Math.Min(edge.Y1, edge.Y2);
+                double hi = horizontal ? Math.Max(edge.X1, edge.X2) : Math.Max(edge.Y1, edge.Y2);
+                spans.Add((lo, hi, edge));
+            }
+            spans.Sort((a, b) => a.Lo.CompareTo(b.Lo));
+            double curLo = spans[0].Lo, curHi = spans[0].Hi, curDepth = spans[0].Edge.Depth;
+            var cur = spans[0].Edge;
+            for (int i = 1; i < spans.Count; i++)
+            {
+                if (spans[i].Lo < curHi - 0.1)
+                {
+                    curHi = Math.Max(curHi, spans[i].Hi);
+                    curDepth = Math.Max(curDepth, spans[i].Edge.Depth);
+                }
+                else
+                {
+                    merged.Add(WithSpan(cur, curLo, curHi, horizontal) with { Depth = curDepth });
+                    cur = spans[i].Edge;
+                    curLo = spans[i].Lo; curHi = spans[i].Hi; curDepth = spans[i].Edge.Depth;
+                }
+            }
+            merged.Add(WithSpan(cur, curLo, curHi, horizontal) with { Depth = curDepth });
+        }
+        merged.Sort((left, right) => right.Depth.CompareTo(left.Depth));
+        return merged;
+    }
+
+    private static CollectedEdge WithSpan(CollectedEdge edge, double lo, double hi, bool horizontal)
+    {
+        double dx = edge.X2 - edge.X1, dy = edge.Y2 - edge.Y1;
+        double denom = horizontal ? dx : dy;
+        if (Math.Abs(denom) < 1e-12) return edge;
+        double baseLo = horizontal ? edge.X1 : edge.Y1;
+        double t0 = (lo - baseLo) / denom, t1 = (hi - baseLo) / denom;
+        return edge with
+        {
+            X1 = edge.X1 + t0 * dx,
+            Y1 = edge.Y1 + t0 * dy,
+            X2 = edge.X1 + t1 * dx,
+            Y2 = edge.Y1 + t1 * dy,
+        };
+    }
+
+    private static bool PointInPolygon(double x, double y, List<(double X, double Y)> polygon)
+    {
+        bool inside = false;
+        for (int i = 0, j = polygon.Count - 1; i < polygon.Count; j = i++)
+        {
+            var (xi, yi) = polygon[i];
+            var (xj, yj) = polygon[j];
+            if ((yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi)
+                inside = !inside;
+        }
+        return inside;
     }
 
     /// <summary>Prints one elevation view to a one-page PDF document at the view's scale.</summary>
@@ -396,6 +636,31 @@ public static class ElevationPrinter
         }
         return result;
     }
+    /// <summary>The part of a segment inside a rectangle (Liang-Barsky), false when nothing is left.</summary>
+    internal static bool ClipSegment(double x0, double y0, double x1, double y1,
+        double rx0, double ry0, double rx1, double ry1,
+        out double cx0, out double cy0, out double cx1, out double cy1)
+    {
+        cx0 = x0; cy0 = y0; cx1 = x1; cy1 = y1;
+        double dx = x1 - x0, dy = y1 - y0;
+        double t0 = 0, t1 = 1;
+        double[] p = [-dx, dx, -dy, dy];
+        double[] q = [x0 - rx0, rx1 - x0, y0 - ry0, ry1 - y0];
+        for (int i = 0; i < 4; i++)
+        {
+            if (Math.Abs(p[i]) < 1e-12) { if (q[i] < 0) return false; }
+            else
+            {
+                double t = q[i] / p[i];
+                if (p[i] < 0) t0 = Math.Max(t0, t);
+                else t1 = Math.Min(t1, t);
+            }
+        }
+        if (t0 > t1) return false;
+        cx0 = x0 + t0 * dx; cy0 = y0 + t0 * dy;
+        cx1 = x0 + t1 * dx; cy1 = y0 + t1 * dy;
+        return (cx1 - cx0) * (cx1 - cx0) + (cy1 - cy0) * (cy1 - cy0) > 1e-12;
+    }
     /// <summary>The part of a polygon that stands behind the cutting plane (the side the view direction points
     /// to), the plane crossing a polygon adding the points where it crosses the plane.</summary>
     private static List<double[]> ClipBehind(List<double[]> polygon, double[] origin, double[] direction)
@@ -451,7 +716,8 @@ public static class ElevationPrinter
     }
 
     internal static void DrawContent(PdfPage page, ElevationContent content, double scale, double originX,
-        double originY, double faceFill = 1, RvtDocument? document = null)
+        double originY, double faceFill = 1, RvtDocument? document = null,
+        (double X0, double Y0, double X1, double Y1)? clipRect = null)
     {
         double ToX(double x) => (x - content.MinX) / scale + originX;
         double ToY(double y) => (y - content.MinY) / scale + originY;
@@ -465,26 +731,53 @@ public static class ElevationPrinter
             if (PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Walls, isSection, scaleDenominator, out double w))
                 faceLine = w;
         }
+        double clipX0 = clipRect?.X0 ?? content.MinX, clipY0 = clipRect?.Y0 ?? content.MinY;
+        double clipX1 = clipRect?.X1 ?? content.MaxX, clipY1 = clipRect?.Y1 ?? content.MaxY;
         // The faded site behind the building: the plants and the ground as light shapes without outlines.
         foreach (var (contextPoints, _) in content.Context)
             page.DrawPolyline(contextPoints.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0, true, 0.9);
-        foreach (var (points, _, outline) in content.Faces)
+        // The faces only fill, far to near, so nearer mass covers what stands behind it; the shared edge
+        // set below inks the visible lines, without the triangulation diagonals. A crop rectangle drops
+        // the faces wholly outside it and clips the ones crossing it, so only the crop is drawn.
+        foreach (var (points, _, _) in content.Faces)
         {
-            var pagePoints = points.Select(point => (ToX(point.X), ToY(point.Y))).ToList();
-            // A section fills its faces grey, so the cut mass reads as a section rather than as the white of an
-            // elevation.
-            page.DrawPolyline(pagePoints, outline ? faceLine : 0, true, faceFill);
+            var pagePoints = points;
+            if (clipRect.HasValue)
+            {
+                double fx0 = double.MaxValue, fy0 = double.MaxValue, fx1 = double.MinValue, fy1 = double.MinValue;
+                foreach (var point in points)
+                {
+                    fx0 = Math.Min(fx0, point.X); fy0 = Math.Min(fy0, point.Y);
+                    fx1 = Math.Max(fx1, point.X); fy1 = Math.Max(fy1, point.Y);
+                }
+                if (fx1 < clipX0 || fx0 > clipX1 || fy1 < clipY0 || fy0 > clipY1) continue;
+                if (fx0 < clipX0 || fx1 > clipX1 || fy0 < clipY0 || fy1 > clipY1)
+                {
+                    pagePoints = ClipToWindow(points, clipX0, clipX1, clipY0, clipY1);
+                    if (pagePoints.Count < 3) continue;
+                }
+            }
+            page.DrawPolyline(pagePoints.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0, true, faceFill);
+        }
+        foreach (var edge in content.Edges)
+        {
+            double x1 = edge.X1, y1 = edge.Y1, x2 = edge.X2, y2 = edge.Y2;
+            if (clipRect.HasValue && !ClipSegment(x1, y1, x2, y2, clipX0, clipY0, clipX1, clipY1,
+                out x1, out y1, out x2, out y2)) continue;
+            page.DrawLine(ToX(x1), ToY(y1), ToX(x2), ToY(y2), faceLine);
         }
 
         // Grids first, then the levels: both dashed and light, over the faces the way an elevation prints them.
         if (content.Grids.Count > 0)
         {
             page.SetDash(2, 1.5);
-            double top = ToY(content.MaxY) - 8;
+            double top = ToY(Math.Min(content.MaxY, clipY1)) - 8;
+            double bottom = ToY(Math.Max(content.MinY, clipY0));
             foreach (var (x, name) in content.Grids)
             {
+                if (x < clipX0 || x > clipX1) continue;
                 double pageX = ToX(x);
-                page.DrawLine(pageX, ToY(content.MinY), pageX, top, 0.18, 0.55);
+                page.DrawLine(pageX, bottom, pageX, top, 0.18, 0.55);
                 var circle = new List<(double X, double Y)>(24);
                 for (int i = 0; i < 24; i++)
                 {
@@ -504,7 +797,8 @@ public static class ElevationPrinter
             {
                 double pageY = ToY(y);
                 if (pageY < ToY(content.MinY) - 1 || pageY > ToY(content.MaxY) + 1) continue;
-                double left = ToX(content.MinX), right = ToX(content.MaxX);
+                if (y < clipY0 - 1 || y > clipY1 + 1) continue;
+                double left = ToX(Math.Max(content.MinX, clipX0)), right = ToX(Math.Min(content.MaxX, clipX1));
                 page.DrawLine(left, pageY, right, pageY, 0.15, 0.55);
                 // The level marker at the right end of the line: a circle with an arrow head, the level name above its
                 // height in millimetres, as an elevation notes them.

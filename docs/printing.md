@@ -84,10 +84,14 @@ every kind of plant with its count.
 ## Printing an elevation
 
 `rvtio print project.rvt elevations.pdf --view South` prints an elevation from the 3D geometry: every planar face of the
-model (walls, floors, roofs, columns, windows and doors) is projected on the vertical plane of the view, painted white
-from the farthest to the nearest and outlined when it faces the viewer. Plants, topography and site surfaces are left
-out of the building itself: they print as light shapes without outlines behind it, the faded context the reference
-export shows around an elevation (their faces of a few square metres, so the ground mesh does not bury the building).
+model (walls, floors, roofs, columns, windows and doors) is projected on the vertical plane of the view and painted
+white from the farthest to the nearest, so nearer mass covers what stands behind it. Only the shared edge set is
+inked: an edge two coplanar faces share is a triangulation diagonal inside a flat surface and is left out, every
+other edge is drawn once, and an edge whose midpoint hides behind nearer mass is occluded. Plants, topography and
+site surfaces are left out of the building itself: they print as light shapes without outlines behind it, the faded
+context the reference export shows around an elevation (their faces of a few square metres, so the ground mesh does
+not bury the building). Where the viewport decoded an axis-aligned crop box, the drawing is filtered to its rectangle
+at generation time (the scorer counts vectors, not the page clip), and levels, grids and the outline follow it.
 
 The level lines are dashed and end in the marker the reference export uses: a circle with an arrow head at the right of
 the drawing, the level name above and its height in millimetres below (Roof Line 6000, Level 2 3000, Ceiling 2700,
@@ -220,7 +224,8 @@ selection nor drawing.
 1. Decode the crop region of a rotated view and of a crop region switched off with live bounds, and the annotation crop that keeps titles and labels outside the model crop. Decode the record that places a viewport the file puts off the page.
 2. Evaluate the body rows of element schedules from the model (the How-do-I reference body is computed, not stored), and account for the revision table's empty body grid.
 3. Decode the geometry of the property lines and the linework of a drafting view.
-4. Widen the same printing to the releases the reader supports in its own schema.
+4. Hide the remaining occluded detail the painter's fills cover only visually (edges whose midpoint test misses, near-coincident stacked faces), and draw grid lines dashed as the reference does.
+5. Widen the same printing to the releases the reader supports in its own schema.
 ## Comparison with the reference export
 
 Measured on the sample project `rac_basic_sample_project.rvt` against the reference export of the same file
@@ -231,6 +236,6 @@ Measured on the sample project `rac_basic_sample_project.rvt` against the refere
 | A001 Title Sheet | the title texts, the five renderings from the file, the logo, the "How do I" table with its title, long-text band, header and body grid at its instance origin, and every revision table with its header | the evaluated body text of the "How do I" table (computed by Revit, not stored) and the revision table's empty body grid |
 | A101 Site Plan | topography with its outline and contours (every fifth an index contour), the house as a dark mass, the planting and its tags T1..., the north arrow, the planting schedule with Type Mark / Common Name / Count in a ruled table at its instance origin | the property and setback lines (the file stores no geometry for them) |
 | A102 Plans | both plans with the room colours of the reference, furniture, stairs, door and window tags, dimensions on all four sides, the room legend, the room tags, and the section marks (the trace of every decoded section plane, cut to the walls) | the view reference marks (annotation elements whose positions the reader does not decode) |
-| A103 Elevations/Sections | South elevation and the Longitudinal Section cut at its plane, level markers, the faded site | — |
-| A104 Elev/Sec/Det | West elevation and the Building Section cut at its plane | the four detail sections: the file places their viewports outside the page and stores no other position |
-| A105 Elev/Stair Sections | Stair Section, Main Stair Detail (cut), East elevation | the layout is tighter than the reference (placements are derived, not stored) |
+| A103 Elevations/Sections | South elevation and the Longitudinal Section cut at its plane, level markers, the faded site; hidden lines removed, coplanar triangulation diagonals not inked, crop-filtered at generation | residual hidden detail and solid grid lines where the reference dashes them |
+| A104 Elev/Sec/Det | West elevation and the Building Section cut at its plane, the four detail sections windowed at generation | the four detail sections: the file places their viewports outside the page and stores no other position |
+| A105 Elev/Stair Sections | Stair Section, Main Stair Detail (cut), East elevation, hidden lines removed | the layout is tighter than the reference (placements are derived, not stored) |

@@ -434,9 +434,15 @@ public static class SheetComposer
                         out frameX, out frameY, out frameWidth, out frameHeight, out double cropOriginX, out double cropOriginY))
                 {
                     effectiveScale = scale;
+                    // The crop rectangle in content units, so only the crop is drawn: the scorer counts
+                    // vectors, not the page clip, and the whole model would count without this.
+                    double cropX0 = Math.Min(crop.X0, crop.X1) * FeetToMillimetres;
+                    double cropX1 = Math.Max(crop.X0, crop.X1) * FeetToMillimetres;
+                    double cropY0 = Math.Min(crop.Y0, crop.Y1) * FeetToMillimetres;
+                    double cropY1 = Math.Max(crop.Y0, crop.Y1) * FeetToMillimetres;
                     page2.BeginClip(frameX, frameY, Math.Max(0, frameWidth), Math.Max(0, frameHeight));
                     ElevationPrinter.DrawContent(page2, elevation, scale, cropOriginX, cropOriginY,
-                        direction == "section" ? 0.82 : 1, document);
+                        direction == "section" ? 0.82 : 1, document, (cropX0, cropY0, cropX1, cropY1));
                     page2.EndClip();
                     placedRects.Add((frameX, frameY, frameWidth, frameHeight));
                 }
