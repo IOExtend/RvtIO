@@ -5,8 +5,8 @@ using Xunit;
 namespace RvtIO.Tests;
 
 /// <summary>RE-486: a ceiling in pieces takes the piece holding its first top face, not the whole surface.
-/// The piece is a connected component of the horizontal top at one height; a sloped or stepped solid,
-/// or one without a single matching underside piece, keeps the whole upper surface.</summary>
+/// The piece is a connected component of the horizontal top at one height; a solid whose first top face
+/// is sloped, a stepped solid, or one without a single matching underside piece, keeps the whole upper surface.</summary>
 public class CoveringFirstPieceTests
 {
     private const double SquareFeet = 0.3048 * 0.3048;
@@ -212,6 +212,31 @@ public class CoveringFirstPieceTests
         var quantities = QuantitiesOf(ceiling);
 
         Assert.Equal(100 * SquareFeet, quantities.Single(q => q.Name == "GrossCeilingArea").Value, 9);
+    }
+
+    [Fact]
+    public void Caller_SlopedFirstThenHorizontalPieces_WritesTheWholeUpperSurface()
+    {
+        // A sloped first top face disqualifies the piece rule even where later horizontal parts
+        // with matching undersides follow: the whole upper surface stays.
+        var sloped = SlopedBox(50, 10, 10, 20, 0.5);
+        var first = SlopedBox(0, 10, 10, 1, 0);
+        var second = SlopedBox(20, 15, 10, 10, 0);
+        var geometry = new GeometryData
+        {
+            Faces = sloped.Faces.Concat(first.Faces).Concat(second.Faces).ToList(),
+            BrepSolids =
+            [
+                new GeoBrepSolid { IsClosed = true, FaceIndices = Enumerable.Range(0, sloped.Faces.Count + first.Faces.Count + second.Faces.Count).ToList() },
+            ],
+        };
+
+        Assert.Null(IfcExporter.FirstTopPieceAreaCurrent(IfcExporter.ShellsOfCurrent(geometry)));
+        var ceiling = new Element { Id = 5, CategoryId = -2000038, Geometry = geometry };
+
+        var quantities = QuantitiesOf(ceiling);
+
+        Assert.Equal((111.803398875 + 100 + 225) * SquareFeet, quantities.Single(q => q.Name == "GrossCeilingArea").Value, 6);
     }
 
     [Fact]

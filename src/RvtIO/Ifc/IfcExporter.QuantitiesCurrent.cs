@@ -1466,9 +1466,10 @@ public partial class IfcExporter
 
     /// <summary>The area of the piece of the top surface that holds its first face (rvt-rs RE-486): Revit's export gives a
     /// ceiling sketched in several pieces the area of the piece its body exporter creates last, which the saved mesh stores
-    /// first (the part of its top face holding the face's first triangle). Null unless the top surface is horizontal at one
-    /// height and in more than one connected piece, and exactly one connected underside piece at the same plan footprint
-    /// has the same area (within 0.1%); a sloped, stepped or partial solid keeps the whole upper surface. Pieces are
+    /// first (the part of its top face holding the face's first triangle). Null unless the first top face itself is
+    /// horizontal at one height and the top surface is in more than one connected piece, and exactly one connected
+    /// underside piece at the same plan footprint has the same area (within 0.1%); a sloped first face, a stepped or
+    /// partial solid keeps the whole upper surface — a later horizontal part never stands in for it. Pieces are
     /// connected components by shared vertices, not serialized face handles: one handle can cut into several regions.
     /// In feet.</summary>
     internal static double? FirstTopPieceAreaCurrent(IEnumerable<ShellInfo> shells)
@@ -1478,6 +1479,16 @@ public partial class IfcExporter
         foreach (var shell in all)
         {
             if (MiddleHeightCurrent(shell.Faces) is not { } middle) continue;
+            // The rule replaces the area with the first top face's own piece, so it applies only when
+            // that face is horizontal: a sloped first face keeps the whole surface even where later
+            // horizontal parts with matching undersides follow.
+            var firstTop = shell.Faces.FirstOrDefault(face => !face.CurvedSurface
+                && face.OuterVertices is { Count: >= 3 }
+                && FaceUnitNormal(face) is { } n && Math.Abs(n[2]) > 1e-9
+                && MeanHeightCurrent(face) >= middle);
+            if (firstTop == null
+                || FaceUnitNormal(firstTop) is not { } firstNormal
+                || Math.Abs(firstNormal[2]) <= 1 - 1e-9) continue;
             var top = HorizontalFaces(shell.Faces, middle, above: true);
             if (top.Count == 0 || !ConstantHeight(top)) continue;
             var bottom = HorizontalFaces(shell.Faces, middle, above: false);
