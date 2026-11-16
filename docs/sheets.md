@@ -35,8 +35,9 @@ was written, 1 a usage error or an output path that cannot be written, 2 a file 
 that cut a stream (the codes of [the export report](export-report.md)).
 
 Each `SheetRecord` also carries `Parameters`: the text and whole-number project and shared parameters
-of the sheet as display strings (numbers with units stay out until their units are read). `SHEET_SCHEDULED`
-reads as `Appears In Sheet List: Yes/No`. The port follows rvt-prt's `list --params` (Unreleased after 0.1.0).
+of the sheet as display strings (numbers with units stay out until their units are read). A Yes/No parameter
+(`Appears In Sheet List` and project/shared parameters of Yes/No kind) reads as `Yes`/`No`; its names are also
+listed in `SheetRecord.YesNoParameters`. The port follows rvt-prt's `list --params` (Unreleased after 0.1.0).
 
 ```sh
 rvtio sheets project.rvt --where "Appears In Sheet List=Yes" --where "Sheet Group=Architectural"
@@ -46,8 +47,9 @@ rvtio sheets project.rvt --params --where "Drawn By=AB"
 
 `--where NAME=VALUE` (also `NAME!=VALUE` and `NAME~TEXT` for contains) keeps only the sheets whose parameters
 match, as in rvt-prt. `*` stands for any text and `?` for one character; names and values compare
-case-insensitively; `true`, `false`, `1` and `0` mean the same as `Yes`/`No`. A parameter a sheet has no value
-for is empty. Repeat a filter for several: all must hold. A name no sheet carries stops with the names there
+case-insensitively. On a Yes/No parameter `true`, `false`, `1` and `0` mean the same as `Yes`/`No`;
+every other field compares literally, so a sheet number `1` never matches `=true`. A parameter a sheet has no
+value for is empty. Repeat a filter for several: all must hold. A name no sheet carries stops with the names there
 are (exit code 1), as does a filter nothing matches. `--params` lists each kept sheet's parameters on standard
 error, `--csv` writes them as CSV (one row per sheet, one column per parameter), `--json` keeps the default JSON.
 

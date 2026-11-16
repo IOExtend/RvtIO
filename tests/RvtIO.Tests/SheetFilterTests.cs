@@ -76,6 +76,49 @@ public class SheetFilterTests
     }
 
     [Fact]
+    public void Filter_YesNoAliasesApplyOnlyToYesNoParameters()
+    {
+        // A sheet whose number is "1", name is "true" and text revision is "0": ordinary text fields
+        // compare literally, so no Yes/No spelling selects them.
+        var sheet = new Element { Id = 100, CategoryId = -2003100 };
+        Add(sheet, BuiltInParameter.SHEET_NUMBER, "SHEET_NUMBER", StorageType.String, "1");
+        Add(sheet, BuiltInParameter.SHEET_NAME, "SHEET_NAME", StorageType.String, "true");
+        Add(sheet, BuiltInParameter.SHEET_SCHEDULED, "SHEET_SCHEDULED", StorageType.Integer, 0);
+        sheet.Parameters.Add(BipHelpers.MakeBipParam(9002, "Revision", StorageType.String, "0"));
+        var record = Record(sheet);
+
+        Assert.False(SheetFilter.TryParse("Sheet Number=true", out _)!.Matches(record));
+        Assert.False(SheetFilter.TryParse("Sheet Number=Yes", out _)!.Matches(record));
+        Assert.False(SheetFilter.TryParse("Sheet Name=1", out _)!.Matches(record));
+        Assert.False(SheetFilter.TryParse("Revision=No", out _)!.Matches(record));
+        Assert.True(SheetFilter.TryParse("Sheet Number!=true", out _)!.Matches(record));
+        // The Yes/No field itself still takes aliases.
+        Assert.True(SheetFilter.TryParse("Appears In Sheet List=false", out _)!.Matches(record));
+        Assert.True(SheetFilter.TryParse("Appears In Sheet List=0", out _)!.Matches(record));
+    }
+
+    [Fact]
+    public void ExtraParameters_BoolSpecParamReadsYesNoAndMatchesAliases()
+    {
+        // A shared Yes/No parameter (boolean Forge spec) with value 1.
+        var sheet = Sheet(100, "A101");
+        var yesNo = BipHelpers.MakeBipParam(9101, "Issued", StorageType.Integer, 1);
+        yesNo.SpecType = "autodesk.spec:spec.bool-1.0.0";
+        sheet.Parameters.Add(yesNo);
+        sheet.Parameters.Add(BipHelpers.MakeBipParam(9102, "Copies", StorageType.Integer, 1));
+        var record = Record(sheet);
+
+        Assert.Equal("Yes", record.Parameters["Issued"]);
+        Assert.Contains("Issued", record.YesNoParameters);
+        Assert.Equal("1", record.Parameters["Copies"]);
+        Assert.DoesNotContain("Copies", record.YesNoParameters);
+        Assert.True(SheetFilter.TryParse("Issued=true", out _)!.Matches(record));
+        Assert.True(SheetFilter.TryParse("Issued=Yes", out _)!.Matches(record));
+        Assert.False(SheetFilter.TryParse("Copies=Yes", out _)!.Matches(record));
+        Assert.True(SheetFilter.TryParse("Copies=1", out _)!.Matches(record));
+    }
+
+    [Fact]
     public void Filter_BadTextFails()
     {
         Assert.Null(SheetFilter.TryParse("no-operator-here", out string? error));

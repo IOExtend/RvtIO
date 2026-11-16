@@ -6,8 +6,10 @@ namespace RvtIO.Sheets;
 /// <summary>
 /// A <c>--where</c> filter over sheets, ported from rvt-prt's sheet-parameter filters:
 /// <c>NAME=VALUE</c> (<c>*</c> and <c>?</c> wildcards), <c>NAME!=VALUE</c>, <c>NAME~TEXT</c> (contains).
-/// Names and values compare case-insensitively; a Yes/No parameter is <c>Yes</c>/<c>No</c> with
-/// <c>true</c>/<c>false</c>/<c>1</c>/<c>0</c> as aliases; a sheet without the parameter has an empty value.
+/// Names and values compare case-insensitively; on a Yes/No parameter (<c>Appears In Sheet List</c> or
+/// one of <see cref="SheetRecord.YesNoParameters"/>) the value reads as <c>Yes</c>/<c>No</c> and the
+/// <c>true</c>/<c>false</c>/<c>1</c>/<c>0</c> spellings match it; every other field compares literally.
+/// A sheet without the parameter has an empty value.
 /// </summary>
 public sealed class SheetFilter
 {
@@ -79,11 +81,23 @@ public sealed class SheetFilter
         return Op switch
         {
             Operator.Contains => actual.Contains(Value, StringComparison.OrdinalIgnoreCase),
-            Operator.Equals => WildcardEquals(actual, Value),
-            Operator.NotEquals => !WildcardEquals(actual, Value),
+            Operator.Equals => IsYesNoParameter(sheet, Name)
+                ? WildcardEquals(actual, Value)
+                : WildcardLiteralEquals(actual, Value),
+            Operator.NotEquals => IsYesNoParameter(sheet, Name)
+                ? !WildcardEquals(actual, Value)
+                : !WildcardLiteralEquals(actual, Value),
             _ => false,
         };
     }
+
+    /// <summary>True when the named field is a Yes/No parameter: <c>Appears In Sheet List</c> or one of
+    /// <see cref="SheetRecord.YesNoParameters"/>. Only for these do the <c>true</c>/<c>false</c>/<c>1</c>/<c>0</c>
+    /// spellings match <c>Yes</c>/<c>No</c>; every other field compares literally.</summary>
+    internal static bool IsYesNoParameter(SheetRecord sheet, string name) =>
+        string.Equals(name, DisplayName(BuiltInParameter.SHEET_SCHEDULED), StringComparison.OrdinalIgnoreCase)
+        || string.Equals(name, nameof(BuiltInParameter.SHEET_SCHEDULED), StringComparison.OrdinalIgnoreCase)
+        || sheet.YesNoParameters.Contains(name);
 
     /// <summary>The value of a named sheet field or parameter, or null when the sheet has no such name.</summary>
     internal static string? Lookup(SheetRecord sheet, string name)
@@ -160,7 +174,13 @@ public sealed class SheetFilter
         string? normalizedActual = NormalizeYesNo(actual);
         if (normalizedPattern != null && normalizedActual != null)
             return string.Equals(normalizedActual, normalizedPattern, StringComparison.OrdinalIgnoreCase);
-        // An empty pattern matches only an empty value (a sheet without the parameter).
+        return WildcardLiteralEquals(actual, pattern);
+    }
+
+    /// <summary>Wildcard comparison without Yes/No normalization: an empty pattern matches only an
+    /// empty value (a sheet without the parameter).</summary>
+    internal static bool WildcardLiteralEquals(string actual, string pattern)
+    {
         if (pattern.Length == 0)
             return actual.Length == 0;
         return WildcardMatch(actual, pattern);
