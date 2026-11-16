@@ -5778,6 +5778,11 @@ internal static partial class ElementBuilder
         rvtInfo.LinePatterns = state?.LinePatterns
             .Where(pair => pair.Value is { BlockCount: 1, Name: not null, Segs: not null })
             .ToDictionary(pair => (int)pair.Key, pair => (pair.Value.Name!, pair.Value.Segs!));
+        rvtInfo.TitleBlockLines = state?.TitleBlockLines
+            .Where(pair => pair.Value is { BlockCount: 1, Lines: not null })
+            .ToDictionary(pair => (int)pair.Key,
+                pair => (IReadOnlyList<(double X0, double Y0, double X1, double Y1, int StyleId)>)pair.Value.Lines!
+                    .Select(line => (line.X0, line.Y0, line.X1, line.Y1, line.StyleId)).ToList());
         rvtInfo.CategoryNames = state?.CategoryNames
             .Where(pair => pair.Value is { BlockCount: 1, Name: not null })
             .ToDictionary(pair => (int)pair.Key, pair => pair.Value.Name!);

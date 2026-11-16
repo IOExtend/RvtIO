@@ -63,6 +63,11 @@ namespace RvtIO.Model
         [System.Text.Json.Serialization.JsonIgnore]
         internal IReadOnlyDictionary<int, (string Name, List<(double Data, int Type)> Segs)>? LinePatterns { get; set; }
 
+        /// <summary>FamilySymbol id -> the linework of a title block family symbol in symbol feet, for the symbols
+        /// whose block decoded exactly once.</summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        internal IReadOnlyDictionary<int, IReadOnlyList<(double X0, double Y0, double X1, double Y1, int StyleId)>>? TitleBlockLines { get; set; }
+
         /// <summary>CategoryElem id -> its name, for the category elements whose block decoded exactly once.</summary>
         [System.Text.Json.Serialization.JsonIgnore]
         internal IReadOnlyDictionary<int, string>? CategoryNames { get; set; }

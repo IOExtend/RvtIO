@@ -127,11 +127,11 @@ are written at their positions.
 
 Measured on the Revit sample project (rac_basic_sample_project.rvt, six sheets A001 and A101 to A105): all six pages are
 841 x 594 mm (A1, the size of the "A1 metric" title block), and sheet A102 draws "Level 1" at (180, 453) mm and
-"Level 2" at (530, 453) mm at 1:100, the positions the reference PDF export shows. The linework of the title block family is not decoded yet: the composer draws the page border and a title block strip
-on the right of the page, built from the sheet's own parameters and the project information (the organization, the
+"Level 2" at (530, 453) mm at 1:100, the positions the reference PDF export shows. The linework of the title block family is decoded from the symbol (its GLine objects, in symbol feet at the sheet position, each in its graphics style's annotation pen); the fixed texts and labels are not decoded yet, so where the linework decoded the composer draws it instead of the page border and the title block strip
+on the right of the page (built from the sheet's own parameters and the project information (the organization, the
 project name and its number come from the project information element when the project information stream does not carry
 them), plus: a logo area, the project area, a revision table
-(No. / Description / Date) and the sheet information (name, number, issue date, drawn by, checked by).
+(No. / Description / Date) and the sheet information (name, number, issue date, drawn by, checked by)).
 
 ## Printing a sheet
 
@@ -200,9 +200,7 @@ selection nor drawing.
   stores Order, Level, Topic, What view, Reviewed?; the revision schedule No., Description, Date; the planting schedule
   Type Mark, Common Name, Count) but not its rows: Revit evaluates them from the model when it draws the schedule. The
   planting schedule and the revision table are the two the printer builds itself from the decoded elements.
-- **The graphic of the title block family**: the strip on the right of a sheet is a stand-in built from the sheet's own
-  fields, the project information and the revisions the file stores. The consultant addresses stay empty because the
-  file carries no value for them.
+- **The fixed texts and labels of the title block family**: the linework of the symbol is drawn (its GLine objects in symbol feet, each in its graphics style's annotation pen), but the fixed texts (TextNoteData + RtfData) and the labels (TagNoteData: sheet number and name, project data, scale, drawn/checked by, issue date) are not decoded yet, so where the linework decoded the stand-in strip is not drawn either.
 - **Property and setback lines**: the site plan prints the topography, the contours, the planting and the entourage, but
   the property and setback lines (OST_SitePropertyLineSegment) carry no geometry the reader decodes.
 - **Images other than the logo and the renderings**: material textures and the sun-path of a solar analysis are not

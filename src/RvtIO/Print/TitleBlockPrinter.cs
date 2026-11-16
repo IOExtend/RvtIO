@@ -6,9 +6,9 @@ namespace RvtIO.Print;
 
 /// <summary>
 /// The title block strip on the right of a sheet: a logo area, the consultant table, the revision table, the project
-/// area and the sheet information (name, number, scale, issue date, drawn by, checked by). The graphic of the title
-/// block family itself is not decoded, so the strip stands in for it; every value in it is read from the file and the
-/// empty fields stay empty.
+/// area and the sheet information (name, number, scale, issue date, drawn by, checked by). Drawn only where the
+/// symbol linework did not decode; where GLine objects of the title block symbol decoded, SheetComposer draws
+/// them instead, so every value in the strip is read from the file and the empty fields stay empty.
 /// </summary>
 internal static class TitleBlockPrinter
 {

@@ -296,6 +296,10 @@ internal class ParsingState
     /// 1 space / 2 dot). Null when the block did not decode; a repeated block clears it.</summary>
     public Dictionary<uint, (int BlockCount, string? Name, List<(double Data, int Type)>? Segs)> LinePatterns { get; } = new();
 
+    /// <summary>FamilySymbol (class 1829) of a title block -> its GLine linework in symbol feet. Null when the block
+    /// did not decode; a repeated block clears it.</summary>
+    public Dictionary<uint, (int BlockCount, List<Parsing.TfBlockDeserializer.TitleBlockLine>? Lines)> TitleBlockLines { get; } = new();
+
     /// <summary>CategoryElem (class 632) -> Category.m_name; every root counts, an unreadable root records null and a
     /// repeated block clears the name.</summary>
     public Dictionary<uint, (int BlockCount, string? Name)> CategoryNames { get; } = new();

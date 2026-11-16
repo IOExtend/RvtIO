@@ -3633,6 +3633,234 @@ internal static partial class TfBlockDeserializer
         return true;
     }
 
+    /// <summary>A line of a title block family symbol, in symbol feet: the segment and the graphics style
+    /// element that inks it (Title Blocks Wide/Medium/Narrow Lines).</summary>
+    internal sealed record TitleBlockLine(double X0, double Y0, double X1, double Y1, int StyleId);
+
+    /// <summary>Reads the linework of a title block family symbol: the GLine objects of the FamilySymbol root
+    /// (class 1829), each as origin + t*dirVec over its end parameters, in symbol feet. Lines whose GInfo carries
+    /// GINFO_NOT_PRINTED (0x20, a revision table's cached grid) are left out. False when anything fails to decode.</summary>
+    internal static bool TryExtractTitleBlockLines(
+        byte[] d, int blockStart, uint dataSize, ushort classId, out List<TitleBlockLine> lines)
+        => TryExtractTitleBlockLines(d, blockStart, dataSize, classId, out lines, out _);
+
+    internal static bool TryExtractTitleBlockLines(
+        byte[] d, int blockStart, uint dataSize, ushort classId, out List<TitleBlockLine> lines, out string failure)
+    {
+        lines = new();
+        failure = "ok";
+        if (classId != 1829
+            || blockStart < 0
+            || dataSize > int.MaxValue
+            || (long)blockStart + 16 + dataSize > d.Length
+            || dataSize < 6
+            || BitConverter.ToUInt32(d, blockStart + 8) != dataSize
+            || BitConverter.ToUInt16(d, blockStart + 12) != classId)
+        {
+            failure = "header";
+            return false;
+        }
+        var fields = SerializationFields(classId);
+        if (fields == null)
+        {
+            failure = "no-schema-1829";
+            return false;
+        }
+        int payloadEnd = blockStart + 16 + (int)dataSize;
+        if (BitConverter.ToUInt32(d, payloadEnd - 4) != dataSize)
+        {
+            failure = "footer";
+            return false;
+        }
+
+        var cur = new Cursor
+        {
+            D = d,
+            Pos = blockStart + 14,
+            End = payloadEnd - 4,
+            RootClassId = classId,
+            TailWalk = true,
+            FamilySymbolParamsWalk = classId == 1829,
+        };
+        var queue = new List<(ushort Cls, uint Id)>();
+        cur.RootQueue = queue;
+        try
+        {
+            try
+            {
+                foreach (var field in fields)
+                    ReadField(cur, field, queue, 0, null);
+            }
+            catch (DecodeFail)
+            {
+                failure = $"decodefail-root pos={cur.Pos}";
+                return false;
+            }
+
+            // The GLine objects carry their GInfo inline (four words: tag, control, style, flags).
+            var geoms = new List<(double T0, double T1, double Ox, double Oy, double Oz, double Dx, double Dy, double Dz, int Tag, int Control, int CategoryId, uint Flags)>();
+            for (int qi = 0; qi < queue.Count; qi++)
+            {
+                ushort queuedClass = queue[qi].Cls;
+                cur.TailClassId = queuedClass;
+                cur.CurrentDeferredClassId = queuedClass;
+                cur.CurrentDeferredQueueIndex = qi;
+                cur.CurrentGeomStepQueueIndex = IsSubclassOf(queuedClass, 96) ? qi : -1;
+                if (ParamSetTags.TryGetValue(queuedClass, out var parameterStore))
+                {
+                    uint count = ReadU32(cur);
+                    if (count == 0xFFFFFFFF) count = 0;
+                    if (count > 100_000)
+                    {
+                        failure = $"paramstore-count qi={qi} cls={queuedClass}";
+                        return false;
+                    }
+                    var recordFields = SerializationFields(parameterStore.RecordClass);
+                    if (recordFields == null)
+                    {
+                        failure = $"no-schema-paramstore qi={qi} cls={queuedClass}";
+                        return false;
+                    }
+                    for (uint index = 0; index < count; index++)
+                        foreach (var recordField in recordFields)
+                            ReadField(cur, recordField, new List<(ushort, uint)>(), 0, null);
+                    continue;
+                }
+                if (queuedClass == 1736)
+                {
+                    if (!TryReadGLine(cur, queue, qi, out var geom, out string glineFailure))
+                    {
+                        failure = $"gline qi={qi} pos={cur.Pos} {glineFailure}";
+                        return false;
+                    }
+                    geoms.Add(geom);
+                    continue;
+                }
+                var qf = SerializationFields(queuedClass);
+                if (qf == null)
+                {
+                    failure = $"no-schema qi={qi} cls={queuedClass} pos={cur.Pos}";
+                    return false;
+                }
+                try
+                {
+                    foreach (var queuedField in qf)
+                        ReadField(cur, queuedField, queue, 1, null);
+                }
+                catch (DecodeFail)
+                {
+                    failure = $"decodefail-qi qi={qi} cls={queuedClass} pos={cur.Pos}";
+                    return false;
+                }
+            }
+
+            foreach (var geom in geoms)
+            {
+                if ((geom.Flags & 0x20) != 0) continue;
+                double x0 = geom.Ox + geom.T0 * geom.Dx, y0 = geom.Oy + geom.T0 * geom.Dy;
+                double x1 = geom.Ox + geom.T1 * geom.Dx, y1 = geom.Oy + geom.T1 * geom.Dy;
+                if (!double.IsFinite(x0) || !double.IsFinite(y0) || !double.IsFinite(x1) || !double.IsFinite(y1))
+                {
+                    failure = $"nonfinite";
+                    return false;
+                }
+                if (Math.Abs(x0) > 1e6 || Math.Abs(y0) > 1e6 || Math.Abs(x1) > 1e6 || Math.Abs(y1) > 1e6)
+                {
+                    failure = $"range";
+                    return false;
+                }
+                lines.Add(new TitleBlockLine(x0, y0, x1, y1, geom.CategoryId));
+            }
+            failure = $"ok glines={geoms.Count} kept={lines.Count} queue={queue.Count}";
+            return true;
+        }
+        catch (DecodeFail)
+        {
+            failure = $"decodefail pos={cur.Pos}";
+            return false;
+        }
+    }
+
+    private static bool TryReadGLine(Cursor cur, List<(ushort Cls, uint Id)> queue, int qi,
+        out (double T0, double T1, double Ox, double Oy, double Oz, double Dx, double Dy, double Dz, int Tag, int Control, int CategoryId, uint Flags) geom)
+    {
+        return TryReadGLine(cur, queue, qi, out geom, out _);
+    }
+
+    private static bool TryReadGLine(Cursor cur, List<(ushort Cls, uint Id)> queue, int qi,
+        out (double T0, double T1, double Ox, double Oy, double Oz, double Dx, double Dy, double Dz, int Tag, int Control, int CategoryId, uint Flags) geom, out string failure)
+    {
+        geom = default;
+        failure = "ok";
+        var glineFields = SerializationFields(1736);
+        if (glineFields == null)
+        {
+            failure = "no-schema-1736";
+            return false;
+        }
+        double t0 = 0, t1 = 0, ox = 0, oy = 0, oz = 0, dx = 0, dy = 0, dz = 0;
+        int tag = 0, control = 0, category = 0;
+        uint flags = 0;
+        bool ginfoRead = false, endsRead = false, originRead = false, dirRead = false;
+        foreach (var field in glineFields)
+        {
+            if (field is { Declaring: 1246, Name: "m_GInfo" })
+            {
+                // In a FamilySymbol block the GNode layout is four raw32 fields (tag, control, category id,
+                // flags), not a queued GInfo object: the deferred-tail walk takes 16 bytes inline. Read them
+                // directly instead of ReadField, whose override would discard the values.
+                tag = ReadI32(cur);
+                control = ReadI32(cur);
+                category = ReadI32(cur);
+                flags = ReadU32(cur);
+                ginfoRead = true;
+            }
+            else if (field is { Declaring: 1737, Name: "m_endParams" })
+            {
+                if (field is not { Type: 7, Mods: 16 })
+                {
+                    failure = $"ends-type t={field.Type} mods={field.Mods}";
+                    return false;
+                }
+                t0 = ReadF64(cur);
+                t1 = ReadF64(cur);
+                endsRead = true;
+            }
+            else if (field is { Declaring: 1736, Name: "m_origin" })
+            {
+                if (field is not { Type: 7, Mods: 16 })
+                {
+                    failure = $"origin-type t={field.Type} mods={field.Mods}";
+                    return false;
+                }
+                ox = ReadF64(cur);
+                oy = ReadF64(cur);
+                oz = ReadF64(cur);
+                originRead = true;
+            }
+            else if (field is { Declaring: 1736, Name: "m_dirVec" })
+            {
+                if (field is not { Type: 7, Mods: 16 })
+                {
+                    failure = $"dir-type t={field.Type} mods={field.Mods}";
+                    return false;
+                }
+                dx = ReadF64(cur);
+                dy = ReadF64(cur);
+                dz = ReadF64(cur);
+                dirRead = true;
+            }
+            else ReadField(cur, field, queue, 1, null);
+        }
+        if (!ginfoRead || !endsRead || !originRead || !dirRead)
+        {
+            failure = $"missing g={ginfoRead} e={endsRead} o={originRead} d={dirRead} nfields={glineFields.Count}";
+            return false;
+        }
+        geom = (t0, t1, ox, oy, oz, dx, dy, dz, tag, control, category, flags);
+        return true;
+    }
+
     /// <summary>Reads a line pattern: the LinePatternElem root (class 2325) owns exactly one deferred LinePattern
     /// (class 2324) through m_pLinePattern. The segments are (data in feet, type 0 dash / 1 space / 2 dot).
     /// False when anything fails to decode.</summary>

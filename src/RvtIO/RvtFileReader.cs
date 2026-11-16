@@ -1903,6 +1903,19 @@ public partial class RvtFileReader
             : (1, read ? name : null, read ? segs : null);
     }
 
+    internal static void RecordTitleBlockLines(
+        ParsingState state, byte[] data, int start, uint size, ushort classId, uint owner)
+    {
+        if (classId != 1829) return;
+        List<TfBlockDeserializer.TitleBlockLine> lines = new();
+        bool read = start >= 0 && start <= data.Length - 4
+            && BitConverter.ToUInt32(data, start) == owner
+            && TfBlockDeserializer.TryExtractTitleBlockLines(data, start, size, classId, out lines);
+        state.TitleBlockLines[owner] = state.TitleBlockLines.TryGetValue(owner, out var old)
+            ? (old.BlockCount + 1, null)
+            : (1, read ? lines : null);
+    }
+
     internal static void RecordCategoryName(
         ParsingState state, byte[] data, int start, uint size, ushort classId, uint owner)
     {
@@ -2402,6 +2415,7 @@ public partial class RvtFileReader
             RecordGraphicsStyle(state, seg, bs, ds, cls, eid);
             RecordPenWidthTable(state, seg, bs, ds, cls, eid);
             RecordLinePattern(state, seg, bs, ds, cls, eid);
+            RecordTitleBlockLines(state, seg, bs, ds, cls, eid);
             RecordCategoryName(state, seg, bs, ds, cls, eid);
             if (cls == 3666)
                 RecordStackedWallTypeRoot(state, seg, bs, ds, cls, eid);

@@ -126,10 +126,23 @@ public static class SheetComposer
             && sheetNumber.Length > 0)
             page2.OutlineTitle = sheet.LookupParameter(BuiltInParameter.SHEET_NAME)?.Value is string sheetName
                 && sheetName.Length > 0 ? sheetNumber + " - " + sheetName : sheetNumber;
-        // The title block family's linework is not decoded: the page border and a title block strip on the right, built
-        // from the sheet's own fields, stand in for it, so a printed sheet reads as a framed page of a set.
+        // The title block family's linework, when it decoded: the GLine objects of the sheet's title block
+        // symbol, in symbol feet mapped like the sheet text (feet to millimetres minus the type origin).
+        // Otherwise the page border and a title block strip on the right, built from the sheet's own fields,
+        // stand in for it, so a printed sheet reads as a framed page of a set.
+        IReadOnlyList<(double X0, double Y0, double X1, double Y1, int StyleId)>? titleLines = null;
+        foreach (var element in document.Elements)
+        {
+            if (element.OwnerViewId != sheet.Id || element.CategoryId != (int)BuiltInCategory.OST_TitleBlocks) continue;
+            if (element.TypeId > 0 && document.RawData.TitleBlockLines?.TryGetValue(element.TypeId, out var decoded) == true
+                && decoded.Count > 0)
+            {
+                titleLines = decoded;
+                break;
+            }
+        }
         double margin = 5;
-        if (options.DrawPageFrame)
+        if (options.DrawPageFrame && titleLines == null)
             page2.DrawRectangle(margin, margin, layout.WidthMillimetres - 2 * margin,
                 layout.HeightMillimetres - 2 * margin, 0.35);
 
@@ -540,10 +553,18 @@ public static class SheetComposer
                 page2.DrawText(lines[line], x, y - line * height * 1.25, height);
         }
 
-        // The title block strip goes last, over the drawings: the scale row names the scale the views were printed at
+        // The title block goes last, over the drawings. Decoded linework draws at its sheet position with its
+        // annotation pens (0.7 pt where the style has no pen, as rvt-prt draws it); otherwise the strip built from
+        // the sheet's own fields stands in. The scale row of the strip names the scale the views were printed at
         // (a view the layout reduced no longer shows its nominal scale), and no drawing line runs under the strip.
         if (options.DrawPageFrame && pdf.Font != null)
         {
+            if (titleLines != null)
+            {
+                DrawTitleBlockLines(page2, document, titleLines, originX, originY);
+            }
+            else
+            {
             string scaleText = effectiveScales.Count > 0
                 ? "1:" + effectiveScales.OrderByDescending(pair => pair.Value).First().Key
                 : "";
@@ -564,6 +585,26 @@ public static class SheetComposer
             }
             TitleBlockPrinter.Draw(page2, document, sheet, Math.Min(180, layout.WidthMillimetres * 0.22),
                 margin, scaleText, TitleLogo(document), Revisions(document));
+            }
+        }
+    }
+
+    /// <summary>Draws the decoded linework of a title block family symbol at its sheet position: symbol feet to
+    /// page millimetres minus the type origin, each line in its graphics style's annotation pen (0.7 pt where the
+    /// style has no pen, as rvt-prt draws it).</summary>
+    private static void DrawTitleBlockLines(PdfPage page, RvtDocument document,
+        IReadOnlyList<(double X0, double Y0, double X1, double Y1, int StyleId)> lines, double originX, double originY)
+    {
+        const double FeetToMillimetres = 304.8;
+        var pens = document.RawData.GraphicsStylePens;
+        foreach (var line in lines)
+        {
+            double widthMillimetres = 0.7 * 25.4 / 72.0;
+            if (pens != null && pens.TryGetValue(line.StyleId, out var style)
+                && PenWidths.TryAnnotationWidth(document, style.PenNumber, out double penWidth))
+                widthMillimetres = penWidth;
+            page.DrawLine(line.X0 * FeetToMillimetres - originX, line.Y0 * FeetToMillimetres - originY,
+                line.X1 * FeetToMillimetres - originX, line.Y1 * FeetToMillimetres - originY, widthMillimetres);
         }
     }
 
