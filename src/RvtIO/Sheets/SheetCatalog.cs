@@ -1,5 +1,6 @@
 using RvtIO.BuiltIns;
 using RvtIO.Model;
+using RvtIO.Parsing;
 
 namespace RvtIO.Sheets;
 
@@ -45,6 +46,10 @@ public sealed class SheetCatalog
         Sheets = sheets;
         Viewports = viewports;
     }
+
+    /// <summary>Create a catalog from sheets and viewports (used by <c>--where</c> filtering).</summary>
+    public static SheetCatalog FromFiltered(IReadOnlyList<SheetRecord> sheets, IReadOnlyList<ViewportRecord> viewports) =>
+        new(sheets, viewports);
 
     /// <summary>The sheets of the document, ordered by number (empty numbers last) and then by element id.</summary>
     public IReadOnlyList<SheetRecord> Sheets { get; }
@@ -130,6 +135,7 @@ public sealed class SheetCatalog
         var sheets = new List<SheetRecord>(sheetElements.Count);
         foreach (var element in sheetElements)
         {
+            var (parameters, yesNo) = ExtraParameters(element, info.UserParameters);
             sheets.Add(new SheetRecord(
                 element.Id,
                 Text(element, BuiltInParameter.SHEET_NUMBER),
@@ -141,10 +147,91 @@ public sealed class SheetCatalog
                 Text(element, BuiltInParameter.SHEET_CHECKED_BY),
                 Text(element, BuiltInParameter.SHEET_APPROVED_BY),
                 Ordered(viewportsBySheet, element.Id),
-                Ordered(owned, element.Id)));
+                Ordered(owned, element.Id),
+                parameters,
+                yesNo));
         }
 
         return new SheetCatalog(sheets, viewports);
+    }
+
+    /// <summary>
+    /// The sheet's project and shared parameters as display strings (rvt-prt's <c>list --params</c>):
+    /// text and whole-number user parameters (positive definition ids) with a value; numbers with units
+    /// are left out until their units are read. Unset sentinels (<c>HasRevitValue == false</c>) are skipped.
+    /// Built-in parameters other than the sheet's own fields (such as category or partition ids) are not
+    /// sheet parameters and stay out. Also returns the display names of the Yes/No parameters among them:
+    /// a user parameter whose definition is a Yes/No kind, whose Forge spec is boolean, or whose stored
+    /// value is boolean, reads as <c>Yes</c>/<c>No</c>, as does <c>Appears In Sheet List</c>.
+    /// </summary>
+    private static (IReadOnlyDictionary<string, string> Parameters, IReadOnlyCollection<string> YesNo)
+        ExtraParameters(Element element, UserParameterCatalog? catalog)
+    {
+        var result = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var yesNo = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var parameter in element.Parameters)
+        {
+            if (parameter.Definition == null || !parameter.HasRevitValue) continue;
+            int id = parameter.Definition.Id;
+            if (id == (int)BuiltInParameter.SHEET_NUMBER
+                || id == (int)BuiltInParameter.SHEET_NAME
+                || id == (int)BuiltInParameter.SHEET_ISSUE_DATE
+                || id == (int)BuiltInParameter.VIEW_SCALE
+                || id == (int)BuiltInParameter.SHEET_DRAWN_BY
+                || id == (int)BuiltInParameter.SHEET_DESIGNED_BY
+                || id == (int)BuiltInParameter.SHEET_CHECKED_BY
+                || id == (int)BuiltInParameter.SHEET_APPROVED_BY)
+                continue;
+            if (id < 0) continue;
+            string? key = parameter.Definition.Name;
+            if (string.IsNullOrWhiteSpace(key)) continue;
+            bool knownYesNo = IsYesNoParameter(parameter, id, catalog);
+            string? value = DisplayParameterValue(parameter, knownYesNo);
+            if (value == null) continue;
+            // First occurrence wins, matching Element.LookupParameter semantics.
+            if (result.TryAdd(key, value) && knownYesNo) yesNo.Add(key);
+        }
+        // "Appears In Sheet List" under its Revit display name for --where compatibility;
+        // the BIP enum name still resolves through SheetFilter.Lookup.
+        if (element.LookupParameter(BuiltInParameter.SHEET_SCHEDULED) is { } scheduled
+            && scheduled.HasRevitValue)
+        {
+            string? scheduledText = scheduled.Value switch
+            {
+                int scheduledInt => scheduledInt != 0 ? "Yes" : "No",
+                bool scheduledBool => scheduledBool ? "Yes" : "No",
+                _ => null,
+            };
+            if (scheduledText != null
+                && result.TryAdd(SheetFilter.DisplayName(BuiltInParameter.SHEET_SCHEDULED), scheduledText))
+                yesNo.Add(SheetFilter.DisplayName(BuiltInParameter.SHEET_SCHEDULED));
+        }
+        return (result, yesNo);
+    }
+
+    /// <summary>True when the parameter is known to be Yes/No: its definition element is a Yes/No kind,
+    /// its Forge spec is boolean, or its stored value is boolean.</summary>
+    private static bool IsYesNoParameter(Parameter parameter, int id, Parsing.UserParameterCatalog? catalog)
+    {
+        if (parameter.Value is bool) return true;
+        if (parameter.SpecType?.Contains("bool", StringComparison.OrdinalIgnoreCase) == true) return true;
+        return catalog?.Definitions.TryGetValue(id, out var definition) == true && definition.IsYesNo;
+    }
+
+    /// <summary>Display text for a sheet parameter: strings as stored, integers as numbers,
+    /// Yes/No parameters as <c>Yes</c>/<c>No</c>.</summary>
+    private static string? DisplayParameterValue(Parameter parameter, bool knownYesNo)
+    {
+        if (parameter.Value == null) return null;
+        if (parameter.Value is bool boolean) return boolean ? "Yes" : "No";
+        return parameter.StorageType switch
+        {
+            StorageType.String => parameter.Value as string,
+            StorageType.Integer => parameter.Value is int i
+                ? knownYesNo ? (i != 0 ? "Yes" : "No") : i.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                : null,
+            _ => null,
+        };
     }
 
     private static IReadOnlyList<int> Ordered(Dictionary<int, List<int>> byOwner, int owner)
