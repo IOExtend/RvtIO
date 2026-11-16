@@ -429,10 +429,23 @@ public static class PlanPrinter
 
     internal static void DrawContent(PdfPage page, PlanContent content, double scale, double originX,
         double originY, double floorFill = 0.9,
-        IReadOnlyList<(double X, double Y, double Dx, double Dy, string Name)>? sectionMarks = null)
+        IReadOnlyList<(double X, double Y, double Dx, double Dy, string Name)>? sectionMarks = null,
+        RvtDocument? document = null)
     {
         double ToX(double x) => (x - content.MinX) / scale + originX;
         double ToY(double y) => (y - content.MinY) / scale + originY;
+
+        // The pen widths of the document's Object Styles, when they decoded: a cut wall prints with the Walls
+        // cut pen at the view scale, a grid with the Grids projection pen, furniture with its own.
+        int scaleDenominator = (int)Math.Round(scale);
+        double wallLine = 0.2, gridLine = 0.18, furnitureLine = 0.12, columnLine = 0.2;
+        if (document != null)
+        {
+            if (PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Walls, true, scaleDenominator, out double w)) wallLine = w;
+            if (PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Columns, true, scaleDenominator, out double c)) columnLine = c;
+            if (PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Grids, false, scaleDenominator, out double g)) gridLine = g;
+            if (PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Furniture, false, scaleDenominator, out double f)) furnitureLine = f;
+        }
 
         foreach (var floor in content.FloorLoops)
             page.DrawPolyline(floor.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0, true, floorFill);
@@ -443,7 +456,7 @@ public static class PlanPrinter
 
         foreach (var grid in content.Grids)
         {
-            page.DrawLine(ToX(grid.X1), ToY(grid.Y1), ToX(grid.X2), ToY(grid.Y2), 0.18, 0.45);
+            page.DrawLine(ToX(grid.X1), ToY(grid.Y1), ToX(grid.X2), ToY(grid.Y2), gridLine, 0.45);
             if (page.Owner.Font == null || grid.Name.Length == 0) continue;
             Bubble(page, ToX(grid.X1), ToY(grid.Y1), grid.Name);
             Bubble(page, ToX(grid.X2), ToY(grid.Y2), grid.Name);
@@ -469,7 +482,7 @@ public static class PlanPrinter
                 [
                     (ToX(ax + nx), ToY(ay + ny)), (ToX(bx + nx), ToY(by + ny)),
                     (ToX(bx - nx), ToY(by - ny)), (ToX(ax - nx), ToY(ay - ny)),
-                ], 0.2, true, new PdfColor(0.72, 0.72, 0.72));
+                ], wallLine, true, new PdfColor(0.72, 0.72, 0.72));
             }
         }
 
@@ -509,7 +522,7 @@ public static class PlanPrinter
         }
 
         foreach (var outline in content.Furniture)
-            page.DrawPolyline(outline.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0.12, true,
+            page.DrawPolyline(outline.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), furnitureLine, true,
                 new PdfColor(0.55, 0.55, 0.55));
 
         // A door is drawn as its leaf and the quarter arc it sweeps: the leaf stands at one jamb, perpendicular to the
@@ -570,7 +583,7 @@ public static class PlanPrinter
             page.DrawPolyline(opening.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0.18, true);
 
         foreach (var column in content.Columns)
-            page.DrawRectangle(ToX(column.X), ToY(column.Y), column.Width / scale, column.Height / scale, 0.2, 1);
+            page.DrawRectangle(ToX(column.X), ToY(column.Y), column.Width / scale, column.Height / scale, columnLine, 1);
 
         if (sectionMarks is { Count: > 0 }) DrawSectionMarks(page, content, scale, originX, originY, sectionMarks);
     }
@@ -605,7 +618,7 @@ public static class PlanPrinter
             page.DrawRectangle(m, m, paper.WidthMillimetres - 2 * m, paper.HeightMillimetres - 2 * m, 0.25);
         }
 
-        DrawContent(page, content, effectiveScale, offsetX, offsetY);
+        DrawContent(page, content, effectiveScale, offsetX, offsetY, 0.9, null, document);
 
         // A title inside the frame: the level or view name and the scale. Drawn only when a font with the name's
         // characters was found; the standard font cannot write Cyrillic.

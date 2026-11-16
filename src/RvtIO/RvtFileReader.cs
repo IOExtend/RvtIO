@@ -1862,6 +1862,45 @@ public partial class RvtFileReader
         state.GraphicsStyles[owner] = state.GraphicsStyles.TryGetValue(owner, out var old)
             ? (old.BlockCount + 1, null, 0)
             : (1, read ? materialId : null, categoryId);
+        int fullCategory = 0, fullOwner = 0, fullType = 0, pen = 0, color = 0, pattern = 0;
+        bool fullRead = start >= 0 && start <= data.Length - 4
+            && BitConverter.ToUInt32(data, start) == owner
+            && TfBlockDeserializer.TryExtractGraphicsStyleFull(data, start, size, classId,
+                out fullCategory, out fullOwner, out fullType,
+                out pen, out color, out pattern, out _);
+        state.GraphicsStylePens[owner] = state.GraphicsStylePens.TryGetValue(owner, out var oldPen)
+            ? (oldPen.BlockCount + 1, null, null, null, null, null, null)
+            : (1, fullRead ? fullCategory : null, fullRead ? fullOwner : null, fullRead ? fullType : null,
+                fullRead ? pen : null, fullRead ? color : null, fullRead ? pattern : null);
+    }
+
+    internal static void RecordPenWidthTable(
+        ParsingState state, byte[] data, int start, uint size, ushort classId, uint owner)
+    {
+        if (classId != 2948) return;
+        Dictionary<int, double[]> rows = new();
+        double[] draft = [];
+        bool read = start >= 0 && start <= data.Length - 4
+            && BitConverter.ToUInt32(data, start) == owner
+            && TfBlockDeserializer.TryExtractPenWidthTable(data, start, size, classId,
+                out rows, out draft);
+        state.PenWidthTables[owner] = state.PenWidthTables.TryGetValue(owner, out var old)
+            ? (old.BlockCount + 1, null, null)
+            : (1, read ? rows : null, read ? draft : null);
+    }
+
+    internal static void RecordLinePattern(
+        ParsingState state, byte[] data, int start, uint size, ushort classId, uint owner)
+    {
+        if (classId != 2325) return;
+        string name = "";
+        List<(double Data, int Type)> segs = new();
+        bool read = start >= 0 && start <= data.Length - 4
+            && BitConverter.ToUInt32(data, start) == owner
+            && TfBlockDeserializer.TryExtractLinePattern(data, start, size, classId, out name, out segs);
+        state.LinePatterns[owner] = state.LinePatterns.TryGetValue(owner, out var old)
+            ? (old.BlockCount + 1, null, null)
+            : (1, read ? name : null, read ? segs : null);
     }
 
     internal static void RecordCategoryName(
@@ -2361,6 +2400,8 @@ public partial class RvtFileReader
             RecordWallEndJoins(state, seg, bs, ds, cls, eid);
             RecordMaterialName(state, seg, bs, ds, cls, eid);
             RecordGraphicsStyle(state, seg, bs, ds, cls, eid);
+            RecordPenWidthTable(state, seg, bs, ds, cls, eid);
+            RecordLinePattern(state, seg, bs, ds, cls, eid);
             RecordCategoryName(state, seg, bs, ds, cls, eid);
             if (cls == 3666)
                 RecordStackedWallTypeRoot(state, seg, bs, ds, cls, eid);

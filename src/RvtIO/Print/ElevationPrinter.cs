@@ -354,7 +354,7 @@ public static class ElevationPrinter
             double m = options.MarginMillimetres;
             page.DrawRectangle(m, m, paper.WidthMillimetres - 2 * m, paper.HeightMillimetres - 2 * m, 0.25);
         }
-        DrawContent(page, content, scale, offsetX, offsetY, view.Direction == "section" ? 0.82 : 1);
+        DrawContent(page, content, scale, offsetX, offsetY, view.Direction == "section" ? 0.82 : 1, document);
         if (pdf.Font != null)
         {
             page.DrawText(view.Name, options.MarginMillimetres + 2, paper.HeightMillimetres - options.MarginMillimetres - 6, 4);
@@ -451,10 +451,20 @@ public static class ElevationPrinter
     }
 
     internal static void DrawContent(PdfPage page, ElevationContent content, double scale, double originX,
-        double originY, double faceFill = 1)
+        double originY, double faceFill = 1, RvtDocument? document = null)
     {
         double ToX(double x) => (x - content.MinX) / scale + originX;
         double ToY(double y) => (y - content.MinY) / scale + originY;
+        // The pen widths of the document's Object Styles, when they decoded: a section cuts its mass with the
+        // Walls cut pen, an elevation outlines it with the Walls projection pen.
+        bool isSection = faceFill < 1;
+        double faceLine = 0.2;
+        if (document != null)
+        {
+            int scaleDenominator = (int)Math.Round(scale);
+            if (PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Walls, isSection, scaleDenominator, out double w))
+                faceLine = w;
+        }
         // The faded site behind the building: the plants and the ground as light shapes without outlines.
         foreach (var (contextPoints, _) in content.Context)
             page.DrawPolyline(contextPoints.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0, true, 0.9);
@@ -463,7 +473,7 @@ public static class ElevationPrinter
             var pagePoints = points.Select(point => (ToX(point.X), ToY(point.Y))).ToList();
             // A section fills its faces grey, so the cut mass reads as a section rather than as the white of an
             // elevation.
-            page.DrawPolyline(pagePoints, outline ? 0.2 : 0, true, faceFill);
+            page.DrawPolyline(pagePoints, outline ? faceLine : 0, true, faceFill);
         }
 
         // Grids first, then the levels: both dashed and light, over the faces the way an elevation prints them.

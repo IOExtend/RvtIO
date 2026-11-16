@@ -283,6 +283,19 @@ internal class ParsingState
     /// block did not decode. A repeated block clears it.</summary>
     public Dictionary<uint, (int BlockCount, int? MaterialId, int CategoryId)> GraphicsStyles { get; } = new();
 
+    /// <summary>GStyleElem (class 2050) -> the full Object Styles row: category, owner (-1 is the document's own
+    /// style for the category), projection/cut type, pen number, color (0xBBGGRR), line pattern id. Null when the
+    /// block did not decode; a repeated block clears it.</summary>
+    public Dictionary<uint, (int BlockCount, int? CategoryId, int? OwnerId, int? GStyleType, int? PenNumber, int? Color, int? LinePatternId)> GraphicsStylePens { get; } = new();
+
+    /// <summary>PenWidthTableElem (class 2948) -> the Line Weights table: model rows by inverted scale (each 16 pen
+    /// widths, feet) and the annotation (draft) pens. Null when the block did not decode; a repeated block clears it.</summary>
+    public Dictionary<uint, (int BlockCount, Dictionary<int, double[]>? ModelRows, double[]? DraftPens)> PenWidthTables { get; } = new();
+
+    /// <summary>LinePatternElem (class 2325) -> the line pattern: name and segments (data in feet, type 0 dash /
+    /// 1 space / 2 dot). Null when the block did not decode; a repeated block clears it.</summary>
+    public Dictionary<uint, (int BlockCount, string? Name, List<(double Data, int Type)>? Segs)> LinePatterns { get; } = new();
+
     /// <summary>CategoryElem (class 632) -> Category.m_name; every root counts, an unreadable root records null and a
     /// repeated block clears the name.</summary>
     public Dictionary<uint, (int BlockCount, string? Name)> CategoryNames { get; } = new();

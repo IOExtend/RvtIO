@@ -212,7 +212,7 @@ public static class SheetComposer
                     frameY = centerY - frameHeight / 2;
                     ClampFrame(ref frameX, ref frameY, frameWidth, frameHeight);
                     ClipFrame(frameX, frameY, frameWidth, frameHeight);
-                    ElevationPrinter.DrawContent(page2, model, drawScale, frameX, frameY);
+                    ElevationPrinter.DrawContent(page2, model, drawScale, frameX, frameY, 1, document);
                     page2.EndClip();
                     effectiveScale = (int)Math.Round(drawScale);
                 }
@@ -267,7 +267,7 @@ public static class SheetComposer
                         ClipFrame(frameX, frameY, frameWidth, frameHeight);
                     }
                     PlanPrinter.DrawContent(page2, content, drawScale, drawOriginX, drawOriginY, 0.9,
-                        ElevationPrinter.SectionMarks(document));
+                        ElevationPrinter.SectionMarks(document), document);
                     page2.EndClip();
                     effectiveScale = (int)Math.Round(drawScale);
                     if (options.DrawRoomLegend && pdf.Font != null && content.Rooms.Count > 0)
@@ -324,7 +324,7 @@ public static class SheetComposer
                         }
                         PlanPrinter.DrawContent(page2, wallsOnly, drawScale,
                             (sitePlan.MinX - site.MinX) / drawScale + frameX,
-                            (sitePlan.MinY - site.MinY) / drawScale + frameY);
+                            (sitePlan.MinY - site.MinY) / drawScale + frameY, 0.9, null, document);
                     }
                     page2.EndClip();
                     // The planting schedule sits under the view title, clear of the site plan.
@@ -379,7 +379,7 @@ public static class SheetComposer
                     effectiveScale = scale;
                     page2.BeginClip(frameX, frameY, Math.Max(0, frameWidth), Math.Max(0, frameHeight));
                     ElevationPrinter.DrawContent(page2, elevation, scale, cropOriginX, cropOriginY,
-                        direction == "section" ? 0.82 : 1);
+                        direction == "section" ? 0.82 : 1, document);
                     page2.EndClip();
                     placedRects.Add((frameX, frameY, frameWidth, frameHeight));
                 }
@@ -459,7 +459,7 @@ public static class SheetComposer
                     }
                     ClipFrame(frameX, frameY, frameWidth, frameHeight);
                     ElevationPrinter.DrawContent(page2, elevation, drawScale, frameX, frameY,
-                        direction == "section" ? 0.82 : 1);
+                        direction == "section" ? 0.82 : 1, document);
                     page2.EndClip();
                     placedRects.Add((frameX, frameY, frameWidth, frameHeight));
                 }

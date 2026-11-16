@@ -3399,8 +3399,21 @@ internal static partial class TfBlockDeserializer
     internal static bool TryExtractGraphicsStyle(
         byte[] d, int blockStart, uint dataSize, ushort classId, out int categoryId, out int materialId)
     {
-        categoryId = 0;
-        materialId = 0;
+        bool ok = TryExtractGraphicsStyleFull(d, blockStart, dataSize, classId,
+            out categoryId, out _, out _, out _, out _, out _, out materialId);
+        if (!ok) { categoryId = 0; materialId = 0; }
+        return ok;
+    }
+
+    /// <summary>Reads the full Object Styles row of a graphics style: the category, owner (-1 is the document's own
+    /// style for the category), projection/cut type and the pen (number, color 0xBBGGRR, line pattern id) of the
+    /// deferred GStyle, plus its material. False when anything fails to decode.</summary>
+    internal static bool TryExtractGraphicsStyleFull(
+        byte[] d, int blockStart, uint dataSize, ushort classId,
+        out int categoryId, out int ownerId, out int gstyleType,
+        out int penNumber, out int color, out int linePatternId, out int materialId)
+    {
+        categoryId = ownerId = gstyleType = penNumber = color = linePatternId = materialId = 0;
         if (classId != 2050
             || blockStart < 0
             || dataSize > int.MaxValue
@@ -3413,6 +3426,9 @@ internal static partial class TfBlockDeserializer
         var styleFields = SerializationFields(2046);
         if (fields == null || styleFields == null
             || !styleFields.Any(field => field is { Declaring: 2046, Name: "m_materialElemId", Type: 14, Mods: 0, Ref: 20 })
+            || !styleFields.Any(field => field is { Declaring: 2046, Name: "m_penNumber", Type: 4, Mods: 0 })
+            || !styleFields.Any(field => field is { Declaring: 2046, Name: "m_color", Type: 5, Mods: 0 })
+            || !styleFields.Any(field => field is { Declaring: 2046, Name: "m_linePatternId", Type: 14, Mods: 0, Ref: 20 })
             || fields.Count(field => field is { Declaring: 2050, Name: "m_pGStyle", Type: 14, Mods: 1 }) != 1)
             return false;
         int payloadEnd = blockStart + 16 + (int)dataSize;
@@ -3423,7 +3439,7 @@ internal static partial class TfBlockDeserializer
         int styleIndex = -1;
         try
         {
-            bool categoryRead = false;
+            bool categoryRead = false, ownerRead = false, typeRead = false;
             foreach (var field in fields)
             {
                 if (field is { Declaring: 2050, Name: "m_categoryId" })
@@ -3433,13 +3449,27 @@ internal static partial class TfBlockDeserializer
                     categoryRead = true;
                     continue;
                 }
+                if (field is { Declaring: 2050, Name: "m_ownerId" })
+                {
+                    if (field is not { Type: 14, Mods: 0, Ref: 20 }) return false;
+                    ownerId = ReadI32(cur);
+                    ownerRead = true;
+                    continue;
+                }
+                if (field is { Declaring: 2050, Name: "m_gstyleType" })
+                {
+                    if (field is not { Type: 4, Mods: 0 }) return false;
+                    gstyleType = ReadI32(cur);
+                    typeRead = true;
+                    continue;
+                }
                 int before = queue.Count;
                 ReadField(cur, field, queue, 0, null);
                 if (field is not { Declaring: 2050, Name: "m_pGStyle" }) continue;
                 if (queue.Count != before + 1 || queue[before].Cls != 2046) return false;
                 styleIndex = before;
             }
-            if (styleIndex < 0 || !categoryRead) return false;
+            if (styleIndex < 0 || !categoryRead || !ownerRead || !typeRead) return false;
 
             for (int queueIndex = 0; queueIndex < styleIndex; queueIndex++)
             {
@@ -3462,7 +3492,22 @@ internal static partial class TfBlockDeserializer
             bool read = false;
             foreach (var styleField in styleFields)
             {
-                if (styleField is { Declaring: 2046, Name: "m_materialElemId" })
+                if (styleField is { Declaring: 2046, Name: "m_penNumber" })
+                {
+                    if (styleField is not { Type: 4, Mods: 0 }) return false;
+                    penNumber = ReadI32(cur);
+                }
+                else if (styleField is { Declaring: 2046, Name: "m_color" })
+                {
+                    if (styleField is not { Type: 5, Mods: 0 }) return false;
+                    color = unchecked((int)ReadU32(cur));
+                }
+                else if (styleField is { Declaring: 2046, Name: "m_linePatternId" })
+                {
+                    if (styleField is not { Type: 14, Mods: 0, Ref: 20 }) return false;
+                    linePatternId = ReadI32(cur);
+                }
+                else if (styleField is { Declaring: 2046, Name: "m_materialElemId" })
                 {
                     materialId = ReadI32(cur);
                     read = true;
@@ -3470,6 +3515,213 @@ internal static partial class TfBlockDeserializer
                 else ReadField(cur, styleField, queue, 1, null);
             }
             return read;
+        }
+        catch (DecodeFail) { return false; }
+    }
+
+    /// <summary>Reads a Line Weights table: the PenWidthTableElem root (class 2948) owns exactly one deferred
+    /// PenWidthTable (class 2947) through m_pPenWidthTable. The model rows map the inverted scale (100 for 1:100)
+    /// to the 16 pen widths in feet; the draft pens are the annotation widths. False when anything fails to decode.</summary>
+    internal static bool TryExtractPenWidthTable(
+        byte[] d, int blockStart, uint dataSize, ushort classId,
+        out Dictionary<int, double[]> modelRows, out double[] draftPens)
+    {
+        modelRows = new();
+        draftPens = [];
+        if (classId != 2948
+            || blockStart < 0
+            || dataSize > int.MaxValue
+            || (long)blockStart + 16 + dataSize > d.Length
+            || dataSize < 6
+            || BitConverter.ToUInt32(d, blockStart + 8) != dataSize
+            || BitConverter.ToUInt16(d, blockStart + 12) != classId)
+            return false;
+        var fields = SerializationFields(classId);
+        var tableFields = SerializationFields(2947);
+        var rowFields = SerializationFields(2946);
+        if (fields == null || tableFields == null || rowFields == null
+            || fields.Count(field => field is { Declaring: 2948, Name: "m_pPenWidthTable", Type: 14, Mods: 1 }) != 1
+            || !tableFields.Any(field => field is { Declaring: 2947, Name: "m_modelPenInfo", Type: 14, Mods: 80, Ref: 2946 })
+            || !tableFields.Any(field => field is { Declaring: 2947, Name: "m_draftPenInfo", Type: 14, Mods: 0, Ref: 2946 })
+            || !rowFields.Any(field => field is { Declaring: 2946, Name: "m_invertedScale", Type: 4, Mods: 0 })
+            || !rowFields.Any(field => field is { Declaring: 2946, Name: "m_pens", Type: 7, Mods: 80 }))
+            return false;
+        int payloadEnd = blockStart + 16 + (int)dataSize;
+        if (BitConverter.ToUInt32(d, payloadEnd - 4) != dataSize) return false;
+
+        var cur = new Cursor { D = d, Pos = blockStart + 14, End = payloadEnd - 4 };
+        var queue = new List<(ushort Cls, uint Id)>();
+        int tableIndex = -1;
+        try
+        {
+            foreach (var field in fields)
+            {
+                int before = queue.Count;
+                ReadField(cur, field, queue, 0, null);
+                if (field is not { Declaring: 2948, Name: "m_pPenWidthTable" }) continue;
+                if (queue.Count != before + 1 || queue[before].Cls != 2947) return false;
+                tableIndex = before;
+            }
+            if (tableIndex < 0) return false;
+
+            for (int queueIndex = 0; queueIndex < tableIndex; queueIndex++)
+            {
+                ushort queuedClass = queue[queueIndex].Cls;
+                if (ParamSetTags.TryGetValue(queuedClass, out var parameterStore))
+                {
+                    uint count = ReadU32(cur);
+                    if (count > 100_000) return false;
+                    var recordFields = SerializationFields(parameterStore.RecordClass);
+                    if (recordFields == null) return false;
+                    for (uint index = 0; index < count; index++)
+                        foreach (var recordField in recordFields)
+                            ReadField(cur, recordField, new List<(ushort, uint)>(), 0, null);
+                    continue;
+                }
+                foreach (var queuedField in SerializationFields(queuedClass) ?? throw Fail)
+                    ReadField(cur, queuedField, queue, 1, null);
+            }
+
+            var rows = new Dictionary<int, double[]>();
+            double[] draft = [];
+            bool draftRead = false;
+            foreach (var tableField in tableFields)
+            {
+                if (tableField is { Declaring: 2947, Name: "m_modelPenInfo" })
+                {
+                    uint count = ReadU32(cur);
+                    if (count == 0xFFFFFFFF) count = 0;
+                    if (count > 1000) return false;
+                    for (uint i = 0; i < count; i++)
+                    {
+                        if (!TryReadPenRow(cur, out int inverted, out double[] pens)) return false;
+                        rows[inverted] = pens;
+                    }
+                }
+                else if (tableField is { Declaring: 2947, Name: "m_draftPenInfo" })
+                {
+                    if (!TryReadPenRow(cur, out _, out double[] pens)) return false;
+                    draft = pens;
+                    draftRead = true;
+                }
+                else if (tableField is { Declaring: 2947, Name: "m_perspectiveModelPenInfo" })
+                {
+                    if (!TryReadPenRow(cur, out _, out _)) return false;
+                }
+                else ReadField(cur, tableField, queue, 1, null);
+            }
+            if (rows.Count == 0 || !draftRead) return false;
+            modelRows = rows;
+            draftPens = draft;
+            return true;
+        }
+        catch (DecodeFail) { return false; }
+    }
+
+    private static bool TryReadPenRow(Cursor cur, out int invertedScale, out double[] pens)
+    {
+        invertedScale = 0;
+        pens = [];
+        // PenInfoForScale: m_invertedScale (i32) then m_pens (counted f64 array).
+        invertedScale = ReadI32(cur);
+        uint count = ReadU32(cur);
+        if (count == 0xFFFFFFFF) count = 0;
+        if (count > 100) return false;
+        var widths = new double[count];
+        for (uint i = 0; i < count; i++) widths[i] = ReadF64(cur);
+        pens = widths;
+        return true;
+    }
+
+    /// <summary>Reads a line pattern: the LinePatternElem root (class 2325) owns exactly one deferred LinePattern
+    /// (class 2324) through m_pLinePattern. The segments are (data in feet, type 0 dash / 1 space / 2 dot).
+    /// False when anything fails to decode.</summary>
+    internal static bool TryExtractLinePattern(
+        byte[] d, int blockStart, uint dataSize, ushort classId,
+        out string name, out List<(double Data, int Type)> segs)
+    {
+        name = "";
+        segs = new();
+        if (classId != 2325
+            || blockStart < 0
+            || dataSize > int.MaxValue
+            || (long)blockStart + 16 + dataSize > d.Length
+            || dataSize < 6
+            || BitConverter.ToUInt32(d, blockStart + 8) != dataSize
+            || BitConverter.ToUInt16(d, blockStart + 12) != classId)
+            return false;
+        var fields = SerializationFields(classId);
+        var patternFields = SerializationFields(2324);
+        if (fields == null || patternFields == null
+            || fields.Count(field => field is { Declaring: 2325, Name: "m_pLinePattern", Type: 14, Mods: 1 }) != 1
+            || !patternFields.Any(field => field is { Declaring: 2324, Name: "m_name", Type: 8, Mods: 96 })
+            || !patternFields.Any(field => field is { Declaring: 2324, Name: "m_segs", Type: 14, Mods: 80, Ref: 2319 }))
+            return false;
+        int payloadEnd = blockStart + 16 + (int)dataSize;
+        if (BitConverter.ToUInt32(d, payloadEnd - 4) != dataSize) return false;
+
+        var cur = new Cursor { D = d, Pos = blockStart + 14, End = payloadEnd - 4 };
+        var queue = new List<(ushort Cls, uint Id)>();
+        int patternIndex = -1;
+        try
+        {
+            foreach (var field in fields)
+            {
+                int before = queue.Count;
+                ReadField(cur, field, queue, 0, null);
+                if (field is not { Declaring: 2325, Name: "m_pLinePattern" }) continue;
+                if (queue.Count != before + 1 || queue[before].Cls != 2324) return false;
+                patternIndex = before;
+            }
+            if (patternIndex < 0) return false;
+
+            for (int queueIndex = 0; queueIndex < patternIndex; queueIndex++)
+            {
+                ushort queuedClass = queue[queueIndex].Cls;
+                if (ParamSetTags.TryGetValue(queuedClass, out var parameterStore))
+                {
+                    uint count = ReadU32(cur);
+                    if (count > 100_000) return false;
+                    var recordFields = SerializationFields(parameterStore.RecordClass);
+                    if (recordFields == null) return false;
+                    for (uint index = 0; index < count; index++)
+                        foreach (var recordField in recordFields)
+                            ReadField(cur, recordField, new List<(ushort, uint)>(), 0, null);
+                    continue;
+                }
+                foreach (var queuedField in SerializationFields(queuedClass) ?? throw Fail)
+                    ReadField(cur, queuedField, queue, 1, null);
+            }
+
+            string patternName = "";
+            var segments = new List<(double Data, int Type)>();
+            bool nameRead = false, segsRead = false;
+            foreach (var patternField in patternFields)
+            {
+                if (patternField is { Declaring: 2324, Name: "m_name" })
+                {
+                    patternName = ReadString(cur);
+                    nameRead = true;
+                }
+                else if (patternField is { Declaring: 2324, Name: "m_segs" })
+                {
+                    uint count = ReadU32(cur);
+                    if (count == 0xFFFFFFFF) count = 0;
+                    if (count > 1000) return false;
+                    for (uint i = 0; i < count; i++)
+                    {
+                        double data = ReadF64(cur);
+                        int type = ReadI32(cur);
+                        segments.Add((data, type));
+                    }
+                    segsRead = true;
+                }
+                else ReadField(cur, patternField, queue, 1, null);
+            }
+            if (!nameRead || !segsRead) return false;
+            name = patternName;
+            segs = segments;
+            return true;
         }
         catch (DecodeFail) { return false; }
     }

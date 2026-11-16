@@ -183,7 +183,7 @@ stays empty.
 | Dimensions | a chain between neighbouring grid lines on all four sides of the building, with the distance in millimetres, as the reference plan dimensions it |
 | Room legend | below the plan: a colour swatch and the name of every kind of room on it |
 
-The page is white with a frame at the margin, and the drawing is centred. The title (the level name and the scale) is
+The page is white with a frame at the margin, and the drawing is centred. Lines print with the weights of the document's Object Styles at the view scale (walls and columns cut with the Walls cut pen, section faces with the cut pen, elevation faces with the projection pen, grids and furniture with their own pens); without a decoded table the previous fixed widths stay. The title (the level name and the scale) is
 written with an embedded TrueType font found on the machine (Arial, Segoe UI or Tahoma on Windows, DejaVu Sans on Linux,
 Arial or Helvetica Neue on macOS); without such a font the page is drawn without a title, because the standard PDF font
 holds no Cyrillic. Elements are selected by their level

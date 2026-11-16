@@ -48,6 +48,21 @@ namespace RvtIO.Model
         [System.Text.Json.Serialization.JsonIgnore]
         internal IReadOnlyDictionary<int, (int Material, int Category)>? GraphicsStyles { get; set; }
 
+        /// <summary>GStyleElem id -> the Object Styles row (category, owner, projection/cut type, pen number,
+        /// color 0xBBGGRR, line pattern id), for the styles whose block decoded exactly once.</summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        internal IReadOnlyDictionary<int, (int CategoryId, int OwnerId, int GStyleType, int PenNumber, int Color, int LinePatternId)>? GraphicsStylePens { get; set; }
+
+        /// <summary>The document's Line Weights table (the lowest-id PenWidthTableElem whose block decoded exactly
+        /// once): model rows by inverted scale and the annotation pens, all widths in feet. Null when no table decoded.</summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        internal (Dictionary<int, double[]> ModelRows, double[] DraftPens)? PenWidthTable { get; set; }
+
+        /// <summary>LinePatternElem id -> the line pattern (name and segments: data in feet, type 0 dash / 1 space /
+        /// 2 dot), for the patterns whose block decoded exactly once.</summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        internal IReadOnlyDictionary<int, (string Name, List<(double Data, int Type)> Segs)>? LinePatterns { get; set; }
+
         /// <summary>CategoryElem id -> its name, for the category elements whose block decoded exactly once.</summary>
         [System.Text.Json.Serialization.JsonIgnore]
         internal IReadOnlyDictionary<int, string>? CategoryNames { get; set; }

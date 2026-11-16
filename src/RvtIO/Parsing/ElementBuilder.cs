@@ -5764,6 +5764,20 @@ internal static partial class ElementBuilder
         rvtInfo.GraphicsStyles = state?.GraphicsStyles
             .Where(pair => pair.Value is { BlockCount: 1, MaterialId: not null })
             .ToDictionary(pair => (int)pair.Key, pair => (pair.Value.MaterialId!.Value, pair.Value.CategoryId));
+        rvtInfo.GraphicsStylePens = state?.GraphicsStylePens
+            .Where(pair => pair.Value is { BlockCount: 1, CategoryId: not null, OwnerId: not null, GStyleType: not null, PenNumber: not null, Color: not null, LinePatternId: not null })
+            .ToDictionary(pair => (int)pair.Key, pair => (pair.Value.CategoryId!.Value, pair.Value.OwnerId!.Value,
+                pair.Value.GStyleType!.Value, pair.Value.PenNumber!.Value, pair.Value.Color!.Value, pair.Value.LinePatternId!.Value));
+        var penTable = state?.PenWidthTables
+            .Where(pair => pair.Value is { BlockCount: 1, ModelRows: not null, DraftPens: not null })
+            .OrderBy(pair => pair.Key)
+            .FirstOrDefault();
+        rvtInfo.PenWidthTable = penTable?.Value.ModelRows != null && penTable?.Value.DraftPens != null
+            ? (penTable.Value.Value.ModelRows!, penTable.Value.Value.DraftPens!)
+            : null;
+        rvtInfo.LinePatterns = state?.LinePatterns
+            .Where(pair => pair.Value is { BlockCount: 1, Name: not null, Segs: not null })
+            .ToDictionary(pair => (int)pair.Key, pair => (pair.Value.Name!, pair.Value.Segs!));
         rvtInfo.CategoryNames = state?.CategoryNames
             .Where(pair => pair.Value is { BlockCount: 1, Name: not null })
             .ToDictionary(pair => (int)pair.Key, pair => pair.Value.Name!);
