@@ -2935,6 +2935,32 @@ internal static partial class ElementBuilder
         }
     }
 
+    /// <summary>The crop frame of every view whose viewer record held a bounded space: the viewer's crop box joined
+    /// to its view through the viewed element id stored after the box. Sides whose bound is inactive fall back to
+    /// ±10000 feet (rvt-prt's NO_CROP); a rectangle reaching there counts as off and keeps drawing the whole model,
+    /// as does a crop region switched off with live bounds (the flags word is not decoded yet). A view without a
+    /// crop frame keeps drawing the whole model in its viewport, as before.</summary>
+    internal static void ApplyViewCrops(RevitFileInfo info, ParsingState? state)
+    {
+        if (state == null || state.ViewCropBlocks.Count == 0) return;
+        var views = new Dictionary<int, Element>(info.Elements.Count);
+        foreach (var e in info.Elements) views[e.Id] = e;
+        foreach (var (_, crop) in state.ViewCropBlocks)
+        {
+            // The stored viewed id is kept only when it names a real view: a wrong read offset degrades to no crop.
+            if (!views.TryGetValue(crop.RawViewId, out var view) || view.ViewCrop != null) continue;
+            double x0 = crop.BoundActive[1] ? crop.Offsets[1] : -10000;
+            double y0 = crop.BoundActive[3] ? crop.Offsets[3] : -10000;
+            double x1 = crop.BoundActive[0] ? crop.Offsets[0] : 10000;
+            double y1 = crop.BoundActive[2] ? crop.Offsets[2] : 10000;
+            bool active = x0 > -10000 && y0 > -10000 && x1 < 10000 && y1 < 10000;
+            view.ViewCrop = new ViewCropFrame(
+                crop.Origin[0], crop.Origin[1], crop.Origin[2],
+                crop.Basis[0], crop.Basis[1], crop.Basis[2],
+                x0, y0, x1, y1, active);
+        }
+    }
+
     /// <summary>Plain text and position of the text notes decoded from their 0x0F83 blocks.</summary>
     private static void ApplyTextNotes(RevitFileInfo info, ParsingState? state)
     {
@@ -6463,6 +6489,7 @@ internal static partial class ElementBuilder
         ApplyTextNotes(rvtInfo, state);
         ApplyViewports(rvtInfo, state);
         ApplyViewPlanes(rvtInfo, state);
+        ApplyViewCrops(rvtInfo, state);
         ApplyImageSizes(rvtInfo, state);
         ApplyViewportScales(rvtInfo, state);
         AddViewAndDatumDefaults(rvtInfo);

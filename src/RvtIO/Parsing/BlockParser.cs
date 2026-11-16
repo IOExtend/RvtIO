@@ -2161,6 +2161,85 @@ internal static class BlockParser
     }
 
     /// <summary>
+    /// Scans chunks for viewer crop boxes (m_boundedSpace): 3 origin doubles, 9 basis doubles (three unit rows,
+    /// mutually perpendicular), 6 m_boundOffset doubles ([max, min] per axis, at most 10001 in magnitude) and
+    /// 7 flag bytes (the six m_boundActive flags and m_isOn, each 0 or 1). The 18 doubles are contiguous; the
+    /// orthonormal basis rows identify the pattern, so no class index is trusted: the file assigns those per schema.
+    /// </summary>
+    internal static void CollectViewCrops(byte[] chunk, ParsingState state)
+    {
+        int pos = 0;
+        while (pos + 16 <= chunk.Length)
+        {
+            uint eid = BitConverter.ToUInt32(chunk, pos);
+            int size = BitConverter.ToInt32(chunk, pos + 8);
+            if (eid == 0 || eid > 50_000_000 || size <= 0 || size > MaxBlockSize || pos + 16 + size > chunk.Length)
+            {
+                pos++;
+                continue;
+            }
+            if (!state.ViewCropBlocks.ContainsKey(eid))
+                TryFindViewCrop(chunk, pos + 16, pos + 16 + size, eid, state);
+            pos += 16 + size;
+        }
+    }
+
+    private static void TryFindViewCrop(byte[] d, int start, int end, uint eid, ParsingState state)
+    {
+        static bool Unit(double x, double y, double z)
+        {
+            double n = Math.Sqrt(x * x + y * y + z * z);
+            return n is >= 0.999 and <= 1.001;
+        }
+        for (int i = start; i + 151 <= end; i++)
+        {
+            double ox = BitConverter.ToDouble(d, i), oy = BitConverter.ToDouble(d, i + 8),
+                oz = BitConverter.ToDouble(d, i + 16);
+            if (!double.IsFinite(ox) || !double.IsFinite(oy) || !double.IsFinite(oz)
+                || Math.Abs(ox) > 1e6 || Math.Abs(oy) > 1e6 || Math.Abs(oz) > 1e6) continue;
+            double r0x = BitConverter.ToDouble(d, i + 24), r0y = BitConverter.ToDouble(d, i + 32),
+                r0z = BitConverter.ToDouble(d, i + 40);
+            if (!Unit(r0x, r0y, r0z)) continue;
+            double r1x = BitConverter.ToDouble(d, i + 48), r1y = BitConverter.ToDouble(d, i + 56),
+                r1z = BitConverter.ToDouble(d, i + 64);
+            double r2x = BitConverter.ToDouble(d, i + 72), r2y = BitConverter.ToDouble(d, i + 80),
+                r2z = BitConverter.ToDouble(d, i + 88);
+            if (!Unit(r1x, r1y, r1z) || !Unit(r2x, r2y, r2z)) continue;
+            if (Math.Abs(r0x * r1x + r0y * r1y + r0z * r1z) > 0.02
+                || Math.Abs(r0x * r2x + r0y * r2y + r0z * r2z) > 0.02
+                || Math.Abs(r1x * r2x + r1y * r2y + r1z * r2z) > 0.02) continue;
+            var offsets = new double[6];
+            bool sane = true;
+            for (int k = 0; k < 6; k++)
+            {
+                double v = BitConverter.ToDouble(d, i + 96 + k * 8);
+                if (!double.IsFinite(v) || Math.Abs(v) > 10001) { sane = false; break; }
+                offsets[k] = v;
+            }
+            if (!sane || offsets[0] < offsets[1] || offsets[2] < offsets[3] || offsets[4] < offsets[5]) continue;
+            var active = new bool[6];
+            for (int k = 0; k < 7; k++)
+            {
+                byte flag = d[i + 144 + k];
+                if (flag > 1) { sane = false; break; }
+                if (k < 6) active[k] = flag != 0;
+            }
+            if (!sane) continue;
+            // The viewed element id follows the bounded space after a fixed run (a pointer, two point triples
+            // and a double): all 24 viewers of the sample file carry it exactly there. The join below keeps it
+            // only when it names a real view, so a wrong offset degrades to no crop.
+            if (i + 217 > end) continue;
+            int rawViewId = BitConverter.ToInt32(d, i + 213);
+            if (rawViewId <= 0 || rawViewId > 50_000_000) continue;
+            state.ViewCropBlocks[eid] = (
+                [ox, oy, oz],
+                [[r0x, r0y, r0z], [r1x, r1y, r1z], [r2x, r2y, r2z]],
+                offsets, active, rawViewId);
+            return;
+        }
+    }
+
+    /// <summary>
     /// Scans a chunk for text-note blocks (class 0x0F83, little-endian 83 0F at the class field) and records the text
     /// and position of every note whose block the block walk did not reach. The two class bytes are rare in text, so
     /// the scan follows them instead of stepping through every byte.

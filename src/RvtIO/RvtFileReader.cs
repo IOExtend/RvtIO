@@ -2632,6 +2632,11 @@ public partial class RvtFileReader
                 BlockParser.CollectViewPlanes(chunk, state);
 
         Lap("view planes");
+        // Viewer crop boxes (m_boundedSpace): the crop rectangle each viewport draws, with the basis of its view.
+        foreach (var chunk in state.Chunks)
+            BlockParser.CollectViewCrops(chunk, state);
+
+        Lap("view crops");
         // a file read by its framing or an unrewritten 64-bit file: skip the legacy 32-bit partition chunk scan
         bool framedBlocks = state.ReadsFramedRecords;
         bool skipPartitionScan = framedBlocks

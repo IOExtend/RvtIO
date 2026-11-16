@@ -1,0 +1,175 @@
+using System.Buffers.Binary;
+using RvtIO.Internal;
+using RvtIO.Model;
+using RvtIO.Parsing;
+using RvtIO.Print;
+using Xunit;
+
+namespace RvtIO.Tests;
+
+/// <summary>Viewport crop boxes (BlockParser.CollectViewCrops), their join to views
+/// (ElementBuilder.ApplyViewCrops) and the sheet frame math (SheetComposer.TryCropFrame):
+/// the crop rectangle a viewport draws at the view's own scale (rvt-prt's to_sheet).</summary>
+public class ViewCropTests
+{
+    private static byte[] ChunkWithViewerBlock(uint eid, double[] origin, double[][] basis,
+        double[] offsets, byte[] flags, int viewId = 312)
+    {
+        var payload = new List<byte>();
+        payload.AddRange(new byte[64]);
+        foreach (double v in origin) payload.AddRange(BitConverter.GetBytes(v));
+        foreach (var row in basis) foreach (double v in row) payload.AddRange(BitConverter.GetBytes(v));
+        foreach (double v in offsets) payload.AddRange(BitConverter.GetBytes(v));
+        payload.AddRange(flags);
+        // The viewed element id 62 bytes past the end of the bounded space.
+        payload.AddRange(new byte[62]);
+        payload.AddRange(BitConverter.GetBytes(viewId));
+        payload.AddRange(new byte[64]);
+        var chunk = new byte[16 + payload.Count];
+        BinaryPrimitives.WriteUInt32LittleEndian(chunk, eid);
+        BinaryPrimitives.WriteInt32LittleEndian(chunk.AsSpan(8), payload.Count);
+        BinaryPrimitives.WriteUInt32LittleEndian(chunk.AsSpan(12), 0x000005BF);
+        payload.ToArray().CopyTo(chunk, 16);
+        return chunk;
+    }
+
+    private static readonly double[] Origin = [0, 0, 0];
+    private static readonly double[][] Basis = [[1, 0, 0], [0, 1, 0], [0, 0, -1]];
+    private static readonly double[] Offsets = [74.2701626513909, -39.85500265497097, 22.32640997306359, -63.25313010110109, 100, -100];
+    private static readonly byte[] Flags = [1, 1, 1, 1, 0, 0, 1];
+
+    [Fact]
+    public void CollectViewCrops_ReadsCropBoxOfViewerBlock()
+    {
+        var state = new ParsingState();
+
+        BlockParser.CollectViewCrops(ChunkWithViewerBlock(313, Origin, Basis, Offsets, Flags), state);
+
+        var crop = Assert.Contains(313u, state.ViewCropBlocks);
+        Assert.Equal([0, 0, 0], crop.Origin);
+        Assert.Equal(74.2701626513909, crop.Offsets[0], 9);
+        Assert.Equal([true, true, true, true, false, false], crop.BoundActive);
+    }
+
+    [Fact]
+    public void CollectViewCrops_FindsPatternInAnyBlockClass()
+    {
+        var chunk = ChunkWithViewerBlock(313, Origin, Basis, Offsets, Flags);
+        // Not the viewer class: the pattern, not the file-specific class index, identifies the box.
+        BinaryPrimitives.WriteUInt32LittleEndian(chunk.AsSpan(12), 0x00000001);
+        var state = new ParsingState();
+
+        BlockParser.CollectViewCrops(chunk, state);
+
+        Assert.Contains(313u, state.ViewCropBlocks);
+    }
+
+    [Fact]
+    public void CollectViewCrops_RejectsGarbage()
+    {
+        var chunk = new byte[16 + 160];
+        BinaryPrimitives.WriteUInt32LittleEndian(chunk, 313);
+        BinaryPrimitives.WriteInt32LittleEndian(chunk.AsSpan(8), 160);
+        BinaryPrimitives.WriteUInt32LittleEndian(chunk.AsSpan(12), 0x000005BF);
+        for (int i = 0; i < 160; i++) chunk[16 + i] = (byte)(i * 7);
+        var state = new ParsingState();
+
+        BlockParser.CollectViewCrops(chunk, state);
+
+        Assert.Empty(state.ViewCropBlocks);
+    }
+
+    private static (ParsingState State, Element View) JoinedState(int viewId = 312)
+    {
+        var state = new ParsingState();
+        state.ViewCropBlocks[313] = ([0, 0, 10], [[1, 0, 0], [0, 1, 0], [0, 0, -1]],
+            [45.0, -20.0, 15.0, -50.0, 100, -100], [true, true, true, true, false, false], viewId);
+        var view = new Element { Id = 312 };
+        return (state, view);
+    }
+
+    [Fact]
+    public void ApplyViewCrops_JoinsViewerBoxToItsView()
+    {
+        var (state, view) = JoinedState();
+        var info = new RevitFileInfo { Elements = [view] };
+
+        ElementBuilder.ApplyViewCrops(info, state);
+
+        Assert.NotNull(view.ViewCrop);
+        Assert.Equal(-20.0, view.ViewCrop!.X0, 9);
+        Assert.Equal(-50.0, view.ViewCrop.Y0, 9);
+        Assert.Equal(45.0, view.ViewCrop.X1, 9);
+        Assert.Equal(15.0, view.ViewCrop.Y1, 9);
+        Assert.True(view.ViewCrop.Active);
+        Assert.Equal([1, 0, 0], view.ViewCrop.Right);
+        Assert.Equal([0, 1, 0], view.ViewCrop.Up);
+    }
+
+    [Fact]
+    public void ApplyViewCrops_InactiveBoundsKeepWholeModel()
+    {
+        // No active side (a crop region switched off): the rectangle spans ±10000 and counts as off.
+        var state = new ParsingState();
+        state.ViewCropBlocks[313] = ([0, 0, 0], [[1, 0, 0], [0, 1, 0], [0, 0, -1]],
+            [10000.0, -10000.0, 10000.0, -10000.0, 100, -100], [false, false, false, false, false, false], 312);
+        var view = new Element { Id = 312 };
+        var info = new RevitFileInfo { Elements = [view] };
+
+        ElementBuilder.ApplyViewCrops(info, state);
+
+        Assert.NotNull(view.ViewCrop);
+        Assert.False(view.ViewCrop!.Active);
+    }
+
+    [Fact]
+    public void ApplyViewCrops_UnknownViewIsIgnored()
+    {
+        // The stored viewed id names no view: no frame is attached anywhere.
+        var (state, _) = JoinedState(viewId: 999999);
+        var view = new Element { Id = 312 };
+        var info = new RevitFileInfo { Elements = [view] };
+
+        ElementBuilder.ApplyViewCrops(info, state);
+
+        Assert.Null(view.ViewCrop);
+    }
+
+    [Fact]
+    public void TryCropFrame_MapsCropToSheetAtTrueScale()
+    {
+        // View 312 on A102: crop -39.855..74.27 x -63.253..22.326 ft at 1:100, viewport centre from its offset.
+        var crop = new ViewCropFrame(0, 0, 0, [1, 0, 0], [0, 1, 0], [0, 0, -1],
+            -39.855, -63.25313010110109, 74.2701626513909, 22.32640997306359, true);
+        double centerX = 0.5920986668670893 * 304.8, centerY = 1.485536794211 * 304.8;
+        double contentMinX = -5000, contentMinY = -20000;
+
+        bool ok = SheetComposer.TryCropFrame(centerX, centerY, 100, crop, contentMinX, contentMinY,
+            out double frameX, out double frameY, out double frameW, out double frameH,
+            out double originX, out double originY);
+
+        Assert.True(ok);
+        double k = 304.8 / 100;
+        Assert.Equal((74.2701626513909 - -39.855) * k, frameW, 6);
+        Assert.Equal((22.32640997306359 - -63.25313010110109) * k, frameH, 6);
+        // The crop corner lands on offset + crop / scale ...
+        Assert.Equal(centerX + -39.855 * k, frameX, 6);
+        Assert.Equal(centerY + -63.25313010110109 * k, frameY, 6);
+        // ... and DrawContent's origin maps content millimetres onto the same points.
+        double cropModelX = (-39.855 + 0) * 304.8, cropModelY = (-63.25313010110109 + 0) * 304.8;
+        Assert.Equal(frameX, originX + (cropModelX - contentMinX) / 100, 6);
+        Assert.Equal(frameY, originY + (cropModelY - contentMinY) / 100, 6);
+    }
+
+    [Fact]
+    public void TryCropFrame_RejectsRotatedBasis()
+    {
+        var crop = new ViewCropFrame(0, 0, 0, [0.7986, -0.6018, 0], [0.6018, 0.7986, 0], [0, 0, -1],
+            -122.0, -196.0, 190.0, 106.0, true);
+
+        bool ok = SheetComposer.TryCropFrame(0, 0, 100, crop, 0, 0,
+            out _, out _, out _, out _, out _, out _);
+
+        Assert.False(ok);
+    }
+}

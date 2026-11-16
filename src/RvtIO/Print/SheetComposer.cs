@@ -243,8 +243,25 @@ public static class SheetComposer
                     frameX = centerX - frameWidth / 2;
                     frameY = centerY - frameHeight / 2;
                     ClampFrame(ref frameX, ref frameY, frameWidth, frameHeight);
-                    ClipFrame(frameX, frameY, frameWidth, frameHeight);
-                    PlanPrinter.DrawContent(page2, content, drawScale, frameX, frameY, 0.9,
+                    double drawOriginX = frameX, drawOriginY = frameY;
+                    // A viewport whose view decoded a crop frame draws the crop at the view's own scale, placed by
+                    // the viewport offset the way Revit places it (sheet = offset + view / scale): the frame is the
+                    // crop rectangle, the content origin is shifted so the crop lands on it, and the content is
+                    // clipped to it. Nothing is reduced to fit: the scale stays true. Views without a crop keep the
+                    // whole-model frame above.
+                    bool cropped = view?.ViewCrop is { Active: true } crop
+                        && TryCropFrame(centerX, centerY, viewScale, crop, content.MinX, content.MinY,
+                            out frameX, out frameY, out frameWidth, out frameHeight, out drawOriginX, out drawOriginY);
+                    if (cropped)
+                    {
+                        drawScale = viewScale;
+                        page2.BeginClip(frameX, frameY, Math.Max(0, frameWidth), Math.Max(0, frameHeight));
+                    }
+                    else
+                    {
+                        ClipFrame(frameX, frameY, frameWidth, frameHeight);
+                    }
+                    PlanPrinter.DrawContent(page2, content, drawScale, drawOriginX, drawOriginY, 0.9,
                         ElevationPrinter.SectionMarks(document));
                     page2.EndClip();
                     effectiveScale = (int)Math.Round(drawScale);
@@ -657,5 +674,31 @@ public static class SheetComposer
             }
         }
         return new PdfPageSize(width, height);
+    }
+
+    /// <summary>Sheet frame and content origin for a viewport with an axis-aligned crop frame: the frame is the
+    /// crop rectangle at the view's own scale, anchored by the viewport offset (sheet = offset + view / scale),
+    /// and the content origin maps DrawContent's (content - Min) / scale coordinates onto it. Returns false unless
+    /// the crop basis is axis-aligned in the sheet plane (a rotated view keeps the whole-model frame).</summary>
+    internal static bool TryCropFrame(double centerXMm, double centerYMm, double scale, ViewCropFrame crop,
+        double contentMinX, double contentMinY,
+        out double frameX, out double frameY, out double frameWidth, out double frameHeight,
+        out double originX, out double originY)
+    {
+        frameX = frameY = frameWidth = frameHeight = originX = originY = 0;
+        if (Math.Abs(Math.Abs(crop.Right[0]) - 1) > 1e-6 || Math.Abs(crop.Right[1]) > 1e-6
+            || Math.Abs(crop.Right[2]) > 1e-6 || Math.Abs(crop.Up[0]) > 1e-6
+            || Math.Abs(Math.Abs(crop.Up[1]) - 1) > 1e-6 || Math.Abs(crop.Up[2]) > 1e-6
+            || !(scale > 0) || crop.X1 <= crop.X0 || crop.Y1 <= crop.Y0) return false;
+        double sx = Math.Sign(crop.Right[0]), sy = Math.Sign(crop.Up[1]);
+        double k = FeetToMillimetres / scale;
+        frameX = centerXMm + crop.X0 * k;
+        frameY = centerYMm + crop.Y0 * k;
+        frameWidth = (crop.X1 - crop.X0) * k;
+        frameHeight = (crop.Y1 - crop.Y0) * k;
+        // Sheet(content) must equal offset + sign * (content - origin) / scale: solve for DrawContent's origin.
+        originX = centerXMm + sx * (contentMinX - crop.OriginX * FeetToMillimetres) / scale;
+        originY = centerYMm + sy * (contentMinY - crop.OriginY * FeetToMillimetres) / scale;
+        return true;
     }
 }

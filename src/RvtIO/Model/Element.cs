@@ -285,6 +285,13 @@ namespace RvtIO.Model
         [JsonIgnore]
         public double[]? ViewportOffset { get; set; }
 
+        /// <summary>For a view: the crop frame of its viewer (the crop region Revit prints), in view feet: the
+        /// origin and the right/up axes of the view, and the crop rectangle. Null when the reader did not decode
+        /// it; <see cref="ViewCropFrame.Active"/> is false when no side is active (Revit prints the whole model)
+        /// or the rectangle runs past ±10000 feet.</summary>
+        [JsonIgnore]
+        public ViewCropFrame? ViewCrop { get; set; }
+
         /// <summary>Exact BaseRailing.m_baseRailingSymbolId stored by this occurrence.</summary>
         [JsonIgnore]
         internal int? SerializedBaseRailingSymbolId { get; set; }

@@ -515,6 +515,11 @@ internal class ParsingState
     /// view on the sheet in feet. Key = viewport element id.</summary>
     public Dictionary<uint, (int ViewId, double X, double Y, double Z)> ViewportPlacements { get; set; } = new();
 
+    /// <summary>The crop box of a viewer decoded from its record: the origin, the three basis rows (right, up,
+    /// looking), the six m_boundOffset values ([max, min] per axis) with the six m_boundActive flags, and the
+    /// viewed element id stored after the box. Key = the viewer record's element id.</summary>
+    public Dictionary<uint, (double[] Origin, double[][] Basis, double[] Offsets, bool[] BoundActive, int RawViewId)> ViewCropBlocks { get; } = new();
+
     /// <summary>Plain text of the text notes decoded from their RTF string (class 0x0F83 block), with the position the
     /// block stores in feet and the font size the RTF declares in points. Key = element id.</summary>
     public Dictionary<uint, (string Text, double X, double Y, double? FontSizePoints)> TextNotes { get; set; } = new();
