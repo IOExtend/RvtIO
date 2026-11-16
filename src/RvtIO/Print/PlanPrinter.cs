@@ -250,26 +250,34 @@ public static class PlanPrinter
                 bool mutualEnd = partnerElement.SerializedWallEndJoins?.Any(partnerJoin =>
                     partnerJoin.ElementId == wall.Id && partnerJoin.JoinedEnd is 0 or 1 && partnerJoin.JoinType == 0) == true;
                 if (mutualEnd && join.JoinedEnd is 0 or 1) continue;
-                // The near face of the partner on the side of this end: the face a point just inside
-                // the wall stands on (an end exactly on the partner's axis faces both sides at once).
+                // The near face of the partner on the side the wall comes from: travelling along
+                // the wall into the join first meets that face. For the end (tip in +u) the wall
+                // approaches along +u, so the retained interior lies behind (-denom side); for the
+                // start the wall leaves along +u, so the interior lies ahead (+denom side). A probe
+                // just inside the tip fails once the tip has crossed the partner axis, choosing the
+                // far face instead.
                 double nx = -vy, ny = vx;
                 double ex = end == 0 ? wall.X1 : wall.X2, ey = end == 0 ? wall.Y1 : wall.Y2;
                 double s = (ex - partner.X1) * nx + (ey - partner.Y1) * ny;
                 double denom = ux * nx + uy * ny;
                 if (Math.Abs(denom) < 0.98) continue;
-                double probe = s - denom * 1e-3;
-                if (Math.Abs(probe) < 1e-9) continue;
-                double facing = Math.Sign(probe) * partner.Width / 2;
+                double side = end == 0 ? Math.Sign(denom) : -Math.Sign(denom);
+                if (side == 0) continue;
+                double facing = side * partner.Width / 2;
+                // Displacement along +u that plants the tip on the face. The start moves forward
+                // (+t shortens), the end moves back (-t shortens); only an overshoot past the face
+                // is taken back, never an extension, and at least a millimetre.
                 double t = (facing - s) / denom;
-                // The end must stand on the partner's span, and only an overshoot past the face is taken back.
+                // The tip must stand on the partner's span, and only an overshoot past the face
+                // is taken back, never an extension, and at least a millimetre.
                 double along = (ex - partner.X1) * vx + (ey - partner.Y1) * vy;
                 if (along < -partner.Width / 2 - 1 || along > partnerLength + partner.Width / 2 + 1) continue;
-                if (t >= -1) continue;
-                double newLength = length + t;
+                bool overshoot = end == 0 ? t >= 1 : t <= -1;
+                if (!overshoot) continue;
+                double newLength = end == 0 ? length - t : length + t;
                 if (newLength < Math.Max(wall.Width, 10)) continue;
-                // t < 0 shortens the wall: the start moves forward along +u, the end moves back.
-                double newX = end == 0 ? ex - ux * t : ex + ux * t;
-                double newY = end == 0 ? ey - uy * t : ey + uy * t;
+                double newX = ex + ux * t;
+                double newY = ey + uy * t;
                 result[i] = end == 0 ? (wall.Id, newX, newY, wall.X2, wall.Y2, wall.Width)
                     : (wall.Id, wall.X1, wall.Y1, newX, newY, wall.Width);
                 wall = result[i];

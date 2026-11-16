@@ -153,4 +153,36 @@ public class PlanWallJoinCutbackTests
         Assert.Equal(Feet(10) + 100, wall.X1, 3);
         Assert.Equal(Feet(20), wall.X2, 3);
     }
+
+    private static double CutEnd(double x1, double x2, int end, bool checkStart)
+    {
+        var source = new Element
+        {
+            Id = 600,
+            SerializedWallEndJoins = [new TfBlockDeserializer.WallEndJoin(end, 601, 2, 0)],
+        };
+        var partner = new Element { Id = 601 };
+        var walls = new List<(int Id, double X1, double Y1, double X2, double Y2, double Width)>
+        {
+            (600, x1, 0, x2, 0, 200),
+            (601, 3000, -1000, 3000, 1000, 200),
+        };
+        var result = PlanPrinter.CutBackJoinedEnds(
+            walls, new Dictionary<int, Element> { [600] = source, [601] = partner })[0];
+        return checkStart ? result.X1 : result.X2;
+    }
+
+    [Fact]
+    public void OffsetEnds_AreCutToTheNearFaceOnBothSides()
+    {
+        // Vertical partner centred at x=3000, width 200: the near face is 2900 for a wall
+        // ending from the west and 3100 for a wall starting to the east. The on-axis
+        // controls already pass through CollectLevel above.
+        Assert.Equal(2900, CutEnd(0, 3000, 1, checkStart: false), 3);
+        Assert.Equal(2900, CutEnd(0, 3050, 1, checkStart: false), 3);
+        Assert.Equal(2900, CutEnd(0, 2950, 1, checkStart: false), 3);
+        Assert.Equal(3100, CutEnd(3000, 6000, 0, checkStart: true), 3);
+        Assert.Equal(3100, CutEnd(2950, 6000, 0, checkStart: true), 3);
+        Assert.Equal(3100, CutEnd(3050, 6000, 0, checkStart: true), 3);
+    }
 }
