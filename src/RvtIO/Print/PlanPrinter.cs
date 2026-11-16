@@ -208,11 +208,94 @@ public static class PlanPrinter
         return pdf;
     }
 
+    /// <summary>Shortens the ends of walls that stop at a joined wall, drawing them flat at the partner's near face
+    /// instead of through it (rvt-rs #1474 and RE-488): a butt join (JoinType 0, m_wallJoinType) whose end is not shared
+    /// with the partner's own end (a T stop, not an L corner both walls end at), on a wall with no top attachment and a
+    /// partner drawn on the same level with a straight location line. Only orthogonal joins move, only the overshoot past
+    /// the near face is taken back (never extended), and at most to a stub of the wall's own width. Mitre joins and
+    /// ambiguous ends (no single butt join, a partner off the level or without a line) keep the stored location line.</summary>
+    internal static List<(int Id, double X1, double Y1, double X2, double Y2, double Width)> CutBackJoinedEnds(
+        List<(int Id, double X1, double Y1, double X2, double Y2, double Width)> walls,
+        IReadOnlyDictionary<int, Element> elements)
+    {
+        if (walls.Count == 0) return walls;
+        var byId = new Dictionary<int, int>();
+        for (int i = 0; i < walls.Count; i++) byId[walls[i].Id] = i;
+        var result = walls.ToList();
+        for (int i = 0; i < result.Count; i++)
+        {
+            var wall = result[i];
+            if (!elements.TryGetValue(wall.Id, out var element)) continue;
+            if (element.SerializedWallJoinedToTop == true) continue;
+            if (element.SerializedWallEndJoins is not { Count: > 0 } joins) continue;
+            double dx = wall.X2 - wall.X1, dy = wall.Y2 - wall.Y1;
+            double length = Math.Sqrt(dx * dx + dy * dy);
+            if (length < 1e-6) continue;
+            double ux = dx / length, uy = dy / length;
+            for (int end = 0; end < 2; end++)
+            {
+                var candidates = joins.Where(join => join.End == end && join.JoinType == 0).ToList();
+                if (candidates.Count != 1) continue;
+                var join = candidates[0];
+                if (!byId.TryGetValue(join.ElementId, out int partnerIndex) || partnerIndex == i) continue;
+                var partner = result[partnerIndex];
+                if (!elements.TryGetValue(partner.Id, out var partnerElement)) continue;
+                double pdx = partner.X2 - partner.X1, pdy = partner.Y2 - partner.Y1;
+                double partnerLength = Math.Sqrt(pdx * pdx + pdy * pdy);
+                if (partnerLength < 1e-6) continue;
+                double vx = pdx / partnerLength, vy = pdy / partnerLength;
+                // Orthogonal butt joins only: an angled join keeps the stored line.
+                if (Math.Abs(ux * vx + uy * vy) > 0.02) continue;
+                // An L corner both walls end at keeps the overlap: the partner names this wall back at one of its ends.
+                bool mutualEnd = partnerElement.SerializedWallEndJoins?.Any(partnerJoin =>
+                    partnerJoin.ElementId == wall.Id && partnerJoin.JoinedEnd is 0 or 1 && partnerJoin.JoinType == 0) == true;
+                if (mutualEnd && join.JoinedEnd is 0 or 1) continue;
+                // The near face of the partner on the side the wall comes from: travelling along
+                // the wall into the join first meets that face. For the end (tip in +u) the wall
+                // approaches along +u, so the retained interior lies behind (-denom side); for the
+                // start the wall leaves along +u, so the interior lies ahead (+denom side). A probe
+                // just inside the tip fails once the tip has crossed the partner axis, choosing the
+                // far face instead.
+                double nx = -vy, ny = vx;
+                double ex = end == 0 ? wall.X1 : wall.X2, ey = end == 0 ? wall.Y1 : wall.Y2;
+                double s = (ex - partner.X1) * nx + (ey - partner.Y1) * ny;
+                double denom = ux * nx + uy * ny;
+                if (Math.Abs(denom) < 0.98) continue;
+                double side = end == 0 ? Math.Sign(denom) : -Math.Sign(denom);
+                if (side == 0) continue;
+                double facing = side * partner.Width / 2;
+                // Displacement along +u that plants the tip on the face. The start moves forward
+                // (+t shortens), the end moves back (-t shortens); only an overshoot past the face
+                // is taken back, never an extension, and at least a millimetre.
+                double t = (facing - s) / denom;
+                // The tip must stand on the partner's span, and only an overshoot past the face
+                // is taken back, never an extension, and at least a millimetre.
+                double along = (ex - partner.X1) * vx + (ey - partner.Y1) * vy;
+                if (along < -partner.Width / 2 - 1 || along > partnerLength + partner.Width / 2 + 1) continue;
+                bool overshoot = end == 0 ? t >= 1 : t <= -1;
+                if (!overshoot) continue;
+                double newLength = end == 0 ? length - t : length + t;
+                if (newLength < Math.Max(wall.Width, 10)) continue;
+                double newX = ex + ux * t;
+                double newY = ey + uy * t;
+                result[i] = end == 0 ? (wall.Id, newX, newY, wall.X2, wall.Y2, wall.Width)
+                    : (wall.Id, wall.X1, wall.Y1, newX, newY, wall.Width);
+                wall = result[i];
+                dx = wall.X2 - wall.X1; dy = wall.Y2 - wall.Y1;
+                length = Math.Sqrt(dx * dx + dy * dy);
+                if (length < 1e-6) break;
+                ux = dx / length; uy = dy / length;
+            }
+        }
+        return result;
+    }
+
     /// <summary>Collects what the plan of a level draws: its walls (cut at the openings of their doors and windows),
     /// columns and grids, and the extents they span in model millimetres. Null when the level has nothing to draw.</summary>
     internal static PlanContent? CollectLevel(RvtDocument document, int levelId)
     {
         var walls = new List<(int Id, double X1, double Y1, double X2, double Y2, double Width)>();
+        var wallElements = new Dictionary<int, Element>();
         var columns = new List<(double X, double Y, double Width, double Height)>();
         double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
         void Grow(double x, double y)
@@ -232,7 +315,7 @@ public static class PlanPrinter
                 double x2 = line.EndPoint[0] * FeetToMillimetres, y2 = line.EndPoint[1] * FeetToMillimetres;
                 double width = WidthOf(element) ?? 100;
                 walls.Add((element.Id, x1, y1, x2, y2, width));
-                Grow(x1, y1); Grow(x2, y2);
+                wallElements[element.Id] = element;
                 continue;
             }
 
@@ -243,9 +326,12 @@ public static class PlanPrinter
                 double x = box[0] * FeetToMillimetres, y = box[1] * FeetToMillimetres;
                 double width = (box[3] - box[0]) * FeetToMillimetres, height = (box[4] - box[1]) * FeetToMillimetres;
                 columns.Add((x, y, width, height));
-                Grow(x, y); Grow(x + width, y + height);
             }
         }
+
+        walls = CutBackJoinedEnds(walls, wallElements);
+        foreach (var wall in walls) { Grow(wall.X1, wall.Y1); Grow(wall.X2, wall.Y2); }
+        foreach (var column in columns) { Grow(column.X, column.Y); Grow(column.X + column.Width, column.Y + column.Height); }
 
         if (walls.Count == 0 && columns.Count == 0) return null;
 

@@ -171,7 +171,7 @@ stays empty.
 
 | Content | Source |
 |---|---|
-| Walls | the stored location line, drawn as two sides its stored width apart, the stretch between them poche (filled grey) with end caps (`WALL_ATTR_WIDTH_PARAM` of the wall or its type; 100 mm when neither stores one) |
+| Walls | the stored location line, drawn as two sides its stored width apart, the stretch between them poche (filled grey) with end caps (`WALL_ATTR_WIDTH_PARAM` of the wall or its type; 100 mm when neither stores one); a stopping end joined to another wall (butt join) is cut back flat at the partner's near face instead of running through it, as in rvt-rs #1474 and RE-488 (orthogonal joins only; mutual end-to-end L corners, mitre joins, roof-joined walls and ambiguous ends keep the stored line) |
 | Openings | the cut loop of a hosted door or window, transformed to the model, leaves its stretch of wall out; the wall is drawn in the pieces between its openings, with a jamb at every cut, and a window gets a light line across the opening |
 | Columns | the stored bounding box footprint, as a filled rectangle |
 | Grids | the stored location lines, clipped to the extent of the level (a grid line can run far beyond the building), with a white bubble and the grid name at both ends |
