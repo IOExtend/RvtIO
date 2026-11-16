@@ -1439,17 +1439,71 @@ public partial class IfcExporter
 
     /// <summary>A ceiling or floor finish: GrossCeilingArea is the computed host area (HOST_AREA_COMPUTED), the area of the ceiling
     /// surface. The parser derives it from the sketch of the ceiling, which fails for a ceiling made of several loops or without
-    /// a sketch; then the area of the upper surface of the solids stands in. The insulation and the lining of a pipe or duct
+    /// a sketch; then the area of the upper surface of the solids stands in, and where that surface is in several pieces the
+    /// area of the piece Revit's export names (the first part of its first face, RE-486). The insulation and the lining of a pipe or duct
     /// (written as IfcCovering as well) hold no such parameter.</summary>
     private List<QuantityValue> CoveringQuantitiesCurrent(Element element)
     {
         var result = new List<QuantityValue>();
         if (element.CategoryId is PipeInsulationCategoryId or DuctInsulationCategoryId or DuctLiningCategoryId) return result;
+        var shells = ShellsOfCurrent(element.Geometry);
         double? area = ComputedHostAreaCurrent(element);
-        double surface = TopSurfaceAreaCurrent(ShellsOfCurrent(element.Geometry)) * SquareFeetToSquareMetres;
-        if (surface > 1e-9 && (area == null || Math.Abs(area.Value - surface) > 0.005 * surface)) area = surface;
+        if (area == null)
+        {
+            // No sketch area: a ceiling in pieces takes the piece Revit's export names (RE-486), not the whole surface.
+            double surface = TopSurfaceAreaCurrent(shells) * SquareFeetToSquareMetres;
+            double? piece = FirstTopPieceAreaCurrent(shells) * SquareFeetToSquareMetres;
+            area = piece ?? (surface > 1e-9 ? surface : null);
+        }
+        else
+        {
+            double surface = TopSurfaceAreaCurrent(shells) * SquareFeetToSquareMetres;
+            if (surface > 1e-9 && (Math.Abs(area.Value - surface) > 0.005 * surface)) area = surface;
+        }
         AddIfPositive(result, QuantityKind.Area, "GrossCeilingArea", area);
         return result;
+    }
+
+    /// <summary>The area of the piece of the top surface that holds its first face (rvt-rs RE-486): Revit's export gives a
+    /// ceiling sketched in several pieces the area of the piece its body exporter creates last, which the saved mesh stores
+    /// first (the part of the top face holding the face's first triangle). Faces are grouped by their serialized face
+    /// (<c>SourceFace</c>, else <c>MeshMarker</c>) within their geometry node, as <see cref="SurfaceAreaCurrent"/> does;
+    /// the piece is the group of the first top face in serialized order. Null unless the top surface is in more than one
+    /// piece and a bottom piece of the same area (within 0.1%) faces it, so a sloped or partial solid keeps the whole
+    /// surface. In feet.</summary>
+    internal static double? FirstTopPieceAreaCurrent(IEnumerable<ShellInfo> shells)
+    {
+        var all = shells as IReadOnlyList<ShellInfo> ?? shells.ToList();
+        var arcs = VerticalCylinderChordsCurrent(all.SelectMany(shell => shell.Faces));
+        foreach (var shell in all)
+        {
+            if (MiddleHeightCurrent(shell.Faces) is not { } middle) continue;
+            var top = shell.Faces
+                .Where(face => !face.CurvedSurface && FaceUnitNormal(face) is { } n && Math.Abs(n[2]) > 1e-9 && MeanHeightCurrent(face) >= middle)
+                .ToList();
+            if (top.Count == 0) continue;
+            static (int Node, uint Face, uint Marker) Key(GeoFace face) =>
+                (face.GeometryNode, face.SourceFace, face.MeshMarker);
+            var firstKey = Key(top[0]);
+            double PieceArea(IEnumerable<GeoFace> faces, (int Node, uint Face, uint Marker) key) => faces
+                .Where(face => Key(face).Equals(key))
+                .Sum(face => (NetFaceArea(face) ?? 0) + ArcSegmentCorrectionCurrent(face, arcs) / Math.Abs(FaceUnitNormal(face)![2]));
+            double topPiece = PieceArea(top, firstKey);
+            if (!(topPiece > 1e-9)) return null;
+            double topWhole = top.Sum(face => (NetFaceArea(face) ?? 0) + ArcSegmentCorrectionCurrent(face, arcs) / Math.Abs(FaceUnitNormal(face)![2]));
+            // A single-piece surface is not a pieces case; the caller then uses the whole surface as before.
+            if (Math.Abs(topWhole - topPiece) <= 1e-9) return null;
+            var bottom = shell.Faces
+                .Where(face => !face.CurvedSurface && FaceUnitNormal(face) is { } n && Math.Abs(n[2]) > 1e-9 && MeanHeightCurrent(face) < middle)
+                .ToList();
+            if (bottom.Count == 0) continue;
+            double bottomPiece = PieceArea(bottom, Key(bottom[0]));
+            if (!(bottomPiece > 1e-9)) return null;
+            // The saved-mesh rule applies where the faces facing each way hold a part of the same area (RE-480/RE-486).
+            if (Math.Abs(bottomPiece - topPiece) > 0.001 * topPiece) return null;
+            return topPiece;
+        }
+        return null;
     }
 
     /// <summary>Column quantities. A column written as a prism carries its extrusion data:
