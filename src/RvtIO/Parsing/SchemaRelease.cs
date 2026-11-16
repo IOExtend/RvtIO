@@ -40,13 +40,13 @@ internal static class SchemaRelease
     internal static int? Saved(string? revitVersion)
         => int.TryParse(revitVersion, out int year) && year is >= 2000 and <= 2100 ? year : null;
 
-    /// <summary>The older of the two releases, which decides every layout and row-size choice; the one that is known when only one
-    /// is, null when neither is.</summary>
+    /// <summary>The stored schema decides layouts and row sizes. The saving release is only a fallback when the schema release
+    /// is unknown; an older or misread BasicFileInfo year must not override the layout of the bytes.</summary>
     internal static int? Effective(int? saved, int? schema)
-        => saved is int s && schema is int c ? Math.Min(s, c) : saved ?? schema;
+        => schema ?? saved;
 
-    /// <summary>The release that decides the layouts of an open file: the older of the saved release and the schema's release
-    /// (<paramref name="schemaRelease"/>), null when neither is known. Every layout and row-size choice reads this one value.</summary>
+    /// <summary>The release that decides the layouts of an open file, preferring <paramref name="schemaRelease"/> over the saving
+    /// release. Every layout and row-size choice reads this one value.</summary>
     internal static int? Of(OpenMcdf.RootStorage root, int? schemaRelease)
         => Effective(Saved(BasicFileInfoReader.Read(root).GetValueOrDefault("RevitVersion")), schemaRelease);
 
@@ -64,7 +64,7 @@ internal static class SchemaRelease
     internal static string Describe(int? saved, int? schema)
     {
         string Show(int? year) => year?.ToString() ?? "unknown";
-        string note = saved is int s && schema is int c && s != c ? $", the layout of release {Math.Min(s, c)} is used" : "";
+        string note = saved is int s && schema is int c && s != c ? $", the layout of release {Effective(s, c)} is used" : "";
         return $"Release: saved by {Show(saved)}, schema of {Show(schema)}{note}";
     }
 }

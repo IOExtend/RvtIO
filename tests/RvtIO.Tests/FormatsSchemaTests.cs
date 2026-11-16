@@ -40,7 +40,7 @@ public class FormatsSchemaTests
 
     /// <summary>The classes the ElemTable layout needs, in the order and shape of Revit 2022 (28-byte rows, 4-byte ids) or
     /// Revit 2024 and later (40-byte rows, 8-byte ids, m_history declared first). ElemTable is id 19.</summary>
-    private static byte[] ElemTableSchema(bool wideIds)
+    internal static byte[] ElemTableSchema(bool wideIds, int? markerId = null)
     {
         byte idType = wideIds ? (byte)0x0B : (byte)0x04;
         string idName = wideIds ? "m_id64" : "m_id";
@@ -52,11 +52,17 @@ public class FormatsSchemaTests
             .Class("ElementHistory", 0, 8, ("m_originalElementId", 0x0E, 0, 14), ("m_creationDate", 0x0E, 0, 15),
                 ("m_lastModificationDate", 0x0E, 0, 15), ("m_lastUserModificationDate", 0x0E, 0, 15)) // 16
             .Class("PartitionId", 0, 1, ("m_id", 0x04, 0, 0));                                    // 17
-        return (wideIds
+        (wideIds
                 ? b.Class("ElemRec", 0, 10, ("m_history", 0x0E, 0, 16), ("m_id", 0x0E, 0, 13), ("m_OwningElementId", 0x0E, 0, 13), ("m_partitionId", 0x0E, 0, 17))
                 : b.Class("ElemRec", 0, 10, ("m_id", 0x0E, 0, 13), ("m_history", 0x0E, 0, 16), ("m_partitionId", 0x0E, 0, 17), ("m_OwningElementId", 0x0E, 0, 13)))   // 18
-            .Class("ElemTable", 0, 9, ("m_elemArr", 0x0E, 0x50, 18), ("m_bExpandAllOnLoad", 0x01, 0, 0))                                                          // 19
-            .Build();
+            .Class("ElemTable", 0, 9, ("m_elemArr", 0x0E, 0x50, 18), ("m_bExpandAllOnLoad", 0x01, 0, 0));                                                         // 19
+        if (markerId is int marker)
+        {
+            for (int id = 20; id < marker; id++) b.Class("Filler" + id, 0, 1);
+            foreach (string name in new[] { "ContentMarker", "ContentKey", "SegmentMarker", "SegmentCheckback", "SignatureMarker" })
+                b.Class(name, 0, 1);
+        }
+        return b.Build();
     }
 
     [Theory]
@@ -140,7 +146,7 @@ public class FormatsSchemaTests
         Assert.Equal(40, ElemTableLayout.RowLength(schema));
     }
 
-    private static byte[] Rows(bool wideIds, params (long Id, long Original, int Created, int Partition, long Owner)[] rows)
+    internal static byte[] Rows(bool wideIds, params (long Id, long Original, int Created, int Partition, long Owner)[] rows)
     {
         var s = new MemoryStream(); var w = new BinaryWriter(s);
         w.Write((ushort)19); w.Write((uint)rows.Length);
