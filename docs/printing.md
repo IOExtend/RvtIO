@@ -184,8 +184,9 @@ stays empty.
 | Room legend | below the plan: a colour swatch and the name of every kind of room on it |
 
 The page is white with a frame at the margin, and the drawing is centred. The title (the level name and the scale) is
-written with an embedded TrueType font found on the machine (Arial, Segoe UI or Tahoma on Windows, DejaVu Sans on Linux,
-Arial or Helvetica Neue on macOS); without such a font the page is drawn without a title, because the standard PDF font
+written with an embedded TrueType font found on the machine (Arial or its metric-compatible substitutes
+Liberation Sans and Arimo on Linux, Arial on macOS, Arial, Segoe UI or Tahoma on Windows; `RVTIO_FONTS` names extra
+folders searched first, `:` on Linux/macOS and `;` on Windows, as in rvt-prt's `RVT_PRT_FONTS`); without such a font the page is drawn without a title, because the standard PDF font
 holds no Cyrillic. Elements are selected by their level
 (`LEVEL_PARAM`); a wall without a location line or a column without a footprint is left out and counted by neither
 selection nor drawing.
