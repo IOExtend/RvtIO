@@ -89,6 +89,7 @@ rvtio print project.rvt plan.pdf --level "Уровень 1" --scale 100
 
 ```sh
 rvtio print project.rvt sheets.pdf --sheet 516334
+rvtio print project.rvt sheets.pdf --all-sheets --where "Appears In Sheet List=Yes"
 rvtio print project.rvt --list-sheets
 ```
 

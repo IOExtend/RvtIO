@@ -100,6 +100,26 @@ public sealed class SheetFilter
         || string.Equals(name, nameof(BuiltInParameter.SHEET_SCHEDULED), StringComparison.OrdinalIgnoreCase)
         || sheet.YesNoParameters.Contains(name, StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>The parameter names a filter may name: the core sheet fields (by Revit display name
+    /// and by BIP enum name) and every extra parameter of the catalog.</summary>
+    internal static SortedSet<string> AvailableNames(SheetCatalog catalog)
+    {
+        var names = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string core in new[]
+        {
+            "Sheet Number", "Sheet Name", "Sheet Issue Date", "View Scale",
+            "Drawn By", "Designed By", "Checked By", "Approved By", "Appears In Sheet List",
+            "SHEET_NUMBER", "SHEET_NAME", "SHEET_ISSUE_DATE", "VIEW_SCALE",
+            "SHEET_DRAWN_BY", "SHEET_DESIGNED_BY", "SHEET_CHECKED_BY", "SHEET_APPROVED_BY",
+            "SHEET_SCHEDULED",
+        })
+            names.Add(core);
+        foreach (var sheet in catalog.Sheets)
+            foreach (var key in sheet.Parameters.Keys)
+                names.Add(key);
+        return names;
+    }
+
     /// <summary>The value of a named sheet field or parameter, or null when the sheet has no such name.</summary>
     internal static string? Lookup(SheetRecord sheet, string name)
     {

@@ -64,7 +64,7 @@ internal static partial class Program
           --list-category <categoryId> <out.csv>  list the elements of one category
           sheets <file.rvt|file.rfa> [output.json] [--r22-layout] [--where FILTER] [--params] [--csv] [--json]
                                             write the sheet catalog (sheets, viewports, parameters, limits not decoded) as JSON
-          print <file.rvt> <out.pdf> [--level <id|name>] [--view <id|name>] [--sheet <id|number>] [--scale <n>]
+          print <file.rvt> <out.pdf> [--level <id|name>] [--view <id|name>] [--sheet <id|number>] [--where FILTER] [--scale <n>]
                                             [--all-views] [--all-sheets] [--paper A4|A3|A2|A1|A0]
                                             [--list-levels] [--list-views] [--list-sheets]
                                             render the plan of one level, one or more views (plans and elevations) or all of

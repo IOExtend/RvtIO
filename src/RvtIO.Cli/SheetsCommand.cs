@@ -123,7 +123,7 @@ internal static class SheetsCommand
         if (filters.Count > 0)
         {
             // A misspelt name stops with the names there are, as in rvt-prt.
-            var available = AvailableNames(catalog);
+            var available = SheetFilter.AvailableNames(catalog);
             foreach (var filter in filters)
             {
                 if (!available.Contains(filter.Name))
@@ -180,24 +180,6 @@ internal static class SheetsCommand
         error.WriteLine($"[sheets] {catalog.Sheets.Count} sheets, {catalog.Viewports.Count} viewports, "
             + $"{catalog.Issues.Count} limits not decoded -> {target}");
         return RvtExitCodes.Success;
-    }
-
-    private static SortedSet<string> AvailableNames(SheetCatalog catalog)
-    {
-        var names = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (string core in new[]
-        {
-            "Sheet Number", "Sheet Name", "Sheet Issue Date", "View Scale",
-            "Drawn By", "Designed By", "Checked By", "Approved By", "Appears In Sheet List",
-            "SHEET_NUMBER", "SHEET_NAME", "SHEET_ISSUE_DATE", "VIEW_SCALE",
-            "SHEET_DRAWN_BY", "SHEET_DESIGNED_BY", "SHEET_CHECKED_BY", "SHEET_APPROVED_BY",
-            "SHEET_SCHEDULED",
-        })
-            names.Add(core);
-        foreach (var sheet in catalog.Sheets)
-            foreach (var key in sheet.Parameters.Keys)
-                names.Add(key);
-        return names;
     }
 
     private static string ToCsv(SheetCatalog catalog)

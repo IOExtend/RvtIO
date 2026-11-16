@@ -46,6 +46,30 @@ public class PrintCommandTests
         Assert.Contains("output PDF path", error.ToString());
     }
 
+    [Fact]
+    public void WhereWithoutValue_IsUsageError()
+    {
+        var error = new StringWriter();
+        Assert.Equal(RvtExitCodes.Usage, Run(error, "model.rvt", "out.pdf", "--sheet", "A102", "--where"));
+        Assert.Contains("--where needs a filter", error.ToString());
+    }
+
+    [Fact]
+    public void WhereWithBadFilter_IsUsageError()
+    {
+        var error = new StringWriter();
+        Assert.Equal(RvtExitCodes.Usage, Run(error, "model.rvt", "out.pdf", "--sheet", "A102", "--where", "no-operator-here"));
+        Assert.Contains("Bad filter", error.ToString());
+    }
+
+    [Fact]
+    public void WhereWithoutSheetContext_IsUsageError()
+    {
+        var error = new StringWriter();
+        Assert.Equal(RvtExitCodes.Usage, Run(error, "model.rvt", "out.pdf", "--level", "L1", "--where", "Drawn By=AB"));
+        Assert.Contains("--where selects sheets", error.ToString());
+    }
+
     [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "link", SetLastError = true)]
     private static extern int LinuxLink(string existing, string link);
 
