@@ -308,6 +308,18 @@ internal class ParsingState
     /// the block did not decode; a repeated block clears it.</summary>
     public Dictionary<uint, (int BlockCount, List<Parsing.TfBlockDeserializer.TitleBlockLabel>? Labels)> TitleBlockLabels { get; } = new();
 
+    /// <summary>ScheduleInstance (class 3532) -> the DBViewSchedule it shows and its top-left origin in sheet feet.
+    /// Null when the block did not decode; a repeated block clears it.</summary>
+    public Dictionary<uint, (int BlockCount, Parsing.TfBlockDeserializer.ScheduleInstancePlacement? Placement)> ScheduleInstances { get; } = new();
+
+    /// <summary>DBViewSchedule (class 1012) -> its table definition: visible columns, category and show flags.
+    /// Null when the block did not decode; a repeated block clears it.</summary>
+    public Dictionary<uint, (int BlockCount, Parsing.TfBlockDeserializer.ScheduleTableDef? Table)> ScheduleTables { get; } = new();
+
+    /// <summary>Sheet element id (class 995 block) -> the revision ids explicitly present on it. Null when the
+    /// block did not decode; a repeated block clears it.</summary>
+    public Dictionary<uint, (int BlockCount, List<int>? RevisionIds)> SheetRevisions { get; } = new();
+
     /// <summary>CategoryElem (class 632) -> Category.m_name; every root counts, an unreadable root records null and a
     /// repeated block clears the name.</summary>
     public Dictionary<uint, (int BlockCount, string? Name)> CategoryNames { get; } = new();

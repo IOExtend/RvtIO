@@ -178,6 +178,8 @@ The text of a sheet prints too: a text note's RTF string (class 0x0F83 block) is
 - Geometry meshing: scales the pole Jacobian degeneracy threshold in `RevolvedMesher.NormalAt` by the profile tangent magnitude so 1-ULP trigonometric differences at sphere poles fall through to the pole limit normal on Linux and macOS as on Windows instead of leaving duplicate pole vertices unmerged. (Refs #39)
 - Reading: resolves category (`-2000112` / `OST_Phases`), `ELEM_CATEGORY_PARAM` / `ELEM_CATEGORY_PARAM_MT`, validated name, and `SerializedOwnElementClassId` for the `id == 0` `ProjectPhase` element in 64-bit-id files under both read modes, even when its element header reports `-1`. (Closes #57)
 
+- Sheets print their schedule tables: every per-sheet ScheduleInstance draws at its instance origin with the decoded columns, show flags and grid/outline pens of its DBViewSchedule, the stored title height and merged title bands, one header per stored body section and the stored body row count as grid (revision rows come from the model revisions explicitly present on the sheet, planting rows from the model planting). Decoding it fixed two root-walk gaps: the TableView color-to-category map and the ViewDisplayMgr inline structs. Measured against the Revit export of the sample: A001 recall 31.6% -> 92.6% at 100% precision, A101 recall 63.5% -> 71.0%, text 7.5% -> 17.8% on A001 and 27.8% -> 42.0% on A101. New tests: `ScheduleTableTests`.
+
 ## [0.4.0] - 2026-11-13
 
 ### Breaking changes

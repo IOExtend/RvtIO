@@ -383,8 +383,9 @@ public static class SheetComposer
                             wallsOriginX, wallsOriginY, 0.9, null, document);
                     }
                     page2.EndClip();
-                    // The planting schedule sits under the view title, clear of the site plan.
-                    if (pdf.Font != null)
+                    // The planting schedule sits under the view title, clear of the site plan, unless its real
+                    // instance drew at its own origin below.
+                    if (pdf.Font != null && !SchedulesOnSheet(document, sheet).Any(schedule => schedule.CategoryId == PlantingCategoryId))
                         DrawPlantingSchedule(page2, document, Math.Max(frameX, 8), frameY - 18);
                 }
             }
@@ -602,9 +603,256 @@ public static class SheetComposer
             else
             {
                 TitleBlockPrinter.Draw(page2, document, sheet, Math.Min(180, layout.WidthMillimetres * 0.22),
-                    margin, scaleText, TitleLogo(document), Revisions(document));
+                    margin, scaleText, TitleLogo(document),
+                    Revisions(document).Select(rev => (rev.Number, rev.Description, rev.Date)).ToList());
+            }
+            // The schedule tables go over the drawings with the title block: each per-sheet ScheduleInstance at
+            // its instance origin, revision schedules with the model Revisions() rows and other schedules with
+            // their stored rows, the header and grid always drawn (rvt-prt tables.py).
+            DrawSchedules(page2, document, sheet, originX, originY);
+        }
+    }
+
+    private const int RevisionsCategoryId = -2006070;
+    private const int PlantingCategoryId = -2001360;
+    private const int ScheduleGridCategoryId = -2000042;
+
+    /// <summary>A schedule instance placed on the sheet with its decoded table: the instance origin in sheet feet
+    /// and the visible columns, show flags, title-area rows and body row count of its DBViewSchedule.</summary>
+    internal sealed record ScheduleOnSheet(int InstanceId, int ScheduleId, double Ox, double Oy,
+        List<(string Heading, double WidthFt)> Columns, int CategoryId,
+        bool ShowTitle, bool ShowHeaders, bool ShowGridLines, bool ShowOutline, string Title,
+        double TitleHeightFt, List<(double HeightFt, string Text)> TitleBands, List<Parsing.TfBlockDeserializer.ScheduleBodySection> BodySections,
+        int GridStyleId, int OutlineStyleId);
+
+    /// <summary>The schedule instances placed on the sheet whose placement and table both decoded: the revision
+    /// schedules of the title block, the planting schedule and the How-do-I table.</summary>
+    internal static List<ScheduleOnSheet> SchedulesOnSheet(RvtDocument document, Element sheet)
+    {
+        var result = new List<ScheduleOnSheet>();
+        var placements = document.RawData.ScheduleInstances;
+        var tables = document.RawData.ScheduleTables;
+        if (placements == null || tables == null) return result;
+        foreach (var element in document.Elements)
+        {
+            if (element.OwnerViewId != sheet.Id || element.CategoryId != (int)BuiltInCategory.OST_ScheduleGraphics) continue;
+            if (!placements.TryGetValue(element.Id, out var placement)) continue;
+            if (!tables.TryGetValue(placement.ScheduleId, out var table)) continue;
+            string title = document.GetElement(placement.ScheduleId)?.Name ?? "";
+            result.Add(new(element.Id, placement.ScheduleId, placement.Ox, placement.Oy,
+                table.Columns, table.CategoryId, table.ShowTitle, table.ShowHeaders,
+                table.ShowGridLines, table.ShowOutline, title,
+                table.TitleHeightFt, table.TitleBands, table.BodySections,
+                table.GridStyleId, table.OutlineStyleId));
+        }
+        return result;
+    }
+
+    /// <summary>Draws the schedule instances placed on the sheet at their instance origins: the title (unless the
+    /// schedule hides it or names it "&lt;...&gt;"), the header and the grid always, revision schedules with the
+    /// model Revisions() rows and the planting schedule with the model planting rows.</summary>
+    private static void DrawSchedules(PdfPage page, RvtDocument document, Element sheet, double originX, double originY)
+    {
+        foreach (var schedule in SchedulesOnSheet(document, sheet))
+            DrawSchedule(page, document, sheet, schedule, originX, originY);
+    }
+
+    private static void DrawSchedule(PdfPage page, RvtDocument document, Element sheet, ScheduleOnSheet schedule,
+        double originX, double originY)
+    {
+        const double FeetToMillimetres = 304.8;
+        const double PtToMm = 25.4 / 72.0;
+        const double InchToMm = 25.4;
+        bool revision = schedule.CategoryId == RevisionsCategoryId;
+        // Measured styles (rvt-prt tables.py SCHEDULE_STYLES): the file decodes no text sizes.
+        double titleH = revision ? 0 : 0.37 * InchToMm;
+        double headH = revision ? 0.3838 * InchToMm : 0.27 * InchToMm;
+        double bodyH = revision ? 0.2559 * InchToMm : 0.2395 * InchToMm;
+        double titlePt = 19, headPt = revision ? 19 : 12.5, bodyPt = 12.5;
+        double insetMm = 0.037 * InchToMm;
+        // The stored title height wins where the file decodes bands after it (the How-do-I title area:
+        // stored 20.2 pt against measured 26.6); the measured heights stay where the title stands alone.
+        if (schedule.TitleBands.Count > 0 && schedule.TitleHeightFt > 0)
+            titleH = schedule.TitleHeightFt * FeetToMillimetres;
+
+        double x0 = schedule.Ox * FeetToMillimetres - originX;
+        double yTop = schedule.Oy * FeetToMillimetres - originY;
+        double[] widths = schedule.Columns.Select(column => column.WidthFt * FeetToMillimetres).ToArray();
+        if (widths.Length == 0 || widths.Any(width => !(width > 0) || width > 1000)) return;
+        double[] edges = new double[widths.Length + 1];
+        edges[0] = x0;
+        for (int i = 0; i < widths.Length; i++) edges[i + 1] = edges[i] + widths[i];
+
+        List<List<string>> rows = new();
+        if (revision)
+        {
+            // The revisions explicitly present on this sheet (rvt-prt sheet_revs): the reference lists none,
+            // so the table is its header only.
+            var present = document.RawData.ScheduleSheetRevisions?.TryGetValue(sheet.Id, out var ids) == true
+                ? new HashSet<int>(ids)
+                : null;
+            foreach (var (number, description, date, id) in Revisions(document))
+            {
+                if (present != null && !present.Contains(id)) continue;
+                rows.Add([number, description, date]);
             }
         }
+        else if (schedule.CategoryId == PlantingCategoryId)
+        {
+            foreach (var (mark, name, count) in PlantingRows(document))
+                rows.Add([mark, name, count]);
+        }
+        else
+        {
+            // Other schedules draw their stored body sections below (one header per section, then the
+            // stored body row count as an empty grid: the body cells carry no evaluated text).
+        }
+        foreach (var row in rows)
+            while (row.Count < widths.Length) row.Add("");
+
+        // The grid and outline pens: the annotation pen of the schedule's own grid and outline line styles
+        // (rvt-prt tables.py _style_width), falling back to the schedule grid style and the measured widths.
+        double AnnotationWidth(int categoryId, double fallback)
+        {
+            int? pen = document.RawData.GraphicsStylePens?.Values
+                .Where(style => style.CategoryId == categoryId && style.OwnerId == -1 && style.GStyleType == 1)
+                .Select(style => (int?)style.PenNumber)
+                .FirstOrDefault();
+            return pen is int number && PenWidths.TryAnnotationWidth(document, number, out double width)
+                ? width : fallback;
+        }
+        int gridStyle = schedule.GridStyleId > 0 ? schedule.GridStyleId : ScheduleGridCategoryId;
+        int outlineStyle = schedule.OutlineStyleId > 0 ? schedule.OutlineStyleId : gridStyle;
+        double gridMm = AnnotationWidth(gridStyle, 0.24 * PtToMm);
+        double outlineMm = AnnotationWidth(outlineStyle, 0.58 * PtToMm);
+
+        double y = yTop;
+        double tableTop = yTop;
+        // Schedule titles print one ascent below the row top (measured 18.4 pt below at 19 pt on both
+        // the How-do-I and planting titles), not centred in the row.
+        bool drewTitleArea = false;
+        if (schedule.ShowTitle && titlePt > 0 && schedule.Title.Length > 0 && !schedule.Title.StartsWith("<", StringComparison.Ordinal))
+        {
+            page.DrawText(schedule.Title, (edges[0] + edges[^1]) / 2, y - 0.97 * titlePt * PtToMm,
+                titlePt * PtToMm, PdfTextAlignment.Center);
+            y -= titleH;
+            drewTitleArea = true;
+            if (schedule.ShowGridLines)
+                page.DrawLine(edges[0], y, edges[^1], y, gridMm);
+        }
+        // Stored title bands (the How-do-I long-text band): merged rows with no internal grid, the text
+        // top-aligned (measured 5.5 pt below the band top at 12.5 pt).
+        foreach (var band in schedule.TitleBands)
+        {
+            double bandH = band.HeightFt * FeetToMillimetres;
+            if (!(bandH > 0) || bandH > 1000) continue;
+            if (band.Text.Length > 0)
+                page.DrawText(band.Text, edges[0] + insetMm, y - 5.5 * PtToMm, bodyPt * PtToMm);
+            y -= bandH;
+            drewTitleArea = true;
+            if (schedule.ShowGridLines)
+                page.DrawLine(edges[0], y, edges[^1], y, gridMm);
+        }
+        // Header texts come from the stored section header where the file decodes one, else from the
+        // schedule fields; other schedules draw one header per stored body section.
+        List<(List<string> Header, List<List<string>> Rows)> sections = new();
+        if (revision || schedule.CategoryId == PlantingCategoryId)
+        {
+            sections.Add((schedule.Columns.Select(column => column.Heading).ToList(), rows));
+        }
+        else
+        {
+            foreach (var bodySection in schedule.BodySections)
+            {
+                var header = bodySection.Header.Count == widths.Length
+                    ? bodySection.Header.ToList()
+                    : schedule.Columns.Select(column => column.Heading).ToList();
+                var body = new List<List<string>>();
+                for (int i = 0; i < bodySection.BodyRows && body.Count < 10000; i++)
+                    body.Add(Enumerable.Repeat("", widths.Length).ToList());
+                sections.Add((header, body));
+            }
+            if (sections.Count == 0)
+                sections.Add((schedule.Columns.Select(column => column.Heading).ToList(), new()));
+        }
+        // The grid starts below the title area. Outer verticals run header-top to table bottom at the
+        // outline weight when the schedule shows its outline (else the header box stands alone at the grid
+        // weight); inner verticals span each header and body row; title and band rows have none.
+        double gridTop = y;
+        bool firstHeader = true;
+        foreach (var (header, body) in sections)
+        {
+            if (schedule.ShowHeaders)
+            {
+                // The header top rule is the title-area rule above, drawn where nothing stands over it.
+                if (firstHeader && !drewTitleArea && schedule.ShowGridLines)
+                    page.DrawLine(edges[0], y, edges[^1], y, gridMm);
+                for (int i = 0; i < widths.Length; i++)
+                {
+                    string text = i < header.Count ? header[i] : "";
+                    if (text.Length == 0) continue;
+                    page.DrawText(text, (edges[i] + edges[i + 1]) / 2,
+                        y - headH / 2 - 0.35 * headPt * PtToMm, headPt * PtToMm, PdfTextAlignment.Center);
+                }
+                y -= headH;
+                if (schedule.ShowGridLines)
+                    page.DrawLine(edges[0], y, edges[^1], y, gridMm);
+                firstHeader = false;
+            }
+            foreach (var row in body)
+            {
+                for (int i = 0; i < widths.Length; i++)
+                {
+                    string cell = i < row.Count ? row[i] : "";
+                    if (cell.Length == 0) continue;
+                    double sizeMm = bodyPt * PtToMm;
+                    if (revision || i == 0)
+                        page.DrawText(cell, edges[i] + insetMm, y - bodyH / 2 - 0.35 * sizeMm, sizeMm);
+                    else
+                        page.DrawText(cell, (edges[i] + edges[i + 1]) / 2, y - bodyH / 2 - 0.35 * sizeMm, sizeMm,
+                            PdfTextAlignment.Center);
+                }
+                y -= bodyH;
+                if (schedule.ShowGridLines)
+                    page.DrawLine(edges[0], y, edges[^1], y, gridMm);
+            }
+        }
+        if (schedule.ShowGridLines && y < gridTop)
+        {
+            for (int i = 1; i < edges.Length - 1; i++)
+                page.DrawLine(edges[i], gridTop, edges[i], y, gridMm);
+        }
+        // The outline closes the table at its own weight: the top rule, the outer verticals and the bottom
+        // rule. Without an outline the header box and body rules stand as drawn above.
+        if (schedule.ShowOutline && y < tableTop)
+        {
+            page.DrawLine(edges[0], tableTop, edges[^1], tableTop, outlineMm);
+            page.DrawLine(edges[0], tableTop, edges[0], y, outlineMm);
+            page.DrawLine(edges[^1], tableTop, edges[^1], y, outlineMm);
+            page.DrawLine(edges[0], y, edges[^1], y, outlineMm);
+        }
+    }
+
+    /// <summary>The planting rows of the model, as the planting schedule lists them: the type mark (T1, T2, ... as
+    /// the plan tags the kinds), the common name and the count, sorted by name.</summary>
+    private static List<(string Mark, string Name, string Count)> PlantingRows(RvtDocument document)
+    {
+        var groups = new SortedDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var element in document.Elements)
+        {
+            if (element.CategoryId != (int)BuiltInCategory.OST_Planting) continue;
+            string name = element.Name ?? "";
+            if (name.Length == 0) continue;
+            groups[name] = groups.TryGetValue(name, out int count) ? count + 1 : 1;
+        }
+        var rows = new List<(string Mark, string Name, string Count)>();
+        int index = 0;
+        foreach (var (name, count) in groups)
+        {
+            index++;
+            rows.Add(($"T{index}", name, count.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        }
+        return rows;
     }
 
     /// <summary>Draws the decoded symbol of a title block family at its sheet position: symbol feet to page
@@ -742,15 +990,8 @@ public static class SheetComposer
     /// </summary>
     private static void DrawPlantingSchedule(PdfPage page, RvtDocument document, double x, double y)
     {
-        var groups = new SortedDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        foreach (var element in document.Elements)
-        {
-            if (element.CategoryId != (int)BuiltInCategory.OST_Planting) continue;
-            string name = element.Name ?? "";
-            if (name.Length == 0) continue;
-            groups[name] = groups.TryGetValue(name, out int count) ? count + 1 : 1;
-        }
-        if (groups.Count == 0) return;
+        var rows = PlantingRows(document);
+        if (rows.Count == 0) return;
         // The table of the reference site plan: the type mark of the plant (T1, T2, ... as the plan tags them), its
         // common name and its count.
         page.DrawText("Planting Schedule", x, y, 3.5);
@@ -758,13 +999,11 @@ public static class SheetComposer
         page.DrawText("Common Name", x + 20, y - 5, 2.2, PdfTextAlignment.Left, 0.4);
         page.DrawText("Count", x + 65, y - 5, 2.2, PdfTextAlignment.Right, 0.4);
         double row = y - 9;
-        int index = 0;
-        foreach (var (name, count) in groups)
+        foreach (var (mark, name, count) in rows)
         {
-            index++;
-            page.DrawText($"T{index}", x, row, 2.4);
+            page.DrawText(mark, x, row, 2.4);
             page.DrawText(name, x + 20, row, 2.4);
-            page.DrawText(count.ToString(), x + 65, row, 2.4, PdfTextAlignment.Right);
+            page.DrawText(count, x + 65, row, 2.4, PdfTextAlignment.Right);
             row -= 4.5;
         }
         // The table of the reference site plan has a border and a rule under the header.
@@ -815,10 +1054,10 @@ public static class SheetComposer
     }
 
     /// <summary>The revisions of the model, as the revision schedule of the title block lists them: the sequence
-    /// number, the description and the date of each.</summary>
-    private static List<(string Number, string Description, string Date)> Revisions(RvtDocument document)
+    /// number, the description, the date and the element id of each.</summary>
+    private static List<(string Number, string Description, string Date, int Id)> Revisions(RvtDocument document)
     {
-        var revisions = new List<(string Number, string Description, string Date)>();
+        var revisions = new List<(string Number, string Description, string Date, int Id)>();
         foreach (var element in document.Elements)
         {
             if (element.CategoryId != (int)BuiltInCategory.OST_Revisions) continue;
@@ -827,7 +1066,7 @@ public static class SheetComposer
             string description = Value(element, BuiltInParameter.PROJECT_REVISION_REVISION_DESCRIPTION);
             string date = Value(element, BuiltInParameter.PROJECT_REVISION_REVISION_DATE);
             if (number.Length == 0 && description.Length == 0 && date.Length == 0) continue;
-            revisions.Add((number, description, date));
+            revisions.Add((number, description, date, element.Id));
         }
         return revisions;
     }

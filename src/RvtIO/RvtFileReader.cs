@@ -1925,6 +1925,45 @@ public partial class RvtFileReader
             : (1, read ? labels : null);
     }
 
+    internal static void RecordScheduleInstance(
+        ParsingState state, byte[] data, int start, uint size, ushort classId, uint owner)
+    {
+        if (classId != 3532) return;
+        TfBlockDeserializer.ScheduleInstancePlacement placement = new(0, 0, 0);
+        bool read = start >= 0 && start <= data.Length - 4
+            && BitConverter.ToUInt32(data, start) == owner
+            && TfBlockDeserializer.TryExtractScheduleInstance(data, start, size, classId, out placement);
+        state.ScheduleInstances[owner] = state.ScheduleInstances.TryGetValue(owner, out var old)
+            ? (old.BlockCount + 1, null)
+            : (1, read ? placement : null);
+    }
+
+    internal static void RecordScheduleTable(
+        ParsingState state, byte[] data, int start, uint size, ushort classId, uint owner)
+    {
+        if (classId != 1012) return;
+        TfBlockDeserializer.ScheduleTableDef table = new(new(), 0, false, false, false, false, 0, 0, 0, new(), new());
+        bool read = start >= 0 && start <= data.Length - 4
+            && BitConverter.ToUInt32(data, start) == owner
+            && TfBlockDeserializer.TryExtractScheduleTable(data, start, size, classId, out table);
+        state.ScheduleTables[owner] = state.ScheduleTables.TryGetValue(owner, out var old)
+            ? (old.BlockCount + 1, null)
+            : (1, read ? table : null);
+    }
+
+    internal static void RecordSheetRevisions(
+        ParsingState state, byte[] data, int start, uint size, ushort classId, uint owner)
+    {
+        if (classId != 995) return;
+        List<int> revisionIds = new();
+        bool read = start >= 0 && start <= data.Length - 4
+            && BitConverter.ToUInt32(data, start) == owner
+            && TfBlockDeserializer.TryExtractSheetRevisions(data, start, size, classId, out revisionIds);
+        state.SheetRevisions[owner] = state.SheetRevisions.TryGetValue(owner, out var old)
+            ? (old.BlockCount + 1, null)
+            : (1, read ? revisionIds : null);
+    }
+
     internal static void RecordCategoryName(
         ParsingState state, byte[] data, int start, uint size, ushort classId, uint owner)
     {
@@ -2425,6 +2464,9 @@ public partial class RvtFileReader
             RecordPenWidthTable(state, seg, bs, ds, cls, eid);
             RecordLinePattern(state, seg, bs, ds, cls, eid);
             RecordTitleBlockLines(state, seg, bs, ds, cls, eid);
+            RecordScheduleInstance(state, seg, bs, ds, cls, eid);
+            RecordScheduleTable(state, seg, bs, ds, cls, eid);
+            RecordSheetRevisions(state, seg, bs, ds, cls, eid);
             RecordCategoryName(state, seg, bs, ds, cls, eid);
             if (cls == 3666)
                 RecordStackedWallTypeRoot(state, seg, bs, ds, cls, eid);

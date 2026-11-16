@@ -3647,6 +3647,754 @@ internal static partial class TfBlockDeserializer
     internal sealed record TitleBlockLabel(double Ox, double Oy, double Oz, double Hx, double Hy, double Bx, double By,
         double Height, double Width, int AttrId, int Flags, int ParamId, string Prefix, string Suffix);
 
+    /// <summary>A schedule instance placed on a sheet: the DBViewSchedule it shows and its top-left origin in
+    /// sheet feet.</summary>
+    internal sealed record ScheduleInstancePlacement(int ScheduleId, double Ox, double Oy);
+
+    /// <summary>Reads the revision ids explicitly present on a sheet from its DBViewDrafting block (class 995):
+    /// m_explicitlyPresentRevisionIds, the revisions the sheet's revision schedule lists (rvt-prt views.py).
+    /// Only the root fields are walked; the deferred queue is not needed. False when anything fails to decode.</summary>
+    internal static bool TryExtractSheetRevisions(
+        byte[] d, int blockStart, uint dataSize, ushort classId, out List<int> revisionIds)
+    {
+        revisionIds = new();
+        if (classId != 995
+            || blockStart < 0
+            || dataSize > int.MaxValue
+            || (long)blockStart + 16 + dataSize > d.Length
+            || dataSize < 6
+            || BitConverter.ToUInt32(d, blockStart + 8) != dataSize
+            || BitConverter.ToUInt16(d, blockStart + 12) != classId)
+            return false;
+        var fields = SerializationFields(classId);
+        if (fields == null) return false;
+        int payloadEnd = blockStart + 16 + (int)dataSize;
+        if (BitConverter.ToUInt32(d, payloadEnd - 4) != dataSize) return false;
+
+        var cur = new Cursor
+        {
+            D = d,
+            Pos = blockStart + 14,
+            End = payloadEnd - 4,
+            RootClassId = classId,
+            TailWalk = true,
+        };
+        var queue = new List<(ushort Cls, uint Id)>();
+        cur.RootQueue = queue;
+        try
+        {
+            var found = new List<int>();
+            bool seen = false;
+            foreach (var field in fields)
+            {
+                if (field is { Name: "m_explicitlyPresentRevisionIds", Type: 14, Mods: 80, Ref: 20 })
+                {
+                    uint count = ReadU32(cur);
+                    if (count == 0xFFFFFFFF) count = 0;
+                    if (count > 100_000) return false;
+                    for (uint i = 0; i < count; i++)
+                        found.Add(ReadI32(cur));
+                    seen = true;
+                }
+                else ReadField(cur, field, queue, 0, null);
+            }
+            if (!seen) return false;
+            if (found.Any(id => id <= 0 && id != -1) || found.Count > 100_000) return false;
+            revisionIds = found.Where(id => id > 0).ToList();
+            return true;
+        }
+        catch (DecodeFail) { return false; }
+    }
+
+    /// <summary>A body section of a schedule table: its stored header texts (one per visible column,
+    /// empty when the file stores none) and its body row count.</summary>
+    internal sealed record ScheduleBodySection(List<string> Header, int BodyRows);
+
+    /// <summary>A schedule definition decoded from its DBViewSchedule block: the visible columns (heading and width
+    /// in feet, in order), the category id, the show flags, the title height and merged bands of the first shown
+    /// section (with their stored texts) and the body sections after it.</summary>
+    internal sealed record ScheduleTableDef(List<(string Heading, double WidthFt)> Columns, int CategoryId,
+        bool ShowTitle, bool ShowHeaders, bool ShowGridLines, bool ShowOutline,
+        int GridStyleId, int OutlineStyleId,
+        double TitleHeightFt, List<(double HeightFt, string Text)> TitleBands, List<ScheduleBodySection> BodySections);
+
+    /// <summary>Reads a schedule instance (class 3532): the DBViewSchedule it shows and its top-left origin in
+    /// sheet feet. False when anything fails to decode.</summary>
+    internal static bool TryExtractScheduleInstance(
+        byte[] d, int blockStart, uint dataSize, ushort classId, out ScheduleInstancePlacement placement)
+    {
+        placement = new(0, 0, 0);
+        if (classId != 3532
+            || blockStart < 0
+            || dataSize > int.MaxValue
+            || (long)blockStart + 16 + dataSize > d.Length
+            || dataSize < 6
+            || BitConverter.ToUInt32(d, blockStart + 8) != dataSize
+            || BitConverter.ToUInt16(d, blockStart + 12) != classId)
+            return false;
+        var fields = SerializationFields(classId);
+        if (fields == null) return false;
+        int payloadEnd = blockStart + 16 + (int)dataSize;
+        if (BitConverter.ToUInt32(d, payloadEnd - 4) != dataSize) return false;
+
+        var cur = new Cursor
+        {
+            D = d,
+            Pos = blockStart + 14,
+            End = payloadEnd - 4,
+            RootClassId = classId,
+            TailWalk = true,
+        };
+        var queue = new List<(ushort Cls, uint Id)>();
+        cur.RootQueue = queue;
+        try
+        {
+            int scheduleId = 0;
+            double ox = 0, oy = 0;
+            bool schedRead = false, originRead = false;
+            foreach (var field in fields)
+            {
+                if (field is { Declaring: 3532, Name: "m_scheduleId" })
+                {
+                    if (field is not { Type: 14, Mods: 0, Ref: 20 }) return false;
+                    scheduleId = ReadI32(cur);
+                    schedRead = true;
+                }
+                else if (field is { Declaring: 3532, Name: "origin_XYZ" })
+                {
+                    var xyzFields = SerializationFields(171);
+                    if (xyzFields == null || xyzFields.Count != 1
+                        || xyzFields[0] is not { Name: "m_xyz", Type: 7, Mods: 16 }) return false;
+                    ox = ReadF64(cur);
+                    oy = ReadF64(cur);
+                    ReadF64(cur);
+                    originRead = true;
+                }
+                else ReadField(cur, field, queue, 0, null);
+            }
+            if (!schedRead || !originRead) return false;
+            for (int qi = 0; qi < queue.Count; qi++)
+            {
+                ushort queuedClass = queue[qi].Cls;
+                cur.TailClassId = queuedClass;
+                cur.CurrentDeferredClassId = queuedClass;
+                cur.CurrentDeferredQueueIndex = qi;
+                cur.CurrentGeomStepQueueIndex = IsSubclassOf(queuedClass, 96) ? qi : -1;
+                if (ParamSetTags.TryGetValue(queuedClass, out var parameterStore))
+                {
+                    uint count = ReadU32(cur);
+                    if (count == 0xFFFFFFFF) count = 0;
+                    if (count > 100_000) return false;
+                    var recordFields = SerializationFields(parameterStore.RecordClass);
+                    if (recordFields == null) return false;
+                    for (uint index = 0; index < count; index++)
+                        foreach (var recordField in recordFields)
+                            ReadField(cur, recordField, new List<(ushort, uint)>(), 0, null);
+                    continue;
+                }
+                var qf = SerializationFields(queuedClass);
+                if (qf == null) return false;
+                foreach (var queuedField in qf)
+                    ReadField(cur, queuedField, queue, 1, null);
+            }
+            if (scheduleId <= 0 || !double.IsFinite(ox) || !double.IsFinite(oy)
+                || Math.Abs(ox) > 1e6 || Math.Abs(oy) > 1e6) return false;
+            placement = new ScheduleInstancePlacement(scheduleId, ox, oy);
+            return cur.Pos <= cur.End;
+        }
+        catch (DecodeFail) { return false; }
+    }
+
+    /// <summary>Reads a schedule definition from its DBViewSchedule block (class 1012): the visible columns
+    /// (heading and width in feet, in field order), the category id and the show flags. False when anything
+    /// fails to decode.</summary>
+    internal static bool TryExtractScheduleTable(
+        byte[] d, int blockStart, uint dataSize, ushort classId, out ScheduleTableDef table)
+        => TryExtractScheduleTable(d, blockStart, dataSize, classId, out table, out _);
+
+    internal static bool TryExtractScheduleTable(
+        byte[] d, int blockStart, uint dataSize, ushort classId, out ScheduleTableDef table, out string failure)
+    {
+        table = new(new(), 0, false, false, false, false, 0, 0, 0, new(), new());
+        failure = "ok";
+        if (classId != 1012
+            || blockStart < 0
+            || dataSize > int.MaxValue
+            || (long)blockStart + 16 + dataSize > d.Length
+            || dataSize < 6
+            || BitConverter.ToUInt32(d, blockStart + 8) != dataSize
+            || BitConverter.ToUInt16(d, blockStart + 12) != classId)
+            return false;
+        var fields = SerializationFields(classId);
+        if (fields == null) return false;
+        int payloadEnd = blockStart + 16 + (int)dataSize;
+        if (BitConverter.ToUInt32(d, payloadEnd - 4) != dataSize) return false;
+
+        var cur = new Cursor
+        {
+            D = d,
+            Pos = blockStart + 14,
+            End = payloadEnd - 4,
+            RootClassId = classId,
+            TailWalk = true,
+        };
+        var queue = new List<(ushort Cls, uint Id)>();
+        cur.RootQueue = queue;
+        try
+        {
+            try
+            {
+                foreach (var field in fields)
+                {
+                    try
+                    {
+                        ReadField(cur, field, queue, 0, null);
+                    }
+                    catch (DecodeFail)
+                    {
+                        failure = $"decodefail-rootfield {field.Declaring}.{field.Name} t={field.Type} mods={field.Mods} pos={cur.Pos}";
+                        return false;
+                    }
+                }
+            }
+            catch (DecodeFail)
+            {
+                failure = $"decodefail-root pos={cur.Pos}";
+                return false;
+            }
+
+            var columns = new List<(string Heading, double WidthFt)>();
+            int categoryId = 0;
+            bool showTitle = false, showHeaders = false, showGridLines = false, showOutline = false;
+            int gridStyleId = 0, outlineStyleId = 0;
+            bool schemaRead = false;
+            var sectionInfos = new List<(int Index, List<int> RowQis, List<int> CellQis, bool Hide)>();
+            var rowHeights = new Dictionary<int, double>();
+            var rowCellQis = new Dictionary<int, List<int>>();
+            var cellInfos = new Dictionary<int, (string Text, int CellType, int CoverBottom, int CoverRight)>();
+            for (int qi = 0; qi < queue.Count; qi++)
+            {
+                ushort queuedClass = queue[qi].Cls;
+                cur.TailClassId = queuedClass;
+                cur.CurrentDeferredClassId = queuedClass;
+                cur.CurrentDeferredQueueIndex = qi;
+                cur.CurrentGeomStepQueueIndex = IsSubclassOf(queuedClass, 96) ? qi : -1;
+                if (ParamSetTags.TryGetValue(queuedClass, out var parameterStore))
+                {
+                    uint count = ReadU32(cur);
+                    if (count == 0xFFFFFFFF) count = 0;
+                    if (count > 100_000)
+                    {
+                        failure = $"paramstore-count qi={qi} cls={queuedClass}";
+                        return false;
+                    }
+                    var recordFields = SerializationFields(parameterStore.RecordClass);
+                    if (recordFields == null)
+                    {
+                        failure = $"no-schema-paramstore qi={qi} cls={queuedClass}";
+                        return false;
+                    }
+                    for (uint index = 0; index < count; index++)
+                        foreach (var recordField in recordFields)
+                            ReadField(cur, recordField, new List<(ushort, uint)>(), 0, null);
+                    continue;
+                }
+                if (queuedClass == 3528)
+                {
+                    if (!TryReadScheduleField(cur, queue, out var heading, out var widthFt, out var hidden, out string fieldFailure))
+                    {
+                        failure = $"field qi={qi} pos={cur.Pos} {fieldFailure}";
+                        return false;
+                    }
+                    if (!hidden) columns.Add((heading, widthFt));
+                    continue;
+                }
+                if (queuedClass == 3535)
+                {
+                    if (!TryReadScheduleSchemaFlags(cur, queue, out int category, out bool title, out bool headers, out bool grid, out bool outline, out int gridStyle, out int outlineStyle, out string schemaFailure))
+                    {
+                        failure = $"schema qi={qi} pos={cur.Pos} {schemaFailure}";
+                        return false;
+                    }
+                    categoryId = category;
+                    showTitle = title;
+                    showHeaders = headers;
+                    showGridLines = grid;
+                    showOutline = outline;
+                    gridStyleId = gridStyle;
+                    outlineStyleId = outlineStyle;
+                    schemaRead = true;
+                    continue;
+                }
+                if (queuedClass == 4107)
+                {
+                    if (!TryReadViewDisplayMgr(cur, queue, out string vdmFailure))
+                    {
+                        failure = $"viewdisplay qi={qi} pos={cur.Pos} {vdmFailure}";
+                        return false;
+                    }
+                    continue;
+                }
+                if (queuedClass == 3536)
+                {
+                    if (!TryReadScheduleSection(cur, queue, out int secIndex, out List<int> secRows, out List<int> secCells, out bool secHide, out string secFailure))
+                    {
+                        failure = $"section qi={qi} pos={cur.Pos} {secFailure}";
+                        return false;
+                    }
+                    sectionInfos.Add((secIndex, secRows, secCells, secHide));
+                    continue;
+                }
+                if (queuedClass == 3926)
+                {
+                    if (!TryReadScheduleRowHeight(cur, out double rowHeight, out string rowFailure))
+                    {
+                        failure = $"tablerow qi={qi} pos={cur.Pos} {rowFailure}";
+                        return false;
+                    }
+                    rowHeights[qi] = rowHeight;
+                    continue;
+                }
+                if (queuedClass == 3925)
+                {
+                    if (!TryReadScheduleRowCells(cur, queue, out List<int> cellQis, out string rcFailure))
+                    {
+                        failure = $"rowcells qi={qi} pos={cur.Pos} {rcFailure}";
+                        return false;
+                    }
+                    rowCellQis[qi] = cellQis;
+                    continue;
+                }
+                if (queuedClass == 3921)
+                {
+                    if (!TryReadScheduleCell(cur, queue, out string cellText, out int cellType, out int coverBottom, out int coverRight, out string cellFailure))
+                    {
+                        failure = $"tablecell qi={qi} pos={cur.Pos} {cellFailure}";
+                        return false;
+                    }
+                    cellInfos[qi] = (cellText, cellType, coverBottom, coverRight);
+                    continue;
+                }
+                var qf = SerializationFields(queuedClass);
+                if (qf == null)
+                {
+                    failure = $"no-schema qi={qi} cls={queuedClass} pos={cur.Pos}";
+                    return false;
+                }
+                try
+                {
+                    foreach (var queuedField in qf)
+                    {
+                        try
+                        {
+                            ReadField(cur, queuedField, queue, 1, null);
+                        }
+                        catch (DecodeFail)
+                        {
+                            failure = $"decodefail-qi qi={qi} cls={queuedClass} field={queuedField.Declaring}.{queuedField.Name} t={queuedField.Type} mods={queuedField.Mods} pos={cur.Pos}";
+                            return false;
+                        }
+                    }
+                }
+                catch (DecodeFail)
+                {
+                    failure = $"decodefail-qi qi={qi} cls={queuedClass} pos={cur.Pos}";
+                    return false;
+                }
+            }
+            if (!schemaRead || columns.Count == 0 || columns.Count > 100)
+            {
+                failure = $"empty schema={schemaRead} cols={columns.Count} queue={queue.Count}";
+                return false;
+            }
+            AssembleScheduleTitleBody(sectionInfos, rowHeights, rowCellQis, cellInfos,
+                out double titleHeightFt, out List<(double HeightFt, string Text)> titleBands, out List<ScheduleBodySection> bodySections);
+            table = new ScheduleTableDef(columns, categoryId, showTitle, showHeaders, showGridLines, showOutline,
+                gridStyleId, outlineStyleId, titleHeightFt, titleBands, bodySections);
+            return true;
+        }
+        catch (DecodeFail)
+        {
+            failure = $"decodefail pos={cur.Pos}";
+            return false;
+        }
+    }
+
+    /// <summary>Assembles the title area and body sections from the decoded sections: the first shown section
+    /// holds the title height (its first row) and the merged bands (its later rows, merged where covers link
+    /// them, with their stored texts); each later shown section holds a header row (its first row's stored
+    /// texts) and the body rows after it. Sections the file hides are skipped.</summary>
+    private static void AssembleScheduleTitleBody(
+        List<(int Index, List<int> RowQis, List<int> CellQis, bool Hide)> sectionInfos,
+        Dictionary<int, double> rowHeights,
+        Dictionary<int, List<int>> rowCellQis,
+        Dictionary<int, (string Text, int CellType, int CoverBottom, int CoverRight)> cellInfos,
+        out double titleHeightFt, out List<(double HeightFt, string Text)> titleBands, out List<ScheduleBodySection> bodySections)
+    {
+        titleHeightFt = 0;
+        titleBands = new();
+        bodySections = new();
+        var shown = sectionInfos.Where(section => !section.Hide).OrderBy(section => section.Index).ToList();
+        if (shown.Count == 0) return;
+        var first = shown[0];
+        if (first.RowQis.Count > 0 && rowHeights.TryGetValue(first.RowQis[0], out double titleHeight)
+            && titleHeight > 0 && titleHeight <= 10)
+            titleHeightFt = titleHeight;
+        // Later rows of the first section form merged bands: a band extends while its last row's cells
+        // carry a bottom cover into the next row (the How-do-I long-text band spans two stored rows).
+        var bands = new List<(double HeightFt, string Text)>();
+        var bandRows = new List<int>();
+        string bandText = "";
+        double bandHeight = 0;
+        for (int i = 1; i < first.RowQis.Count; i++)
+        {
+            int rowQi = first.RowQis[i];
+            double height = rowHeights.TryGetValue(rowQi, out double h) ? h : 0;
+            string text = FirstCellText(first, i, rowCellQis, cellInfos);
+            bool extends = bandRows.Count > 0 && BandExtends(bandRows[^1], first, rowCellQis, cellInfos);
+            if (!extends && bandRows.Count > 0 && bandHeight > 0 && bandHeight <= 20)
+            {
+                bands.Add((bandHeight, bandText));
+                bandRows.Clear();
+                bandText = "";
+                bandHeight = 0;
+            }
+            bandRows.Add(rowQi);
+            if (height > 0 && height <= 10) bandHeight += height;
+            if (bandText.Length == 0 && text.Length > 0) bandText = text;
+        }
+        if (bandRows.Count > 0 && bandHeight > 0 && bandHeight <= 20)
+            bands.Add((bandHeight, bandText));
+        titleBands = bands;
+        foreach (var section in shown.Skip(1))
+        {
+            var header = SectionRowTexts(section, 0, rowCellQis, cellInfos);
+            int bodyRows = Math.Max(0, section.RowQis.Count - 1);
+            bodySections.Add(new ScheduleBodySection(header, bodyRows));
+        }
+    }
+
+    private static List<string> SectionRowTexts((int Index, List<int> RowQis, List<int> CellQis, bool Hide) section, int rowPos,
+        Dictionary<int, List<int>> rowCellQis,
+        Dictionary<int, (string Text, int CellType, int CoverBottom, int CoverRight)> cellInfos)
+    {
+        var texts = new List<string>();
+        if (rowPos < 0 || rowPos >= section.CellQis.Count) return texts;
+        int rowCellQi = section.CellQis[rowPos];
+        if (rowCellQi < 0 || !rowCellQis.TryGetValue(rowCellQi, out var cellQis)) return texts;
+        foreach (int cellQi in cellQis)
+        {
+            if (cellQi >= 0 && cellInfos.TryGetValue(cellQi, out var cell))
+                texts.Add(cell.Text);
+            else
+                texts.Add("");
+        }
+        return texts;
+    }
+
+    private static string FirstCellText((int Index, List<int> RowQis, List<int> CellQis, bool Hide) section, int rowPos,
+        Dictionary<int, List<int>> rowCellQis,
+        Dictionary<int, (string Text, int CellType, int CoverBottom, int CoverRight)> cellInfos)
+    {
+        foreach (string text in SectionRowTexts(section, rowPos, rowCellQis, cellInfos))
+            if (text.Length > 0) return text;
+        return "";
+    }
+
+    private static bool BandExtends(int rowQi, (int Index, List<int> RowQis, List<int> CellQis, bool Hide) section,
+        Dictionary<int, List<int>> rowCellQis,
+        Dictionary<int, (string Text, int CellType, int CoverBottom, int CoverRight)> cellInfos)
+    {
+        int pos = section.RowQis.IndexOf(rowQi);
+        if (pos < 0 || pos >= section.CellQis.Count) return false;
+        int rowCellQi = section.CellQis[pos];
+        if (rowCellQi < 0 || !rowCellQis.TryGetValue(rowCellQi, out var cellQis)) return false;
+        return cellQis.Any(cellQi => cellQi >= 0 && cellInfos.TryGetValue(cellQi, out var cell) && cell.CoverBottom > 0);
+    }
+
+    private static bool TryReadScheduleField(Cursor cur, List<(ushort, uint)> queue,
+        out string heading, out double widthFt, out bool hidden, out string failure)
+    {
+        heading = "";
+        widthFt = 0;
+        hidden = false;
+        failure = "ok";
+        var fieldFields = SerializationFields(3528);
+        if (fieldFields == null) { failure = "no-schema-3528"; return false; }
+        bool headRead = false, widthRead = false, hiddenRead = false;
+        foreach (var field in fieldFields)
+        {
+            if (field is { Declaring: 3528, Name: "m_columnHeading" })
+            {
+                if (field is not { Type: 8, Mods: 96 }) { failure = "heading-type"; return false; }
+                heading = ReadString(cur);
+                headRead = true;
+            }
+            else if (field is { Declaring: 3528, Name: "m_columnWidth" })
+            {
+                if (field is not { Type: 7, Mods: 0 }) { failure = "width-type"; return false; }
+                widthFt = ReadF64(cur);
+                widthRead = true;
+            }
+            else if (field is { Declaring: 3528, Name: "m_hidden" })
+            {
+                if (field is not { Type: 1, Mods: 0 }) { failure = "hidden-type"; return false; }
+                if (cur.Pos + 1 > cur.End) throw Fail;
+                hidden = cur.D[cur.Pos] != 0;
+                cur.Pos++;
+                hiddenRead = true;
+            }
+            else ReadField(cur, field, queue, 1, null);
+        }
+        if (!headRead || !widthRead || !hiddenRead) { failure = "missing-schedule-field"; return false; }
+        if (!(widthFt > 0) || widthFt > 100 || heading.Length > 200) { failure = "bad-schedule-field"; return false; }
+        return true;
+    }
+
+    private static bool TryReadScheduleSchemaFlags(Cursor cur, List<(ushort, uint)> queue,
+        out int categoryId, out bool showTitle, out bool showHeaders, out bool showGridLines, out bool showOutline,
+        out int gridStyleId, out int outlineStyleId, out string failure)
+    {
+        categoryId = 0;
+        showTitle = showHeaders = showGridLines = showOutline = false;
+        gridStyleId = outlineStyleId = 0;
+        failure = "ok";
+        var schemaFields = SerializationFields(3535);
+        if (schemaFields == null) { failure = "no-schema-3535"; return false; }
+        bool catRead = false, titleRead = false, headRead = false, gridRead = false, outlineRead = false;
+        foreach (var field in schemaFields)
+        {
+            if (field.Declaring != 3535) { ReadField(cur, field, queue, 1, null); continue; }
+            if (field is { Name: "m_categoryId" })
+            {
+                if (field is not { Type: 14, Mods: 0, Ref: 20 }) { failure = "category-type"; return false; }
+                categoryId = ReadI32(cur);
+                catRead = true;
+            }
+            else if (field is { Name: "m_showTitle" })
+            {
+                if (!TryReadFlag(cur, field, out bool value)) { failure = "title-type"; return false; }
+                showTitle = value; titleRead = true;
+            }
+            else if (field is { Name: "m_showHeaders" })
+            {
+                if (!TryReadFlag(cur, field, out bool value)) { failure = "headers-type"; return false; }
+                showHeaders = value; headRead = true;
+            }
+            else if (field is { Name: "m_showGridLines" })
+            {
+                if (!TryReadFlag(cur, field, out bool value)) { failure = "grid-type"; return false; }
+                showGridLines = value; gridRead = true;
+            }
+            else if (field is { Name: "m_showOutline" })
+            {
+                if (field is not { Type: 1, Mods: 0 }) { failure = "outline-type"; return false; }
+                if (cur.Pos + 1 > cur.End) throw Fail;
+                showOutline = cur.D[cur.Pos] != 0;
+                cur.Pos++;
+                outlineRead = true;
+            }
+            else if (field is { Name: "m_bodyGridCategoryId" })
+            {
+                if (field is not { Type: 14, Mods: 0, Ref: 20 }) { failure = "gridstyle-type"; return false; }
+                gridStyleId = ReadI32(cur);
+            }
+            else if (field is { Name: "m_outlineGridCategoryId" })
+            {
+                if (field is not { Type: 14, Mods: 0, Ref: 20 }) { failure = "outlinestyle-type"; return false; }
+                outlineStyleId = ReadI32(cur);
+            }
+            else ReadField(cur, field, queue, 1, null);
+        }
+        if (!catRead || !titleRead || !headRead || !gridRead || !outlineRead) { failure = "missing-schema-flags"; return false; }
+        return true;
+    }
+
+    private static bool TryReadFlag(Cursor c, TfField f, out bool value)
+    {
+        value = false;
+        if (f is not { Type: 1, Mods: 0 }) return false;
+        if (c.Pos + 1 > c.End) throw Fail;
+        value = c.D[c.Pos] != 0;
+        c.Pos++;
+        return true;
+    }
+
+    /// <summary>Reads a schedule section (class 3536): its index, hidden flag and the queue indices of its
+    /// row and row-cell objects (-1 for a null pointer). False when anything fails to decode.</summary>
+    private static bool TryReadScheduleSection(Cursor cur, List<(ushort, uint)> queue,
+        out int index, out List<int> rowQis, out List<int> cellQis, out bool hide, out string failure)
+    {
+        index = 0;
+        rowQis = new();
+        cellQis = new();
+        hide = false;
+        failure = "ok";
+        var fields = SerializationFields(3536);
+        if (fields == null) { failure = "no-schema-3536"; return false; }
+        bool indexRead = false, rowsRead = false, cellsRead = false, hideRead = false;
+        foreach (var field in fields)
+        {
+            if (field is { Declaring: 3537, Name: "m_rows" })
+            {
+                if (field is not { Type: 14, Mods: 81 }) { failure = "rows-type"; return false; }
+                if (!TryReadPtrArray(cur, queue, field with { Mods = 1 }, out rowQis, out string rowsFailure))
+                {
+                    failure = $"rows {rowsFailure}";
+                    return false;
+                }
+                rowsRead = true;
+            }
+            else if (field is { Declaring: 3537, Name: "m_tableCells" })
+            {
+                if (field is not { Type: 14, Mods: 81 }) { failure = "cells-type"; return false; }
+                if (!TryReadPtrArray(cur, queue, field with { Mods = 1 }, out cellQis, out string cellsFailure))
+                {
+                    failure = $"cells {cellsFailure}";
+                    return false;
+                }
+                cellsRead = true;
+            }
+            else if (field is { Declaring: 3537, Name: "m_index" })
+            {
+                if (field is not { Type: 4, Mods: 0 }) { failure = "index-type"; return false; }
+                index = ReadI32(cur);
+                indexRead = true;
+            }
+            else if (field is { Declaring: 3537, Name: "m_hideSection" })
+            {
+                if (field is not { Type: 1, Mods: 0 }) { failure = "hide-type"; return false; }
+                if (cur.Pos + 1 > cur.End) throw Fail;
+                hide = cur.D[cur.Pos] != 0;
+                cur.Pos++;
+                hideRead = true;
+            }
+            else ReadField(cur, field, queue, 1, null);
+        }
+        if (!indexRead || !rowsRead || !cellsRead || !hideRead) { failure = "missing-section"; return false; }
+        if (rowQis.Count != cellQis.Count || rowQis.Count > 10000) { failure = "section-mismatch"; return false; }
+        return true;
+    }
+
+    private static bool TryReadPtrArray(Cursor cur, List<(ushort, uint)> queue, TfField element,
+        out List<int> qis, out string failure)
+    {
+        qis = new();
+        failure = "ok";
+        uint count = ReadU32(cur);
+        if (count == 0xFFFFFFFF) return true;
+        if (count > 100_000) { failure = "count"; return false; }
+        for (uint i = 0; i < count; i++)
+        {
+            int before = queue.Count;
+            ReadField(cur, element, queue, 1, null);
+            qis.Add(queue.Count > before ? queue.Count - 1 : -1);
+        }
+        return true;
+    }
+
+    private static bool TryReadScheduleRowHeight(Cursor cur, out double height, out string failure)
+    {
+        height = 0;
+        failure = "ok";
+        var fields = SerializationFields(3926);
+        if (fields == null || fields.Count != 1
+            || fields[0] is not { Declaring: 3926, Name: "m_dHeight", Type: 7, Mods: 0 })
+        {
+            failure = "no-schema-3926";
+            return false;
+        }
+        height = ReadF64(cur);
+        if (!(height > 0) || height > 10) { failure = "bad-height"; return false; }
+        return true;
+    }
+
+    private static bool TryReadScheduleRowCells(Cursor cur, List<(ushort, uint)> queue,
+        out List<int> cellQis, out string failure)
+    {
+        cellQis = new();
+        failure = "ok";
+        var fields = SerializationFields(3925);
+        if (fields == null || fields.Count != 1
+            || fields[0] is not { Declaring: 3925, Name: "m_arrCells", Type: 14, Mods: 81 })
+        {
+            failure = "no-schema-3925";
+            return false;
+        }
+        return TryReadPtrArray(cur, queue, fields[0] with { Mods = 1 }, out cellQis, out failure);
+    }
+
+    private static bool TryReadScheduleCell(Cursor cur, List<(ushort, uint)> queue,
+        out string text, out int cellType, out int coverBottom, out int coverRight, out string failure)
+    {
+        text = "";
+        cellType = coverBottom = coverRight = 0;
+        failure = "ok";
+        var fields = SerializationFields(3921);
+        if (fields == null) { failure = "no-schema-3921"; return false; }
+        bool textRead = false, typeRead = false, bottomRead = false, rightRead = false;
+        foreach (var field in fields)
+        {
+            if (field is { Declaring: 3921, Name: "m_text" })
+            {
+                if (field is not { Type: 8, Mods: 96 }) { failure = "text-type"; return false; }
+                text = ReadString(cur);
+                textRead = true;
+            }
+            else if (field is { Declaring: 3921, Name: "m_cellType" })
+            {
+                if (field is not { Type: 4, Mods: 0 }) { failure = "type-type"; return false; }
+                cellType = ReadI32(cur);
+                typeRead = true;
+            }
+            else if (field is { Declaring: 3921, Name: "m_coverBottom" })
+            {
+                if (field is not { Type: 4, Mods: 0 }) { failure = "bottom-type"; return false; }
+                coverBottom = ReadI32(cur);
+                bottomRead = true;
+            }
+            else if (field is { Declaring: 3921, Name: "m_coverRight" })
+            {
+                if (field is not { Type: 4, Mods: 0 }) { failure = "right-type"; return false; }
+                coverRight = ReadI32(cur);
+                rightRead = true;
+            }
+            else ReadField(cur, field, queue, 1, null);
+        }
+        if (!textRead || !typeRead || !bottomRead || !rightRead) { failure = "missing-cell"; return false; }
+        if (text.Length > 1000) { failure = "bad-text"; return false; }
+        return true;
+    }
+
+    /// <summary>Reads a ViewDisplayMgr deferred object (class 4107): its display settings are inline structs
+    /// (the file's own schema names their classes; the shipped schema leaves them unreferenced, so the generic
+    /// walk would read them as polymorphic handles and misalign). The two raytrace settings stay queued owned
+    /// pointers. False when anything fails to decode.</summary>
+    private static bool TryReadViewDisplayMgr(Cursor cur, List<(ushort, uint)> queue, out string failure)
+    {
+        failure = "ok";
+        var fields = SerializationFields(4107);
+        if (fields == null) { failure = "no-schema-4107"; return false; }
+        foreach (var field in fields)
+        {
+            if (field.Declaring != 4107 || field is not { Type: 14, Mods: 0 }) { ReadField(cur, field, queue, 1, null); continue; }
+            int inlineClass = field.Name switch
+            {
+                "m_background" => 4103,
+                "m_fog" => 4105,
+                "m_model" => 4108,
+                "m_sketchyLines" => 4109,
+                "m_exposure" => 4104,
+                "m_lights" => 4106,
+                "m_shadows" => 4110,
+                _ => 0,
+            };
+            if (inlineClass == 0) ReadField(cur, field, queue, 1, null);
+            else ReadInlineStruct(cur, inlineClass, queue, 1);
+        }
+        return true;
+    }
+
     /// <summary>Reads the linework of a title block family symbol: the GLine objects of the FamilySymbol root
     /// (class 1829), each as origin + t*dirVec over its end parameters, in symbol feet. Lines whose GInfo carries
     /// GINFO_NOT_PRINTED (0x20, a revision table's cached grid) are left out. False when anything fails to decode.</summary>
@@ -5617,6 +6365,16 @@ internal static partial class TfBlockDeserializer
                     uint tags = ReadU32(c);
                     if (tags > 100_000 || !c.Take(checked((int)tags * 4))) throw Fail;
                 }
+                return true;
+            }
+            // TableView (1013).m_colorToCategoryIdMap: the schema names no item type; the payload is a map of
+            // [int key][ElementId value] entries (rvt-prt decodes [{first, second.m_id}]). The following m_fontIds
+            // and the DBViewSchedule tail then align exactly.
+            case (1013, "m_colorToCategoryIdMap") when f.Type == 14 && f.Mods == 80 && f.Ref == null && f.Cnt == null:
+            {
+                uint entries = ReadU32(c);
+                if (entries == 0xFFFFFFFF) return true;
+                if (entries > 100_000 || !c.Take(checked((int)entries * 8))) throw Fail;
                 return true;
             }
             // ParamDef.m_typeId and ParamDefValue.m_specTypeId are ForgeTypeId structs (one string each); kept under

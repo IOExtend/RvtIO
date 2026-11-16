@@ -5793,6 +5793,21 @@ internal static partial class ElementBuilder
             .ToDictionary(pair => (int)pair.Key,
                 pair => (IReadOnlyList<(double Ox, double Oy, double Height, double Width, int Flags, double Bx, double By, int ParamId, string Prefix, string Suffix)>)pair.Value.Labels!
                     .Select(label => (label.Ox, label.Oy, label.Height, label.Width, label.Flags, label.Bx, label.By, label.ParamId, label.Prefix, label.Suffix)).ToList());
+        rvtInfo.ScheduleInstances = state?.ScheduleInstances
+            .Where(pair => pair.Value is { BlockCount: 1, Placement: not null })
+            .ToDictionary(pair => (int)pair.Key,
+                pair => (pair.Value.Placement!.ScheduleId, pair.Value.Placement!.Ox, pair.Value.Placement!.Oy));
+        rvtInfo.ScheduleTables = state?.ScheduleTables
+            .Where(pair => pair.Value is { BlockCount: 1, Table: not null })
+            .ToDictionary(pair => (int)pair.Key,
+                pair => (pair.Value.Table!.Columns, pair.Value.Table!.CategoryId, pair.Value.Table!.ShowTitle,
+                    pair.Value.Table!.ShowHeaders, pair.Value.Table!.ShowGridLines, pair.Value.Table!.ShowOutline,
+                    pair.Value.Table!.GridStyleId, pair.Value.Table!.OutlineStyleId,
+                    pair.Value.Table!.TitleHeightFt, pair.Value.Table!.TitleBands, pair.Value.Table!.BodySections));
+        rvtInfo.ScheduleSheetRevisions = state?.SheetRevisions
+            .Where(pair => pair.Value is { BlockCount: 1, RevisionIds: not null })
+            .ToDictionary(pair => (int)pair.Key,
+                pair => (IReadOnlyList<int>)pair.Value.RevisionIds!);
         rvtInfo.CategoryNames = state?.CategoryNames
             .Where(pair => pair.Value is { BlockCount: 1, Name: not null })
             .ToDictionary(pair => (int)pair.Key, pair => pair.Value.Name!);
