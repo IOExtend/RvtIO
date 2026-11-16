@@ -46,6 +46,10 @@ public sealed class SheetCatalog
         Viewports = viewports;
     }
 
+    /// <summary>Create a catalog from sheets and viewports (used by <c>--where</c> filtering).</summary>
+    public static SheetCatalog FromFiltered(IReadOnlyList<SheetRecord> sheets, IReadOnlyList<ViewportRecord> viewports) =>
+        new(sheets, viewports);
+
     /// <summary>The sheets of the document, ordered by number (empty numbers last) and then by element id.</summary>
     public IReadOnlyList<SheetRecord> Sheets { get; }
 
@@ -141,10 +145,65 @@ public sealed class SheetCatalog
                 Text(element, BuiltInParameter.SHEET_CHECKED_BY),
                 Text(element, BuiltInParameter.SHEET_APPROVED_BY),
                 Ordered(viewportsBySheet, element.Id),
-                Ordered(owned, element.Id)));
+                Ordered(owned, element.Id),
+                ExtraParameters(element)));
         }
 
         return new SheetCatalog(sheets, viewports);
+    }
+
+    /// <summary>
+    /// The sheet's project and shared parameters as display strings (rvt-prt's <c>list --params</c>):
+    /// text and whole numbers with a value; numbers with units are left out until their units are read.
+    /// The 8 core fields are not repeated here. Unset sentinels (<c>HasRevitValue == false</c>) are skipped.
+    /// </summary>
+    private static IReadOnlyDictionary<string, string> ExtraParameters(Element element)
+    {
+        var result = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var parameter in element.Parameters)
+        {
+            if (parameter.Definition == null || !parameter.HasRevitValue) continue;
+            int id = parameter.Definition.Id;
+            if (id == (int)BuiltInParameter.SHEET_NUMBER
+                || id == (int)BuiltInParameter.SHEET_NAME
+                || id == (int)BuiltInParameter.SHEET_ISSUE_DATE
+                || id == (int)BuiltInParameter.VIEW_SCALE
+                || id == (int)BuiltInParameter.SHEET_DRAWN_BY
+                || id == (int)BuiltInParameter.SHEET_DESIGNED_BY
+                || id == (int)BuiltInParameter.SHEET_CHECKED_BY
+                || id == (int)BuiltInParameter.SHEET_APPROVED_BY)
+                continue;
+            string? key = parameter.Definition.Name;
+            if (string.IsNullOrWhiteSpace(key)) continue;
+            string? value = DisplayParameterValue(parameter);
+            if (value == null) continue;
+            // First occurrence wins, matching Element.LookupParameter semantics.
+            result.TryAdd(key, value);
+        }
+        // "Appears In Sheet List" under its Revit display name for --where compatibility;
+        // the BIP enum name still resolves through SheetFilter.Lookup.
+        if (element.LookupParameter(BuiltInParameter.SHEET_SCHEDULED) is { } scheduled
+            && scheduled.HasRevitValue
+            && scheduled.Value is int scheduledInt)
+        {
+            result.TryAdd(
+                SheetFilter.DisplayName(BuiltInParameter.SHEET_SCHEDULED),
+                scheduledInt != 0 ? "Yes" : "No");
+            result.Remove(nameof(BuiltInParameter.SHEET_SCHEDULED));
+        }
+        return result;
+    }
+
+    /// <summary>Display text for a sheet parameter: strings as stored, integers as numbers.</summary>
+    private static string? DisplayParameterValue(Parameter parameter)
+    {
+        if (parameter.Value == null) return null;
+        return parameter.StorageType switch
+        {
+            StorageType.String => parameter.Value as string,
+            StorageType.Integer => parameter.Value is int i ? i.ToString(System.Globalization.CultureInfo.InvariantCulture) : null,
+            _ => null,
+        };
     }
 
     private static IReadOnlyList<int> Ordered(Dictionary<int, List<int>> byOwner, int owner)

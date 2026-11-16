@@ -16,7 +16,8 @@ public sealed class SheetRecord
         string? checkedBy,
         string? approvedBy,
         IReadOnlyList<int> viewportIds,
-        IReadOnlyList<int> ownedElementIds)
+        IReadOnlyList<int> ownedElementIds,
+        IReadOnlyDictionary<string, string>? parameters = null)
     {
         ElementId = elementId;
         Number = number;
@@ -29,6 +30,7 @@ public sealed class SheetRecord
         ApprovedBy = approvedBy;
         ViewportIds = viewportIds;
         OwnedElementIds = ownedElementIds;
+        Parameters = parameters ?? new Dictionary<string, string>();
     }
 
     /// <summary>The element id of the sheet.</summary>
@@ -68,4 +70,9 @@ public sealed class SheetRecord
     /// view-specific graphics and other content placed on the sheet), ascending. Empty when the file decoded no owner
     /// view for its content.</summary>
     public IReadOnlyList<int> OwnedElementIds { get; }
+
+    /// <summary>The sheet's project and shared parameters as display strings, keyed by display name
+    /// (the <c>Definition.Name</c> Revit shows). Only text and whole numbers are included; numbers with
+    /// units are left out until their units are read. The 8 core fields above are not repeated here.</summary>
+    public IReadOnlyDictionary<string, string> Parameters { get; }
 }

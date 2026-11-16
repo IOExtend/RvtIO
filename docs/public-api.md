@@ -66,9 +66,10 @@ extension and label helpers carry the ids and names stored in the file format.
 | Type | Use |
 |---|---|
 | `SheetCatalog` | `Extract(document)` (or a `RevitFileInfo`) returns the sheets of the file, the viewports placed on them and the limits of this release: `Sheets`, `Viewports` and `Issues`. Nothing is read from the file again. |
-| `SheetRecord` | A sheet: `ElementId`, `Number`, `Name`, `IssueDate`, `Scale`, `DrawnBy`, `DesignedBy`, `CheckedBy`, `ApprovedBy`, `ViewportIds` and `OwnedElementIds`. |
+| `SheetRecord` | A sheet: `ElementId`, `Number`, `Name`, `IssueDate`, `Scale`, `DrawnBy`, `DesignedBy`, `CheckedBy`, `ApprovedBy`, `ViewportIds`, `OwnedElementIds` and `Parameters` (text/whole-number project/shared params; `Appears In Sheet List`). |
 | `ViewportRecord` | A placed view: `ElementId`, `SheetId` and `DetailNumber`; `DisplayedViewId` is null until the viewer element is decoded. |
 | `SheetIssue`, `SheetIssueKind` | What this release does not decode: page size, view placement, displayed view, view content and crop region. |
+| `SheetFilter` | A `--where` filter (`NAME=VALUE`, `!=`, `~`, `*`/`?` wildcards, Yes/No aliases); `SheetCatalog.FromFiltered` keeps matching sheets. |
 
 See [sheets and viewports](sheets.md) for what is decoded, what the limits are and why no page coordinate is exposed yet.
 
