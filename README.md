@@ -210,6 +210,8 @@ Reads `.rvt` projects and `.rfa` families. Testing covers sample projects saved 
 
 The tested projects include basic and advanced architecture, structure and MEP samples, plus several larger multi-discipline models.
 
+The stored class schema determines the decoding layout, including element row and ID widths. The saving year in `BasicFileInfo` is a fallback when the schema release cannot be recognized. Diagnostics report both years when they differ; an older saving year does not override a recognized newer schema.
+
 ## Limitations
 
 - Version 0.4.0 is a preview. The API can change before 1.0.

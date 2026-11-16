@@ -59,7 +59,7 @@ internal static class ElemTableReader
             {
                 RecordStream(diagnostics, "Global/ElemTable", data.Length, 1, 1, 0, 0, 0, exactTable.Length);
                 // Every version but R22: the layout comes from the file's own schema, not from a constant. The shipped R22 layout
-                // is used only for a file whose release in force (the older of the saved and the schema release) is 2022 or unknown.
+                // is used only for a file whose schema release (falling back to the saving release) is 2022 or unknown.
                 var formats = FormatsSchema.TryRead(root);
                 bool shipped = exactTable.Length >= 2 && BitConverter.ToUInt16(exactTable, 0) == ElementExportIds.ElemTableClassId
                     && SchemaRelease.AllowsShipped(formats?.Release ?? SchemaRelease.Of(root, null), 2022);

@@ -23,13 +23,13 @@ internal static class ElemTableLayout
     internal static int? IdWidth(FormatsSchema schema)
         => schema.Get("Identifier") is { Fields: [{ } field] } && LeafWidth(field.Type) is int width && Agrees(SchemaRelease.IdWidth(schema.Release), width) ? width : null;
 
-    /// <summary>True when the schema declares an element id width that the release in force does not have (a file saved by an older
-    /// release than its schema): the layout of that release is not the layout of the bytes.</summary>
+    /// <summary>True when the declared element id width contradicts the recognized release. Such a schema must not fall back
+    /// to a layout with a different width.</summary>
     internal static bool DisagreesWithRelease(FormatsSchema schema)
         => schema.Get("Identifier") is { Fields: [{ } field] } && LeafWidth(field.Type) is int width && !Agrees(SchemaRelease.IdWidth(schema.Release), width);
 
-    /// <summary>The widths the schema declares must be those of the release in force (the older of the saved and the schema release);
-    /// a file whose two releases disagree on the layout is not decoded by a layout it does not have.</summary>
+    /// <summary>Declared widths must agree with the recognized schema release, or with the saving release when the schema release
+    /// is unknown. Contradictory evidence is not decoded with a layout it does not have.</summary>
     private static bool Agrees(int? releaseWidth, int declared) => releaseWidth is not int expected || expected == declared;
 
     /// <summary>The rows of a decoded Global/ElemTable stream, or null unless the stream is this schema's ElemTable: the class
