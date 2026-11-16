@@ -282,14 +282,33 @@ public static class SheetComposer
                 if (site != null)
                 {
                     double drawScale = scale;
-                    frameWidth = (site.MaxX - site.MinX) / drawScale;
-                    frameHeight = (site.MaxY - site.MinY) / drawScale;
-                    FitFrame(ref frameWidth, ref frameHeight, ref drawScale);
-                    frameX = centerX - frameWidth / 2;
-                    frameY = centerY - frameHeight / 2;
-                    ClampFrame(ref frameX, ref frameY, frameWidth, frameHeight);
-                    ClipFrame(frameX, frameY, frameWidth, frameHeight);
-                    SitePrinter.DrawContent(page2, site, drawScale, frameX, frameY);
+                    // A site viewport whose view decoded a crop box draws the crop at the view's own scale, placed
+                    // by the viewport offset, the way a plan viewport does: the frame is the crop rectangle and the
+                    // content is clipped to it. Views without a crop keep the whole-model frame below.
+                    double siteOriginX = 0, siteOriginY = 0;
+                    bool siteCropped = view?.ViewCrop is { Active: true } siteCrop
+                        && TryCropFrame(centerX, centerY, scale, siteCrop, site.MinX, site.MinY,
+                            out frameX, out frameY, out frameWidth, out frameHeight,
+                            out siteOriginX, out siteOriginY);
+                    double siteDrawOriginX = frameX, siteDrawOriginY = frameY;
+                    if (siteCropped)
+                    {
+                        drawScale = scale;
+                        siteDrawOriginX = siteOriginX;
+                        siteDrawOriginY = siteOriginY;
+                        page2.BeginClip(frameX, frameY, Math.Max(0, frameWidth), Math.Max(0, frameHeight));
+                    }
+                    else
+                    {
+                        frameWidth = (site.MaxX - site.MinX) / drawScale;
+                        frameHeight = (site.MaxY - site.MinY) / drawScale;
+                        FitFrame(ref frameWidth, ref frameHeight, ref drawScale);
+                        frameX = centerX - frameWidth / 2;
+                        frameY = centerY - frameHeight / 2;
+                        ClampFrame(ref frameX, ref frameY, frameWidth, frameHeight);
+                        ClipFrame(frameX, frameY, frameWidth, frameHeight);
+                    }
+                    SitePrinter.DrawContent(page2, site, drawScale, siteDrawOriginX, siteDrawOriginY);
                     effectiveScale = (int)Math.Round(drawScale);
                     // The building stands on the site: the walls of the level with most walls go on the same plan,
                     // without its rooms, furniture and dimensions, which a site plan does not show.
@@ -314,17 +333,29 @@ public static class SheetComposer
                             new List<(double MidX, double MidY, double Nx, double Ny, string Text, bool IsWindow)>(),
                             sitePlan.MinX, sitePlan.MinY, sitePlan.MaxX, sitePlan.MaxY);
                         // The house is filled dark on a site plan, the way the reference fills the building: the rooms
-                        // of the level under its walls.
+                        // of the level under its walls. Inside a crop the building origin comes from the crop, like
+                        // the plan viewport's own origin; otherwise it is the site origin, as before.
+                        double wallsOriginX, wallsOriginY;
+                        if (siteCropped && view?.ViewCrop is { Active: true } wallsCrop
+                            && TryCropFrame(centerX, centerY, scale, wallsCrop, sitePlan.MinX, sitePlan.MinY,
+                                out _, out _, out _, out _, out wallsOriginX, out wallsOriginY))
+                        {
+                            // The frame stays the site frame above; only the building origin moves to its crop mapping.
+                        }
+                        else
+                        {
+                            wallsOriginX = (sitePlan.MinX - site.MinX) / drawScale + frameX;
+                            wallsOriginY = (sitePlan.MinY - site.MinY) / drawScale + frameY;
+                        }
                         foreach (var room in sitePlan.Rooms)
                         {
                             var polygon = room.Polygon.Select(point => (
-                                (point.X - site.MinX) / drawScale + frameX,
-                                (point.Y - site.MinY) / drawScale + frameY)).ToList();
+                                (point.X - sitePlan.MinX) / drawScale + wallsOriginX,
+                                (point.Y - sitePlan.MinY) / drawScale + wallsOriginY)).ToList();
                             if (polygon.Count >= 3) page2.DrawPolyline(polygon, 0, true, 0.45);
                         }
                         PlanPrinter.DrawContent(page2, wallsOnly, drawScale,
-                            (sitePlan.MinX - site.MinX) / drawScale + frameX,
-                            (sitePlan.MinY - site.MinY) / drawScale + frameY, 0.9, null, document);
+                            wallsOriginX, wallsOriginY, 0.9, null, document);
                     }
                     page2.EndClip();
                     // The planting schedule sits under the view title, clear of the site plan.
