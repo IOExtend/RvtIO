@@ -138,8 +138,16 @@ them), plus: a logo area, the project area, a revision table
 ```sh
 rvtio print project.rvt sheets.pdf --sheet 516334
 rvtio print project.rvt sheets.pdf --sheet 245623,516334   # one page each
+rvtio print project.rvt sheets.pdf --sheet A102 --where "Drawn By=AB"
+rvtio print project.rvt sheets.pdf --all-sheets --where "Appears In Sheet List=Yes"
 rvtio print project.rvt --list-sheets
+rvtio print project.rvt --list-sheets --where "Sheet Group=Architectural"
 ```
+
+`--where NAME=VALUE` (also `NAME!=VALUE` and `NAME~TEXT` for contains, `*` and `?` wildcards, repeatable,
+case-insensitive) keeps only the sheets whose parameters match, as in `rvtio sheets --where` (see
+[sheets and viewports](sheets.md)); with `--sheet` a sheet prints when it is one of those numbered and matches
+the filters. A misspelt name or an empty match exits with code 1.
 
 A sheet is printed from the linework the reader decodes: the location curves of the elements the sheet owns (the page
 border, the title block frame and its rules, the tables drawn as lines), at their sheet coordinates. The page is the size
