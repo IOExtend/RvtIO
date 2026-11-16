@@ -16,6 +16,8 @@ public class PdfFontsTests
         int dejavu = files.FindIndex(f => f.Contains("DejaVuSans", StringComparison.Ordinal));
         Assert.True(liberation >= 0 && arimo >= 0 && dejavu >= 0);
         Assert.True(liberation < dejavu && arimo < dejavu);
+        // Debian Bookworm's fonts-liberation2 path, ahead of the older liberation path.
+        Assert.Contains("/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf", files);
     }
 
     [Fact]
@@ -38,5 +40,39 @@ public class PdfFontsTests
 
         Assert.DoesNotContain(files, f => f.StartsWith("/fonts/", StringComparison.Ordinal));
         Assert.Contains(files, f => f.Contains("DejaVuSans", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void TruncatedFont_ReportsUnsupportedInsteadOfOverrunningTables()
+    {
+        // The review's repro: a 16-byte file with a valid magic and one declared
+        // but truncated table directory entry.
+        byte[] truncated = new byte[16];
+        truncated[1] = 1;
+        truncated[5] = 1;
+
+        var error = Assert.Throws<NotSupportedException>(() => new PdfTrueTypeFont(truncated, "bad"));
+        Assert.Contains("runcated", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TryFind_InvalidPreferredFontFallsThroughWithoutThrowing()
+    {
+        string folder = Path.Combine(Path.GetTempPath(), "rvtio-bad-font-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            byte[] truncated = new byte[16];
+            truncated[1] = 1;
+            truncated[5] = 1;
+            File.WriteAllBytes(Path.Combine(folder, "arial.ttf"), truncated);
+
+            // Must not throw: a corrupt preferred font is skipped like an unsupported one.
+            PdfFonts.TryFind(_ => folder, out string? _);
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+        }
     }
 }

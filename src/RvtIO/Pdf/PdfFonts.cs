@@ -25,6 +25,8 @@ public static class PdfFonts
     /// so a title wraps the same on every machine.</summary>
     private static readonly string[] Candidates =
     [
+        // Debian Bookworm and later ship Liberation Sans in fonts-liberation2.
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "/usr/share/fonts/TTF/LiberationSans-Regular.ttf",
         "/usr/share/fonts/truetype/arimo/Arimo-Regular.ttf",
@@ -57,9 +59,12 @@ public static class PdfFonts
                 path = candidate;
                 return font;
             }
-            catch (Exception exception) when (exception is NotSupportedException or IOException or UnauthorizedAccessException)
+            catch (Exception exception) when (exception is NotSupportedException or IOException or UnauthorizedAccessException
+                // A corrupt candidate must not abort the search: every out-of-range table read already
+                // reports NotSupportedException, this covers any other malformed-input failure.
+                or ArgumentException)
             {
-                // A .ttc collection or a font without a Unicode cmap: try the next candidate.
+                // A .ttc collection, a font without a Unicode cmap or a corrupt file: try the next candidate.
             }
         }
         return null;
