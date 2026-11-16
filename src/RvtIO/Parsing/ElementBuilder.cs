@@ -5783,6 +5783,16 @@ internal static partial class ElementBuilder
             .ToDictionary(pair => (int)pair.Key,
                 pair => (IReadOnlyList<(double X0, double Y0, double X1, double Y1, int StyleId)>)pair.Value.Lines!
                     .Select(line => (line.X0, line.Y0, line.X1, line.Y1, line.StyleId)).ToList());
+        rvtInfo.TitleBlockTexts = state?.TitleBlockTexts
+            .Where(pair => pair.Value is { BlockCount: 1, Texts: not null })
+            .ToDictionary(pair => (int)pair.Key,
+                pair => (IReadOnlyList<(double Ox, double Oy, double Height, double Width, int Flags, double Bx, double By, byte[] Rtf)>)pair.Value.Texts!
+                    .Select(text => (text.Ox, text.Oy, text.Height, text.Width, text.Flags, text.Bx, text.By, text.Rtf)).ToList());
+        rvtInfo.TitleBlockLabels = state?.TitleBlockLabels
+            .Where(pair => pair.Value is { BlockCount: 1, Labels: not null })
+            .ToDictionary(pair => (int)pair.Key,
+                pair => (IReadOnlyList<(double Ox, double Oy, double Height, double Width, int Flags, double Bx, double By, int ParamId, string Prefix, string Suffix)>)pair.Value.Labels!
+                    .Select(label => (label.Ox, label.Oy, label.Height, label.Width, label.Flags, label.Bx, label.By, label.ParamId, label.Prefix, label.Suffix)).ToList());
         rvtInfo.CategoryNames = state?.CategoryNames
             .Where(pair => pair.Value is { BlockCount: 1, Name: not null })
             .ToDictionary(pair => (int)pair.Key, pair => pair.Value.Name!);

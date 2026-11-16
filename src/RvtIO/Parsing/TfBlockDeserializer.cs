@@ -3637,6 +3637,16 @@ internal static partial class TfBlockDeserializer
     /// element that inks it (Title Blocks Wide/Medium/Narrow Lines).</summary>
     internal sealed record TitleBlockLine(double X0, double Y0, double X1, double Y1, int StyleId);
 
+    /// <summary>A fixed text of a title block family symbol, in symbol feet: the anchor, the box height and width,
+    /// the alignment flags, the base direction and the RTF bytes.</summary>
+    internal sealed record TitleBlockText(double Ox, double Oy, double Oz, double Hx, double Hy, double Bx, double By,
+        double Height, double Width, int AttrId, int Flags, byte[] Rtf);
+
+    /// <summary>A label of a title block family symbol, in symbol feet: the anchor, the box, the flags, the base
+    /// direction and the parameter it prints (a BuiltInParameter id) with its prefix, suffix and sample text.</summary>
+    internal sealed record TitleBlockLabel(double Ox, double Oy, double Oz, double Hx, double Hy, double Bx, double By,
+        double Height, double Width, int AttrId, int Flags, int ParamId, string Prefix, string Suffix);
+
     /// <summary>Reads the linework of a title block family symbol: the GLine objects of the FamilySymbol root
     /// (class 1829), each as origin + t*dirVec over its end parameters, in symbol feet. Lines whose GInfo carries
     /// GINFO_NOT_PRINTED (0x20, a revision table's cached grid) are left out. False when anything fails to decode.</summary>
@@ -3647,7 +3657,26 @@ internal static partial class TfBlockDeserializer
     internal static bool TryExtractTitleBlockLines(
         byte[] d, int blockStart, uint dataSize, ushort classId, out List<TitleBlockLine> lines, out string failure)
     {
+        bool ok = TryExtractTitleBlockSymbol(d, blockStart, dataSize, classId,
+            out lines, out _, out _, out failure);
+        return ok;
+    }
+
+    /// <summary>Reads a title block family symbol: its GLine linework, fixed texts (TextNoteData + RtfData) and
+    /// labels (TagNoteData + parameter formatting). Texts carry the RTF bytes; labels carry the printed parameter
+    /// id with its prefix, suffix and sample text. False when anything fails to decode.</summary>
+    internal static bool TryExtractTitleBlockSymbol(
+        byte[] d, int blockStart, uint dataSize, ushort classId,
+        out List<TitleBlockLine> lines, out List<TitleBlockText> texts, out List<TitleBlockLabel> labels)
+        => TryExtractTitleBlockSymbol(d, blockStart, dataSize, classId, out lines, out texts, out labels, out _);
+
+    internal static bool TryExtractTitleBlockSymbol(
+        byte[] d, int blockStart, uint dataSize, ushort classId,
+        out List<TitleBlockLine> lines, out List<TitleBlockText> texts, out List<TitleBlockLabel> labels, out string failure)
+    {
         lines = new();
+        texts = new();
+        labels = new();
         failure = "ok";
         if (classId != 1829
             || blockStart < 0
@@ -3698,7 +3727,11 @@ internal static partial class TfBlockDeserializer
             }
 
             // The GLine objects carry their GInfo inline (four words: tag, control, style, flags).
+            // TextNoteData queues its RtfData; TagNoteData carries its parameter formatting inline.
             var geoms = new List<(double T0, double T1, double Ox, double Oy, double Oz, double Dx, double Dy, double Dz, int Tag, int Control, int CategoryId, uint Flags)>();
+            var rawTexts = new List<(double Ox, double Oy, double Oz, double Hx, double Hy, double Bx, double By, double Height, double Width, int AttrId, int Flags, int RtfQi)>();
+            var rawLabels = new List<(double Ox, double Oy, double Oz, double Hx, double Hy, double Bx, double By, double Height, double Width, int AttrId, int Flags, List<(int ParamId, string Prefix, string Suffix, string Sample)> Params)>();
+            var rtfBlobs = new Dictionary<int, byte[]>();
             for (int qi = 0; qi < queue.Count; qi++)
             {
                 ushort queuedClass = queue[qi].Cls;
@@ -3736,6 +3769,36 @@ internal static partial class TfBlockDeserializer
                     geoms.Add(geom);
                     continue;
                 }
+                if (queuedClass == 3973)
+                {
+                    if (!TryReadTextNoteData(cur, queue, out var text, out string textFailure))
+                    {
+                        failure = $"textnote qi={qi} pos={cur.Pos} {textFailure}";
+                        return false;
+                    }
+                    rawTexts.Add(text);
+                    continue;
+                }
+                if (queuedClass == 3932)
+                {
+                    if (!TryReadTagNoteData(cur, queue, out var label, out string labelFailure))
+                    {
+                        failure = $"taggote qi={qi} pos={cur.Pos} {labelFailure}";
+                        return false;
+                    }
+                    rawLabels.Add(label);
+                    continue;
+                }
+                if (queuedClass == 3487)
+                {
+                    if (!TryReadRtfData(cur, out var rtf, out string rtfFailure))
+                    {
+                        failure = $"rtf qi={qi} pos={cur.Pos} {rtfFailure}";
+                        return false;
+                    }
+                    rtfBlobs[qi] = rtf;
+                    continue;
+                }
                 var qf = SerializationFields(queuedClass);
                 if (qf == null)
                 {
@@ -3771,7 +3834,35 @@ internal static partial class TfBlockDeserializer
                 }
                 lines.Add(new TitleBlockLine(x0, y0, x1, y1, geom.CategoryId));
             }
-            failure = $"ok glines={geoms.Count} kept={lines.Count} queue={queue.Count}";
+            foreach (var raw in rawTexts)
+            {
+                if (!rtfBlobs.TryGetValue(raw.RtfQi, out var rtf))
+                {
+                    failure = $"missing-rtf rtfQi={raw.RtfQi}";
+                    return false;
+                }
+                texts.Add(new TitleBlockText(raw.Ox, raw.Oy, raw.Oz, raw.Hx, raw.Hy, raw.Bx, raw.By,
+                    raw.Height, raw.Width, raw.AttrId, raw.Flags, rtf));
+            }
+            foreach (var raw in rawLabels)
+            {
+                int paramId = 0;
+                string prefix = "", suffix = "";
+                foreach (var p in raw.Params)
+                {
+                    if (p.ParamId != 0)
+                    {
+                        paramId = p.ParamId;
+                        prefix = p.Prefix;
+                        suffix = p.Suffix;
+                        break;
+                    }
+                }
+                if (paramId == 0) continue;
+                labels.Add(new TitleBlockLabel(raw.Ox, raw.Oy, raw.Oz, raw.Hx, raw.Hy, raw.Bx, raw.By,
+                    raw.Height, raw.Width, raw.AttrId, raw.Flags, paramId, prefix, suffix));
+            }
+            failure = $"ok glines={geoms.Count} kept={lines.Count} texts={texts.Count} labels={labels.Count} queue={queue.Count}";
             return true;
         }
         catch (DecodeFail)
@@ -3859,6 +3950,225 @@ internal static partial class TfBlockDeserializer
         }
         geom = (t0, t1, ox, oy, oz, dx, dy, dz, tag, control, category, flags);
         return true;
+    }
+
+    private static bool TryReadTextDataBase(Cursor cur, List<(ushort Cls, uint Id)> queue,
+        out double ox, out double oy, out double oz, out double hx, out double hy,
+        out double bx, out double by, out double height, out double width,
+        out int attrId, out int flags, out string failure)
+    {
+        ox = oy = oz = hx = hy = bx = by = height = width = 0;
+        attrId = flags = 0;
+        failure = "ok";
+        var baseFields = SerializationFields(3933);
+        if (baseFields == null)
+        {
+            failure = "no-schema-3933";
+            return false;
+        }
+        bool o = false, u = false, b = false, h = false, w = false, a = false, f = false;
+        foreach (var field in baseFields)
+        {
+            if (field is { Declaring: 3933, Name: "m_orig" })
+            {
+                if (field is not { Type: 7, Mods: 16 }) { failure = "orig-type"; return false; }
+                ox = ReadF64(cur); oy = ReadF64(cur); oz = ReadF64(cur); o = true;
+            }
+            else if (field is { Declaring: 3933, Name: "m_upVec" })
+            {
+                if (field is not { Type: 7, Mods: 16 }) { failure = "up-type"; return false; }
+                hx = ReadF64(cur); hy = ReadF64(cur); ReadF64(cur); u = true;
+            }
+            else if (field is { Declaring: 3933, Name: "m_baseVec" })
+            {
+                if (field is not { Type: 7, Mods: 16 }) { failure = "base-type"; return false; }
+                bx = ReadF64(cur); by = ReadF64(cur); ReadF64(cur); b = true;
+            }
+            else if (field is { Declaring: 3933, Name: "m_height" })
+            {
+                if (field is not { Type: 7, Mods: 0 }) { failure = "height-type"; return false; }
+                height = ReadF64(cur); h = true;
+            }
+            else if (field is { Declaring: 3933, Name: "m_lineWidth" })
+            {
+                if (field is not { Type: 7, Mods: 0 }) { failure = "width-type"; return false; }
+                width = ReadF64(cur); w = true;
+            }
+            else if (field is { Declaring: 3933, Name: "m_attrId" })
+            {
+                if (field is not { Type: 14, Mods: 0, Ref: 20 }) { failure = "attr-type"; return false; }
+                attrId = ReadI32(cur); a = true;
+            }
+            else if (field is { Declaring: 3933, Name: "m_flags" })
+            {
+                if (field is not { Type: 4, Mods: 0 }) { failure = "flags-type"; return false; }
+                flags = ReadI32(cur); f = true;
+            }
+            else ReadField(cur, field, queue, 1, null);
+        }
+        if (!o || !u || !b || !h || !w || !a || !f) { failure = "missing-base"; return false; }
+        return true;
+    }
+
+    private static bool TryReadTextNoteData(Cursor cur, List<(ushort Cls, uint Id)> queue,
+        out (double Ox, double Oy, double Oz, double Hx, double Hy, double Bx, double By, double Height, double Width, int AttrId, int Flags, int RtfQi) text, out string failure)
+    {
+        text = default;
+        failure = "ok";
+        if (!TryReadTextDataBase(cur, queue, out double ox, out double oy, out double oz,
+            out double hx, out double hy, out double bx, out double by, out double height, out double width,
+            out int attrId, out int flags, out string baseFailure))
+        {
+            failure = baseFailure;
+            return false;
+        }
+        var noteFields = SerializationFields(3973);
+        if (noteFields == null) { failure = "no-schema-3973"; return false; }
+        int rtfQi = -1;
+        bool rtfRead = false;
+        foreach (var field in noteFields)
+        {
+            if (field.Declaring != 3973) continue;
+            if (field is { Name: "m_oRtfData" })
+            {
+                int before = queue.Count;
+                ReadField(cur, field, queue, 1, null);
+                if (queue.Count == before)
+                {
+                    rtfQi = -1;
+                }
+                else
+                {
+                    if (queue.Count != before + 1 || queue[before].Cls != 3487)
+                    {
+                        failure = $"rtf-queue before={before} after={queue.Count}";
+                        return false;
+                    }
+                    rtfQi = before;
+                }
+                rtfRead = true;
+            }
+            else ReadField(cur, field, queue, 1, null);
+        }
+        if (!rtfRead) { failure = "missing-rtf-field"; return false; }
+        text = (ox, oy, oz, hx, hy, bx, by, height, width, attrId, flags, rtfQi);
+        return true;
+    }
+
+    private static bool TryReadTagNoteData(Cursor cur, List<(ushort Cls, uint Id)> queue,
+        out (double Ox, double Oy, double Oz, double Hx, double Hy, double Bx, double By, double Height, double Width, int AttrId, int Flags, List<(int ParamId, string Prefix, string Suffix, string Sample)> Params) label, out string failure)
+    {
+        label = default;
+        failure = "ok";
+        if (!TryReadTextDataBase(cur, queue, out double ox, out double oy, out double oz,
+            out double hx, out double hy, out double bx, out double by, out double height, out double width,
+            out int attrId, out int flags, out string baseFailure))
+        {
+            failure = baseFailure;
+            return false;
+        }
+        var tagFields = SerializationFields(3932);
+        if (tagFields == null) { failure = "no-schema-3932"; return false; }
+        var collected = new List<(int ParamId, string Prefix, string Suffix, string Sample)>();
+        bool arrRead = false;
+        foreach (var field in tagFields)
+        {
+            if (field.Declaring != 3932) continue;
+            if (field is { Name: "m_paramDataFormattingArr" })
+            {
+                if (field is not { Type: 14, Mods: 80 })
+                {
+                    failure = $"parr-type t={field.Type} mods={field.Mods}";
+                    return false;
+                }
+                uint count = ReadU32(cur);
+                if (count == 0xFFFFFFFF) count = 0;
+                if (count > 1000) { failure = "parr-count"; return false; }
+                for (uint i = 0; i < count; i++)
+                {
+                    if (!TryReadTagParam(cur, queue, out var param, out string paramFailure))
+                    {
+                        failure = $"parr[{i}] {paramFailure}";
+                        return false;
+                    }
+                    collected.Add(param);
+                }
+                arrRead = true;
+            }
+            else ReadField(cur, field, queue, 1, null);
+        }
+        if (!arrRead) { failure = "missing-parr"; return false; }
+        label = (ox, oy, oz, hx, hy, bx, by, height, width, attrId, flags, collected);
+        return true;
+    }
+
+    private static bool TryReadTagParam(Cursor cur, List<(ushort Cls, uint Id)> queue,
+        out (int ParamId, string Prefix, string Suffix, string Sample) param, out string failure)
+    {
+        param = default;
+        failure = "ok";
+        var paramFields = SerializationFields(3929);
+        if (paramFields == null) { failure = "no-schema-3929"; return false; }
+        int paramId = 0;
+        string prefix = "", sample = "", suffix = "";
+        bool idRead = false, preRead = false, samRead = false, sufRead = false;
+        foreach (var field in paramFields)
+        {
+            if (field is { Declaring: 3929, Name: "m_paramId" })
+            {
+                if (field is not { Type: 14, Mods: 0, Ref: 20 }) { failure = "paramid-type"; return false; }
+                paramId = ReadI32(cur); idRead = true;
+            }
+            else if (field is { Declaring: 3929, Name: "m_prefix" })
+            {
+                prefix = ReadString(cur); preRead = true;
+            }
+            else if (field is { Declaring: 3929, Name: "m_sampleText" })
+            {
+                sample = ReadString(cur); samRead = true;
+            }
+            else if (field is { Declaring: 3929, Name: "m_suffix" })
+            {
+                suffix = ReadString(cur); sufRead = true;
+            }
+            else ReadField(cur, field, queue, 1, null);
+        }
+        if (!idRead || !preRead || !samRead || !sufRead) { failure = "missing-param"; return false; }
+        param = (paramId, prefix, suffix, sample);
+        return true;
+    }
+
+    private static bool TryReadRtfData(Cursor cur,
+        out byte[] rtf, out string failure)
+    {
+        rtf = [];
+        failure = "ok";
+        var rtfFields = SerializationFields(3487);
+        if (rtfFields == null) { failure = "no-schema-3487"; return false; }
+        foreach (var field in rtfFields)
+        {
+            if (field is { Declaring: 3487, Name: "m_arrRtfStream" })
+            {
+                if (field is not { Type: 2, Mods: 80 }) { failure = "rtf-type"; return false; }
+                uint count = ReadU32(cur);
+                if (count == 0xFFFFFFFF) count = 0;
+                if (count > 1_000_000) { failure = "rtf-count"; return false; }
+                int at = TakeRtfBytes(cur, (int)count);
+                if (at < 0) { failure = "rtf-bytes"; return false; }
+                rtf = new byte[count];
+                System.Buffer.BlockCopy(cur.D, at, rtf, 0, (int)count);
+            }
+            else { failure = $"rtf-unexpected {field.Declaring}.{field.Name}"; return false; }
+        }
+        return true;
+    }
+
+    private static int TakeRtfBytes(Cursor c, int n)
+    {
+        if (n < 0 || c.Pos + n > c.End) return -1;
+        int p = c.Pos;
+        c.Pos += n;
+        return p;
     }
 
     /// <summary>Reads a line pattern: the LinePatternElem root (class 2325) owns exactly one deferred LinePattern

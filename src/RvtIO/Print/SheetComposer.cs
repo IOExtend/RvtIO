@@ -131,6 +131,7 @@ public static class SheetComposer
         // Otherwise the page border and a title block strip on the right, built from the sheet's own fields,
         // stand in for it, so a printed sheet reads as a framed page of a set.
         IReadOnlyList<(double X0, double Y0, double X1, double Y1, int StyleId)>? titleLines = null;
+        int titleSymbolId = 0;
         foreach (var element in document.Elements)
         {
             if (element.OwnerViewId != sheet.Id || element.CategoryId != (int)BuiltInCategory.OST_TitleBlocks) continue;
@@ -138,6 +139,7 @@ public static class SheetComposer
                 && decoded.Count > 0)
             {
                 titleLines = decoded;
+                titleSymbolId = element.TypeId;
                 break;
             }
         }
@@ -554,17 +556,12 @@ public static class SheetComposer
         }
 
         // The title block goes last, over the drawings. Decoded linework draws at its sheet position with its
-        // annotation pens (0.7 pt where the style has no pen, as rvt-prt draws it); otherwise the strip built from
-        // the sheet's own fields stands in. The scale row of the strip names the scale the views were printed at
-        // (a view the layout reduced no longer shows its nominal scale), and no drawing line runs under the strip.
+        // annotation pens (0.7 pt where the style has no pen, as rvt-prt draws it), with its fixed texts and
+        // labels; otherwise the strip built from the sheet's own fields stands in. The scale row of the strip
+        // names the scale the views were printed at (a view the layout reduced no longer shows its nominal scale),
+        // and no drawing line runs under the strip.
         if (options.DrawPageFrame && pdf.Font != null)
         {
-            if (titleLines != null)
-            {
-                DrawTitleBlockLines(page2, document, titleLines, originX, originY);
-            }
-            else
-            {
             string scaleText = effectiveScales.Count > 0
                 ? "1:" + effectiveScales.OrderByDescending(pair => pair.Value).First().Key
                 : "";
@@ -583,17 +580,31 @@ public static class SheetComposer
                 }
                 if (nominal.Count > 0) scaleText = "1:" + nominal.OrderByDescending(pair => pair.Value).First().Key;
             }
-            TitleBlockPrinter.Draw(page2, document, sheet, Math.Min(180, layout.WidthMillimetres * 0.22),
-                margin, scaleText, TitleLogo(document), Revisions(document));
+            if (titleLines != null)
+            {
+                IReadOnlyList<(double Ox, double Oy, double Height, double Width, int Flags, double Bx, double By, byte[] Rtf)>? titleTexts = null;
+                IReadOnlyList<(double Ox, double Oy, double Height, double Width, int Flags, double Bx, double By, int ParamId, string Prefix, string Suffix)>? titleLabels = null;
+                document.RawData.TitleBlockTexts?.TryGetValue(titleSymbolId, out titleTexts);
+                document.RawData.TitleBlockLabels?.TryGetValue(titleSymbolId, out titleLabels);
+                DrawTitleBlockSymbol(page2, document, sheet, scaleText, titleLines,
+                    titleTexts, titleLabels, originX, originY);
+            }
+            else
+            {
+                TitleBlockPrinter.Draw(page2, document, sheet, Math.Min(180, layout.WidthMillimetres * 0.22),
+                    margin, scaleText, TitleLogo(document), Revisions(document));
             }
         }
     }
 
-    /// <summary>Draws the decoded linework of a title block family symbol at its sheet position: symbol feet to
-    /// page millimetres minus the type origin, each line in its graphics style's annotation pen (0.7 pt where the
-    /// style has no pen, as rvt-prt draws it).</summary>
-    private static void DrawTitleBlockLines(PdfPage page, RvtDocument document,
-        IReadOnlyList<(double X0, double Y0, double X1, double Y1, int StyleId)> lines, double originX, double originY)
+    /// <summary>Draws the decoded symbol of a title block family at its sheet position: symbol feet to page
+    /// millimetres minus the type origin, each line in its graphics style's annotation pen (0.7 pt where the
+    /// style has no pen, as rvt-prt draws it), each fixed text and label at its anchor.</summary>
+    private static void DrawTitleBlockSymbol(PdfPage page, RvtDocument document, Element sheet, string scaleText,
+        IReadOnlyList<(double X0, double Y0, double X1, double Y1, int StyleId)> lines,
+        IReadOnlyList<(double Ox, double Oy, double Height, double Width, int Flags, double Bx, double By, byte[] Rtf)>? texts,
+        IReadOnlyList<(double Ox, double Oy, double Height, double Width, int Flags, double Bx, double By, int ParamId, string Prefix, string Suffix)>? labels,
+        double originX, double originY)
     {
         const double FeetToMillimetres = 304.8;
         var pens = document.RawData.GraphicsStylePens;
@@ -606,6 +617,71 @@ public static class SheetComposer
             page.DrawLine(line.X0 * FeetToMillimetres - originX, line.Y0 * FeetToMillimetres - originY,
                 line.X1 * FeetToMillimetres - originX, line.Y1 * FeetToMillimetres - originY, widthMillimetres);
         }
+        if (texts != null)
+        {
+            foreach (var text in texts)
+            {
+                var parsed = Parsing.RtfText.Parse(text.Rtf, 0, text.Rtf.Length);
+                if (parsed?.Text is not { Length: > 0 } plain) continue;
+                double sizeMm = parsed.Value.FontSizePoints is double points && points > 0
+                    ? points * 25.4 / 72.0 : 2.5;
+                DrawTitleBlockText(page, plain, text.Ox * FeetToMillimetres - originX,
+                    text.Oy * FeetToMillimetres - originY, sizeMm, text.Flags, text.Bx, text.By);
+            }
+        }
+        if (labels != null)
+        {
+            foreach (var label in labels)
+            {
+                string value = TitleBlockLabelValue(document, sheet, scaleText, label.ParamId);
+                if (value.Length == 0) continue;
+                value = label.Prefix + value + label.Suffix;
+                // A label with no decoded text type prints at its box height, as rvt-prt sizes it.
+                double sizeMm = label.Height * 304.8 / 1.257;
+                DrawTitleBlockText(page, value, label.Ox * FeetToMillimetres - originX,
+                    label.Oy * FeetToMillimetres - originY, sizeMm, label.Flags, label.Bx, label.By);
+            }
+        }
+    }
+
+    private static void DrawTitleBlockText(PdfPage page, string text, double x, double y,
+        double sizeMm, int flags, double bx, double by)
+    {
+        if (string.IsNullOrEmpty(text) || sizeMm <= 0) return;
+        var alignment = (flags & 0x80) != 0 ? PdfTextAlignment.Center
+            : (flags & 0x100) != 0 ? PdfTextAlignment.Right : PdfTextAlignment.Left;
+        double angle = Math.Atan2(by, bx) * 180.0 / Math.PI;
+        string[] parts = text.Split('\n');
+        for (int i = 0; i < parts.Length; i++)
+        {
+            if (parts[i].Length == 0) continue;
+            double lineY = y - i * sizeMm * 1.25;
+            if (Math.Abs(angle) < 1e-6) page.DrawText(parts[i], x, lineY, sizeMm, alignment);
+            else page.DrawTextRotated(parts[i], x, lineY, sizeMm, angle, alignment);
+        }
+    }
+
+    /// <summary>The printed value of a title block label: the sheet number and name, the drawn/checked by, the
+    /// print time, the view scale, or a project information field, as rvt-prt resolves them.</summary>
+    private static string TitleBlockLabelValue(RvtDocument document, Element sheet, string scaleText, int paramId)
+    {
+        static string Text(Element element, BuiltInParameter id) =>
+            element.LookupParameter(id)?.Value as string ?? "";
+        var project = document.ProjectInformation;
+        return paramId switch
+        {
+            -1007401 => Text(sheet, BuiltInParameter.SHEET_NUMBER),
+            -1007400 => Text(sheet, BuiltInParameter.SHEET_NAME),
+            -1007404 => Text(sheet, BuiltInParameter.SHEET_DRAWN_BY),
+            -1007405 => Text(sheet, BuiltInParameter.SHEET_CHECKED_BY),
+            -1007403 => System.DateTime.Now.ToString("dd/MM/yyyy HH:mm:ss"),
+            -1007402 => scaleText,
+            -1006316 => project?.Number ?? "",
+            -1006317 => project?.Name ?? "",
+            -1006319 => project?.Client ?? "",
+            -1006321 => project?.IssueDate ?? "",
+            _ => "",
+        };
     }
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, PdfRasterImage?> Logos = new();

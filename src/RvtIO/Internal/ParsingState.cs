@@ -300,6 +300,14 @@ internal class ParsingState
     /// did not decode; a repeated block clears it.</summary>
     public Dictionary<uint, (int BlockCount, List<Parsing.TfBlockDeserializer.TitleBlockLine>? Lines)> TitleBlockLines { get; } = new();
 
+    /// <summary>FamilySymbol (class 1829) of a title block -> its fixed texts (TextNoteData + RtfData) in symbol
+    /// feet. Null when the block did not decode; a repeated block clears it.</summary>
+    public Dictionary<uint, (int BlockCount, List<Parsing.TfBlockDeserializer.TitleBlockText>? Texts)> TitleBlockTexts { get; } = new();
+
+    /// <summary>FamilySymbol (class 1829) of a title block -> its labels (TagNoteData) in symbol feet. Null when
+    /// the block did not decode; a repeated block clears it.</summary>
+    public Dictionary<uint, (int BlockCount, List<Parsing.TfBlockDeserializer.TitleBlockLabel>? Labels)> TitleBlockLabels { get; } = new();
+
     /// <summary>CategoryElem (class 632) -> Category.m_name; every root counts, an unreadable root records null and a
     /// repeated block clears the name.</summary>
     public Dictionary<uint, (int BlockCount, string? Name)> CategoryNames { get; } = new();

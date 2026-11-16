@@ -1908,12 +1908,21 @@ public partial class RvtFileReader
     {
         if (classId != 1829) return;
         List<TfBlockDeserializer.TitleBlockLine> lines = new();
+        List<TfBlockDeserializer.TitleBlockText> texts = new();
+        List<TfBlockDeserializer.TitleBlockLabel> labels = new();
         bool read = start >= 0 && start <= data.Length - 4
             && BitConverter.ToUInt32(data, start) == owner
-            && TfBlockDeserializer.TryExtractTitleBlockLines(data, start, size, classId, out lines);
-        state.TitleBlockLines[owner] = state.TitleBlockLines.TryGetValue(owner, out var old)
-            ? (old.BlockCount + 1, null)
+            && TfBlockDeserializer.TryExtractTitleBlockSymbol(data, start, size, classId,
+                out lines, out texts, out labels);
+        state.TitleBlockLines[owner] = state.TitleBlockLines.TryGetValue(owner, out var oldLines)
+            ? (oldLines.BlockCount + 1, null)
             : (1, read ? lines : null);
+        state.TitleBlockTexts[owner] = state.TitleBlockTexts.TryGetValue(owner, out var oldTexts)
+            ? (oldTexts.BlockCount + 1, null)
+            : (1, read ? texts : null);
+        state.TitleBlockLabels[owner] = state.TitleBlockLabels.TryGetValue(owner, out var oldLabels)
+            ? (oldLabels.BlockCount + 1, null)
+            : (1, read ? labels : null);
     }
 
     internal static void RecordCategoryName(

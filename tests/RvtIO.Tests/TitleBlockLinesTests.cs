@@ -3,8 +3,9 @@ using Xunit;
 
 namespace RvtIO.Tests;
 
-/// <summary>Title block linework (TfBlockDeserializer.TryExtractTitleBlockLines): the GLine objects of a title
-/// block family symbol, as origin + t*dirVec over their end parameters, in symbol feet (rvt-prt titleblock.py).</summary>
+/// <summary>Title block symbol (TfBlockDeserializer.TryExtractTitleBlockSymbol): the GLine linework, fixed texts
+/// (TextNoteData + RtfData) and labels (TagNoteData) of a title block family symbol, in symbol feet
+/// (rvt-prt titleblock.py).</summary>
 public class TitleBlockLinesTests
 {
     [Fact]
@@ -39,6 +40,39 @@ public class TitleBlockLinesTests
         {
             if (element.CategoryId != -2000280 || element.RootClassName != "FamilyInstance") continue;
             Assert.Equal(382615, element.TypeId);
+        }
+    }
+
+    [Fact]
+    public void SampleFile_DecodesTitleBlockTextsAndLabels()
+    {
+        string? path = TestFiles.TryFind("Test_2022.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+        var texts = document.RawData.TitleBlockTexts;
+        var labels = document.RawData.TitleBlockLabels;
+        Assert.NotNull(texts);
+        Assert.NotNull(labels);
+        // 10 fixed texts and 10 labels (rvt-prt read_symbol on 382615).
+        Assert.True(texts!.ContainsKey(382615), "Title block texts did not decode.");
+        Assert.True(labels!.ContainsKey(382615), "Title block labels did not decode.");
+        Assert.Equal(10, texts[382615].Count);
+        Assert.Equal(10, labels[382615].Count);
+        // The first fixed texts rvt-prt reads: the URL and the "Scale" caption.
+        var first = texts[382615][0];
+        var parsed = RvtIO.Parsing.RtfText.Parse(first.Rtf, 0, first.Rtf.Length);
+        Assert.NotNull(parsed);
+        Assert.Contains("autodesk.com", parsed!.Value.Text);
+        var second = RvtIO.Parsing.RtfText.Parse(texts[382615][1].Rtf, 0, texts[382615][1].Rtf.Length);
+        Assert.Equal("Scale", second!.Value.Text.Trim());
+        // The labels print the sheet and project parameters (BuiltInParameter ids).
+        var paramsSeen = labels[382615].Select(label => label.ParamId).ToHashSet();
+        foreach (int expected in new[] { -1007400, -1007401, -1007402, -1007403, -1007404, -1007405, -1006316, -1006317, -1006319, -1006321 })
+            Assert.Contains(expected, paramsSeen);
+        foreach (var label in labels[382615])
+        {
+            Assert.True(double.IsFinite(label.Ox) && double.IsFinite(label.Oy));
+            Assert.True(label.Height > 0 && label.Width >= 0);
         }
     }
 }
