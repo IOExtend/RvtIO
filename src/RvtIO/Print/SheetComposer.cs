@@ -212,10 +212,12 @@ public static class SheetComposer
                 centerY = offset[1] * FeetToMillimetres - originY;
             }
             double frameX = centerX, frameY = centerY, frameWidth = 0, frameHeight = 0;
-            if (placed && view?.RootClassName == "DBView3d")
+            if (placed && view?.RootClassName == "DBView3d" && !IsAnalysisView(view))
             {
                 // A 3D view: an isometric projection of the model, white faces with their outlines, as the massing the
-                // view would show without its rendering.
+                // view would show without its rendering. A sun or lighting analysis prints as its shaded study, not
+                // as vector massing (the reference shows no such linework, and rvt-prt draws 3D only with a camera
+                // looking off-axis): those viewports print nothing vector, like an unplaced view.
                 var model = ElevationPrinter.Collect(document, "iso");
                 if (model != null)
                 {
@@ -296,6 +298,25 @@ public static class SheetComposer
                 var site = SitePrinter.Collect(document);
                 if (site != null)
                 {
+                    // The building stands on the site: the walls of the level with most walls go on the same plan,
+                    // without its rooms, furniture and dimensions, which a site plan does not show. Found first so
+                    // the site context can be kept to the building and its air, like an elevation drops a far tree.
+                    PlanPrinter.PlanContent? sitePlan = null;
+                    {
+                        int? bestLevel = null;
+                        int bestCount = 0;
+                        foreach (var level in PlanPrinter.Levels(document))
+                        {
+                            var content = PlanPrinter.CollectLevel(document, level.LevelId);
+                            if (content == null || content.Walls.Count <= bestCount) continue;
+                            bestLevel = level.LevelId;
+                            bestCount = content.Walls.Count;
+                        }
+                        if (bestLevel is int levelId)
+                            sitePlan = PlanPrinter.CollectLevel(document, levelId);
+                    }
+                    if (sitePlan != null)
+                        site = KeepSiteNearBuilding(site, sitePlan);
                     double drawScale = scale;
                     // A site viewport whose view decoded a crop box draws the crop at the view's own scale, placed
                     // by the viewport offset, the way a plan viewport does: the frame is the crop rectangle and the
@@ -325,20 +346,9 @@ public static class SheetComposer
                     }
                     SitePrinter.DrawContent(page2, site, drawScale, siteDrawOriginX, siteDrawOriginY);
                     effectiveScale = (int)Math.Round(drawScale);
-                    // The building stands on the site: the walls of the level with most walls go on the same plan,
-                    // without its rooms, furniture and dimensions, which a site plan does not show.
-                    int? bestLevel = null;
-                    int bestCount = 0;
-                    foreach (var level in PlanPrinter.Levels(document))
+                    if (sitePlan is { } building)
                     {
-                        var content = PlanPrinter.CollectLevel(document, level.LevelId);
-                        if (content == null || content.Walls.Count <= bestCount) continue;
-                        bestLevel = level.LevelId;
-                        bestCount = content.Walls.Count;
-                    }
-                    if (bestLevel is int levelId && PlanPrinter.CollectLevel(document, levelId) is { } sitePlan)
-                    {
-                        var wallsOnly = new PlanPrinter.PlanContent(sitePlan.Walls, sitePlan.Columns,
+                        var wallsOnly = new PlanPrinter.PlanContent(building.Walls, building.Columns,
                             new List<(double X1, double Y1, double X2, double Y2, string Name)>(),
                             sitePlan.Gaps, sitePlan.WindowGaps, sitePlan.DoorGaps,
                             sitePlan.FloorLoops,
@@ -352,21 +362,21 @@ public static class SheetComposer
                         // the plan viewport's own origin; otherwise it is the site origin, as before.
                         double wallsOriginX, wallsOriginY;
                         if (siteCropped && view?.ViewCrop is { Active: true } wallsCrop
-                            && TryCropFrame(centerX, centerY, scale, wallsCrop, sitePlan.MinX, sitePlan.MinY,
+                            && TryCropFrame(centerX, centerY, scale, wallsCrop, building.MinX, building.MinY,
                                 out _, out _, out _, out _, out wallsOriginX, out wallsOriginY))
                         {
                             // The frame stays the site frame above; only the building origin moves to its crop mapping.
                         }
                         else
                         {
-                            wallsOriginX = (sitePlan.MinX - site.MinX) / drawScale + frameX;
-                            wallsOriginY = (sitePlan.MinY - site.MinY) / drawScale + frameY;
+                            wallsOriginX = (building.MinX - site.MinX) / drawScale + frameX;
+                            wallsOriginY = (building.MinY - site.MinY) / drawScale + frameY;
                         }
-                        foreach (var room in sitePlan.Rooms)
+                        foreach (var room in building.Rooms)
                         {
                             var polygon = room.Polygon.Select(point => (
-                                (point.X - sitePlan.MinX) / drawScale + wallsOriginX,
-                                (point.Y - sitePlan.MinY) / drawScale + wallsOriginY)).ToList();
+                                (point.X - building.MinX) / drawScale + wallsOriginX,
+                                (point.Y - building.MinY) / drawScale + wallsOriginY)).ToList();
                             if (polygon.Count >= 3) page2.DrawPolyline(polygon, 0, true, 0.45);
                         }
                         PlanPrinter.DrawContent(page2, wallsOnly, drawScale,
@@ -890,8 +900,51 @@ public static class SheetComposer
             && Math.Abs(origin[0] - crop.OriginX) + Math.Abs(origin[1] - crop.OriginY) + Math.Abs(origin[2] - crop.OriginZ) < 1e-3;
     }
 
+    /// <summary>True when the view is a sun, lighting or energy analysis: it prints as its shaded study,
+    /// not as vector massing, so a sheet viewport of it draws nothing (the reference shows no such linework).</summary>
+    internal static bool IsAnalysisView(Element? view) =>
+        view?.Name is string name && (name.Contains("Solar", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Lighting", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Energy Analysis", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Sun Path", StringComparison.OrdinalIgnoreCase));
+
     /// <summary>True when the vector is a unit axis of the coordinate system, up to a sign.</summary>
     private static bool AxisAligned(double[] v) =>
         v is { Length: 3 } && v.Count(c => Math.Abs(Math.Abs(c) - 1) < 1e-6) == 1
         && v.All(c => Math.Abs(c) < 1e-6 || Math.Abs(Math.Abs(c) - 1) < 1e-6);
+
+    /// <summary>The site content kept to the building and its air: topography, contours, plants and entourage
+    /// outside the building breadth plus a margin are dropped, the way an elevation drops a far tree, so a far
+    /// parking lot does not shrink the building to a corner of the sheet. Returns the site unchanged when the
+    /// building has no extent or nothing would remain.</summary>
+    internal static SitePrinter.SiteContent KeepSiteNearBuilding(SitePrinter.SiteContent site,
+        PlanPrinter.PlanContent building)
+    {
+        double breadth = building.MaxX - building.MinX, height = building.MaxY - building.MinY;
+        if (!(breadth > 0) || !(height > 0)) return site;
+        double keepLeft = building.MinX - breadth * 0.25, keepRight = building.MaxX + breadth * 0.25;
+        double keepBottom = building.MinY - height * 0.25, keepTop = building.MaxY + height * 0.25;
+        static bool Inside(double x, double y, double kl, double kr, double kb, double kt) =>
+            x >= kl && x <= kr && y >= kb && y <= kt;
+        var topography = site.Topography.Where(polygon => polygon.Any(point => Inside(point.X, point.Y, keepLeft, keepRight, keepBottom, keepTop))).ToList();
+        var contours = site.Contours.Where(line => Inside(line.X1, line.Y1, keepLeft, keepRight, keepBottom, keepTop)
+            || Inside(line.X2, line.Y2, keepLeft, keepRight, keepBottom, keepTop)).ToList();
+        var plants = site.Plants.Where(plant => Inside(plant.X, plant.Y, keepLeft, keepRight, keepBottom, keepTop)).ToList();
+        var entourage = site.Entourage.Where(polygon => polygon.Any(point => Inside(point.X, point.Y, keepLeft, keepRight, keepBottom, keepTop))).ToList();
+        if (topography.Count == 0 && plants.Count == 0) return site;
+        double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
+        void Grow(double x, double y)
+        {
+            minX = Math.Min(minX, x); maxX = Math.Max(maxX, x);
+            minY = Math.Min(minY, y); maxY = Math.Max(maxY, y);
+        }
+        foreach (var polygon in topography) foreach (var point in polygon) Grow(point.X, point.Y);
+        foreach (var line in contours) { Grow(line.X1, line.Y1); Grow(line.X2, line.Y2); }
+        foreach (var plant in plants) { Grow(plant.X - plant.Radius, plant.Y - plant.Radius); Grow(plant.X + plant.Radius, plant.Y + plant.Radius); }
+        foreach (var polygon in entourage) foreach (var point in polygon) Grow(point.X, point.Y);
+        Grow(building.MinX, building.MinY);
+        Grow(building.MaxX, building.MaxY);
+        if (!(minX <= maxX) || !(minY <= maxY)) return site;
+        return new SitePrinter.SiteContent(topography, contours, plants, entourage, minX, minY, maxX, maxY);
+    }
 }

@@ -155,4 +155,82 @@ public class SheetComposerTests
         var error = Assert.Throws<InvalidOperationException>(() => SheetComposer.Render(document, 300));
         Assert.Contains("not a numbered sheet", error.Message);
     }
+
+    private static SitePrinter.SiteContent Site(
+        List<List<(double X, double Y)>>? topography = null,
+        List<(double X1, double Y1, double X2, double Y2, double Z)>? contours = null,
+        List<(double X, double Y, double Radius, string Type)>? plants = null,
+        List<List<(double X, double Y)>>? entourage = null)
+    {
+        topography ??= new();
+        contours ??= new();
+        plants ??= new();
+        entourage ??= new();
+        double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
+        void Grow(double x, double y)
+        {
+            minX = Math.Min(minX, x); maxX = Math.Max(maxX, x);
+            minY = Math.Min(minY, y); maxY = Math.Max(maxY, y);
+        }
+        foreach (var polygon in topography) foreach (var point in polygon) Grow(point.X, point.Y);
+        foreach (var line in contours) { Grow(line.X1, line.Y1); Grow(line.X2, line.Y2); }
+        foreach (var plant in plants) { Grow(plant.X - plant.Radius, plant.Y - plant.Radius); Grow(plant.X + plant.Radius, plant.Y + plant.Radius); }
+        foreach (var polygon in entourage) foreach (var point in polygon) Grow(point.X, point.Y);
+        if (minX > maxX) { minX = minY = 0; maxX = maxY = 1; }
+        return new SitePrinter.SiteContent(topography, contours, plants, entourage, minX, minY, maxX, maxY);
+    }
+
+    private static PlanPrinter.PlanContent Building(double minX, double minY, double maxX, double maxY) =>
+        new([], [], [], new(), new(), new(), new(), new(), new(), new(), new(),
+            minX, minY, maxX, maxY);
+
+    [Fact]
+    public void KeepSiteNearBuilding_DropsContextBeyondTheBuildingAir()
+    {
+        var site = Site(
+            topography: new()
+            {
+                new() { (50000, 50000), (60000, 50000), (55000, 60000) },
+                new() { (4000, 3000), (6000, 3000), (5000, 5000) },
+            },
+            contours: new() { (50000, 50000, 51000, 51000, 0), (4500, 3500, 5500, 3500, 0) },
+            plants: new() { (80000, 80000, 500, "Tree"), (5000, 4000, 500, "Bush") },
+            entourage: new() { new() { (90000, 90000), (91000, 90000) }, new() { (4800, 4200), (4900, 4200) } });
+        var building = Building(0, 0, 10000, 8000);
+
+        SitePrinter.SiteContent kept = SheetComposer.KeepSiteNearBuilding(site, building);
+
+        Assert.Equal(1, kept.Topography.Count);
+        Assert.Single(kept.Contours);
+        Assert.Single(kept.Plants);
+        Assert.Single(kept.Entourage);
+        // The kept context stays inside the building plus its air; the bounds still hold the building.
+        Assert.Equal(0, kept.MinX);
+        Assert.Equal(0, kept.MinY);
+        Assert.Equal(10000, kept.MaxX);
+        Assert.Equal(8000, kept.MaxY);
+    }
+
+    [Fact]
+    public void KeepSiteNearBuilding_KeepsEverythingWhenNothingWouldRemain()
+    {
+        var site = Site(
+            topography: new() { new() { (50000, 50000), (60000, 50000), (55000, 60000) } },
+            plants: new() { (80000, 80000, 500, "Tree") });
+        var building = Building(0, 0, 10000, 8000);
+
+        SitePrinter.SiteContent kept = SheetComposer.KeepSiteNearBuilding(site, building);
+
+        Assert.Same(site, kept);
+    }
+
+    [Fact]
+    public void KeepSiteNearBuilding_KeepsEverythingWithoutABuildingExtent()
+    {
+        var site = Site(topography: new() { new() { (0, 0), (100, 0), (50, 50) } });
+
+        SitePrinter.SiteContent kept = SheetComposer.KeepSiteNearBuilding(site, Building(5, 5, 5, 5));
+
+        Assert.Same(site, kept);
+    }
 }
