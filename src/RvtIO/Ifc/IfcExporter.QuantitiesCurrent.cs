@@ -1466,11 +1466,11 @@ public partial class IfcExporter
 
     /// <summary>The area of the piece of the top surface that holds its first face (rvt-rs RE-486): Revit's export gives a
     /// ceiling sketched in several pieces the area of the piece its body exporter creates last, which the saved mesh stores
-    /// first (the part of the top face holding the face's first triangle). Faces are grouped by their serialized face
-    /// (<c>SourceFace</c>, else <c>MeshMarker</c>) within their geometry node, as <see cref="SurfaceAreaCurrent"/> does;
-    /// the piece is the group of the first top face in serialized order. Null unless the top surface is in more than one
-    /// piece and a bottom piece of the same area (within 0.1%) faces it, so a sloped or partial solid keeps the whole
-    /// surface. In feet.</summary>
+    /// first (the part of its top face holding the face's first triangle). Null unless the top surface is horizontal at one
+    /// height and in more than one connected piece, and exactly one connected underside piece at the same plan footprint
+    /// has the same area (within 0.1%); a sloped, stepped or partial solid keeps the whole upper surface. Pieces are
+    /// connected components by shared vertices, not serialized face handles: one handle can cut into several regions.
+    /// In feet.</summary>
     internal static double? FirstTopPieceAreaCurrent(IEnumerable<ShellInfo> shells)
     {
         var all = shells as IReadOnlyList<ShellInfo> ?? shells.ToList();
@@ -1478,33 +1478,115 @@ public partial class IfcExporter
         foreach (var shell in all)
         {
             if (MiddleHeightCurrent(shell.Faces) is not { } middle) continue;
-            var top = shell.Faces
-                .Where(face => !face.CurvedSurface && FaceUnitNormal(face) is { } n && Math.Abs(n[2]) > 1e-9 && MeanHeightCurrent(face) >= middle)
-                .ToList();
-            if (top.Count == 0) continue;
-            static (int Node, uint Face, uint Marker) Key(GeoFace face) =>
-                (face.GeometryNode, face.SourceFace, face.MeshMarker);
-            var firstKey = Key(top[0]);
-            double PieceArea(IEnumerable<GeoFace> faces, (int Node, uint Face, uint Marker) key) => faces
-                .Where(face => Key(face).Equals(key))
-                .Sum(face => (NetFaceArea(face) ?? 0) + ArcSegmentCorrectionCurrent(face, arcs) / Math.Abs(FaceUnitNormal(face)![2]));
-            double topPiece = PieceArea(top, firstKey);
+            var top = HorizontalFaces(shell.Faces, middle, above: true);
+            if (top.Count == 0 || !ConstantHeight(top)) continue;
+            var bottom = HorizontalFaces(shell.Faces, middle, above: false);
+            if (bottom.Count == 0 || !ConstantHeight(bottom)) continue;
+            var topPieces = ConnectedPieces(top);
+            if (topPieces.Count < 2) continue;
+            var first = topPieces.First(piece => piece.Contains(top[0]));
+            double topPiece = PieceArea(first, arcs);
             if (!(topPiece > 1e-9)) return null;
-            double topWhole = top.Sum(face => (NetFaceArea(face) ?? 0) + ArcSegmentCorrectionCurrent(face, arcs) / Math.Abs(FaceUnitNormal(face)![2]));
-            // A single-piece surface is not a pieces case; the caller then uses the whole surface as before.
-            if (Math.Abs(topWhole - topPiece) <= 1e-9) return null;
-            var bottom = shell.Faces
-                .Where(face => !face.CurvedSurface && FaceUnitNormal(face) is { } n && Math.Abs(n[2]) > 1e-9 && MeanHeightCurrent(face) < middle)
-                .ToList();
-            if (bottom.Count == 0) continue;
-            double bottomPiece = PieceArea(bottom, Key(bottom[0]));
-            if (!(bottomPiece > 1e-9)) return null;
-            // The saved-mesh rule applies where the faces facing each way hold a part of the same area (RE-480/RE-486).
-            if (Math.Abs(bottomPiece - topPiece) > 0.001 * topPiece) return null;
+            // The counterpart below: the same area where the first top piece stands, and only there.
+            var (tx0, ty0, tx1, ty1) = PlanBounds(first);
+            int matches = ConnectedPieces(bottom)
+                .Where(piece => Math.Abs(PieceArea(piece, arcs) - topPiece) <= 0.001 * topPiece)
+                .Count(piece => Overlaps(piece, tx0, ty0, tx1, ty1));
+            if (matches != 1) return null;
             return topPiece;
         }
         return null;
     }
+
+    /// <summary>Plan extent of faces, in feet.</summary>
+    private static (double X0, double Y0, double X1, double Y1) PlanBounds(IEnumerable<GeoFace> faces)
+    {
+        double x0 = double.MaxValue, y0 = double.MaxValue, x1 = double.MinValue, y1 = double.MinValue;
+        foreach (var face in faces)
+        {
+            if (face.OuterVertices is not { } ring) continue;
+            foreach (var p in ring)
+            {
+                if (p is not { Length: >= 2 }) continue;
+                x0 = Math.Min(x0, p[0]); y0 = Math.Min(y0, p[1]);
+                x1 = Math.Max(x1, p[0]); y1 = Math.Max(y1, p[1]);
+            }
+        }
+        return (x0, y0, x1, y1);
+    }
+
+    /// <summary>True when the plan extent of a piece overlaps a box with positive area.</summary>
+    private static bool Overlaps(List<GeoFace> piece, double x0, double y0, double x1, double y1)
+    {
+        var (px0, py0, px1, py1) = PlanBounds(piece);
+        return px0 < x1 && x0 < px1 && py0 < y1 && y0 < py1;
+    }
+
+    /// <summary>Planar horizontal faces on one side of a height: at or above it (<paramref name="above"/>),
+    /// or strictly below it.</summary>
+    private static List<GeoFace> HorizontalFaces(IEnumerable<GeoFace> faces, double aboveOrAt, bool above) =>
+        faces.Where(face => !face.CurvedSurface
+            && face.OuterVertices is { Count: >= 3 }
+            && FaceUnitNormal(face) is { } n && Math.Abs(n[2]) > 1 - 1e-9
+            && (above ? MeanHeightCurrent(face) >= aboveOrAt : MeanHeightCurrent(face) < aboveOrAt))
+        .ToList();
+
+    /// <summary>True when every face lies at the same height (within a micrometre): one constant-height primitive.</summary>
+    private static bool ConstantHeight(IReadOnlyList<GeoFace> faces)
+    {
+        double height = MeanHeightCurrent(faces[0]);
+        return faces.All(face => Math.Abs(MeanHeightCurrent(face) - height) <= 1e-6);
+    }
+
+    /// <summary>Connected components of faces by shared vertices, in order of first appearance.</summary>
+    private static List<List<GeoFace>> ConnectedPieces(List<GeoFace> faces)
+    {
+        int count = faces.Count;
+        int[] parent = Enumerable.Range(0, count).ToArray();
+        int Find(int x)
+        {
+            while (parent[x] != x)
+            {
+                parent[x] = parent[parent[x]];
+                x = parent[x];
+            }
+            return x;
+        }
+        static bool SharesVertex(GeoFace left, GeoFace right)
+        {
+            if (left.OuterVertices is not { } a || right.OuterVertices is not { } b) return false;
+            foreach (var p in a)
+            {
+                if (p is not { Length: >= 3 }) continue;
+                foreach (var q in b)
+                {
+                    if (q is { Length: >= 3 } && p[0] == q[0] && p[1] == q[1] && p[2] == q[2]) return true;
+                }
+            }
+            return false;
+        }
+        for (int i = 0; i < count; i++)
+            for (int j = i + 1; j < count; j++)
+                if (SharesVertex(faces[i], faces[j]))
+                {
+                    int a = Find(i), b = Find(j);
+                    if (a != b) parent[a] = b;
+                }
+        var groups = new Dictionary<int, List<GeoFace>>();
+        for (int i = 0; i < count; i++)
+        {
+            int root = Find(i);
+            if (!groups.TryGetValue(root, out var group)) groups[root] = group = new List<GeoFace>();
+            group.Add(faces[i]);
+        }
+        return groups.Values.OrderBy(group => faces.IndexOf(group[0])).ToList();
+    }
+
+    /// <summary>Net face areas of a piece, with the arc bulges of its outline, in feet.</summary>
+    private static double PieceArea(
+        IEnumerable<GeoFace> piece,
+        Dictionary<(long, long, long, long), (double Cx, double Cy, double R)> arcs) =>
+        piece.Sum(face => (NetFaceArea(face) ?? 0) + ArcSegmentCorrectionCurrent(face, arcs) / Math.Abs(FaceUnitNormal(face)![2]));
 
     /// <summary>Column quantities. A column written as a prism carries its extrusion data:
     /// Length, CrossSectionArea (the profile), OuterSurfaceArea (the length times the perimeter) and GrossVolume (the length times
