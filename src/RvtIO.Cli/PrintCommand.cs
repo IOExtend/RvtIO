@@ -2,13 +2,16 @@ using System.Globalization;
 using RvtIO;
 using RvtIO.Pdf;
 using RvtIO.Print;
+using RvtIO.Sheets;
 
 namespace RvtIO.Cli;
 
 /// <summary>
-/// <c>rvtio print &lt;file.rvt&gt; &lt;out.pdf&gt; [--level &lt;id|name&gt;] [--view &lt;id|name&gt;] [--scale &lt;n&gt;]
+/// <c>rvtio print &lt;file.rvt&gt; &lt;out.pdf&gt; [--level &lt;id|name&gt;] [--view &lt;id|name&gt;] [--sheet &lt;id|number&gt;] [--where FILTER] [--scale &lt;n&gt;]
 /// [--paper A4|A3|A2|A1|A0]</c>: renders the plan of one level, or one or more plan views at their own scales, to a PDF
 /// (see <see cref="PlanPrinter"/>). <c>--list-levels</c> and <c>--list-views</c> print what can be printed instead.
+/// <c>--where NAME=VALUE</c> (also <c>!=</c> and <c>~</c> for contains, <c>*</c> and <c>?</c> wildcards, repeatable) keeps
+/// only the sheets whose parameters match; it needs <c>--sheet</c>, <c>--all-sheets</c> or <c>--list-sheets</c>.
 /// Exit codes: 0 written, 1 usage error or an output path that cannot be written (also a level or view that is not
 /// printable), 2 the file cannot be read, 3 a reader limit cut a stream, 4 nothing to draw.
 /// </summary>
@@ -19,6 +22,7 @@ internal static class PrintCommand
         string? file = null, outputPath = null, levelText = null;
         var viewTexts = new List<string>();
         var sheetTexts = new List<string>();
+        var whereTexts = new List<string>();
         int scale = 100;
         PdfPageSize? paper = null;
         bool listLevels = false, listViews = false, listSheets = false, allViews = false, allSheets = false;
@@ -56,7 +60,16 @@ internal static class PrintCommand
                     else if (Paper(value) is { } size) paper = size;
                     else return Usage(error, "--paper requires one of A4, A3, A2, A1, A0.");
                     break;
+                case "--where":
+                    if (i + 1 >= args.Length) return Usage(error, "--where needs a filter: NAME=VALUE, NAME!=VALUE or NAME~TEXT.");
+                    whereTexts.Add(args[++i]);
+                    break;
                 default:
+                    if (arg.StartsWith("--where=", StringComparison.Ordinal))
+                    {
+                        whereTexts.Add(arg["--where=".Length..]);
+                        break;
+                    }
                     if (arg.StartsWith("--", StringComparison.Ordinal)) return Usage(error, "Unknown option for print: " + arg + ".");
                     if (file == null) file = arg;
                     else if (outputPath == null) outputPath = arg;
@@ -65,6 +78,15 @@ internal static class PrintCommand
             }
         }
         if (file == null) return Usage(error, "print requires the file.");
+        var whereFilters = new List<SheetFilter>();
+        foreach (string text in whereTexts)
+        {
+            var parsed = SheetFilter.TryParse(text, out string? parseError);
+            if (parsed == null) return Usage(error, parseError!);
+            whereFilters.Add(parsed);
+        }
+        if (whereFilters.Count > 0 && sheetTexts.Count == 0 && !allSheets && !listSheets)
+            return Usage(error, "--where selects sheets; it needs --sheet, --all-sheets or --list-sheets.");
         bool listing = listLevels || listViews || listSheets;
         if (!listing && outputPath == null) return Usage(error, "print requires the output PDF path.");
         // The comparison is the file's identity, not the spelling of the paths: an output path that is a hard link,
@@ -97,21 +119,49 @@ internal static class PrintCommand
         IReadOnlyList<ElevationView> elevations = ElevationPrinter.Views(document);
         IReadOnlyList<PrintableSheet> sheets = SheetPrinter.Sheets(document);
         IReadOnlyList<ComposedSheet> composed = SheetComposer.Sheets(document);
+        HashSet<int>? whereSheets = null;
+        if (whereFilters.Count > 0)
+        {
+            // A misspelt name stops with the names there are, as in rvt-prt and rvtio sheets.
+            SheetCatalog catalog = SheetCatalog.Extract(document);
+            var available = SheetFilter.AvailableNames(catalog);
+            foreach (var filter in whereFilters)
+            {
+                if (!available.Contains(filter.Name))
+                {
+                    error.WriteLine($"Unknown sheet parameter '{filter.Name}'. Available: {string.Join(", ", available)}.");
+                    return RvtExitCodes.Usage;
+                }
+            }
+            whereSheets = catalog.Sheets.Where(sheet => whereFilters.All(filter => filter.Matches(sheet)))
+                .Select(sheet => sheet.ElementId).ToHashSet();
+            if (whereSheets.Count == 0)
+            {
+                error.WriteLine("[print] no sheet matches the --where filters; nothing was written.");
+                return RvtExitCodes.Usage;
+            }
+        }
+        IReadOnlyList<PrintableSheet> ListedSheets() =>
+            whereSheets == null ? sheets : sheets.Where(sheet => whereSheets.Contains(sheet.SheetId)).ToList();
+        IReadOnlyList<ComposedSheet> ListedComposed() =>
+            whereSheets == null ? composed : composed.Where(sheet => whereSheets.Contains(sheet.SheetId)).ToList();
         if (listSheets)
         {
-            if (composed.Count > 0)
+            IReadOnlyList<ComposedSheet> listedComposed = ListedComposed();
+            IReadOnlyList<PrintableSheet> listedSheets = ListedSheets();
+            if (listedComposed.Count > 0)
             {
-                foreach (ComposedSheet sheet in composed)
+                foreach (ComposedSheet sheet in listedComposed)
                     output.WriteLine($"{sheet.SheetId}\t{sheet.Number}\t{sheet.Name ?? ""}\t"
                         + $"{sheet.Page.WidthMillimetres:0}x{sheet.Page.HeightMillimetres:0} mm\t"
                         + $"{sheet.ViewportCount} views\t{sheet.TextCount} texts");
             }
             else
             {
-                foreach (PrintableSheet sheet in sheets)
+                foreach (PrintableSheet sheet in listedSheets)
                     output.WriteLine($"{sheet.SheetId}\t{sheet.Number ?? ""}\t{sheet.Name ?? ""}\t"
                         + $"{sheet.WidthMillimetres:0}x{sheet.HeightMillimetres:0} mm\t{sheet.CurveCount} curves\t{sheet.TextCount} texts");
-                if (sheets.Count == 0) error.WriteLine("No sheet with decoded linework was found.");
+                if (listedSheets.Count == 0) error.WriteLine("No sheet with decoded linework was found.");
             }
             return RvtExitCodes.Success;
         }
@@ -148,12 +198,13 @@ internal static class PrintCommand
             PdfDocument pdf;
             if (allSheets)
             {
-                if (composed.Count == 0)
+                IReadOnlyList<ComposedSheet> toCompose = ListedComposed();
+                if (toCompose.Count == 0)
                 {
                     error.WriteLine("No numbered sheet was found; nothing to compose.");
                     return RvtExitCodes.DecodeError;
                 }
-                pdf = SheetComposer.RenderSheets(document, composed.Select(sheet => sheet.SheetId).ToList(),
+                pdf = SheetComposer.RenderSheets(document, toCompose.Select(sheet => sheet.SheetId).ToList(),
                     new SheetComposeOptions { PaperSize = paper });
             }
             else if (allViews)
@@ -172,41 +223,23 @@ internal static class PrintCommand
             }
             else if (sheetTexts.Count > 0)
             {
-                var sheetIds = new List<int>();
-                var composedIds = new List<int>();
-                foreach (string text in sheetTexts)
+                // Explicit names resolve against the complete catalogue; the --where filters
+                // then intersect. Resolving against the filtered lists first would report a
+                // filtered-out sheet as nonexistent instead of skipping it.
+                ExplicitSheetSelection selection = SelectExplicitSheets(sheetTexts, sheets, composed, whereSheets);
+                if (selection.Missing is { } missing)
                 {
-                    ComposedSheet? composedMatch = null;
-                    foreach (ComposedSheet sheet in composed)
-                    {
-                        if (int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int id) && id == sheet.SheetId)
-                            composedMatch = sheet;
-                        else if (string.Equals(sheet.Number, text, StringComparison.OrdinalIgnoreCase))
-                            composedMatch = sheet;
-                        if (composedMatch != null) break;
-                    }
-                    if (composedMatch != null)
-                    {
-                        composedIds.Add(composedMatch.SheetId);
-                        continue;
-                    }
-                    PrintableSheet? match = null;
-                    foreach (PrintableSheet sheet in sheets)
-                    {
-                        if (int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int id) && id == sheet.SheetId)
-                            match = sheet;
-                        else if (string.Equals(sheet.Number, text, StringComparison.OrdinalIgnoreCase))
-                            match = sheet;
-                        if (match != null) break;
-                    }
-                    if (match == null)
-                    {
-                        error.WriteLine($"No printable sheet is named or numbered '{text}'. --list-sheets shows them.");
-                        return RvtExitCodes.Usage;
-                    }
-                    sheetIds.Add(match.SheetId);
+                    error.WriteLine($"No printable sheet is named or numbered '{missing}'. --list-sheets shows them.");
+                    return RvtExitCodes.Usage;
                 }
-                pdf = composedIds.Count == sheetTexts.Count
+                if (selection.ComposedIds.Count == 0 && selection.SheetIds.Count == 0)
+                {
+                    error.WriteLine("[print] no sheet matches the --where filters; nothing was written.");
+                    return RvtExitCodes.Usage;
+                }
+                var sheetIds = selection.SheetIds;
+                var composedIds = selection.ComposedIds;
+                pdf = sheetIds.Count == 0
                     ? SheetComposer.RenderSheets(document, composedIds, new SheetComposeOptions { PaperSize = paper })
                     : SheetPrinter.RenderSheets(document, sheetIds, new SheetPrintOptions { PaperSize = paper });
             }
@@ -321,11 +354,64 @@ internal static class PrintCommand
         _ => null,
     };
 
+    /// <summary>Explicit <c>--sheet</c> texts resolved against the complete catalogue, then intersected
+    /// with the <c>--where</c> filter: a sheet prints when it is one of those numbered and matches the
+    /// filters. <see cref="Missing"/> names the first text no printable sheet carries; when it is null
+    /// and both id lists are empty, the intersection removed everything.</summary>
+    internal sealed record ExplicitSheetSelection(
+        IReadOnlyList<int> SheetIds, IReadOnlyList<int> ComposedIds, string? Missing);
+
+    /// <summary>Resolves explicit sheet names against every printable sheet, then keeps only the ids
+    /// the <c>--where</c> filter matched (null keeps everything).</summary>
+    internal static ExplicitSheetSelection SelectExplicitSheets(
+        IEnumerable<string> sheetTexts,
+        IReadOnlyList<PrintableSheet> sheets,
+        IReadOnlyList<ComposedSheet> composed,
+        ISet<int>? whereSheets)
+    {
+        var sheetIds = new List<int>();
+        var composedIds = new List<int>();
+        foreach (string text in sheetTexts)
+        {
+            ComposedSheet? composedMatch = null;
+            foreach (ComposedSheet sheet in composed)
+            {
+                if (int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int id) && id == sheet.SheetId)
+                    composedMatch = sheet;
+                else if (string.Equals(sheet.Number, text, StringComparison.OrdinalIgnoreCase))
+                    composedMatch = sheet;
+                if (composedMatch != null) break;
+            }
+            if (composedMatch != null)
+            {
+                composedIds.Add(composedMatch.SheetId);
+                continue;
+            }
+            PrintableSheet? match = null;
+            foreach (PrintableSheet sheet in sheets)
+            {
+                if (int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int id) && id == sheet.SheetId)
+                    match = sheet;
+                else if (string.Equals(sheet.Number, text, StringComparison.OrdinalIgnoreCase))
+                    match = sheet;
+                if (match != null) break;
+            }
+            if (match == null) return new ExplicitSheetSelection([], [], text);
+            sheetIds.Add(match.SheetId);
+        }
+        if (whereSheets != null)
+        {
+            composedIds.RemoveAll(id => !whereSheets.Contains(id));
+            sheetIds.RemoveAll(id => !whereSheets.Contains(id));
+        }
+        return new ExplicitSheetSelection(sheetIds, composedIds, null);
+    }
+
     private static int Usage(TextWriter error, string problem)
     {
         error.WriteLine(problem);
         error.WriteLine("Usage: rvtio print <file.rvt> <out.pdf> [--level <id|name>] [--view <id|name>] [--sheet <id|number>] "
-            + "[--all-views] [--all-sheets] [--scale <n>] [--paper A4|A3|A2|A1|A0] "
+            + "[--where FILTER] [--all-views] [--all-sheets] [--scale <n>] [--paper A4|A3|A2|A1|A0] "
             + "[--list-levels] [--list-views] [--list-sheets]");
         return RvtExitCodes.Usage;
     }

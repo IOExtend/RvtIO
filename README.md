@@ -77,7 +77,7 @@ List the sheets and the viewports placed on them:
 rvtio sheets project.rvt sheets.json
 ```
 
-The catalog has the sheet number, name, issue date, by-lines and scale, the viewports of each sheet and the elements each sheet owns. Page size, view placement, the displayed view and 2D content are not decoded; every limit is reported in the catalog itself. See [sheets and viewports](docs/sheets.md).
+The catalog has the sheet number, name, issue date, by-lines and scale, the viewports of each sheet and the elements each sheet owns, plus the text and whole-number project/shared parameters of each sheet (`--params`, `--csv`, `--where NAME=VALUE` with `!=`/`~` and `*`/`?` wildcards). Page size, view placement, the displayed view and 2D content are not decoded; every limit is reported in the catalog itself. See [sheets and viewports](docs/sheets.md).
 
 Print the plan of a level to PDF — walls with their stored width, column footprints and grids, on the smallest paper that holds the drawing at the scale:
 
@@ -89,6 +89,7 @@ rvtio print project.rvt plan.pdf --level "Уровень 1" --scale 100
 
 ```sh
 rvtio print project.rvt sheets.pdf --sheet 516334
+rvtio print project.rvt sheets.pdf --all-sheets --where "Appears In Sheet List=Yes"
 rvtio print project.rvt --list-sheets
 ```
 

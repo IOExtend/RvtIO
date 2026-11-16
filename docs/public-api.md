@@ -66,9 +66,10 @@ extension and label helpers carry the ids and names stored in the file format.
 | Type | Use |
 |---|---|
 | `SheetCatalog` | `Extract(document)` (or a `RevitFileInfo`) returns the sheets of the file, the viewports placed on them and the limits of this release: `Sheets`, `Viewports` and `Issues`. Nothing is read from the file again. |
-| `SheetRecord` | A sheet: `ElementId`, `Number`, `Name`, `IssueDate`, `Scale`, `DrawnBy`, `DesignedBy`, `CheckedBy`, `ApprovedBy`, `ViewportIds` and `OwnedElementIds`. |
+| `SheetRecord` | A sheet: `ElementId`, `Number`, `Name`, `IssueDate`, `Scale`, `DrawnBy`, `DesignedBy`, `CheckedBy`, `ApprovedBy`, `ViewportIds`, `OwnedElementIds`, `Parameters` (text/whole-number project/shared params; Yes/No params read as `Yes`/`No`) and `YesNoParameters` (their names). |
 | `ViewportRecord` | A placed view: `ElementId`, `SheetId` and `DetailNumber`; `DisplayedViewId` is null until the viewer element is decoded. |
 | `SheetIssue`, `SheetIssueKind` | What this release does not decode: page size, view placement, displayed view, view content and crop region. |
+| `SheetFilter` | A `--where` filter (`NAME=VALUE`, `!=`, `~`, `*`/`?` wildcards; `true`/`false`/`1`/`0` aliases apply only to Yes/No params); `SheetCatalog.FromFiltered` keeps matching sheets. |
 
 See [sheets and viewports](sheets.md) for what is decoded, what the limits are and why no page coordinate is exposed yet.
 
@@ -101,7 +102,7 @@ See [printing a plan](printing.md) for what is drawn, what is not, and the roadm
 | `PdfPageSize` | Paper sizes A4 to A0 in millimetres, `Landscape` for the turned page. |
 | `PdfTextAlignment` | `Left`, `Center`, `Right`: where the text anchor sits. |
 | `PdfTrueTypeFont` | A TrueType font parsed for embedding (`UnitsPerEm`, `GlyphOf`, `AdvanceOf`), drawn as a Type0 font with Identity-H encoding and a ToUnicode map, so text in the scripts it covers (Cyrillic included) is real, selectable PDF text. |
-| `PdfFonts` | `TryFind` loads the first TrueType font found on the machine (Arial, Segoe UI, Tahoma, DejaVu Sans, Helvetica Neue). |
+| `PdfFonts` | `TryFind` loads the first TrueType font found on the machine (Arial, its metric-compatible substitutes Liberation Sans and Arimo, Segoe UI, Tahoma, DejaVu Sans, Helvetica Neue); `RVTIO_FONTS` names extra folders searched first. |
 
 Without `PdfDocument.Font` the writer uses the standard Helvetica font, which holds printable ASCII only, and a text with
 another character is refused. With it, every text is written with the embedded font.

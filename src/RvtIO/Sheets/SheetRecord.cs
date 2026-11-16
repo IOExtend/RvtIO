@@ -16,7 +16,9 @@ public sealed class SheetRecord
         string? checkedBy,
         string? approvedBy,
         IReadOnlyList<int> viewportIds,
-        IReadOnlyList<int> ownedElementIds)
+        IReadOnlyList<int> ownedElementIds,
+        IReadOnlyDictionary<string, string>? parameters = null,
+        IReadOnlyCollection<string>? yesNoParameters = null)
     {
         ElementId = elementId;
         Number = number;
@@ -29,6 +31,10 @@ public sealed class SheetRecord
         ApprovedBy = approvedBy;
         ViewportIds = viewportIds;
         OwnedElementIds = ownedElementIds;
+        Parameters = parameters ?? new Dictionary<string, string>();
+        // Names compare case-insensitively everywhere else (Lookup, the filter contract), so a plain
+        // array or list of Yes/No names must not turn case-sensitive here.
+        YesNoParameters = new HashSet<string>(yesNoParameters ?? [], StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>The element id of the sheet.</summary>
@@ -68,4 +74,16 @@ public sealed class SheetRecord
     /// view-specific graphics and other content placed on the sheet), ascending. Empty when the file decoded no owner
     /// view for its content.</summary>
     public IReadOnlyList<int> OwnedElementIds { get; }
+
+    /// <summary>The sheet's project and shared parameters as display strings, keyed by display name
+    /// (the <c>Definition.Name</c> Revit shows). Only text and whole numbers are included; numbers with
+    /// units are left out until their units are read. A Yes/No parameter reads as <c>Yes</c>/<c>No</c>.
+    /// The 8 core fields above are not repeated here.</summary>
+    public IReadOnlyDictionary<string, string> Parameters { get; }
+
+    /// <summary>The display names of the entries of <see cref="Parameters"/> (and the
+    /// <c>Appears In Sheet List</c> value) that are Yes/No parameters. Only for these do the
+    /// <c>true</c>/<c>false</c>/<c>1</c>/<c>0</c> spellings match <c>Yes</c>/<c>No</c>; every other
+    /// field compares literally.</summary>
+    public IReadOnlyCollection<string> YesNoParameters { get; }
 }
