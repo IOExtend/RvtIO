@@ -172,4 +172,71 @@ public class ViewCropTests
 
         Assert.False(ok);
     }
+
+    [Fact]
+    public void TryCropFrame_MapsSectionBasisToSheet()
+    {
+        // A section looking along +x: right is -y, up is +z; content is already projected on those axes.
+        var crop = new ViewCropFrame(10, 20, 5, [0, -1, 0], [0, 0, 1], [1, 0, 0],
+            -70, -10, 80, 35, true);
+
+        bool ok = SheetComposer.TryCropFrame(1000, 2000, 100, crop, -50000, -30000,
+            out double frameX, out double frameY, out double frameW, out double frameH,
+            out double originX, out double originY);
+
+        Assert.True(ok);
+        double k = 304.8 / 100;
+        Assert.Equal(1000 + -70 * k, frameX, 6);
+        Assert.Equal(2000 + -10 * k, frameY, 6);
+        Assert.Equal(150 * k, frameW, 6);
+        Assert.Equal(45 * k, frameH, 6);
+        // The view origin in content units: (origin . right) and (origin . up), in millimetres.
+        Assert.Equal(1000 + (-50000 - -20 * 304.8) / 100, originX, 6);
+        Assert.Equal(2000 + (-30000 - 5 * 304.8) / 100, originY, 6);
+        // The crop corner lands on the frame corner through DrawContent's mapping: the model point
+        // at view (X0, Y0) is origin + X0 * right + Y0 * up, and its content coordinates are its dot
+        // products with the basis rows.
+        double cropModelX = (-70 + (10 * 0 + 20 * -1 + 5 * 0)) * 304.8;
+        double cropModelY = (-10 + (10 * 0 + 20 * 0 + 5 * 1)) * 304.8;
+        Assert.Equal(frameX, originX + (cropModelX - -50000) / 100, 6);
+        Assert.Equal(frameY, originY + (cropModelY - -30000) / 100, 6);
+    }
+
+    [Fact]
+    public void ViewBasisMatches_AcceptsTheDecodedPlane()
+    {
+        // View 8237 (a South-ish elevation): the decoded view plane equals the viewer basis.
+        var view = new Element
+        {
+            Id = 8237,
+            ViewOrigin = [-34.735, -2.5124, 3.937],
+            ViewHorizontalDirection = [0, -1, 0],
+            ViewVerticalDirection = [0, 0, 1],
+            ViewDirection = [1, 0, 0],
+        };
+        var crop = new ViewCropFrame(-34.735, -2.5124, 3.937, [0, -1, 0], [0, 0, 1], [1, 0, 0],
+            -78.0, -12.0, 73.0, 32.0, true);
+
+        Assert.True(SheetComposer.ViewBasisMatches(view, crop));
+    }
+
+    [Fact]
+    public void ViewBasisMatches_RejectsMismatchOrMissingPlane()
+    {
+        var view = new Element
+        {
+            Id = 8237,
+            ViewOrigin = [-34.735, -2.5124, 3.937],
+            ViewHorizontalDirection = [0, -1, 0],
+            ViewVerticalDirection = [0, 0, 1],
+            ViewDirection = [1, 0, 0],
+        };
+        var shifted = new ViewCropFrame(0, 0, 0, [0, -1, 0], [0, 0, 1], [1, 0, 0],
+            -78.0, -12.0, 73.0, 32.0, true);
+        var noPlane = new Element { Id = 312 };
+
+        Assert.False(SheetComposer.ViewBasisMatches(view, shifted));
+        Assert.False(SheetComposer.ViewBasisMatches(noPlane, shifted));
+        Assert.False(SheetComposer.ViewBasisMatches(null, shifted));
+    }
 }

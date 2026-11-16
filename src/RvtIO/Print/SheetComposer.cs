@@ -365,7 +365,25 @@ public static class SheetComposer
                 var elevation = detailOnPage
                     ? ElevationPrinter.Collect(document, direction, stairsOnly, viewElement, detailWindow)
                     : null;
-                if (elevation != null)
+                // A viewport whose view decoded a crop frame draws the crop at the view's own scale, placed by
+                // the viewport offset (sheet = offset + view / scale): the frame is the crop rectangle and the
+                // content is clipped to it, nothing is reduced to fit. The crop applies only where the collection
+                // used the view's own axes (the basis matches the decoded view plane) and the view is not a
+                // windowed detail, which keeps its own enclosure. Views without a crop keep the whole-model
+                // frame below.
+                if (elevation != null && detailWindow == null && view?.ViewCrop is { Active: true } crop
+                    && ViewBasisMatches(viewElement, crop)
+                    && TryCropFrame(centerX, centerY, scale, crop, elevation.MinX, elevation.MinY,
+                        out frameX, out frameY, out frameWidth, out frameHeight, out double cropOriginX, out double cropOriginY))
+                {
+                    effectiveScale = scale;
+                    page2.BeginClip(frameX, frameY, Math.Max(0, frameWidth), Math.Max(0, frameHeight));
+                    ElevationPrinter.DrawContent(page2, elevation, scale, cropOriginX, cropOriginY,
+                        direction == "section" ? 0.82 : 1);
+                    page2.EndClip();
+                    placedRects.Add((frameX, frameY, frameWidth, frameHeight));
+                }
+                else if (elevation != null)
                 {
                     double drawScale = scale;
                     frameWidth = (elevation.MaxX - elevation.MinX) / drawScale
@@ -683,27 +701,49 @@ public static class SheetComposer
 
     /// <summary>Sheet frame and content origin for a viewport with an axis-aligned crop frame: the frame is the
     /// crop rectangle at the view's own scale, anchored by the viewport offset (sheet = offset + view / scale),
-    /// and the content origin maps DrawContent's (content - Min) / scale coordinates onto it. Returns false unless
-    /// the crop basis is axis-aligned in the sheet plane (a rotated view keeps the whole-model frame).</summary>
+    /// and the content origin maps DrawContent's (content - Min) / scale coordinates onto it. The content
+    /// coordinates must run along the crop basis (model feet for a plan, projected millimetres for an elevation
+    /// collected with the view's own axes): the view origin in content units is its dot product with each basis
+    /// row. Returns false unless the right and up rows are axis-aligned; a rotated view keeps the whole-model
+    /// frame.</summary>
     internal static bool TryCropFrame(double centerXMm, double centerYMm, double scale, ViewCropFrame crop,
         double contentMinX, double contentMinY,
         out double frameX, out double frameY, out double frameWidth, out double frameHeight,
         out double originX, out double originY)
     {
         frameX = frameY = frameWidth = frameHeight = originX = originY = 0;
-        if (Math.Abs(Math.Abs(crop.Right[0]) - 1) > 1e-6 || Math.Abs(crop.Right[1]) > 1e-6
-            || Math.Abs(crop.Right[2]) > 1e-6 || Math.Abs(crop.Up[0]) > 1e-6
-            || Math.Abs(Math.Abs(crop.Up[1]) - 1) > 1e-6 || Math.Abs(crop.Up[2]) > 1e-6
+        if (!AxisAligned(crop.Right) || !AxisAligned(crop.Up)
             || !(scale > 0) || crop.X1 <= crop.X0 || crop.Y1 <= crop.Y0) return false;
-        double sx = Math.Sign(crop.Right[0]), sy = Math.Sign(crop.Up[1]);
         double k = FeetToMillimetres / scale;
         frameX = centerXMm + crop.X0 * k;
         frameY = centerYMm + crop.Y0 * k;
         frameWidth = (crop.X1 - crop.X0) * k;
         frameHeight = (crop.Y1 - crop.Y0) * k;
-        // Sheet(content) must equal offset + sign * (content - origin) / scale: solve for DrawContent's origin.
-        originX = centerXMm + sx * (contentMinX - crop.OriginX * FeetToMillimetres) / scale;
-        originY = centerYMm + sy * (contentMinY - crop.OriginY * FeetToMillimetres) / scale;
+        // Sheet(content) must equal offset + (content - origin) / scale along each basis row.
+        double originXV = (crop.OriginX * crop.Right[0] + crop.OriginY * crop.Right[1] + crop.OriginZ * crop.Right[2]) * FeetToMillimetres;
+        double originYV = (crop.OriginX * crop.Up[0] + crop.OriginY * crop.Up[1] + crop.OriginZ * crop.Up[2]) * FeetToMillimetres;
+        originX = centerXMm + (contentMinX - originXV) / scale;
+        originY = centerYMm + (contentMinY - originYV) / scale;
         return true;
     }
+
+    /// <summary>True when the view's decoded plane matches the crop frame's basis and origin: the collection
+    /// projected the model with these very axes, so the crop rectangle maps onto its content. Guards the crop
+    /// path where the collection fell back to compass axes.</summary>
+    internal static bool ViewBasisMatches(RvtIO.Model.Element? view, ViewCropFrame crop)
+    {
+        if (view?.ViewOrigin is not { Length: 3 } origin
+            || view.ViewHorizontalDirection is not { Length: 3 } horiz
+            || view.ViewVerticalDirection is not { Length: 3 } vert
+            || view.ViewDirection is not { Length: 3 } dir) return false;
+        static bool Same(double[] a, double[] b) =>
+            Math.Abs(a[0] - b[0]) + Math.Abs(a[1] - b[1]) + Math.Abs(a[2] - b[2]) < 1e-6;
+        return Same(horiz, crop.Right) && Same(vert, crop.Up)
+            && Math.Abs(origin[0] - crop.OriginX) + Math.Abs(origin[1] - crop.OriginY) + Math.Abs(origin[2] - crop.OriginZ) < 1e-3;
+    }
+
+    /// <summary>True when the vector is a unit axis of the coordinate system, up to a sign.</summary>
+    private static bool AxisAligned(double[] v) =>
+        v is { Length: 3 } && v.Count(c => Math.Abs(Math.Abs(c) - 1) < 1e-6) == 1
+        && v.All(c => Math.Abs(c) < 1e-6 || Math.Abs(Math.Abs(c) - 1) < 1e-6);
 }

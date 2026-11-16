@@ -192,12 +192,7 @@ selection nor drawing.
 
 ## What is still not drawn
 
-- **The crop region of a view**: a plan viewport whose view decoded a crop box draws the crop at the view's own
-  scale (the frame is the crop rectangle, placed by the viewport offset); an elevation prints the whole model inside
-  its viewport frame, not the part the view crops. A detail section (1:10 to 1:50) is drawn as a window of 80 x 60 mm
-  on the page around the point of its plane, at the height its name stands for (a roof detail high, a foundation
-  detail low), not as the crop the file sets. A view whose crop region is off or whose basis is rotated keeps the
-  whole-model frame.
+- **The crop region of a view**: a plan or elevation viewport whose view decoded a crop box draws the crop at the view\&\#8217;s own scale (the frame is the crop rectangle, placed by the viewport offset); the axes the view was collected with must match the crop basis. A detail section (1:10 to 1:50) keeps its windowed enclosure, and a view without a decoded crop, with the crop region off or with a rotated basis keeps the whole-model frame.
 - **The four details of A104**: the "Typical Wall Roof Connection", "Typical Floor Wall Connection", "Typical
   Foundation Detail" and "Typ. Wall Section" viewports are placed outside the page by the file (x = 813 mm on an 841 mm
   page, y = -300 mm) and the record stores no other position for them, so they are not printed.
@@ -218,9 +213,7 @@ selection nor drawing.
 
 ## Next steps
 
-1. Decode the crop region of an elevation or section view, so a detail cut prints where Revit crops it.
-   (Plan viewports already draw their crop box.) Decode the record that places a viewport the file puts off the
-   page.
+1. Decode the crop region of a rotated view and of a crop region switched off with live bounds, and the annotation crop that keeps titles and labels outside the model crop. Decode the record that places a viewport the file puts off the page.
 2. Decode the row data of a schedule view, so every schedule prints its table, not only the planting and the revisions.
 3. Decode the geometry of the property lines and the linework of a drafting view.
 4. Widen the same printing to the releases the reader supports in its own schema.
