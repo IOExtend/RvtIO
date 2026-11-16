@@ -154,8 +154,10 @@ public sealed class SheetCatalog
 
     /// <summary>
     /// The sheet's project and shared parameters as display strings (rvt-prt's <c>list --params</c>):
-    /// text and whole numbers with a value; numbers with units are left out until their units are read.
-    /// The 8 core fields are not repeated here. Unset sentinels (<c>HasRevitValue == false</c>) are skipped.
+    /// text and whole-number user parameters (positive definition ids) with a value; numbers with units
+    /// are left out until their units are read. The 8 core fields are not repeated here. Unset sentinels
+    /// (<c>HasRevitValue == false</c>) are skipped. Built-in parameters other than the sheet's own fields
+    /// (such as category or partition ids) are not sheet parameters and stay out too.
     /// </summary>
     private static IReadOnlyDictionary<string, string> ExtraParameters(Element element)
     {
@@ -173,6 +175,7 @@ public sealed class SheetCatalog
                 || id == (int)BuiltInParameter.SHEET_CHECKED_BY
                 || id == (int)BuiltInParameter.SHEET_APPROVED_BY)
                 continue;
+            if (id < 0) continue;
             string? key = parameter.Definition.Name;
             if (string.IsNullOrWhiteSpace(key)) continue;
             string? value = DisplayParameterValue(parameter);

@@ -36,6 +36,16 @@ public class SheetFilterTests
     }
 
     [Fact]
+    public void ExtraParameters_SkipsBuiltinNonSheetParams()
+    {
+        var sheet = Sheet(100, "A101");
+        sheet.Parameters.Add(BipHelpers.MakeBipParam(-1140362, "ELEM_CATEGORY_PARAM", StorageType.Integer, -2003100));
+        var record = SheetCatalog.Extract(new RevitFileInfo { Elements = [sheet] }).Sheets[0];
+
+        Assert.DoesNotContain("ELEM_CATEGORY_PARAM", record.Parameters.Keys);
+    }
+
+    [Fact]
     public void Filter_EqualsSupportsWildcardsCaseInsensitively()
     {
         var record = Record(Sheet(100, "A101", "Architectural"));
