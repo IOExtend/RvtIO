@@ -32,7 +32,9 @@ public sealed class SheetRecord
         ViewportIds = viewportIds;
         OwnedElementIds = ownedElementIds;
         Parameters = parameters ?? new Dictionary<string, string>();
-        YesNoParameters = yesNoParameters ?? [];
+        // Names compare case-insensitively everywhere else (Lookup, the filter contract), so a plain
+        // array or list of Yes/No names must not turn case-sensitive here.
+        YesNoParameters = new HashSet<string>(yesNoParameters ?? [], StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>The element id of the sheet.</summary>

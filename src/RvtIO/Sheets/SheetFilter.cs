@@ -93,11 +93,12 @@ public sealed class SheetFilter
 
     /// <summary>True when the named field is a Yes/No parameter: <c>Appears In Sheet List</c> or one of
     /// <see cref="SheetRecord.YesNoParameters"/>. Only for these do the <c>true</c>/<c>false</c>/<c>1</c>/<c>0</c>
-    /// spellings match <c>Yes</c>/<c>No</c>; every other field compares literally.</summary>
+    /// spellings match <c>Yes</c>/<c>No</c>; every other field compares literally. The name compares
+    /// case-insensitively even when the record was built with a case-sensitive collection.</summary>
     internal static bool IsYesNoParameter(SheetRecord sheet, string name) =>
         string.Equals(name, DisplayName(BuiltInParameter.SHEET_SCHEDULED), StringComparison.OrdinalIgnoreCase)
         || string.Equals(name, nameof(BuiltInParameter.SHEET_SCHEDULED), StringComparison.OrdinalIgnoreCase)
-        || sheet.YesNoParameters.Contains(name);
+        || sheet.YesNoParameters.Contains(name, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The value of a named sheet field or parameter, or null when the sheet has no such name.</summary>
     internal static string? Lookup(SheetRecord sheet, string name)

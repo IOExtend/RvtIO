@@ -119,6 +119,24 @@ public class SheetFilterTests
     }
 
     [Fact]
+    public void Filter_YesNoNameMatchesCaseInsensitivelyWithPlainArray()
+    {
+        // The record path: Yes/No names handed over as a plain case-sensitive array still match
+        // a filter naming the parameter in another case (Lookup already ignores case).
+        var record = new SheetRecord(
+            2, "A2", "Example", null, null, null, null, null, null,
+            [], [],
+            new Dictionary<string, string> { ["Issued"] = "Yes" },
+            ["Issued"]);
+
+        Assert.True(SheetFilter.TryParse("Issued=true", out _)!.Matches(record));
+        Assert.True(SheetFilter.TryParse("issued=true", out _)!.Matches(record));
+        Assert.True(SheetFilter.TryParse("ISSUED=1", out _)!.Matches(record));
+        Assert.True(SheetFilter.TryParse("issued=Yes", out _)!.Matches(record));
+        Assert.False(SheetFilter.TryParse("issued=No", out _)!.Matches(record));
+    }
+
+    [Fact]
     public void Filter_BadTextFails()
     {
         Assert.Null(SheetFilter.TryParse("no-operator-here", out string? error));
