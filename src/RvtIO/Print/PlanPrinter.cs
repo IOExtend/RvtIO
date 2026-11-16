@@ -598,6 +598,7 @@ public static class PlanPrinter
         double offsetY = (paper.HeightMillimetres - (content.MaxY - content.MinY) / effectiveScale) / 2;
 
         PdfPage page = pdf.AddPage(paper);
+        if (!string.IsNullOrEmpty(title)) page.OutlineTitle = title;
         if (options.DrawFrame)
         {
             double m = options.MarginMillimetres;

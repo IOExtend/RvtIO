@@ -256,6 +256,10 @@ public sealed class PdfPage
     /// <summary>The paper size of the page.</summary>
     public PdfPageSize Size { get; }
 
+    /// <summary>The bookmark title of the page (the sheet number and name, the view name): null for no bookmark.
+    /// Pages with a title appear in the document outline, one bookmark per page in page order.</summary>
+    public string? OutlineTitle { get; set; }
+
     internal string Content => _content.ToString();
 
     /// <summary>The document the page belongs to: the font and the used characters live there.</summary>

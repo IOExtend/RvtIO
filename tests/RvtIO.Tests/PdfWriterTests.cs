@@ -210,6 +210,34 @@ public class PdfWriterTests
     }
 
     [Fact]
+    public void TitledPages_GetBookmarksPointingAtTheirPages()
+    {
+        var document = new PdfDocument();
+        document.AddPage(PdfPageSize.A4);
+        document.AddPage(PdfPageSize.A4).OutlineTitle = "A102 - Plans";
+
+        string pdf = Write(document);
+
+        // One bookmark, pointing at the second page (object 6 without an embedded font).
+        Assert.Contains("/Outlines", pdf);
+        Assert.Contains("/Count 1", pdf);
+        Assert.Contains("/Title (A102 - Plans)", pdf);
+        Assert.Contains("/Dest [6 0 R /Fit]", pdf);
+    }
+
+    [Fact]
+    public void NonAsciiTitle_IsWrittenAsUtf16()
+    {
+        var document = new PdfDocument();
+        document.AddPage(PdfPageSize.A4).OutlineTitle = "А101 - План";
+
+        string pdf = Write(document);
+
+        Assert.Contains("<FEFF", pdf);
+        Assert.DoesNotContain("/Title (", pdf);
+    }
+
+    [Fact]
     public void Save_WritesACrossReferenceThatPointsAtEveryObject()
     {
         var document = new PdfDocument();

@@ -97,7 +97,7 @@ See [printing a plan](printing.md) for what is drawn, what is not, and the roadm
 | Type | Use |
 |---|---|
 | `PdfDocument` | `AddPage(size)` and `Save(path | stream)`; writes PDF 1.4 with vector lines, polygons, rectangles and text, without a third-party library. |
-| `PdfPage` | `DrawLine`, `DrawPolyline`, `DrawRectangle`, `DrawText` and `DrawImage` in millimetres from the lower-left corner, y up. |
+| `PdfPage` | `DrawLine`, `DrawPolyline`, `DrawRectangle`, `DrawText` and `DrawImage` in millimetres from the lower-left corner, y up; `OutlineTitle` puts the page in the document outline (one bookmark per titled page, used for sheet numbers). |
 | `IPdfImage`, `PdfRasterImage`, `PdfJpegImage` | An image the writer embeds: RGB pixels (`PdfRasterImage`, Flate) or a JPEG as it is (`PdfJpegImage`, DCTDecode, size and components read from its header). |
 | `PdfPageSize` | Paper sizes A4 to A0 in millimetres, `Landscape` for the turned page. |
 | `PdfTextAlignment` | `Left`, `Center`, `Right`: where the text anchor sits. |

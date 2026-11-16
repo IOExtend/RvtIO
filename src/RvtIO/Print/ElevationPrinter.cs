@@ -348,6 +348,7 @@ public static class ElevationPrinter
         double offsetX = (paper.WidthMillimetres - (content.MaxX - content.MinX) / scale - LabelMarginMillimetres) / 2;
         double offsetY = (paper.HeightMillimetres - (content.MaxY - content.MinY) / scale) / 2;
         PdfPage page = pdf.AddPage(paper);
+        if (!string.IsNullOrEmpty(view.Name)) page.OutlineTitle = view.Name;
         if (options.DrawFrame)
         {
             double m = options.MarginMillimetres;

@@ -50,7 +50,19 @@ internal static class PdfSerializer
         Raw("%PDF-1.4\n");
 
         BeginObject(CatalogId);
-        Raw($"<< /Type /Catalog /Pages {PagesId} 0 R >>\n");
+        var outlines = new List<(int Page, string Title)>();
+        for (int i = 0; i < pages.Count; i++)
+            if (pages[i].OutlineTitle is { Length: > 0 } title)
+                outlines.Add((i, title));
+        if (outlines.Count > 0)
+        {
+            int outlinesId = firstPage + pages.Count * 2 + document.Images.Count;
+            Raw($"<< /Type /Catalog /Pages {PagesId} 0 R /Outlines {outlinesId} 0 R /PageMode /UseOutlines >>\n");
+        }
+        else
+        {
+            Raw($"<< /Type /Catalog /Pages {PagesId} 0 R >>\n");
+        }
         EndObject();
 
         BeginObject(PagesId);
@@ -156,6 +168,28 @@ internal static class PdfSerializer
             EndObject();
         }
 
+        // The document outline, after the images: one bookmark per titled page, in page order, each pointing
+        // at its page. Untitled documents write no outline, as before.
+        if (outlines.Count > 0)
+        {
+            int outlinesId = firstPage + pages.Count * 2 + document.Images.Count;
+            int firstItem = outlinesId + 1;
+            BeginObject(outlinesId);
+            Raw($"<< /Type /Outlines /First {firstItem} 0 R /Last {firstItem + outlines.Count - 1} 0 R "
+                + $"/Count {outlines.Count} >>\n");
+            EndObject();
+            for (int o = 0; o < outlines.Count; o++)
+            {
+                int id = firstItem + o;
+                string prev = o > 0 ? $" /Prev {id - 1} 0 R" : string.Empty;
+                string next = o < outlines.Count - 1 ? $" /Next {id + 1} 0 R" : string.Empty;
+                BeginObject(id);
+                Raw($"<< /Title {OutlineTitle(outlines[o].Title)} /Parent {outlinesId} 0 R{prev}{next} "
+                    + $"/Dest [{PageId(outlines[o].Page)} 0 R /Fit] >>\n");
+                EndObject();
+            }
+        }
+
         long xref = position;
         Raw($"xref\n0 {offsets.Count + 1}\n");
         Raw("0000000000 65535 f \n");
@@ -163,6 +197,25 @@ internal static class PdfSerializer
             Raw(offset.ToString("D10", CultureInfo.InvariantCulture) + " 00000 n \n");
         Raw($"trailer\n<< /Size {offsets.Count + 1} /Root {CatalogId} 0 R >>\n");
         Raw($"startxref\n{xref}\n%%EOF\n");
+    }
+
+    /// <summary>A bookmark title as a PDF string: printable ASCII in parentheses, anything else as UTF-16BE
+    /// hex (sheet names can be Cyrillic).</summary>
+    private static string OutlineTitle(string title)
+    {
+        bool ascii = true;
+        foreach (char character in title)
+            if (character < ' ' || character > '~') { ascii = false; break; }
+        if (ascii)
+            return "(" + title.Replace("\\", "\\\\").Replace("(", "\\(").Replace(")", "\\)") + ")";
+        var bytes = new byte[2 + title.Length * 2];
+        bytes[0] = 0xFE; bytes[1] = 0xFF;
+        for (int i = 0; i < title.Length; i++)
+        {
+            bytes[2 + i * 2] = (byte)(title[i] >> 8);
+            bytes[2 + i * 2 + 1] = (byte)(title[i] & 0xFF);
+        }
+        return "<" + BitConverter.ToString(bytes).Replace("-", string.Empty) + ">";
     }
 
     /// <summary>Zlib (RFC 1950) wrapping of the payload, which the PDF /FlateDecode filter reads.</summary>

@@ -95,6 +95,7 @@ public static class ViewPrinter
             width = height * aspect;
         }
         PdfPage page = pdf.AddPage(paper);
+        if (!string.IsNullOrEmpty(view.Name)) page.OutlineTitle = view.Name;
         page.DrawImage(image, (paper.WidthMillimetres - width) / 2, (paper.HeightMillimetres - height) / 2, width,
             height);
         if (pdf.Font != null)

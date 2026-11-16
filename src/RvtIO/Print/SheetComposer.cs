@@ -121,6 +121,11 @@ public static class SheetComposer
         var (page, originX, originY) = PageOf(document, sheet, null);
         PdfPageSize layout = page;
         PdfPage page2 = pdf.AddPage(page);
+        // The bookmark of the page, as Revit names separate files: "<number> - <name>".
+        if (sheet.LookupParameter(BuiltInParameter.SHEET_NUMBER)?.Value is string sheetNumber
+            && sheetNumber.Length > 0)
+            page2.OutlineTitle = sheet.LookupParameter(BuiltInParameter.SHEET_NAME)?.Value is string sheetName
+                && sheetName.Length > 0 ? sheetNumber + " - " + sheetName : sheetNumber;
         // The title block family's linework is not decoded: the page border and a title block strip on the right, built
         // from the sheet's own fields, stand in for it, so a printed sheet reads as a framed page of a set.
         double margin = 5;

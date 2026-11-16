@@ -179,6 +179,11 @@ public static class SheetPrinter
         double offsetY = (paper.HeightMillimetres - contentHeight) / 2 - minY;
 
         PdfPage page = pdf.AddPage(paper);
+        // The bookmark of the page, as Revit names separate files: "<number> - <name>".
+        if (sheet.LookupParameter(BuiltInParameter.SHEET_NUMBER)?.Value is string sheetNumber
+            && sheetNumber.Length > 0)
+            page.OutlineTitle = sheet.LookupParameter(BuiltInParameter.SHEET_NAME)?.Value is string sheetName
+                && sheetName.Length > 0 ? sheetNumber + " - " + sheetName : sheetNumber;
         foreach (var curve in curves)
             page.DrawLine(curve.X1 + offsetX, curve.Y1 + offsetY, curve.X2 + offsetX, curve.Y2 + offsetY, 0.18);
         foreach (var arc in arcs)
