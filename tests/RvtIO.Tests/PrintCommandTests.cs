@@ -1,11 +1,14 @@
 using System.Diagnostics;
 using RvtIO;
+using RvtIO.Pdf;
+using RvtIO.Print;
 using Xunit;
 
 namespace RvtIO.Tests;
 
 /// <summary>The <c>print</c> command of the command line tool (src/RvtIO.Cli/PrintCommand): the output path is refused
 /// when it names the input file through a hard link, and the PDF is written beside the target and moved over it.
+/// Explicit <c>--sheet</c> names resolve against the complete catalogue before the <c>--where</c> intersection.
 /// </summary>
 public class PrintCommandTests
 {
@@ -68,6 +71,69 @@ public class PrintCommandTests
         var error = new StringWriter();
         Assert.Equal(RvtExitCodes.Usage, Run(error, "model.rvt", "out.pdf", "--level", "L1", "--where", "Drawn By=AB"));
         Assert.Contains("--where selects sheets", error.ToString());
+    }
+
+    private static (IReadOnlyList<PrintableSheet> Sheets, IReadOnlyList<ComposedSheet> Composed) TwoSheets() =>
+    (
+        [
+            new PrintableSheet(101, "A101", "Plan", 100, 100, 1, 0),
+            new PrintableSheet(102, "A102", "Plan", 100, 100, 1, 0),
+        ],
+        [
+            new ComposedSheet(101, "A101", "Plan", PdfPageSize.A4, 1, 0),
+            new ComposedSheet(102, "A102", "Plan", PdfPageSize.A4, 1, 0),
+        ]
+    );
+
+    [Fact]
+    public void SelectExplicitSheets_MixedMatchingAndNonMatching_KeepsOnlyTheMatch()
+    {
+        var (sheets, composed) = TwoSheets();
+
+        // The review's repro: --sheet A101,A102 with --where Sheet Number=A102 prints only A102,
+        // instead of failing that A101 does not exist.
+        var selection = RvtIO.Cli.PrintCommand.SelectExplicitSheets(
+            ["A101", "A102"], sheets, composed, new HashSet<int> { 102 });
+
+        Assert.Null(selection.Missing);
+        Assert.Equal([102], selection.ComposedIds);
+        Assert.Empty(selection.SheetIds);
+    }
+
+    [Fact]
+    public void SelectExplicitSheets_UnknownName_ReportsMissingBeforeFiltering()
+    {
+        var (sheets, composed) = TwoSheets();
+
+        var selection = RvtIO.Cli.PrintCommand.SelectExplicitSheets(
+            ["A101", "A999"], sheets, composed, new HashSet<int> { 101 });
+
+        Assert.Equal("A999", selection.Missing);
+    }
+
+    [Fact]
+    public void SelectExplicitSheets_AllFilteredOut_LeavesEmptySelection()
+    {
+        var (sheets, composed) = TwoSheets();
+
+        var selection = RvtIO.Cli.PrintCommand.SelectExplicitSheets(
+            ["A101"], sheets, composed, new HashSet<int> { 102 });
+
+        Assert.Null(selection.Missing);
+        Assert.Empty(selection.ComposedIds);
+        Assert.Empty(selection.SheetIds);
+    }
+
+    [Fact]
+    public void SelectExplicitSheets_WithoutFilter_KeepsEverything()
+    {
+        var (sheets, composed) = TwoSheets();
+
+        var selection = RvtIO.Cli.PrintCommand.SelectExplicitSheets(
+            ["A101", "A102"], sheets, composed, null);
+
+        Assert.Null(selection.Missing);
+        Assert.Equal([101, 102], selection.ComposedIds);
     }
 
     [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "link", SetLastError = true)]

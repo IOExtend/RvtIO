@@ -140,24 +140,28 @@ internal static class PrintCommand
                 error.WriteLine("[print] no sheet matches the --where filters; nothing was written.");
                 return RvtExitCodes.Usage;
             }
-            sheets = sheets.Where(sheet => whereSheets.Contains(sheet.SheetId)).ToList();
-            composed = composed.Where(sheet => whereSheets.Contains(sheet.SheetId)).ToList();
         }
+        IReadOnlyList<PrintableSheet> ListedSheets() =>
+            whereSheets == null ? sheets : sheets.Where(sheet => whereSheets.Contains(sheet.SheetId)).ToList();
+        IReadOnlyList<ComposedSheet> ListedComposed() =>
+            whereSheets == null ? composed : composed.Where(sheet => whereSheets.Contains(sheet.SheetId)).ToList();
         if (listSheets)
         {
-            if (composed.Count > 0)
+            IReadOnlyList<ComposedSheet> listedComposed = ListedComposed();
+            IReadOnlyList<PrintableSheet> listedSheets = ListedSheets();
+            if (listedComposed.Count > 0)
             {
-                foreach (ComposedSheet sheet in composed)
+                foreach (ComposedSheet sheet in listedComposed)
                     output.WriteLine($"{sheet.SheetId}\t{sheet.Number}\t{sheet.Name ?? ""}\t"
                         + $"{sheet.Page.WidthMillimetres:0}x{sheet.Page.HeightMillimetres:0} mm\t"
                         + $"{sheet.ViewportCount} views\t{sheet.TextCount} texts");
             }
             else
             {
-                foreach (PrintableSheet sheet in sheets)
+                foreach (PrintableSheet sheet in listedSheets)
                     output.WriteLine($"{sheet.SheetId}\t{sheet.Number ?? ""}\t{sheet.Name ?? ""}\t"
                         + $"{sheet.WidthMillimetres:0}x{sheet.HeightMillimetres:0} mm\t{sheet.CurveCount} curves\t{sheet.TextCount} texts");
-                if (sheets.Count == 0) error.WriteLine("No sheet with decoded linework was found.");
+                if (listedSheets.Count == 0) error.WriteLine("No sheet with decoded linework was found.");
             }
             return RvtExitCodes.Success;
         }
@@ -194,12 +198,13 @@ internal static class PrintCommand
             PdfDocument pdf;
             if (allSheets)
             {
-                if (composed.Count == 0)
+                IReadOnlyList<ComposedSheet> toCompose = ListedComposed();
+                if (toCompose.Count == 0)
                 {
                     error.WriteLine("No numbered sheet was found; nothing to compose.");
                     return RvtExitCodes.DecodeError;
                 }
-                pdf = SheetComposer.RenderSheets(document, composed.Select(sheet => sheet.SheetId).ToList(),
+                pdf = SheetComposer.RenderSheets(document, toCompose.Select(sheet => sheet.SheetId).ToList(),
                     new SheetComposeOptions { PaperSize = paper });
             }
             else if (allViews)
@@ -218,51 +223,22 @@ internal static class PrintCommand
             }
             else if (sheetTexts.Count > 0)
             {
-                var sheetIds = new List<int>();
-                var composedIds = new List<int>();
-                foreach (string text in sheetTexts)
+                // Explicit names resolve against the complete catalogue; the --where filters
+                // then intersect. Resolving against the filtered lists first would report a
+                // filtered-out sheet as nonexistent instead of skipping it.
+                ExplicitSheetSelection selection = SelectExplicitSheets(sheetTexts, sheets, composed, whereSheets);
+                if (selection.Missing is { } missing)
                 {
-                    ComposedSheet? composedMatch = null;
-                    foreach (ComposedSheet sheet in composed)
-                    {
-                        if (int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int id) && id == sheet.SheetId)
-                            composedMatch = sheet;
-                        else if (string.Equals(sheet.Number, text, StringComparison.OrdinalIgnoreCase))
-                            composedMatch = sheet;
-                        if (composedMatch != null) break;
-                    }
-                    if (composedMatch != null)
-                    {
-                        composedIds.Add(composedMatch.SheetId);
-                        continue;
-                    }
-                    PrintableSheet? match = null;
-                    foreach (PrintableSheet sheet in sheets)
-                    {
-                        if (int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int id) && id == sheet.SheetId)
-                            match = sheet;
-                        else if (string.Equals(sheet.Number, text, StringComparison.OrdinalIgnoreCase))
-                            match = sheet;
-                        if (match != null) break;
-                    }
-                    if (match == null)
-                    {
-                        error.WriteLine($"No printable sheet is named or numbered '{text}'. --list-sheets shows them.");
-                        return RvtExitCodes.Usage;
-                    }
-                    sheetIds.Add(match.SheetId);
+                    error.WriteLine($"No printable sheet is named or numbered '{missing}'. --list-sheets shows them.");
+                    return RvtExitCodes.Usage;
                 }
-                if (whereSheets != null)
+                if (selection.ComposedIds.Count == 0 && selection.SheetIds.Count == 0)
                 {
-                    // With --sheet as well, a sheet prints when it is one of those numbered and matches the filters.
-                    composedIds.RemoveAll(id => !whereSheets.Contains(id));
-                    sheetIds.RemoveAll(id => !whereSheets.Contains(id));
-                    if (composedIds.Count == 0 && sheetIds.Count == 0)
-                    {
-                        error.WriteLine("[print] no sheet matches the --where filters; nothing was written.");
-                        return RvtExitCodes.Usage;
-                    }
+                    error.WriteLine("[print] no sheet matches the --where filters; nothing was written.");
+                    return RvtExitCodes.Usage;
                 }
+                var sheetIds = selection.SheetIds;
+                var composedIds = selection.ComposedIds;
                 pdf = sheetIds.Count == 0
                     ? SheetComposer.RenderSheets(document, composedIds, new SheetComposeOptions { PaperSize = paper })
                     : SheetPrinter.RenderSheets(document, sheetIds, new SheetPrintOptions { PaperSize = paper });
@@ -377,6 +353,59 @@ internal static class PrintCommand
         "A0" => PdfPageSize.A0,
         _ => null,
     };
+
+    /// <summary>Explicit <c>--sheet</c> texts resolved against the complete catalogue, then intersected
+    /// with the <c>--where</c> filter: a sheet prints when it is one of those numbered and matches the
+    /// filters. <see cref="Missing"/> names the first text no printable sheet carries; when it is null
+    /// and both id lists are empty, the intersection removed everything.</summary>
+    internal sealed record ExplicitSheetSelection(
+        IReadOnlyList<int> SheetIds, IReadOnlyList<int> ComposedIds, string? Missing);
+
+    /// <summary>Resolves explicit sheet names against every printable sheet, then keeps only the ids
+    /// the <c>--where</c> filter matched (null keeps everything).</summary>
+    internal static ExplicitSheetSelection SelectExplicitSheets(
+        IEnumerable<string> sheetTexts,
+        IReadOnlyList<PrintableSheet> sheets,
+        IReadOnlyList<ComposedSheet> composed,
+        ISet<int>? whereSheets)
+    {
+        var sheetIds = new List<int>();
+        var composedIds = new List<int>();
+        foreach (string text in sheetTexts)
+        {
+            ComposedSheet? composedMatch = null;
+            foreach (ComposedSheet sheet in composed)
+            {
+                if (int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int id) && id == sheet.SheetId)
+                    composedMatch = sheet;
+                else if (string.Equals(sheet.Number, text, StringComparison.OrdinalIgnoreCase))
+                    composedMatch = sheet;
+                if (composedMatch != null) break;
+            }
+            if (composedMatch != null)
+            {
+                composedIds.Add(composedMatch.SheetId);
+                continue;
+            }
+            PrintableSheet? match = null;
+            foreach (PrintableSheet sheet in sheets)
+            {
+                if (int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int id) && id == sheet.SheetId)
+                    match = sheet;
+                else if (string.Equals(sheet.Number, text, StringComparison.OrdinalIgnoreCase))
+                    match = sheet;
+                if (match != null) break;
+            }
+            if (match == null) return new ExplicitSheetSelection([], [], text);
+            sheetIds.Add(match.SheetId);
+        }
+        if (whereSheets != null)
+        {
+            composedIds.RemoveAll(id => !whereSheets.Contains(id));
+            sheetIds.RemoveAll(id => !whereSheets.Contains(id));
+        }
+        return new ExplicitSheetSelection(sheetIds, composedIds, null);
+    }
 
     private static int Usage(TextWriter error, string problem)
     {
