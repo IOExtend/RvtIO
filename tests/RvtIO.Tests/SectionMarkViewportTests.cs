@@ -49,5 +49,8 @@ public class SectionMarkViewportTests
         Assert.DoesNotContain(marks, mark => mark.Name == "Stair Section");
         Assert.DoesNotContain(marks, mark => mark.Name == "Section");
         Assert.DoesNotContain(marks, mark => mark.Name == "Section 1");
+        // The Architectural Section has no decoded extent record (viewer -1): the file gives it no
+        // trace geometry, so it marks nothing instead of inventing a full-height vertical.
+        Assert.DoesNotContain(marks, mark => mark.Name == "Architectural Section");
     }
 }

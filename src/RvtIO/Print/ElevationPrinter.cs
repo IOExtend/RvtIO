@@ -830,24 +830,27 @@ public static class ElevationPrinter
             if (view.ViewOrigin is not { Length: 3 } origin || view.ViewDirection is not { Length: 3 } direction
                 || view.ViewVerticalDirection is not { Length: 3 } vertical) continue;
             if (Math.Abs(vertical[2]) < 0.9) continue;
-            if (view.SectionViewerId is int viewerId && viewerId > 0
-                && document.RawData.SectionViews?.TryGetValue(viewerId, out var section) == true)
-            {
-                // A callout of another view marks that view, not the plan; a finer-scale-only section
-                // (a 1:20 detail) stays off a coarser plan, and a plan-parented mark stays in its plan.
-                if (section.ParentViewId > 0
-                    && document.GetElement(section.ParentViewId) is { } parent
-                    && parent.RootClassName is ("DBViewSection" or "DBViewElevation"))
-                    continue;
-                if (viewportScaleDenominator is double scale && scale > 0 && section.CoarserScale > 0
-                    && 1.0 / scale < section.CoarserScale - 1e-9)
-                    continue;
-                if (viewportViewId is int viewportId && section.ParentViewId > 0
-                    && section.ParentViewId != viewportId
-                    && document.GetElement(section.ParentViewId) is { } owner
-                    && owner.RootClassName is not ("DBViewSection" or "DBViewElevation"))
-                    continue;
-            }
+            // A plan trace needs the file's section extent: traces are drawn from Section records, so a
+            // section view with no decoded extent (no viewer record) leaves no trace, the way the
+            // reference draws none for the Architectural Section (viewer -1, no extent record) while
+            // rvt-prt draws traces only from Section m_frontCut extents.
+            if (view.SectionViewerId is not int viewerId || viewerId <= 0
+                || document.RawData.SectionViews?.TryGetValue(viewerId, out var section) != true)
+                continue;
+            // A callout of another view marks that view, not the plan; a finer-scale-only section
+            // (a 1:20 detail) stays off a coarser plan, and a plan-parented mark stays in its plan.
+            if (section.ParentViewId > 0
+                && document.GetElement(section.ParentViewId) is { } parent
+                && parent.RootClassName is ("DBViewSection" or "DBViewElevation"))
+                continue;
+            if (viewportScaleDenominator is double scale && scale > 0 && section.CoarserScale > 0
+                && 1.0 / scale < section.CoarserScale - 1e-9)
+                continue;
+            if (viewportViewId is int viewportId && section.ParentViewId > 0
+                && section.ParentViewId != viewportId
+                && document.GetElement(section.ParentViewId) is { } owner
+                && owner.RootClassName is not ("DBViewSection" or "DBViewElevation"))
+                continue;
             // The trace of the plane runs along the horizontal in-plane axis: the cross product of the view direction
             // and the vertical of the view.
             double dx = direction[1] * vertical[2] - direction[2] * vertical[1];
