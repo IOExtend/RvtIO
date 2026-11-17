@@ -279,6 +279,10 @@ internal class ParsingState
     /// unreadable root records null. Duplicates clear the name.</summary>
     public Dictionary<uint, (int BlockCount, string? Name)> MaterialNames { get; } = new();
 
+    /// <summary>Material element id -> the cut and surface fill pattern ids of its Material record (-1 when the
+    /// material has no pattern of that kind), for the blocks that decoded exactly once.</summary>
+    public Dictionary<uint, (int BlockCount, int CutPatternId, int SurfacePatternId)> MaterialPatterns { get; } = new();
+
     /// <summary>GStyleElem (class 2050) -> GStyle.m_materialElemId and the style's category; MaterialId is null when the
     /// block did not decode. A repeated block clears it.</summary>
     public Dictionary<uint, (int BlockCount, int? MaterialId, int CategoryId)> GraphicsStyles { get; } = new();
@@ -295,6 +299,10 @@ internal class ParsingState
     /// <summary>LinePatternElem (class 2325) -> the line pattern: name and segments (data in feet, type 0 dash /
     /// 1 space / 2 dot). Null when the block did not decode; a repeated block clears it.</summary>
     public Dictionary<uint, (int BlockCount, string? Name, List<(double Data, int Type)>? Segs)> LinePatterns { get; } = new();
+
+    /// <summary>Fill pattern element id -> its name and line families (angle, origin, shift/offset, dash list),
+    /// for the blocks that decoded exactly once.</summary>
+    public Dictionary<uint, (int BlockCount, string? Name, List<Parsing.TfBlockDeserializer.PatternGrid>? Grids)> FillPatterns { get; } = new();
 
     /// <summary>FamilySymbol (class 1829) of a title block -> its GLine linework in symbol feet. Null when the block
     /// did not decode; a repeated block clears it.</summary>

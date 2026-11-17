@@ -5841,6 +5841,14 @@ internal static partial class ElementBuilder
             .ToDictionary(pair => (int)pair.Key,
                 pair => (pair.Value.Viewdata!.ParentViewId, pair.Value.Viewdata!.CoarserScale,
                     (IReadOnlyList<double[]>?)pair.Value.Viewdata!.FrontCut));
+        rvtInfo.MaterialPatterns = state?.MaterialPatterns
+            .Where(pair => pair.Value is { SurfacePatternId: not -1 } or { CutPatternId: not -1 })
+            .ToDictionary(pair => (int)pair.Key,
+                pair => (pair.Value.CutPatternId, pair.Value.SurfacePatternId));
+        rvtInfo.FillPatterns = state?.FillPatterns
+            .Where(pair => pair.Value is { Name: not null, Grids: not null })
+            .ToDictionary(pair => (int)pair.Key,
+                pair => (pair.Value.Name!, (IReadOnlyList<TfBlockDeserializer.PatternGrid>)pair.Value.Grids!));
         rvtInfo.GridCenterCategories = state?.GridCenterCategories
             .Where(pair => pair.Value is { BlockCount: 1, CategoryId: not null })
             .ToDictionary(pair => (int)pair.Key,

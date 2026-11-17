@@ -98,6 +98,16 @@ namespace RvtIO.Model
         [System.Text.Json.Serialization.JsonIgnore]
         internal IReadOnlyDictionary<int, (int ParentViewId, double CoarserScale, IReadOnlyList<double[]>? FrontCut)>? SectionViews { get; set; }
 
+        /// <summary>Material element id -> its cut and surface fill pattern element ids (-1 when the material
+        /// has no pattern of that kind), for the materials whose block decoded exactly once.</summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        internal IReadOnlyDictionary<int, (int CutPatternId, int SurfacePatternId)>? MaterialPatterns { get; set; }
+
+        /// <summary>Fill pattern element id -> its name and line families (angle, origin, shift/offset, dash list
+        /// in the pattern's own feet), for the patterns whose block decoded exactly once.</summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        internal IReadOnlyDictionary<int, (string Name, IReadOnlyList<Parsing.TfBlockDeserializer.PatternGrid> Grids)>? FillPatterns { get; set; }
+
         /// <summary>Grid type element id (GridAttributes root) -> the center-segment category id whose
         /// projection graphics style inks the grid's center line, for the types whose block decoded
         /// exactly once.</summary>

@@ -3395,6 +3395,241 @@ internal static partial class TfBlockDeserializer
         catch (DecodeFail) { return null; }
     }
 
+    /// <summary>One line family of a fill pattern: its angle (radians), origin, shift (along the line) and
+    /// offset (between lines) in the pattern's own feet, and its repeating dash list (dash, gap, ...; a zero
+    /// dash is a dot).</summary>
+    internal sealed record PatternGrid(double Angle, double OriginX, double OriginY, double Shift, double Offset,
+        double[] Segments);
+
+    /// <summary>Reads a material's cut and surface fill patterns: the MaterialElem root (class 2486) owns one
+    /// deferred Material (class 2479) through m_pMaterial, whose m_cutPatternId and m_surfacePatternId name the
+    /// pattern elements. Both ids are -1 when the material has no pattern of that kind. False when anything
+    /// fails to decode.</summary>
+    internal static bool TryExtractMaterialPatterns(
+        byte[] d, int blockStart, uint dataSize, ushort classId, out int cutPatternId, out int surfacePatternId)
+    {
+        cutPatternId = surfacePatternId = -1;
+        if (classId != 2486
+            || blockStart < 0
+            || dataSize > int.MaxValue
+            || (long)blockStart + 16 + dataSize > d.Length
+            || dataSize < 6
+            || BitConverter.ToUInt32(d, blockStart + 8) != dataSize
+            || BitConverter.ToUInt16(d, blockStart + 12) != classId)
+            return false;
+        var fields = SerializationFields(classId);
+        var materialFields = SerializationFields(2479);
+        if (fields == null || materialFields == null) return false;
+        if (!materialFields.Any(f => f is { Declaring: 2479, Name: "m_surfacePatternId" })) return false;
+        int payloadEnd = blockStart + 16 + (int)dataSize;
+        if (BitConverter.ToUInt32(d, payloadEnd - 4) != dataSize) return false;
+
+        var cur = new Cursor { D = d, Pos = blockStart + 14, End = payloadEnd - 4 };
+        var queue = new List<(ushort Cls, uint Id)>();
+        int materialIndex = -1;
+        bool ownOwnerRead = false;
+        try
+        {
+            foreach (var field in fields)
+            {
+                if (field is { Declaring: 37, Name: "m_id" })
+                {
+                    if (ownOwnerRead || field is not { Type: 14, Mods: 0, Ref: 20 }) return false;
+                    int owner = ReadI32(cur);
+                    if (owner <= 0 || (uint)owner != BitConverter.ToUInt32(d, blockStart)) return false;
+                    ownOwnerRead = true;
+                    continue;
+                }
+                if (field is { Declaring: 2486, Name: "m_materialPathMap", Type: 14, Mods: 80 })
+                {
+                    SkipMaterialPathMap(cur);
+                    continue;
+                }
+                int before = queue.Count;
+                ReadField(cur, field, queue, 0, null);
+                if (field is not { Declaring: 2486, Name: "m_pMaterial" }) continue;
+                if (queue.Count != before + 1 || queue[before].Cls != 2479) return false;
+                materialIndex = before;
+            }
+            if (materialIndex < 0 || !ownOwnerRead) return false;
+            SkipQueuedObjects(cur, queue, materialIndex);
+            foreach (var field in materialFields)
+            {
+                if (field is { Declaring: 2479, Name: "m_cutPatternId", Type: 14, Mods: 0, Ref: 20 })
+                {
+                    cutPatternId = ReadI32(cur);
+                    continue;
+                }
+                if (field is { Declaring: 2479, Name: "m_surfacePatternId", Type: 14, Mods: 0, Ref: 20 })
+                {
+                    surfacePatternId = ReadI32(cur);
+                    return true;
+                }
+                ReadField(cur, field, queue, 1, null);
+            }
+            return false;
+        }
+        catch (DecodeFail) { return false; }
+    }
+
+    /// <summary>The m_materialPathMap of a MaterialElem (map&lt;int, pair&lt;AString, int&gt;&gt;): read as its
+    /// stored entries, the field carries no item class.</summary>
+    private static void SkipMaterialPathMap(Cursor cur)
+    {
+        uint entries = ReadU32(cur);
+        if (entries == 0xFFFFFFFF) return;
+        if (entries > 10_000) throw Fail;
+        for (uint index = 0; index < entries; index++)
+        {
+            ReadI32(cur);
+            ReadString(cur);
+            ReadI32(cur);
+        }
+    }
+
+    /// <summary>Walks the deferred objects queued before <paramref name="stopIndex"/>, so the cursor reaches the
+    /// object whose fields the caller wants to read next. Parameter-set stores are read as their own records.</summary>
+    private static void SkipQueuedObjects(Cursor cur, List<(ushort Cls, uint Id)> queue, int stopIndex)
+    {
+        for (int queueIndex = 0; queueIndex < stopIndex; queueIndex++)
+        {
+            ushort queuedClass = queue[queueIndex].Cls;
+            if (ParamSetTags.TryGetValue(queuedClass, out var parameterStore))
+            {
+                uint count = ReadU32(cur);
+                if (count > 100_000) throw Fail;
+                var recordFields = SerializationFields(parameterStore.RecordClass);
+                if (recordFields == null) throw Fail;
+                for (uint index = 0; index < count; index++)
+                    foreach (var recordField in recordFields)
+                        ReadField(cur, recordField, new List<(ushort, uint)>(), 0, null);
+                continue;
+            }
+            foreach (var queuedField in SerializationFields(queuedClass) ?? throw Fail)
+                ReadField(cur, queuedField, queue, 1, null);
+        }
+    }
+
+    /// <summary>Reads a fill pattern: the FillPatternElem root (class 1851) owns one deferred FillPattern
+    /// (class 1849) through m_pFillPattern, whose m_gridsArr queues the FillGrid objects (class 1848) that carry
+    /// each line family's angle, origin, shift/offset and dash list. False when anything fails to decode.</summary>
+    internal static bool TryExtractFillPattern(
+        byte[] d, int blockStart, uint dataSize, ushort classId,
+        out string? name, out List<PatternGrid>? grids)
+    {
+        name = null;
+        grids = null;
+        if (classId != 1851
+            || blockStart < 0
+            || dataSize > int.MaxValue
+            || (long)blockStart + 16 + dataSize > d.Length
+            || dataSize < 6
+            || BitConverter.ToUInt32(d, blockStart + 8) != dataSize
+            || BitConverter.ToUInt16(d, blockStart + 12) != classId)
+            return false;
+        var rootFields = SerializationFields(classId);
+        var patternFields = SerializationFields(1849);
+        var gridFields = SerializationFields(1848);
+        if (rootFields == null || patternFields == null || gridFields == null) return false;
+        int payloadEnd = blockStart + 16 + (int)dataSize;
+        if (BitConverter.ToUInt32(d, payloadEnd - 4) != dataSize) return false;
+
+        var cur = new Cursor { D = d, Pos = blockStart + 14, End = payloadEnd - 4 };
+        var queue = new List<(ushort Cls, uint Id)>();
+        int patternIndex = -1;
+        bool ownOwnerRead = false;
+        try
+        {
+            foreach (var field in rootFields)
+            {
+                if (field is { Declaring: 37, Name: "m_id" })
+                {
+                    if (ownOwnerRead || field is not { Type: 14, Mods: 0, Ref: 20 }) return false;
+                    int owner = ReadI32(cur);
+                    if (owner <= 0 || (uint)owner != BitConverter.ToUInt32(d, blockStart)) return false;
+                    ownOwnerRead = true;
+                    continue;
+                }
+                int before = queue.Count;
+                ReadField(cur, field, queue, 0, null);
+                if (field is not { Declaring: 1851, Name: "m_pFillPattern" }) continue;
+                if (queue.Count != before + 1 || queue[before].Cls != 1849) return false;
+                patternIndex = before;
+            }
+            if (patternIndex < 0 || !ownOwnerRead) return false;
+            SkipQueuedObjects(cur, queue, patternIndex);
+
+            int gridCount = 0;
+            foreach (var field in patternFields)
+            {
+                if (field is { Declaring: 1849, Name: "m_gridsArr", Type: 14, Mods: 81 })
+                {
+                    int before = queue.Count;
+                    ReadField(cur, field, queue, 1, null);
+                    gridCount = queue.Count - before;
+                }
+                else if (field is { Declaring: 1849, Name: "m_name", Type: 8, Mods: 96 })
+                    name = ReadString(cur);
+                else if (field is { Declaring: 1849, Name: "m_scale", Type: 7, Mods: 0 })
+                    ReadF64(cur);
+                else if (field is { Declaring: 1849, Name: "m_windowSize", Type: 7, Mods: 0 })
+                    ReadF64(cur);
+                else
+                    ReadField(cur, field, queue, 1, null);
+            }
+            if (gridCount <= 0) return false;
+
+            // The queued children are read in the stream order the pointers were seen: a CellList may have
+            // queued a PatternHelper before the grids, so skip every non-FillGrid object up to the last grid.
+            var result = new List<PatternGrid>(gridCount);
+            for (int queueIndex = patternIndex + 1; queueIndex < queue.Count && result.Count < gridCount; queueIndex++)
+            {
+                if (queue[queueIndex].Cls != 1848)
+                {
+                    foreach (var queuedField in SerializationFields(queue[queueIndex].Cls) ?? throw Fail)
+                        ReadField(cur, queuedField, queue, 1, null);
+                    continue;
+                }
+                double angle = 0, ox = 0, oy = 0, shift = 0, offset = 0;
+                double[] segments = [];
+                foreach (var field in gridFields)
+                {
+                    if (field is { Declaring: 1848, Name: "m_angle", Type: 7, Mods: 0 })
+                        angle = ReadF64(cur);
+                    else if (field is { Declaring: 1848, Name: "m_origin", Type: 7, Mods: 16 })
+                    {
+                        ox = ReadF64(cur);
+                        oy = ReadF64(cur);
+                    }
+                    else if (field is { Declaring: 1848, Name: "m_deltas", Type: 7, Mods: 16 })
+                    {
+                        shift = ReadF64(cur);
+                        offset = ReadF64(cur);
+                    }
+                    else if (field is { Declaring: 1848, Name: "m_segs", Type: 7, Mods: 80 })
+                    {
+                        uint count = ReadU32(cur);
+                        if (count == 0xFFFFFFFF) { segments = []; }
+                        else if (count > 1000) return false;
+                        else
+                        {
+                            segments = new double[count];
+                            for (uint segIndex = 0; segIndex < count; segIndex++)
+                                segments[segIndex] = ReadF64(cur);
+                        }
+                    }
+                    else
+                        ReadField(cur, field, queue, 1, null);
+                }
+                result.Add(new PatternGrid(angle, ox, oy, shift, offset, segments));
+            }
+            if (result.Count != gridCount) return false;
+            grids = result;
+            return name != null;
+        }
+        catch (DecodeFail) { return false; }
+    }
+
     /// <summary>Reads a graphics style: the GStyleElem root (class 2050) owns exactly one deferred GStyle (class 2046)
     /// through m_pGStyle, and GStyle.m_materialElemId is one of its serialized fields;
     /// the root names the category of the style in m_categoryId. The root and

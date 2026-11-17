@@ -1842,13 +1842,31 @@ public partial class RvtFileReader
         ParsingState state, byte[] data, int start, uint size, ushort classId, uint owner)
     {
         if (classId != 2486) return;
-        string? name = start >= 0 && start <= data.Length - 4
-            && BitConverter.ToUInt32(data, start) == owner
-                ? TfBlockDeserializer.ExtractMaterialName(data, start, size, classId)
-                : null;
+        bool framed = start >= 0 && start <= data.Length - 4 && BitConverter.ToUInt32(data, start) == owner;
+        string? name = framed ? TfBlockDeserializer.ExtractMaterialName(data, start, size, classId) : null;
         state.MaterialNames[owner] = state.MaterialNames.TryGetValue(owner, out var old)
             ? (old.BlockCount + 1, null)
             : (1, name);
+        int cutPatternId = -1, surfacePatternId = -1;
+        bool patterns = framed && TfBlockDeserializer.TryExtractMaterialPatterns(
+            data, start, size, classId, out cutPatternId, out surfacePatternId);
+        state.MaterialPatterns[owner] = state.MaterialPatterns.TryGetValue(owner, out var oldPatterns)
+            ? (oldPatterns.BlockCount + 1, oldPatterns.CutPatternId, oldPatterns.SurfacePatternId)
+            : (1, patterns ? cutPatternId : -1, patterns ? surfacePatternId : -1);
+    }
+
+    internal static void RecordFillPattern(
+        ParsingState state, byte[] data, int start, uint size, ushort classId, uint owner)
+    {
+        if (classId != 1851) return;
+        string? name = null;
+        List<TfBlockDeserializer.PatternGrid>? grids = null;
+        bool read = start >= 0 && start <= data.Length - 4
+            && BitConverter.ToUInt32(data, start) == owner
+            && TfBlockDeserializer.TryExtractFillPattern(data, start, size, classId, out name, out grids);
+        state.FillPatterns[owner] = state.FillPatterns.TryGetValue(owner, out var old)
+            ? (old.BlockCount + 1, old.Name, old.Grids)
+            : (1, read ? name : null, read ? grids : null);
     }
 
     internal static void RecordGraphicsStyle(
@@ -2499,6 +2517,7 @@ public partial class RvtFileReader
             RecordWallJoinedToTop(state, seg, bs, ds, cls, eid);
             RecordWallEndJoins(state, seg, bs, ds, cls, eid);
             RecordMaterialName(state, seg, bs, ds, cls, eid);
+            RecordFillPattern(state, seg, bs, ds, cls, eid);
             RecordGraphicsStyle(state, seg, bs, ds, cls, eid);
             RecordPenWidthTable(state, seg, bs, ds, cls, eid);
             RecordLinePattern(state, seg, bs, ds, cls, eid);

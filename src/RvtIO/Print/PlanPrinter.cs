@@ -1,5 +1,6 @@
 using RvtIO.BuiltIns;
 using RvtIO.Model;
+using RvtIO.Parsing;
 using RvtIO.Pdf;
 
 namespace RvtIO.Print;
@@ -60,7 +61,8 @@ public static class PlanPrinter
         List<(List<(double X, double Y)> Polygon, string Name, string Number, double AreaSquareFeet)> Rooms,
         List<List<(double X, double Y)>> Furniture,
         List<(double MidX, double MidY, double Nx, double Ny, string Text, bool IsWindow)> Tags,
-        double MinX, double MinY, double MaxX, double MaxY);
+        double MinX, double MinY, double MaxX, double MaxY,
+        List<(List<(double X, double Y)> Polygon, IReadOnlyList<TfBlockDeserializer.PatternGrid> Grids)>? RoomPatterns = null);
 
     /// <summary>The levels a plan can be printed for: those that own at least one wall or column with a location line,
     /// by elevation and then name.</summary>
@@ -344,6 +346,60 @@ public static class PlanPrinter
             rooms.Add((polygon, element.Name ?? "", number, areaFeet));
         }
 
+        // A room stands on the floor whose top face holds its centre, and a floor's top compound layer may name a
+        // material with a surface pattern: a carpet in a sunken living room prints its "Sand" hatch inside the room's
+        // fill, as the reference plan does. The material and the pattern are the file's own; the association is the
+        // geometric one (the floor whose top face contains the room centre, the highest such floor below the level).
+        var roomPatterns = new List<(List<(double X, double Y)> Polygon, IReadOnlyList<TfBlockDeserializer.PatternGrid> Grids)>();
+        if (document.RawData.MaterialPatterns is { Count: > 0 } materialPatterns
+            && document.RawData.FillPatterns is { Count: > 0 } fillPatterns)
+        {
+            double levelElevation = document.GetElement(levelId)?.LookupParameter(BuiltInParameter.LEVEL_ELEV)?.Value
+                is double elev ? elev : 0;
+            var floors = new List<(List<(double X, double Y)> Polygon, double TopZ, int MaterialId)>();
+            foreach (var element in document.Elements)
+            {
+                if (element.CategoryId != (int)BuiltInCategory.OST_Floors) continue;
+                if (element.Geometry is not { Faces.Count: > 0 } geometry) continue;
+                var type = element.TypeId > 0 ? document.GetElement(element.TypeId) : null;
+                var layers = type?.SerializedHostTypeLayers;
+                if (layers is not { Length: > 0 } || layers[0].RawMaterialId <= 0) continue;
+                if (!materialPatterns.TryGetValue(layers[0].RawMaterialId, out var material)
+                    || material.SurfacePatternId <= 0 || !fillPatterns.ContainsKey(material.SurfacePatternId)) continue;
+                List<(double X, double Y)>? top = null;
+                double topZ = double.MinValue;
+                foreach (var face in geometry.Faces)
+                {
+                    if (face.OuterVertices is not { Count: >= 3 } vertices || face.Normal[2] < 0.9) continue;
+                    double z = 0;
+                    foreach (var vertex in vertices) z += vertex[2];
+                    z /= vertices.Count;
+                    if (z <= topZ) continue;
+                    topZ = z;
+                    top = vertices.Select(vertex => (vertex[0] * FeetToMillimetres, vertex[1] * FeetToMillimetres)).ToList();
+                }
+                if (top == null || topZ > levelElevation + 1) continue;
+                floors.Add((top, topZ, layers[0].RawMaterialId));
+            }
+            foreach (var room in rooms)
+            {
+                double cx = 0, cy = 0;
+                foreach (var point in room.Polygon) { cx += point.X; cy += point.Y; }
+                cx /= room.Polygon.Count;
+                cy /= room.Polygon.Count;
+                (double TopZ, int MaterialId)? best = null;
+                foreach (var floor in floors)
+                {
+                    if (!PointInPolygon(cx, cy, floor.Polygon)) continue;
+                    if (best == null || floor.TopZ > best.Value.TopZ) best = (floor.TopZ, floor.MaterialId);
+                }
+                if (best == null) continue;
+                var material = materialPatterns[best.Value.MaterialId];
+                if (!fillPatterns.TryGetValue(material.SurfacePatternId, out var pattern)) continue;
+                roomPatterns.Add((room.Polygon, pattern.Grids));
+            }
+        }
+
         var openingLoops = new List<List<(double X, double Y)>>();
         foreach (var insert in document.Elements)
         {
@@ -414,7 +470,7 @@ public static class PlanPrinter
         minX -= annotation; minY -= annotation; maxX += annotation; maxY += annotation;
 
         return new PlanContent(walls, columns, grids, gaps, windowGaps, doorGaps, floorLoops, openingLoops, rooms,
-            furniture, tags, minX, minY, maxX, maxY);
+            furniture, tags, minX, minY, maxX, maxY, roomPatterns);
     }
 
     /// <summary>Draws collected plan content on a page: the model point (content.MinX, content.MinY) goes to
@@ -485,6 +541,13 @@ public static class PlanPrinter
         foreach (var room in content.Rooms)
             page.DrawPolyline(room.Polygon.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0, true,
                 RoomFill(room.Name));
+
+        // A room's floor material may name a surface pattern (the sunken living room's carpet names "Sand"):
+        // the reference prints that hatch inside the room's colour fill, and both the material and the pattern
+        // are the file's own records.
+        foreach (var pattern in content.RoomPatterns ?? [])
+            FillHatch.Draw(page, pattern.Polygon.Select(point => (ToX(point.X), ToY(point.Y))).ToList(),
+                pattern.Grids, ToX(0), ToY(0), 0.1);
 
         // Plan grids dash with the file's center-segment pattern like elevation grids do (the reference
         // draws dashed centerlines, not solids; a solid fills the dash gaps with unscored extras while the
@@ -920,6 +983,21 @@ public static class PlanPrinter
             sum += x1 * y2 - x2 * y1;
         }
         return sum / 2;
+    }
+
+    /// <summary>Even-odd point-in-polygon test on a closed outline.</summary>
+    private static bool PointInPolygon(double x, double y, IReadOnlyList<(double X, double Y)> polygon)
+    {
+        bool inside = false;
+        for (int i = 0, j = polygon.Count - 1; i < polygon.Count; j = i++)
+        {
+            var a = polygon[i];
+            var b = polygon[j];
+            if ((a.Y > y) != (b.Y > y)
+                && x < (b.X - a.X) * (y - a.Y) / (b.Y - a.Y) + a.X)
+                inside = !inside;
+        }
+        return inside;
     }
 
     /// <summary>The stretches of a wall that are not an opening: [0, length] minus the gaps, in order.</summary>
