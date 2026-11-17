@@ -73,6 +73,97 @@ public class ElevationPrinterTests
         };
     }
 
+    private static Element SectionView(int id, double[] origin)
+    {
+        return new Element
+        {
+            Id = id,
+            CategoryId = (int)BuiltInCategory.OST_Views,
+            ViewOrigin = origin,
+            ViewDirection = [-1, 0, 0],
+            ViewHorizontalDirection = [0, 1, 0],
+            ViewVerticalDirection = [0, 0, 1],
+        };
+    }
+
+    [Fact]
+    public void Collect_CutsAtTheViewPlaneInFeet()
+    {
+        // Two walls five metres apart along X; a section looking -X with its plane at x = 10 ft keeps
+        // the west wall and cuts the east one. The plane origin is file feet, like ViewOrigin documents.
+        var view = SectionView(900, [10, 0, 5]);
+        var document = Document(
+            QuadWall(600, [[3, 0, 0], [3, 4, 0], [3, 4, 3], [3, 0, 3]], [1, 0, 0]),
+            QuadWall(601, [[20, 0, 0], [20, 4, 0], [20, 4, 3], [20, 0, 3]], [1, 0, 0]),
+            view);
+
+        var content = ElevationPrinter.Collect(document, "section", false, view, null);
+
+        // The west wall (x = 3 ft, in front of the 10 ft plane) stays; the east wall is cut away.
+        Assert.NotNull(content);
+        Assert.Single(content!.Faces);
+        Assert.All(content.Faces[0].Points, point => Assert.True(point.X <= 10 * FeetToMillimetres + 1));
+    }
+
+    [Fact]
+    public void SampleFile_StairSectionShowsTheStair()
+    {
+        // The stair railing (world y about -13.7..-6.5 m) projects onto content X in that range
+        // (the view looks along -X with right axis +Y). A feet-as-millimetres cut plane would drop
+        // everything east of x = 40 mm, leaving none of the stair.
+        string? path = TestFiles.TryFind("Test_2022.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+        var view = document.Elements.FirstOrDefault(e =>
+            e.CategoryId == (int)BuiltInCategory.OST_Views && e.Name == "Stair Section");
+        Assert.NotNull(view);
+
+        var content = ElevationPrinter.Collect(document, "section", true, view, null);
+
+        Assert.NotNull(content);
+        Assert.Contains(content!.Edges, edge => Math.Min(edge.X1, edge.X2) < -6000);
+    }
+
+    [Fact]
+    public void SampleFile_StairDetailWindowFramesTheStair()
+    {
+        // The Main Stair Detail window (2.6 x 1.9 m around the stair) clips the model to the stair
+        // enclosure instead of drawing the whole model.
+        string? path = TestFiles.TryFind("Test_2022.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+        var view = document.Elements.FirstOrDefault(e =>
+            e.CategoryId == (int)BuiltInCategory.OST_Views && e.Name == "Main Stair Detail");
+        Assert.NotNull(view);
+
+        var content = ElevationPrinter.Collect(document, "section", false, view, (2600, 1900));
+
+        Assert.NotNull(content);
+        Assert.True(content!.MaxX - content.MinX < 3000,
+            $"detail width is {content.MaxX - content.MinX:0} mm");
+        Assert.True(content.MaxY - content.MinY < 2500,
+            $"detail height is {content.MaxY - content.MinY:0} mm");
+    }
+
+    [Fact]
+    public void Collect_MarksCutEdgesOnThePlane()
+    {
+        // A sloped face straddling the section plane (x = 10 ft, looking -X): the clipped boundary on the
+        // plane inks heavy, the natural edges thin.
+        var view = SectionView(900, [10, 0, 5]);
+        var document = Document(
+            QuadWall(600, [[8, 0, 0], [12, 0, 3], [12, 4, 3], [8, 4, 0]], [-0.6, 0, 0.8]),
+            view);
+
+        var content = ElevationPrinter.Collect(document, "section", false, view, null)!;
+
+        Assert.NotNull(content);
+        var cut = Assert.Single(content!.Edges, e => e.IsCut);
+        Assert.Equal(1.5 * FeetToMillimetres, cut.Y1, 0);
+        Assert.Equal(1.5 * FeetToMillimetres, cut.Y2, 0);
+        Assert.Contains(content.Edges, e => !e.IsCut);
+    }
+
     private static RvtDocument Document(params Element[] elements) =>
         RvtDocument.FromInfo(new RevitFileInfo { Elements = elements.ToList() });
 

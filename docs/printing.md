@@ -95,8 +95,10 @@ context the reference export shows around an elevation (their faces of a few squ
 not bury the building). Where the viewport decoded an axis-aligned crop box, the drawing is filtered to its rectangle
 at generation time (the scorer counts vectors, not the page clip), and levels, grids and the outline follow it.
 
-The level lines are thin and dashed (3 mm on, 1.5 mm off on the reference) and start at the crop like
-the reference, running to the level's decoded datum envelope; each ends in the marker the reference export uses:
+The level lines are thin and dashed (3 mm on, 1.5 mm off on the reference). Each spans its decoded datum
+envelope while the datum stays near the crop; where the datum runs far past a narrow crop (the stair at 1:50),
+the line is clipped to the crop plus a label-strip margin on each side, as the reference ends its lines at the
+markers just past the frame. Each line ends in the marker the reference export uses:
 a circle with an arrow head at the right of the drawing, the level name above and its height in millimetres below
 (Roof Line 6000, Level 2 3000, Ceiling 2700, Level 1 0, Level 1 Living Rm. -550, Foundation -800 on the sample).
 Only the level records of the project are drawn: the families each carry their own reference levels under the same
@@ -107,15 +109,20 @@ resolved from the grid type's center-segment line pattern) with solid white-fill
 The plane of a view is decoded from the view's own block (class 0x3F8): the block stores a point of the plane, the view
 scale, the vertical axis and the camera direction, so an elevation is projected on the exact axes of the view and a
 section is **cut at its plane**: the geometry between the viewer and the plane is removed, the polygons crossing the plane
-are clipped, and the faces behind it are filled grey. On the sample, the Longitudinal Section of A103 shows the rooms,
+are clipped, and the faces behind it are filled grey. The stored point is file feet, like every model coordinate, and is
+converted to millimetres before the cut. On the sample, the Longitudinal Section of A103 shows the rooms,
 walls and the stair cut at the section line. A view whose plane is not decoded falls back to the direction taken from its
-name (North, South, East, West, Section projected along the short axis of the building).
+name (North, South, East, West, Section projected along the short axis of the building). The edges the cut itself
+creates ink with the Walls cut pen; every other projected edge of a section inks thin with the projection pen,
+as the reference draws cut boundaries heavy and projection linework light.
 
 A detail section (1:10 to 1:50) is printed when its plane is decoded: the cut is drawn inside a window of about
 3.0 x 2.2 metres around the point of the plane, the area a wall or roof detail covers, and only when the viewport sits on
-the drawable part of the page (the file places some detail viewports outside it). A view the file places off the page
+the drawable part of the page (the file places some detail viewports outside it). A stair detail (1:20) instead takes
+the file's own crop frame, the way the reference places it next to the stair section; its level lines and grid bubbles
+stay suppressed until per-view placement of datum annotation is decoded. A view the file places off the page
 (a stair section whose stored centre is x = 0) is moved into the free space of the sheet, a drawing larger than its
-place (a stair detail at 1:20) is drawn at a scale that fits, and every drawing is kept inside the page. Two drawings the file places on top of each other are separated: the later
+place is drawn at a scale that fits, and every drawing is kept inside the page. Two drawings the file places on top of each other are separated: the later
 one moves to the free place of the top row. A view of the section class whose name carries no compass word (a "Main
 Stair Detail") is printed as a section too. The plane of a view is looked for in
 every chunk of the file, and the block layout (class 0x3F8) takes precedence over the older signature, so the details are
@@ -236,7 +243,7 @@ selection nor drawing.
 1. Decode the crop region of a rotated view and of a crop region switched off with live bounds, and the annotation crop that keeps titles and labels outside the model crop. Decode the record that places a viewport the file puts off the page. Draw section marks from their decoded front-cut segments assigned to the right viewport (the duplicate Building trace on Level 2, the short callout bubbles with sheet references).
 2. Evaluate the body rows of element schedules from the model (the How-do-I reference body is computed, not stored).
 3. Decode the geometry of the property lines (with their bearing/distance labels) and the spot elevations, the solar-analysis diagram of a site sheet, and the file's own tag positions with leaders.
-4. Decode the per-view positions of datum bubbles: the reference lines its level marks up on the crop edge and ends each line at its own marker, while ours run every line from the crop to the datum end. Hide the exposed second-floor railing boards the reference does not draw (per-view detail level or occluder gap), and restore the long footing/grade model edges the file's footing instances never decode into geometry.
+4. Decode per-view placement of viewports and datum annotation: our stair/detail frames follow the file offset while the reference resolves overlapping viewports side by side, and the reference lines its level marks up on the crop edge and ends each line at its own marker while ours run datum spans (clipped only past a label margin). Hide the exposed second-floor railing boards the reference does not draw (per-view detail level or occluder gap), and restore the long footing/grade model edges the file's footing instances never decode into geometry.
 5. Widen the same printing to the releases the reader supports in its own schema.
 ## Comparison with the reference export
 
@@ -248,6 +255,6 @@ Measured on the sample project `rac_basic_sample_project.rvt` against the refere
 | A001 Title Sheet | the title texts, the five renderings from the file, the logo, the "How do I" table with its title, long-text band, header and body grid at its instance origin, and every revision table with its header and empty body grid to its fixed height | the evaluated body text of the "How do I" table (computed by Revit, not stored) |
 | A101 Site Plan | the planting tags T1... with their leaders, the north arrow, the planting schedule with Type Mark / Common Name / Count in a ruled table at its instance origin | the property and setback lines (no decoded geometry yet), the spot elevations, the solar-analysis diagram, the file's own tag positions |
 | A102 Plans | both plans with the room colours of the reference, furniture, stairs, door and window tags, dimensions on all four sides, the room legend, the room tags, and the section marks of the viewports they belong to (cut to the viewport frame at generation) | the view reference marks (annotation elements whose positions the reader does not decode); the Building Section trace repeats in the Level 2 plan, whose own mark the file hides elsewhere |
-| A103 Elevations/Sections | South elevation and the Longitudinal Section cut at its plane, level markers, the faded site; stacked wall layers and window frames hide on the silhouette in front, coincident modeling inks once, coplanar triangulation diagonals not inked, crop-filtered at generation; level lines span their datum envelopes from the crop and the grids dash coarsely ([36 9 9 9] pt from the grid type's line pattern), as the reference does | the level lines end at their markers in the reference (per-view bubble positions, not decoded) and the long footing/grade model edges |
-| A104 Elev/Sec/Det | West elevation and the Building Section cut at its plane, the four detail sections windowed at generation | the four detail sections: the file places their viewports outside the page and stores no other position |
-| A105 Elev/Stair Sections | Stair Section, Main Stair Detail (cut), East elevation, hidden lines removed | the layout is tighter than the reference (placements are derived, not stored) |
+| A103 Elevations/Sections | South elevation and the Longitudinal Section cut at its true plane (feet-to-mm), level markers, the faded site; stacked wall layers hide on the silhouette, coincident modeling inks once, coplanar triangulation diagonals not inked, crop-filtered at generation; level lines follow their datum envelopes near the crop with a label-margin cap for narrow viewports, and the grids dash coarsely ([36 9 9 9] pt from the grid type's line pattern), as the reference does | per-view level ends and markers (not decoded) and the long footing/grade model edges (footing instances lack decoded geometry) |
+| A104 Elev/Sec/Det | West elevation and the Building Section cut at its plane, the four detail sections windowed at generation; cut-created edges ink heavy, projection edges thin | the four detail sections: the file places their viewports outside the page and stores no other position |
+| A105 Elev/Stair Sections | Stair Section cut at its true plane with restored level lines, Main Stair Detail on the file's own crop frame, East elevation, hidden lines removed | viewport and per-view datum placement still decoded file-verbally while the reference resolves overlaps side by side; the layout is tighter than the reference (placements are derived, not stored) |

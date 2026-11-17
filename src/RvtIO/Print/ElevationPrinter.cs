@@ -98,7 +98,7 @@ public static class ElevationPrinter
     ];
 
     internal static ElevationContent? Collect(RvtDocument document, string direction, bool stairsOnly = false,
-        Element? planeView = null, (double Width, double Height)? window = null)
+        Element? planeView = null, (double Width, double Height)? window = null, bool suppressDatums = false)
     {
         double[] planeOrigin = [];
         bool cut = false;
@@ -107,7 +107,10 @@ public static class ElevationPrinter
             ViewVerticalDirection: { Length: 3 } vert, ViewHorizontalDirection: { Length: 3 } horiz })
         {
             (H, V, D) = (horiz, vert, dir);
-            planeOrigin = origin;
+            // The file stores the view origin in feet, like every model coordinate; the corners below
+            // are millimetres, so the cut plane and the detail window need it converted.
+            planeOrigin = [origin[0] * FeetToMillimetres, origin[1] * FeetToMillimetres,
+                origin[2] * FeetToMillimetres];
             // A section is cut at its plane: only what stands behind it is drawn.
             cut = direction == "section";
         }
@@ -265,7 +268,7 @@ public static class ElevationPrinter
             }
         }
         if (faces.Count == 0) return null;
-        var deduped = DedupeEdges(edgeFaces, D);
+        var deduped = DedupeEdges(edgeFaces, D, cut ? planeOrigin : null);
         var occluded = OccludeEdges(faces, faceMinDepths, deduped);
         List<CollectedEdge> edges = MergeOverlaps(occluded);
         // A windowed detail keeps its fine construction lines; anywhere else coincident modeling
@@ -348,31 +351,35 @@ public static class ElevationPrinter
             grids.Add((x, element.Name ?? ""));
         }
         grids.Sort((left, right) => left.X.CompareTo(right.X));
-        if (grids.Count > 0) maxY += 4500;
         context.Sort((left, right) => right.Depth.CompareTo(left.Depth));
         // A detail window carries no level lines or grid bubbles: it is a detail of the construction, not a drawing of
-        // the levels.
-        if (window != null)
+        // the levels. A stair detail at 1:20 keeps none either for now: its datum annotation lands off the page
+        // until per-view placement is decoded, while the reference draws only three in-crop level bands there.
+        if (window != null || suppressDatums)
         {
             distinctLevels.Clear();
             grids.Clear();
         }
+        // The grid bubbles print above the frame: without grids (a windowed detail) the frame ends at the model.
+        if (grids.Count > 0) maxY += 4500;
         return new ElevationContent(faces, distinctLevels, grids, context, edges, minX, minY, maxX, maxY);
     }
 
     /// <summary>A projected edge for inking: its ends in view millimetres, the painter's depth of its face,
-    /// the depth of its midpoint for occlusion, the incident faces (FaceB is -1 when single) and its plane key
-    /// for coplanar merging.</summary>
+    /// the depth of its midpoint for occlusion, the incident faces (FaceB is -1 when single), its plane key
+    /// for coplanar merging, and whether the section cut created it (inked with the cut pen; other edges
+    /// use the projection pen).</summary>
     internal sealed record CollectedEdge(double X1, double Y1, double X2, double Y2, double Depth, double MidDepth,
-        int FaceA, int FaceB, long Nx, long Ny, long Nz, long Off);
+        int FaceA, int FaceB, long Nx, long Ny, long Nz, long Off, bool IsCut = false);
 
     /// <summary>Visible edges of the projected faces: an edge shared by exactly two coplanar faces is a
     /// triangulation diagonal inside a flat surface and is not inked; every other edge is drawn once, so a
     /// crease shared by two faces is not inked twice. Endpoints quantize to 0.1 mm, plane normals to 0.001
-    /// and plane offsets to 0.5 mm. Each edge carries its 3D midpoint depth and its incident faces.</summary>
+    /// and plane offsets to 0.5 mm. Each edge carries its 3D midpoint depth and its incident faces. An edge
+    /// both of whose 3D ends lie on the cut plane (within a millimetre) is cut-created.</summary>
     internal static List<CollectedEdge> DedupeEdges(
         List<(List<(double X, double Y)> Points, List<double[]> Ring, double Depth, long Nx, long Ny, long Nz, long Off, int FaceIndex)> edgeFaces,
-        double[] viewDir)
+        double[] viewDir, double[]? cutOrigin = null)
     {
         var byEdge = new Dictionary<(long Ax, long Ay, long Bx, long By), List<int>>();
         for (int f = 0; f < edgeFaces.Count; f++)
@@ -417,14 +424,23 @@ public static class ElevationPrinter
                     otherFace = o.FaceIndex;
                 }
                 double midDepth = depth;
+                bool isCut = false;
                 if (hasRing)
                 {
                     var ca = ring[i];
                     var cb = ring[(i + 1) % ring.Count];
                     midDepth = ((ca[0] + cb[0]) / 2) * viewDir[0] + ((ca[1] + cb[1]) / 2) * viewDir[1]
                         + ((ca[2] + cb[2]) / 2) * viewDir[2];
+                    if (cutOrigin != null)
+                    {
+                        double da = (ca[0] - cutOrigin[0]) * viewDir[0] + (ca[1] - cutOrigin[1]) * viewDir[1]
+                            + (ca[2] - cutOrigin[2]) * viewDir[2];
+                        double db = (cb[0] - cutOrigin[0]) * viewDir[0] + (cb[1] - cutOrigin[1]) * viewDir[1]
+                            + (cb[2] - cutOrigin[2]) * viewDir[2];
+                        isCut = Math.Abs(da) <= 1.0 && Math.Abs(db) <= 1.0;
+                    }
                 }
-                edges.Add(new CollectedEdge(a.X, a.Y, b.X, b.Y, depth, midDepth, faceIndex, otherFace, nx, ny, nz, off));
+                edges.Add(new CollectedEdge(a.X, a.Y, b.X, b.Y, depth, midDepth, faceIndex, otherFace, nx, ny, nz, off, isCut));
             }
         }
         edges.Sort((left, right) => right.Depth.CompareTo(left.Depth));
@@ -844,15 +860,20 @@ public static class ElevationPrinter
         double ToX(double x) => (x - content.MinX) / scale + originX;
         double ToY(double y) => (y - content.MinY) / scale + originY;
         // The pen widths of the document's Object Styles, when they decoded: a section cuts its mass with the
-        // Walls cut pen, an elevation outlines it with the Walls projection pen.
+        // Walls cut pen, an elevation outlines it with the Walls projection pen. Only the edges the cut
+        // created ink heavy; the projected edges of a section ink thin like the reference does.
         bool isSection = faceFill < 1;
-        double faceLine = 0.2;
+        double faceLine = 0.2, projLine = 0.1;
         if (document != null)
         {
             int scaleDenominator = (int)Math.Round(scale);
             if (PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Walls, isSection, scaleDenominator, out double w))
                 faceLine = w;
+            if (isSection && PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Walls, false, scaleDenominator, out double p))
+                projLine = p;
         }
+        // An elevation has no cut: every edge inks with the face line as before.
+        if (!isSection) projLine = faceLine;
         double clipX0 = clipRect?.X0 ?? content.MinX, clipY0 = clipRect?.Y0 ?? content.MinY;
         double clipX1 = clipRect?.X1 ?? content.MaxX, clipY1 = clipRect?.Y1 ?? content.MaxY;
         // The faded site behind the building: the plants and the ground as light shapes without outlines.
@@ -886,7 +907,7 @@ public static class ElevationPrinter
             double x1 = edge.X1, y1 = edge.Y1, x2 = edge.X2, y2 = edge.Y2;
             if (clipRect.HasValue && !ClipSegment(x1, y1, x2, y2, clipX0, clipY0, clipX1, clipY1,
                 out x1, out y1, out x2, out y2)) continue;
-            page.DrawLine(ToX(x1), ToY(y1), ToX(x2), ToY(y2), faceLine);
+            page.DrawLine(ToX(x1), ToY(y1), ToX(x2), ToY(y2), edge.IsCut ? faceLine : projLine);
         }
 
         // Grids first, then the levels: light over the faces the way an elevation prints them. The grids
@@ -930,18 +951,32 @@ public static class ElevationPrinter
         if (content.Levels.Count > 0)
         {
             // A level line is thin (0.283 pt on the reference) and dashed short: 3 mm on, 1.5 mm off.
-            // It spans the datum envelope, past the crop; only its height is clipped to the crop.
+            // It follows its datum while it stays near the crop; only its height is always clipped to the crop.
             page.SetDash(3.0, 1.5);
+            // The line stays near the crop: a datum far wider than a narrow crop (the stair at 1:50) would
+            // otherwise run ten metres past the frame, while the reference ends its lines at the markers
+            // just past the crop. The margin is the label strip the markers and labels take on the right.
+            double marginContent = LabelMarginMillimetres * scale;
             double lastLabelY = double.NegativeInfinity;
             foreach (var (y, label, x0, x1) in content.Levels)
             {
-                double pageY = ToY(y);
-                if (pageY < ToY(content.MinY) - 1 || pageY > ToY(content.MaxY) + 1) continue;
+                // A level belongs to the crop, not to the collected model bounds: stairs-only content ends
+                // above the Foundation while the crop reaches it, and the reference draws it.
                 if (y < clipY0 - 1 || y > clipY1 + 1) continue;
-                // The line starts at the crop, like the reference (its left bubbles line up on the crop
-                // edge), and runs to the datum end; nothing is inked outside the drawn frame (the scorer
-                // counts vectors, not the page clip).
-                double left = ToX(clipX0), right = ToX(x1);
+                double pageY = ToY(y);
+                // The line follows its datum envelope while it stays near the crop. A datum far wider than
+                // a narrow crop (the stair at 1:50) is clipped to the crop plus a label-strip margin on each
+                // side, the way the reference ends its lines at the markers just past the frame.
+                double left = ToX(x0), right = ToX(x1);
+                if (x1 - x0 > 2 * (clipX1 - clipX0))
+                {
+                    left = ToX(Math.Max(x0, clipX0 - marginContent));
+                    right = ToX(Math.Min(x1, clipX1 + marginContent));
+                }
+                else
+                {
+                    left = ToX(Math.Min(x0, clipX0));
+                }
                 if (right <= left) continue;
                 page.DrawLine(left, pageY, right, pageY, 0.1, 0.55);
                 // The level marker at the right end of the line: a circle with an arrow head, the level name above its

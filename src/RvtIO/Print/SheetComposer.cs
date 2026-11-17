@@ -348,8 +348,8 @@ public static class SheetComposer
                 // two metres around it, the size a wall or roof detail covers. The detail is printed only when its
                 // viewport sits on the drawable part of the page: the file places some of them outside it.
                 // A stair section is printed whole like a building section, not as a windowed detail; a stair detail
-                // (1:20) shows the stair in its enclosure, so it is not limited to the stairs alone. It takes the right
-                // part of the sheet, the way the reference places it.
+                // (1:20) shows the stair in its enclosure through the file's own crop frame, the way the
+                // reference places it next to the stair section.
                 bool stairSection = name.Contains("stair", StringComparison.OrdinalIgnoreCase);
                 bool stairsOnly = stairSection && scale >= 50;
                 double stripLeftForStair = layout.WidthMillimetres - 5
@@ -358,24 +358,25 @@ public static class SheetComposer
                     && viewElement?.ViewDirection is { Length: 3 };
                 double stripLeft = layout.WidthMillimetres - 5
                     - Math.Min(180, layout.WidthMillimetres * 0.22) - 3;
-                // A stair detail (1:20) is cropped to the stair enclosure, like the details of the reference: a window of
-                // 80 x 60 mm on the page around the point of its plane.
-                (double Width, double Height)? detailWindow = detailSection ? (3000, 2200)
-                    : stairSection && scale < 50 ? (130 * scale, 95 * scale)
-                    : null;
+                // A detail section (1:10 to 1:20) shows the cut near the point of its plane: a window about
+                // three by two metres around it, the size a wall or roof detail covers.
+                (double Width, double Height)? detailWindow = detailSection ? (3000, 2200) : null;
                 // A detail whose viewport the file puts against the border or outside the page is not printed.
                 bool detailOnPage = !detailSection || (centerX > 40 && centerX < stripLeft - 40
                     && centerY > 40 && centerY < layout.HeightMillimetres - 40);
                 var elevation = detailOnPage
-                    ? ElevationPrinter.Collect(document, direction, stairsOnly, viewElement, detailWindow)
+                    ? ElevationPrinter.Collect(document, direction, stairsOnly, viewElement, detailWindow,
+                        suppressDatums: stairSection && scale < 50)
                     : null;
                 // A viewport whose view decoded a crop frame draws the crop at the view's own scale, placed by
                 // the viewport offset (sheet = offset + view / scale): the frame is the crop rectangle and the
                 // content is clipped to it, nothing is reduced to fit. The crop applies only where the collection
-                // used the view's own axes (the basis matches the decoded view plane) and the view is not a
-                // windowed detail, which keeps its own enclosure. Views without a crop keep the whole-model
-                // frame below.
-                if (elevation != null && detailWindow == null && view?.ViewCrop is { Active: true } crop
+                // used the view's own axes (the basis matches the decoded view plane). A windowed wall or roof
+                // detail keeps its own enclosure and its fitted place; a windowed stair detail takes the file's
+                // crop frame instead, the way the reference places it next to the stair section. Views without
+                // a crop keep the whole-model frame below.
+                if (elevation != null && (detailWindow == null || (stairSection && scale < 50))
+                    && view?.ViewCrop is { Active: true } crop
                     && ViewBasisMatches(viewElement, crop)
                     && TryCropFrame(centerX, centerY, scale, crop, elevation.MinX, elevation.MinY,
                         out frameX, out frameY, out frameWidth, out frameHeight, out double cropOriginX, out double cropOriginY))
