@@ -265,8 +265,12 @@ public static class ElevationPrinter
             }
         }
         if (faces.Count == 0) return null;
-        List<CollectedEdge> edges =
-            MergeOverlaps(OccludeEdges(faces, faceMinDepths, DedupeEdges(edgeFaces, D)));
+        var deduped = DedupeEdges(edgeFaces, D);
+        var occluded = OccludeEdges(faces, faceMinDepths, deduped);
+        List<CollectedEdge> edges = MergeOverlaps(occluded);
+        // A windowed detail keeps its fine construction lines; anywhere else coincident modeling
+        // (a railing family drawing the same board four times) inks once.
+        if (window == null) edges = ConsolidateCoincident(edges);
         // The site around the building is drawn, but it does not decide the frame: the building does, with a little
         // air around it for the trees and the ground. Context beyond that air (a tree far down the site) is dropped,
         // so the drawing stays the size of the building.
@@ -542,6 +546,52 @@ public static class ElevationPrinter
         }
         merged.Sort((left, right) => right.Depth.CompareTo(left.Depth));
         return merged;
+    }
+
+    /// <summary>Collapses coincident modeling drawn several times into one inked line: edges parallel within
+    /// 50 mm, overlapping over most of their length, at the same depth and of the same length (a railing family
+    /// drawing one board four times, a window jamb doubled by its frame). Only full duplicates collapse: a short
+    /// edge on a long one stays (a head on a wall top), lines at different depths stay (a rail in front of its
+    /// wall), and staggered layers stay. The nearest edge survives, the way the reference inks the visible one.</summary>
+    internal static List<CollectedEdge> ConsolidateCoincident(List<CollectedEdge> edges)
+    {
+        const double ToleranceMillimetres = 50.0;
+        var survivors = new List<CollectedEdge>(edges.Count);
+        foreach (var edge in edges.OrderBy(e => e.MidDepth))
+        {
+            double dx = edge.X2 - edge.X1, dy = edge.Y2 - edge.Y1;
+            double len = Math.Sqrt(dx * dx + dy * dy);
+            if (!(len > 1e-9)) continue;
+            bool horizontal = Math.Abs(dy) <= Math.Abs(dx);
+            double lo = horizontal ? Math.Min(edge.X1, edge.X2) : Math.Min(edge.Y1, edge.Y2);
+            double hi = horizontal ? Math.Max(edge.X1, edge.X2) : Math.Max(edge.Y1, edge.Y2);
+            bool absorbed = false;
+            foreach (var kept in survivors)
+            {
+                double kdx = kept.X2 - kept.X1, kdy = kept.Y2 - kept.Y1;
+                double klen = Math.Sqrt(kdx * kdx + kdy * kdy);
+                if (!(klen > 1e-9)) continue;
+                bool kHorizontal = Math.Abs(kdy) <= Math.Abs(kdx);
+                if (kHorizontal != horizontal) continue;
+                // Parallel within the tolerance: the perpendicular distance of both ends.
+                double sep = horizontal
+                    ? Math.Max(Math.Abs(edge.Y1 - kept.Y1), Math.Abs(edge.Y2 - kept.Y2))
+                    : Math.Max(Math.Abs(edge.X1 - kept.X1), Math.Abs(edge.X2 - kept.X2));
+                if (sep > ToleranceMillimetres) continue;
+                if (Math.Abs(edge.MidDepth - kept.MidDepth) > ToleranceMillimetres) continue;
+                double klo = horizontal ? Math.Min(kept.X1, kept.X2) : Math.Min(kept.Y1, kept.Y2);
+                double khi = horizontal ? Math.Max(kept.X1, kept.X2) : Math.Max(kept.Y1, kept.Y2);
+                double overlap = Math.Min(hi, khi) - Math.Max(lo, klo);
+                double shorter = Math.Min(len, klen);
+                if (overlap < 0.8 * shorter) continue;
+                if (Math.Min(len, klen) < 0.8 * Math.Max(len, klen)) continue;
+                absorbed = true;
+                break;
+            }
+            if (!absorbed) survivors.Add(edge);
+        }
+        survivors.Sort((left, right) => right.Depth.CompareTo(left.Depth));
+        return survivors;
     }
 
     private static CollectedEdge WithSpan(CollectedEdge edge, double lo, double hi, bool horizontal)

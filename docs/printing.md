@@ -82,7 +82,11 @@ every kind of plant with its count.
 model (walls, floors, roofs, columns, windows and doors) is projected on the vertical plane of the view and painted
 white from the farthest to the nearest, so nearer mass covers what stands behind it. Only the shared edge set is
 inked: an edge two coplanar faces share is a triangulation diagonal inside a flat surface and is left out, every
-other edge is drawn once, and an edge whose midpoint hides behind nearer mass is occluded. A face counts as nearer
+other edge is drawn once, and an edge whose midpoint hides behind nearer mass is occluded. Coincident modeling
+collapses to one line: parallel edges within 50 mm at the same depth and of the same length (a railing family
+drawing one board four times, a window jamb doubled by its frame) ink once, keeping the nearest; a short edge on
+a long one stays, lines at different depths stay, and staggered layers stay, so distinct linework is never lost.
+Windowed details skip this and keep every fine construction line. A face counts as nearer
 by its nearest corner (a wall end turned away from the view still covers what stands behind it), and a midpoint on
 the boundary of the nearer face counts as inside (half a millimetre): stacked wall layers and window frames project
 onto the silhouette of the mass in front, and the reference draws that silhouette once. Plants, topography and
@@ -232,7 +236,7 @@ selection nor drawing.
 1. Decode the crop region of a rotated view and of a crop region switched off with live bounds, and the annotation crop that keeps titles and labels outside the model crop. Decode the record that places a viewport the file puts off the page. Draw section marks from their decoded front-cut segments assigned to the right viewport (the duplicate Building trace on Level 2, the short callout bubbles with sheet references).
 2. Evaluate the body rows of element schedules from the model (the How-do-I reference body is computed, not stored).
 3. Decode the geometry of the property lines (with their bearing/distance labels) and the spot elevations, the solar-analysis diagram of a site sheet, and the file's own tag positions with leaders.
-4. Decode the per-view positions of datum bubbles: the reference lines its level marks up on the crop edge and ends each line at its own marker, while ours run every line from the crop to the datum end.
+4. Decode the per-view positions of datum bubbles: the reference lines its level marks up on the crop edge and ends each line at its own marker, while ours run every line from the crop to the datum end. Hide the exposed second-floor railing boards the reference does not draw (per-view detail level or occluder gap), and restore the long footing/grade model edges the file's footing instances never decode into geometry.
 5. Widen the same printing to the releases the reader supports in its own schema.
 ## Comparison with the reference export
 
@@ -244,6 +248,6 @@ Measured on the sample project `rac_basic_sample_project.rvt` against the refere
 | A001 Title Sheet | the title texts, the five renderings from the file, the logo, the "How do I" table with its title, long-text band, header and body grid at its instance origin, and every revision table with its header and empty body grid to its fixed height | the evaluated body text of the "How do I" table (computed by Revit, not stored) |
 | A101 Site Plan | the planting tags T1... with their leaders, the north arrow, the planting schedule with Type Mark / Common Name / Count in a ruled table at its instance origin | the property and setback lines (no decoded geometry yet), the spot elevations, the solar-analysis diagram, the file's own tag positions |
 | A102 Plans | both plans with the room colours of the reference, furniture, stairs, door and window tags, dimensions on all four sides, the room legend, the room tags, and the section marks of the viewports they belong to (cut to the viewport frame at generation) | the view reference marks (annotation elements whose positions the reader does not decode); the Building Section trace repeats in the Level 2 plan, whose own mark the file hides elsewhere |
-| A103 Elevations/Sections | South elevation and the Longitudinal Section cut at its plane, level markers, the faded site; stacked wall layers and window frames hide on the silhouette in front, coplanar triangulation diagonals not inked, crop-filtered at generation; level lines span their datum envelopes from the crop and the grids dash coarsely ([36 9 9 9] pt from the grid type's line pattern), as the reference does | the level lines end at their markers in the reference (per-view bubble positions, not decoded) and the long footing/grade model edges |
+| A103 Elevations/Sections | South elevation and the Longitudinal Section cut at its plane, level markers, the faded site; stacked wall layers and window frames hide on the silhouette in front, coincident modeling inks once, coplanar triangulation diagonals not inked, crop-filtered at generation; level lines span their datum envelopes from the crop and the grids dash coarsely ([36 9 9 9] pt from the grid type's line pattern), as the reference does | the level lines end at their markers in the reference (per-view bubble positions, not decoded) and the long footing/grade model edges |
 | A104 Elev/Sec/Det | West elevation and the Building Section cut at its plane, the four detail sections windowed at generation | the four detail sections: the file places their viewports outside the page and stores no other position |
 | A105 Elev/Stair Sections | Stair Section, Main Stair Detail (cut), East elevation, hidden lines removed | the layout is tighter than the reference (placements are derived, not stored) |

@@ -199,6 +199,41 @@ public class ElevationPrinterTests
         Assert.Equal("Level 1", level.Label);
     }
 
+    private static ElevationPrinter.CollectedEdge H(double x1, double x2, double y, double depth) =>
+        new(x1, y, x2, y, depth, depth, 0, -1, 0, 0, 1, 0);
+
+    [Fact]
+    public void ConsolidateCoincident_MergesFourfoldRailingBoards()
+    {
+        // A railing family drawing one 7178 mm board four times at the same depth: the reference inks it once.
+        var edges = new List<ElevationPrinter.CollectedEdge>
+        {
+            H(0, 7178, 2800, -13053), H(0, 7178, 2800.4, -13053),
+            H(0, 7178, 2799.7, -13053), H(0.3, 7178, 2800.1, -13053),
+        };
+
+        var merged = ElevationPrinter.ConsolidateCoincident(edges);
+
+        Assert.Single(merged);
+        Assert.Equal(0, merged[0].X1, 0);
+        Assert.Equal(7178, merged[0].X2, 0);
+    }
+
+    [Fact]
+    public void ConsolidateCoincident_KeepsSeparatedAndDeepLines()
+    {
+        // A 60 mm offset, a 60 mm depth step (a rail in front of its wall) and a short head on a long
+        // wall top all stay: only true duplicates collapse, so distinct linework is never lost.
+        var wall = H(0, 10000, 0, -13000);
+        var apart = H(0, 10000, 60, -13000);
+        var deep = H(0, 10000, 0, -13060);
+        var head = H(2000, 4000, 0, -13000);
+
+        Assert.Equal(2, ElevationPrinter.ConsolidateCoincident([wall, apart]).Count);
+        Assert.Equal(2, ElevationPrinter.ConsolidateCoincident([wall, deep]).Count);
+        Assert.Equal(2, ElevationPrinter.ConsolidateCoincident([wall, head]).Count);
+    }
+
     private static Element DatumLevel(int id, string name, double elevationFeet, double[] envelope)
     {
         var level = Level(id, name, elevationFeet, "Level");
