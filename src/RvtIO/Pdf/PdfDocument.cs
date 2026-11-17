@@ -488,6 +488,21 @@ public sealed class PdfPage
     /// <summary>Millimetres to the PDF user space unit (1/72 inch), which the page box and the content share.</summary>
     private static double Points(double millimetres) => millimetres * 72.0 / 25.4;
 
+    /// <summary>The width of one line of text in millimetres, with the same font metrics
+    /// <see cref="DrawText"/> paints with (the embedded font's advances, else half an em per character).</summary>
+    internal double MeasureText(string text, double heightMillimetres)
+    {
+        if (string.IsNullOrEmpty(text)) return 0;
+        if (_document.Font is { } font)
+        {
+            double width = 0;
+            foreach (char character in text)
+                width += font.AdvanceOf(font.GlyphOf(character)) / (double)font.UnitsPerEm * heightMillimetres;
+            return width;
+        }
+        return text.Length * heightMillimetres * 0.5;
+    }
+
     /// <summary>Draws one line of text rotated about its anchor. With <see cref="PdfDocument.Font"/> set the text uses
     /// the embedded font; without it the standard Helvetica font is used and the text must be printable ASCII.</summary>
     /// <param name="text">The text.</param>

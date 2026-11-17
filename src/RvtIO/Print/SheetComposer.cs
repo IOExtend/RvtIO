@@ -676,9 +676,9 @@ public static class SheetComposer
         double bodyH = revision ? 0.2559 * InchToMm : 0.2395 * InchToMm;
         double titlePt = 19, headPt = revision ? 19 : 12.5, bodyPt = 12.5;
         double insetMm = 0.037 * InchToMm;
-        // The stored title height wins where the file decodes bands after it (the How-do-I title area:
-        // stored 20.2 pt against measured 26.6); the measured heights stay where the title stands alone.
-        if (schedule.TitleBands.Count > 0 && schedule.TitleHeightFt > 0)
+        // The stored title height wins where the file decodes it (the How-do-I title area: stored 20.2 pt
+        // against measured 26.6; the planting title: stored 30 pt against measured 26.6).
+        if (!revision && schedule.TitleHeightFt > 0)
             titleH = schedule.TitleHeightFt * FeetToMillimetres;
 
         double x0 = schedule.Ox * FeetToMillimetres - originX;
@@ -705,6 +705,11 @@ public static class SheetComposer
         }
         else if (schedule.CategoryId == PlantingCategoryId)
         {
+            // The stored body section opens with leading empty grid rows (one for the planting schedule)
+            // before the evaluated rows; the model rows carry the type marks, names and counts.
+            int leadingEmpty = schedule.BodySections.Count > 0 ? schedule.BodySections[0].LeadingEmpty : 0;
+            for (int i = 0; i < leadingEmpty && rows.Count < 10000; i++)
+                rows.Add(Enumerable.Repeat("", widths.Length).ToList());
             foreach (var (mark, name, count) in PlantingRows(document))
                 rows.Add([mark, name, count]);
         }
@@ -727,8 +732,8 @@ public static class SheetComposer
             return pen is int number && PenWidths.TryAnnotationWidth(document, number, out double width)
                 ? width : fallback;
         }
-        int gridStyle = schedule.GridStyleId > 0 ? schedule.GridStyleId : ScheduleGridCategoryId;
-        int outlineStyle = schedule.OutlineStyleId > 0 ? schedule.OutlineStyleId : gridStyle;
+        int gridStyle = schedule.GridStyleId != 0 ? schedule.GridStyleId : ScheduleGridCategoryId;
+        int outlineStyle = schedule.OutlineStyleId != 0 ? schedule.OutlineStyleId : gridStyle;
         double gridMm = AnnotationWidth(gridStyle, 0.24 * PtToMm);
         double outlineMm = AnnotationWidth(outlineStyle, 0.58 * PtToMm);
 
@@ -759,6 +764,32 @@ public static class SheetComposer
             if (schedule.ShowGridLines)
                 page.DrawLine(edges[0], y, edges[^1], y, gridMm);
         }
+        // Header texts wrap into their columns ("Type Mark" wraps to two lines in its narrow column):
+        // the header grows one body row per wrapped line after the first (measured 31.8 pt for two lines
+        // against 17.3 for one), each column's lines centred as a block.
+        List<List<string>> WrapHeaders(List<string> header, double sizeMm)
+        {
+            var wrapped = new List<List<string>>(widths.Length);
+            for (int i = 0; i < widths.Length; i++)
+            {
+                string text = i < header.Count ? header[i] : "";
+                var lines = new List<string>();
+                if (text.Length > 0)
+                {
+                    foreach (string word in text.Split(' '))
+                    {
+                        string candidate = lines.Count == 0 ? word : lines[^1] + " " + word;
+                        if (lines.Count > 0 && page.MeasureText(candidate, sizeMm) <= widths[i])
+                            lines[^1] = candidate;
+                        else
+                            lines.Add(word);
+                    }
+                }
+                if (lines.Count == 0) lines.Add("");
+                wrapped.Add(lines);
+            }
+            return wrapped;
+        }
         // Header texts come from the stored section header where the file decodes one, else from the
         // schedule fields; other schedules draw one header per stored body section.
         List<(List<string> Header, List<List<string>> Rows)> sections = new();
@@ -786,6 +817,9 @@ public static class SheetComposer
         // weight); inner verticals span each header and body row; title and band rows have none.
         double gridTop = y;
         bool firstHeader = true;
+        // A wrapped header line after the first adds the measured extra line pitch (the planting header:
+        // 31.8 pt for two lines against 17.3 for one).
+        double extraHeaderLineMm = 14.55 * PtToMm;
         foreach (var (header, body) in sections)
         {
             if (schedule.ShowHeaders)
@@ -793,14 +827,23 @@ public static class SheetComposer
                 // The header top rule is the title-area rule above, drawn where nothing stands over it.
                 if (firstHeader && !drewTitleArea && schedule.ShowGridLines)
                     page.DrawLine(edges[0], y, edges[^1], y, gridMm);
+                var wrapped = revision
+                    ? header.Select(text => new List<string> { text }).ToList()
+                    : WrapHeaders(header, headPt * PtToMm);
+                int headerLines = Math.Max(1, wrapped.Max(lines => lines.Count));
+                double headerH = revision ? headH : bodyH + (headerLines - 1) * extraHeaderLineMm;
                 for (int i = 0; i < widths.Length; i++)
                 {
-                    string text = i < header.Count ? header[i] : "";
-                    if (text.Length == 0) continue;
-                    page.DrawText(text, (edges[i] + edges[i + 1]) / 2,
-                        y - headH / 2 - 0.35 * headPt * PtToMm, headPt * PtToMm, PdfTextAlignment.Center);
+                    var lines = i < wrapped.Count ? wrapped[i] : new List<string> { "" };
+                    for (int j = 0; j < lines.Count; j++)
+                    {
+                        if (lines[j].Length == 0) continue;
+                        page.DrawText(lines[j], (edges[i] + edges[i + 1]) / 2,
+                            y - headerH / 2 - 0.35 * headPt * PtToMm + ((lines.Count - 1) / 2.0 - j) * extraHeaderLineMm,
+                            headPt * PtToMm, PdfTextAlignment.Center);
+                    }
                 }
-                y -= headH;
+                y -= headerH;
                 if (schedule.ShowGridLines)
                     page.DrawLine(edges[0], y, edges[^1], y, gridMm);
                 firstHeader = false;
@@ -841,23 +884,31 @@ public static class SheetComposer
 
     /// <summary>The planting rows of the model, as the planting schedule lists them: the type mark (T1, T2, ... as
     /// the plan tags the kinds), the common name and the count, sorted by name.</summary>
-    private static List<(string Mark, string Name, string Count)> PlantingRows(RvtDocument document)
+    /// <summary>The planting rows of the model, as the planting schedule lists them: one row per planting type
+    /// (its type mark and common name from the type element), counting the placed instances of that type.</summary>
+    internal static List<(string Mark, string Name, string Count)> PlantingRows(RvtDocument document)
     {
-        var groups = new SortedDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var order = new List<int>();
+        var counts = new Dictionary<int, int>();
+        var infos = new Dictionary<int, (string Mark, string Name)>();
         foreach (var element in document.Elements)
         {
             if (element.CategoryId != (int)BuiltInCategory.OST_Planting) continue;
-            string name = element.Name ?? "";
-            if (name.Length == 0) continue;
-            groups[name] = groups.TryGetValue(name, out int count) ? count + 1 : 1;
+            // Type definitions and unplaced surrogates are not counted: only placed instances resolve
+            // through their type id to a type element carrying a mark.
+            if (element.RootClassName is "FamilySymbol" or "FamSymSurrogate") continue;
+            var type = element.TypeId > 0 ? document.GetElement(element.TypeId) : null;
+            if (type == null || type.Id == element.Id) continue;
+            var (mark, common) = SitePrinter.PlantingTypeOf(document, element);
+            if (mark.Length == 0) continue;
+            if (!counts.TryAdd(type.Id, 1)) counts[type.Id]++;
+            else order.Add(type.Id);
+            infos[type.Id] = (mark, common);
         }
         var rows = new List<(string Mark, string Name, string Count)>();
-        int index = 0;
-        foreach (var (name, count) in groups)
-        {
-            index++;
-            rows.Add(($"T{index}", name, count.ToString(System.Globalization.CultureInfo.InvariantCulture)));
-        }
+        foreach (int typeId in order.OrderBy(id => infos[id].Mark, StringComparer.Ordinal))
+            rows.Add((infos[typeId].Mark, infos[typeId].Name,
+                counts[typeId].ToString(System.Globalization.CultureInfo.InvariantCulture)));
         return rows;
     }
 

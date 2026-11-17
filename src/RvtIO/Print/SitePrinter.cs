@@ -14,11 +14,11 @@ public static class SitePrinter
     private const double FeetToMillimetres = 304.8;
 
     /// <summary>The projected site: the topography outlines, the plants and the extents they span, in millimetres.
-    /// </summary>
+    /// Each plant carries its schedule key: the type mark (T1, T2, ...) for its tag, empty when unknown.</summary>
     internal sealed record SiteContent(
         List<List<(double X, double Y)>> Topography,
         List<(double X1, double Y1, double X2, double Y2, double Z)> Contours,
-        List<(double X, double Y, double Radius, string Type)> Plants,
+        List<(double X, double Y, double Radius, string Type, string Mark)> Plants,
         List<List<(double X, double Y)>> Entourage,
         double MinX, double MinY, double MaxX, double MaxY);
 
@@ -58,7 +58,7 @@ public static class SitePrinter
             }
         }
 
-        var plants = new List<(double X, double Y, double Radius, string Type)>();
+        var plants = new List<(double X, double Y, double Radius, string Type, string Mark)>();
         foreach (var element in document.Elements)
         {
             if (element.CategoryId != (int)BuiltInCategory.OST_Planting) continue;
@@ -68,7 +68,7 @@ public static class SitePrinter
             double y = (box[1] + box[4]) / 2 * FeetToMillimetres;
             double radius = Math.Min(box[3] - box[0], box[4] - box[1]) / 2 * FeetToMillimetres;
             if (radius <= 0) continue;
-            plants.Add((x, y, radius, element.Name ?? ""));
+            plants.Add((x, y, radius, element.Name ?? "", PlantingTypeOf(document, element).Mark));
             Grow(x - radius, y - radius);
             Grow(x + radius, y + radius);
         }
@@ -137,6 +137,20 @@ public static class SitePrinter
         return new SiteContent(topography, contours, plants, entourage, minX, minY, maxX, maxY);
     }
 
+    /// <summary>The schedule key of a planting instance: the type mark (its ALL_MODEL_TYPE_MARK) and the
+    /// common name (its ALL_MODEL_DESCRIPTION, the "Common Name" the planting schedule lists), read from its
+    /// type when the type carries them, else from the instance itself. Empty when the file names neither.</summary>
+    internal static (string Mark, string CommonName) PlantingTypeOf(RvtDocument document, Element element)
+    {
+        var type = element.TypeId > 0 ? document.GetElement(element.TypeId) : null;
+        if (type == element) type = null;
+        string mark = (type?.LookupParameter(BuiltInParameter.ALL_MODEL_TYPE_MARK)?.Value as string
+            ?? element.LookupParameter(BuiltInParameter.ALL_MODEL_TYPE_MARK)?.Value as string) ?? "";
+        string common = (type?.LookupParameter(BuiltInParameter.ALL_MODEL_DESCRIPTION)?.Value as string
+            ?? element.LookupParameter(BuiltInParameter.ALL_MODEL_DESCRIPTION)?.Value as string) ?? "";
+        return (mark, common);
+    }
+
     /// <summary>Draws the site with (MinX, MinY) at (originX, originY), one model unit per 1/scale.</summary>
     internal static void DrawContent(PdfPage page, SiteContent content, double scale, double originX, double originY)
     {
@@ -176,7 +190,7 @@ public static class SitePrinter
             bool index = contourLevels.IndexOf(level) % 5 == 0;
             page.DrawLine(ToX(x1), ToY(y1), ToX(x2), ToY(y2), index ? 0.16 : 0.07, index ? 0.5 : 0.62);
         }
-        foreach (var (x, y, radius, _) in content.Plants)
+        foreach (var (x, y, radius, _, _) in content.Plants)
         {
             double pageX = ToX(x), pageY = ToY(y), r = radius / scale;
             var circle = new List<(double X, double Y)>(24);
@@ -193,8 +207,8 @@ public static class SitePrinter
         foreach (var polygon in content.Entourage)
             page.DrawPolyline(polygon.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0.15, true, 0.75);
 
-        // The planting of the site is tagged the way the planting schedule tags it: T1 for the first kind of plant, T2
-        // for the next, each on a leader line from the plant.
+        // The planting of the site is tagged with the type mark of the planting schedule (T1, T2, ...),
+        // each on a leader line from the plant; untagged kinds fall back to their order in the schedule.
         var types = content.Plants.Where(plant => plant.Type.Length > 0).Select(plant => plant.Type)
             .Distinct().OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToList();
         var tagged = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -203,15 +217,16 @@ public static class SitePrinter
             foreach (var plant in content.Plants)
             {
                 int index = types.IndexOf(plant.Type);
-                if (index < 0) continue;
-                tagged.TryGetValue(plant.Type, out int count);
+                if (index < 0 && plant.Mark.Length == 0) continue;
+                string tag = plant.Mark.Length > 0 ? plant.Mark : $"T{index + 1}";
+                tagged.TryGetValue(tag, out int count);
                 if (count >= 2) continue;
-                tagged[plant.Type] = count + 1;
+                tagged[tag] = count + 1;
                 double pageX = ToX(plant.X), pageY = ToY(plant.Y), r = plant.Radius / scale;
                 double endX = pageX + r + 3, endY = pageY + r * 0.5 + 3 + count * 4;
                 page.DrawLine(pageX + r * 0.7, pageY + r * 0.7, endX, endY, 0.08, 0.45);
                 page.DrawLine(endX, endY, endX + 3, endY, 0.08, 0.45);
-                page.DrawText($"T{index + 1}", endX + 3.6, endY - 0.9, 2, PdfTextAlignment.Left, 0.4);
+                page.DrawText(tag, endX + 3.6, endY - 0.9, 2, PdfTextAlignment.Left, 0.4);
             }
         }
 

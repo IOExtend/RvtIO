@@ -202,11 +202,13 @@ selection nor drawing.
   page, y = -300 mm) and the record stores no other position for them, so they are not printed.
 - **A schedule's body rows**: the block of a schedule view stores its visible columns (the "How do I" schedule of the sample
   stores Level, Topic, What view, Reviewed?; the revision schedule No., Description, Date; the planting schedule
-  Type Mark, Common Name, Count), its shown sections with the title height, the merged title bands and the body row
-  count, but not evaluated body cells: Revit evaluates them from the model when it draws the schedule. Every
-  per-sheet schedule instance prints at its instance origin with its decoded columns, show flags, grid and outline
-  pens, title bands and body grid; revision rows come from the model revisions explicitly present on that sheet
-  (the sample lists none, like the reference) and planting rows from the model planting.
+  Type Mark, Common Name, Count), its shown sections with the title height, the merged title bands and the body rows
+  with their stored texts, but not evaluated body cells: Revit evaluates them from the model when it draws the schedule.
+  Every per-sheet schedule instance prints at its instance origin with its decoded columns, show flags, grid and outline
+  pens (the negative category ids they name, resolved against the Object Styles), title bands and body grid; revision
+  rows come from the model revisions explicitly present on that sheet (the sample lists none, like the reference) and
+  planting rows group the placed instances by their resolved type (type mark with the T{n} fallback, common name from
+  the type), with the stored leading empty rows and a header that wraps into its columns like the reference.
 - **The table grids of the title block family**: the linework, fixed texts and labels of the symbol are drawn, and the
   per-sheet schedule instances (revision tables, planting schedule, How-do-I table) print from their decoded view
   blocks; the symbol-embedded schedule template itself (the cached revision grid with GINFO_NOT_PRINTED) is left out.

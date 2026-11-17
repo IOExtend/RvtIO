@@ -73,12 +73,42 @@ public class ScheduleTableTests
         var body = Assert.Single(howdoi.BodySections);
         Assert.Equal(["Level", "Topic", "What view", "Reviewed?"], body.Header);
         Assert.Equal(41, body.BodyRows);
+        Assert.Equal(41, body.LeadingEmpty);
 
         // The planting schedule: Type Mark / Common Name / Count.
         Assert.True(tables.ContainsKey(959491), "Planting table 959491 did not decode.");
         var planting = tables[959491];
         Assert.Equal(["Type Mark", "Common Name", "Count"],
             planting.Columns.Select(column => column.Heading).ToList());
+        // The stored title height (0.0347 ft = 30 pt) and the body section with its header, one leading
+        // empty row and 8 body rows in total (the empty row plus the 7 type rows with their counts).
+        Assert.Equal(0.0347, planting.TitleHeightFt, 4);
+        Assert.Empty(planting.TitleBands);
+        var plantingBody = Assert.Single(planting.BodySections);
+        Assert.Equal(["Type Mark", "Common Name", "Count"], plantingBody.Header);
+        Assert.Equal(1, plantingBody.LeadingEmpty);
+        Assert.Equal(8, plantingBody.BodyRows);
+    }
+
+    [Fact]
+    public void SampleFile_GroupsPlantingRowsByType()
+    {
+        string? path = TestFiles.TryFind("Test_2022.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+
+        // Grouped by the resolved planting type, with the type mark and common name: T1 Honey Locust 8,
+        // T2 Hawthorn 1, T3 Large Tooth Aspen 1, T4 Red Maple 2, T5 Scarlet Oak 2, T6 Red Ash 1,
+        // T7 Lombardy Poplar 1 (the "Type Mark" and "Common Name" the schedule binds to).
+        var rows = SheetComposer.PlantingRows(document);
+
+        Assert.Equal(
+            new[] { "T1", "T2", "T3", "T4", "T5", "T6", "T7" },
+            rows.Select(row => row.Mark).ToArray());
+        Assert.Equal(
+            new[] { "Honey Locust", "Hawthorn", "Large Tooth Aspen", "Red Maple", "Scarlet Oak", "Red Ash", "Lombardy Poplar" },
+            rows.Select(row => row.Name).ToArray());
+        Assert.Equal(new[] { "8", "1", "1", "2", "2", "1", "1" }, rows.Select(row => row.Count).ToArray());
     }
 
     [Fact]

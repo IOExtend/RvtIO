@@ -3707,8 +3707,8 @@ internal static partial class TfBlockDeserializer
     }
 
     /// <summary>A body section of a schedule table: its stored header texts (one per visible column,
-    /// empty when the file stores none) and its body row count.</summary>
-    internal sealed record ScheduleBodySection(List<string> Header, int BodyRows);
+    /// empty when the file stores none), the count of leading all-empty body rows and the total body row count.</summary>
+    internal sealed record ScheduleBodySection(List<string> Header, int LeadingEmpty, int BodyRows);
 
     /// <summary>A schedule definition decoded from its DBViewSchedule block: the visible columns (heading and width
     /// in feet, in order), the category id, the show flags, the title height and merged bands of the first shown
@@ -4070,7 +4070,15 @@ internal static partial class TfBlockDeserializer
         {
             var header = SectionRowTexts(section, 0, rowCellQis, cellInfos);
             int bodyRows = Math.Max(0, section.RowQis.Count - 1);
-            bodySections.Add(new ScheduleBodySection(header, bodyRows));
+            // Leading body rows with no stored text (the planting schedule's empty row under its header)
+            // still draw as grid rows; the evaluated rows follow them.
+            int leadingEmpty = 0;
+            for (int i = 1; i < section.RowQis.Count; i++)
+            {
+                if (SectionRowTexts(section, i, rowCellQis, cellInfos).Any(text => text.Length > 0)) break;
+                leadingEmpty++;
+            }
+            bodySections.Add(new ScheduleBodySection(header, leadingEmpty, bodyRows));
         }
     }
 
