@@ -126,6 +126,27 @@ public class ElevationPrinterTests
     }
 
     [Fact]
+    public void SampleFile_StairSectionIncludesTreadAndRiserMass()
+    {
+        // Treads and risers are their own categories (OST_StairsTrisers). A stair section that skipped
+        // them collected 440 faces and inked 121 stair edges; with the tread/riser boards the mass is
+        // 483 faces and the occlusion pass hides the stair-body projection edges behind it (35 edges),
+        // the way the reference hides them. The probe pins the measured face count.
+        string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+        var view = document.Elements.FirstOrDefault(e =>
+            e.CategoryId == (int)BuiltInCategory.OST_Views && e.Name == "Stair Section");
+        Assert.NotNull(view);
+
+        var content = ElevationPrinter.Collect(document, "section", true, view, null);
+
+        Assert.NotNull(content);
+        Assert.True(content!.Faces.Count >= 470,
+            $"stair section collected {content.Faces.Count} faces (440 without the tread/riser mass)");
+    }
+
+    [Fact]
     public void SampleFile_StairDetailWindowFramesTheStair()
     {
         // The Main Stair Detail window (2.6 x 1.9 m around the stair) clips the model to the stair

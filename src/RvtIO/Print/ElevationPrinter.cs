@@ -95,11 +95,14 @@ public static class ElevationPrinter
         double MinX, double MinY, double MaxX, double MaxY);
 
     /// <summary>Projects the model geometry on the vertical plane of a direction. Null when the model has no face.</summary>
-    /// <summary>The categories a stair section draws: the stairs, their railings and supports.</summary>
+    /// <summary>The categories a stair section draws: the stairs, their railings and supports. Treads and
+    /// risers are their own categories (the tread/riser boards the plane passes through); without that mass a
+    /// stair section leaves projection edges of the stair body inked that the reference hides behind it.</summary>
     private static readonly HashSet<int> StairCategories =
     [
         (int)BuiltInCategory.OST_Stairs, (int)BuiltInCategory.OST_StairsRailing,
         (int)BuiltInCategory.OST_StairsSupports, (int)BuiltInCategory.OST_Lines,
+        (int)BuiltInCategory.OST_StairsTrisers,
     ];
 
     internal static ElevationContent? Collect(RvtDocument document, string direction, bool stairsOnly = false,

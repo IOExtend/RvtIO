@@ -222,6 +222,8 @@ The text of a sheet prints too: a text note's RTF string (class 0x0F83 block) is
 
 - Plan section traces, their ticks and bubbles ink with the Sections projection pen (pen 1 annotates 0.1 mm = 0.283 pt): the file's Sections projection pen is pen 1, rvt-prt draws datums at annotation pen 1, and the reference draws every trace, tick and bubble at 0.283 pt, while the old hardcoded 0.22 mm (0.624 pt) inked them heavy — verified by dumping both PDFs (zero 0.624 linework left on A102; the Building jog horizontal now matches the reference segment-for-segment at y512.5 x592-724). Measured against the Revit export of the sample: no vector-score movement (A102 stays 78.5%/87.1%; the scorer samples path geometry and is blind to pen widths); other sheets unchanged. New test: `DrawContent_InksTracesWithTheSectionsProjectionPen` (0.2835 w present, 0.6236 w absent). Full print suites 103/103 green on net8.0+net10.0.
 
+- Stair sections include the tread and riser boards: they are their own category (`OST_StairsTrisers`), so the `stairsOnly` filter dropped the mass the plane passes through. Probing the sample's Stair Section: without them 440 faces and 121 stair edges (8 cut), with them 483 faces and 35 stair edges — the added boards occlude the stair-body projection edges the reference hides behind them. Railings are unchanged (105 edges either way) and no matched ink is lost: A105 precision 67.1% -> 67.7% at flat recall 89.7%; other sheets unchanged. New test: `SampleFile_StairSectionIncludesTreadAndRiserMass` (the measured 483-face baseline). Full print suites 104/104 green on net8.0+net10.0.
+
 ## [0.4.0] - 2026-11-13
 
 ### Breaking changes

@@ -138,7 +138,10 @@ Stair Detail") is printed as a section too. The plane of a view is looked for in
 every chunk of the file, and the block layout (class 0x3F8) takes precedence over the older signature, so the details are
 found as well as the building sections. A viewport whose view is not printed (a wall section at 1:20, a schedule) is
 neither drawn nor titled, so a sheet shows only the views the printer can stand behind. A stair section (a view whose name holds "stair", 1:20 to 1:50)
-projects only the stairs, their railings and supports, so the page shows the stair rather than the whole building. Measured on the Revit sample project: the South view prints
+projects only the stairs, their railings, supports, lines, treads and risers, so the page shows the stair rather than
+the whole building; the tread/riser boards are the mass the occlusion pass needs, otherwise the stair-body projection
+edges stay inked where the reference hides them (483 faces and 35 stair edges with them, 440 and 121 without).
+Measured on the Revit sample project: the South view prints
 the two-storey facade with its balcony rail, columns and roof on sheet A103.
 
 A drawing the layout reduces to fit its place prints at the scale it finally has: its view title, the sheet scale
