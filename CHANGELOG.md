@@ -224,6 +224,8 @@ The text of a sheet prints too: a text note's RTF string (class 0x0F83 block) is
 
 - Stair sections include the tread and riser boards: they are their own category (`OST_StairsTrisers`), so the `stairsOnly` filter dropped the mass the plane passes through. Probing the sample's Stair Section: without them 440 faces and 121 stair edges (8 cut), with them 483 faces and 35 stair edges — the added boards occlude the stair-body projection edges the reference hides behind them. Railings are unchanged (105 edges either way) and no matched ink is lost: A105 precision 67.1% -> 67.7% at flat recall 89.7%; other sheets unchanged. New test: `SampleFile_StairSectionIncludesTreadAndRiserMass` (the measured 483-face baseline). Full print suites 104/104 green on net8.0+net10.0.
 
+- Plan dimension chains match the reference: the top chain now sits 780 mm beyond the outer wall face (the reference's measured 22.1 pt above the north face at 1:100; the old rule used the wall's location line + 550 mm, i.e. 11.6 pt from the face, so every reference segment missed ours by more than the 2.16 pt tolerance), and the three invented chains on the bottom, left and right are gone — the reference's Level 1 draws a single top chain and carries short per-element dimensions on the other sides. Measured against the Revit export of the sample: A102 recall 78.5% -> 78.6%, precision 87.1% -> 90.1%; other sheets unchanged (the same 0.15 mm chain pen, so no width-driven effect). New test: `DrawContent_DrawsOneDimensionChainAboveTheWallFace` (the wall face plus one chain at the computed offset). Full print suites 114/114 green on net8.0+net10.0.
+
 ## [0.4.0] - 2026-11-13
 
 ### Breaking changes

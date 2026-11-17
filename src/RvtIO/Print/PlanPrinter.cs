@@ -814,12 +814,10 @@ public static class PlanPrinter
     {
         if (page.Owner.Font == null) return;
         var xs = new List<double>();
-        var ys = new List<double>();
         foreach (var grid in content.Grids)
         {
             double dx = grid.X2 - grid.X1, dy = grid.Y2 - grid.Y1;
             if (Math.Abs(dx) < Math.Abs(dy)) xs.Add((grid.X1 + grid.X2) / 2);
-            else ys.Add((grid.Y1 + grid.Y2) / 2);
         }
         static List<double> Dedupe(List<double> values)
         {
@@ -830,27 +828,28 @@ public static class PlanPrinter
             return result;
         }
         xs = Dedupe(xs);
-        ys = Dedupe(ys);
 
-        // The chains stand just outside the building itself, not at the edge of the annotation margin.
-        double wallMinX = double.MaxValue, wallMinY = double.MaxValue;
-        double wallMaxX = double.MinValue, wallMaxY = double.MinValue;
+        // The chain stands just outside the building itself, not at the edge of the annotation margin.
+        double wallMaxY = double.MinValue;
+        foreach (var wall in content.Walls)
+            wallMaxY = Math.Max(wallMaxY, Math.Max(wall.Y1, wall.Y2));
+        foreach (var column in content.Columns)
+            wallMaxY = Math.Max(wallMaxY, column.Y + column.Height);
+        if (content.Walls.Count == 0 && content.Columns.Count == 0) return;
+        // The reference draws the top chain just outside the building's outer wall face, not at the
+        // stored location line (which sits at the wall's centre): measured on the sample plan the chain
+        // is 22.1 pt above the north face at 1:100, i.e. 780 mm in the model. The old rule used the
+        // location line + 550 mm, which put the chain 11.6 pt from the face — half the offset, so every
+        // reference segment missed ours by more than the scorer's tolerance.
+        const double DimChainOffsetMillimetres = 780;
+        double faceMaxY = wallMaxY;
         foreach (var wall in content.Walls)
         {
-            wallMinX = Math.Min(wallMinX, Math.Min(wall.X1, wall.X2));
-            wallMaxX = Math.Max(wallMaxX, Math.Max(wall.X1, wall.X2));
-            wallMinY = Math.Min(wallMinY, Math.Min(wall.Y1, wall.Y2));
-            wallMaxY = Math.Max(wallMaxY, Math.Max(wall.Y1, wall.Y2));
+            // A wall's stored location line runs along its centre: the face is half its width beyond.
+            if (Math.Abs(wall.Y2 - wall.Y1) > Math.Abs(wall.X2 - wall.X1)) continue;
+            faceMaxY = Math.Max(faceMaxY, Math.Max(wall.Y1, wall.Y2) + wall.Width / 2);
         }
-        foreach (var column in content.Columns)
-        {
-            wallMinX = Math.Min(wallMinX, column.X);
-            wallMaxX = Math.Max(wallMaxX, column.X + column.Width);
-            wallMinY = Math.Min(wallMinY, column.Y);
-            wallMaxY = Math.Max(wallMaxY, column.Y + column.Height);
-        }
-        if (wallMinX > wallMaxX) return;
-        double top = toY(wallMaxY + 550);
+        double top = toY(faceMaxY + DimChainOffsetMillimetres);
         if (xs.Count >= 2)
         {
             page.DrawLine(toX(xs[0]), top, toX(xs[^1]), top, 0.15, 0.3);
@@ -864,50 +863,9 @@ public static class PlanPrinter
                     PdfTextAlignment.Center, 0.25);
             }
         }
-        double right = toX(wallMaxX + 550);
-        if (ys.Count >= 2)
-        {
-            page.DrawLine(right, toY(ys[0]), right, toY(ys[^1]), 0.15, 0.3);
-            for (int i = 0; i < ys.Count; i++)
-            {
-                double y = toY(ys[i]);
-                page.DrawLine(right - 1.5, y - 1.5, right + 1.5, y + 1.5, 0.15, 0.3);
-                if (i == 0) continue;
-                double millimetres = ys[i] - ys[i - 1];
-                page.DrawTextRotated($"{millimetres:0}", right - 1.2, (y + toY(ys[i - 1])) / 2, 2.2, 90,
-                    PdfTextAlignment.Center, 0.25);
-            }
-        }
-
-        // The same chains below and to the left of the building, the way the reference plan dimensions both sides.
-        double bottom = toY(wallMinY - 550);
-        if (xs.Count >= 2)
-        {
-            page.DrawLine(toX(xs[0]), bottom, toX(xs[^1]), bottom, 0.15, 0.3);
-            for (int i = 0; i < xs.Count; i++)
-            {
-                double x = toX(xs[i]);
-                page.DrawLine(x - 1.5, bottom - 1.5, x + 1.5, bottom + 1.5, 0.15, 0.3);
-                if (i == 0) continue;
-                double millimetres = xs[i] - xs[i - 1];
-                page.DrawText($"{millimetres:0}", (x + toX(xs[i - 1])) / 2, bottom - 3.4, 2.2,
-                    PdfTextAlignment.Center, 0.25);
-            }
-        }
-        double left = toX(wallMinX - 550);
-        if (ys.Count >= 2)
-        {
-            page.DrawLine(left, toY(ys[0]), left, toY(ys[^1]), 0.15, 0.3);
-            for (int i = 0; i < ys.Count; i++)
-            {
-                double y = toY(ys[i]);
-                page.DrawLine(left - 1.5, y - 1.5, left + 1.5, y + 1.5, 0.15, 0.3);
-                if (i == 0) continue;
-                double millimetres = ys[i] - ys[i - 1];
-                page.DrawTextRotated($"{millimetres:0}", left - 0.8, (y + toY(ys[i - 1])) / 2, 2.2, 90,
-                    PdfTextAlignment.Center, 0.25);
-            }
-        }
+        // The reference plan draws a single dimension chain, above the building: its Level 1 has no
+        // bottom, left or right chain (those sides carry short per-element dimensions instead). The
+        // printer used to invent all four, which added three chains the reference never inks.
     }
 
     /// <summary>The colour a plan fills a room with, by the name of the room, the way the reference fills it: a bath

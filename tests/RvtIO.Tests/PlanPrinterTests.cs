@@ -183,6 +183,43 @@ public class PlanPrinterTests
         Assert.Contains("[] 0 d", text);
     }
 
+    [Fact]
+    public void DrawContent_DrawsOneDimensionChainAboveTheWallFace()
+    {
+        // The reference plan draws a single dimension chain, 780 mm (22.1 pt at 1:100) above the outer
+        // wall face; its Level 1 has no bottom, left or right chain. The old rule put the chain 550 mm
+        // from the wall's location line and invented three more chains, so every reference segment
+        // missed ours by more than the scorer's tolerance.
+        var document = Document(Level(500, "Level 1", 0),
+            Wall(600, 500, 0, 0, 40, 0),
+            Grid(700, 0, -5, 0, 5), Grid(701, 10, -5, 10, 5), Grid(702, 20, -5, 20, 5));
+        var content = PlanPrinter.CollectLevel(document, 500)!;
+        var pdf = new PdfDocument { Font = PdfFonts.TryFind(out _) };
+        var page = pdf.AddPage(new PdfPageSize(1000, 1000));
+        PlanPrinter.DrawContent(page, content, 100, 10, 10, 0.9, null, document);
+        string text = Content(pdf);
+
+        var longHorizontals = new List<double>();
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
+            text, @"([\d.]+) ([\d.]+) m ([\d.]+) ([\d.]+) l"))
+        {
+            double x0 = double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            double y0 = double.Parse(m.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
+            double x1 = double.Parse(m.Groups[3].Value, System.Globalization.CultureInfo.InvariantCulture);
+            double y1 = double.Parse(m.Groups[4].Value, System.Globalization.CultureInfo.InvariantCulture);
+            if (Math.Abs(y1 - y0) < 0.01 && Math.Abs(x1 - x0) > 100) longHorizontals.Add(y0);
+        }
+        longHorizontals.Sort();
+
+        // Two long horizontals: the wall's outer face and, above it, the one top chain. Its offset beyond
+        // the face is 780 mm — the reference's measured 22.1 pt at 1:100 — mapped by the same
+        // (content - Min) / scale + origin the renderer uses. Before the fix the list held four chains at
+        // the location line + 550 mm instead.
+        Assert.Equal(2, longHorizontals.Count);
+        double expected = ((100.0 + 780.0 - content.MinY) / 100.0 + 10.0) * 72 / 25.4;
+        Assert.Equal(expected, longHorizontals[^1], 1);
+    }
+
     private static double Area(List<(double X, double Y)> points)
     {
         double sum = 0;
