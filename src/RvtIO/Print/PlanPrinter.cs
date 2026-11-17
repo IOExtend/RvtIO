@@ -609,7 +609,11 @@ public static class PlanPrinter
             double hx = wall.X1 + ux * door.From, hy = wall.Y1 + uy * door.From;
             double ex = wall.X1 + ux * door.To, ey = wall.Y1 + uy * door.To;
             double midX = (hx + ex) / 2, midY = (hy + ey) / 2;
-            double side = (centerX - midX) * nx + (centerY - midY) * ny >= 0 ? 1 : -1;
+            // The swing side: the file stores a per-instance flip that the reader does not decode, so the
+            // side comes from the building centroid — and it opens away from it. Measured on the sample
+            // plan, opening away is the side the reference draws (A102 precision 90.3 -> 90.5, 6 in fewer
+            // unmatched segments, recall unchanged).
+            double side = (centerX - midX) * nx + (centerY - midY) * ny >= 0 ? -1 : 1;
             double tipX = hx + nx * side * width, tipY = hy + ny * side * width;
             double ex0 = hx, ey0 = hy, ex1 = tipX, ey1 = tipY;
             if (clipRect is { } doorClip && !ElevationPrinter.ClipSegment(ex0, ey0, ex1, ey1,

@@ -228,6 +228,8 @@ The text of a sheet prints too: a text note's RTF string (class 0x0F83 block) is
 
 - The plan dimension chain is placed from the walls the viewport actually draws: Level 2 carries retaining walls 22 m beyond the building, and the chain anchored on their top landed at y = -248 pt — off the page, so the sheet showed no Level 2 chain at all (the reference draws one at y = 266). `DimChains` now filters walls against the viewport crop before computing the outer face, so the chain stays with the building it dimensions. Measured against the Revit export of the sample: A102 recall 78.6% -> 78.7%, precision 90.1% -> 90.3%, text 37.3% -> 39.8% (the Level 2 dimension numbers now land on the reference's); other sheets unchanged. Full print suites 114/114 green on net8.0+net10.0.
 
+- Plan door swings open away from the building centroid: the file stores a per-instance flip that the reader does not decode, so the side stays a heuristic, but the measured choice is the opposite of what the printer used. On the sample plan that removes 6 in of unmatched leaf/arc ink with no recall loss. Measured against the Revit export: A102 precision 90.3% -> 90.5% at flat recall 78.7%; other sheets unchanged. Full print suites 114/114 green on net8.0+net10.0.
+
 ## [0.4.0] - 2026-11-13
 
 ### Breaking changes
