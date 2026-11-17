@@ -141,13 +141,15 @@ public class SheetLayoutTests
     }
 
     [Fact]
-    public void Render_SkipsADetailViewportAgainstTheBorder()
+    public void Render_RelocatesADetailViewportAgainstTheBorder()
     {
+        // A detail viewport the file parks against the border is still printed (relocated onto the sheet),
+        // so it draws the same linework as the same detail placed in the middle.
         int border = Count(Content(SheetWith(SectionView(910, "Typical Foundation Detail", 10),
             WallWithFace(950, 3, 3), 5, 300)), " l ");
         int middle = Count(Content(SheetWith(SectionView(910, "Typical Foundation Detail", 10),
             WallWithFace(950, 3, 3), 300, 300)), " l ");
 
-        Assert.True(middle > border);
+        Assert.Equal(middle, border);
     }
 }

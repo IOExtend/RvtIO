@@ -344,12 +344,13 @@ public static class SheetComposer
                 // An elevation or a section: the model faces projected on the view's plane when the reader decoded it
                 // (a section is then cut at its plane), otherwise on the plane of the direction taken from the name.
                 Element? viewElement = document.GetElement(viewId);
-                // A detail section (1:10 to 1:50) shows the cut near the point of its plane: a window about three by
-                // two metres around it, the size a wall or roof detail covers. The detail is printed only when its
-                // viewport sits on the drawable part of the page: the file places some of them outside it.
-                // A stair section is printed whole like a building section, not as a windowed detail; a stair detail
-                // (1:20) shows the stair in its enclosure through the file's own crop frame, the way the
-                // reference places it next to the stair section.
+                // A detail section (1:10 to 1:50) is drawn from its own file crop frame: the crop rectangle is
+                // the detail's true extent (a roof detail's crop sits at roof height), while the old
+                // plane-origin window showed the wrong slice (the plane origin sits floors below the crop).
+                // Without a usable crop the invented window stays as a fallback. A stair section is printed
+                // whole like a building section, not as a detail; a stair detail (1:20) shows the stair in
+                // its enclosure through the file's own crop frame, the way the reference places it next to
+                // the stair section.
                 bool stairSection = name.Contains("stair", StringComparison.OrdinalIgnoreCase);
                 bool stairsOnly = stairSection && scale >= 50;
                 double stripLeftForStair = layout.WidthMillimetres - 5
@@ -358,15 +359,22 @@ public static class SheetComposer
                     && viewElement?.ViewDirection is { Length: 3 };
                 double stripLeft = layout.WidthMillimetres - 5
                     - Math.Min(180, layout.WidthMillimetres * 0.22) - 3;
-                // A detail section (1:10 to 1:20) shows the cut near the point of its plane: a window about
-                // three by two metres around it, the size a wall or roof detail covers.
-                (double Width, double Height)? detailWindow = detailSection ? (3000, 2200) : null;
-                // A detail whose viewport the file puts against the border or outside the page is not printed.
-                bool detailOnPage = !detailSection || (centerX > 40 && centerX < stripLeft - 40
-                    && centerY > 40 && centerY < layout.HeightMillimetres - 40);
-                var elevation = detailOnPage
-                    ? ElevationPrinter.Collect(document, direction, stairsOnly, viewElement, detailWindow)
-                    : null;
+                // A detail without a usable file crop falls back to a window about three by two metres
+                // around the point of its plane, the size a wall or roof detail covers.
+                bool detailCropUsable = detailSection && viewElement?.ViewCrop is { Active: true } detailCrop
+                    && ViewBasisMatches(viewElement, detailCrop);
+                (double Width, double Height)? detailWindow = detailSection && !detailCropUsable ? (3000, 2200) : null;
+                // A fallback-windowed detail the file puts against the border or outside the page is still
+                // printed: Revit lays such callouts out in a bottom row above their own titles (A104's four
+                // details), so the frame is anchored on the decoded title label instead of the file offset.
+                // A crop-drawn detail relocates the same way in the crop branch below.
+                bool detailRelocated = detailWindow != null
+                    && !(centerX > 40 && centerX < stripLeft - 40 && centerY > 40 && centerY < layout.HeightMillimetres - 40)
+                    && element.ViewportLabelOrigin is { Length: >= 2 }
+                    && element.ViewportLabelLength is double labelLen && labelLen > 0;
+                var elevation =
+                    ElevationPrinter.Collect(document, direction, stairsOnly, viewElement, detailWindow,
+                        isDetail: detailSection);
                 // A viewport whose view decoded a crop frame draws the crop at the view's own scale, placed by
                 // the viewport offset (sheet = offset + view / scale): the frame is the crop rectangle and the
                 // content is clipped to it, nothing is reduced to fit. The crop applies only where the collection
@@ -381,6 +389,33 @@ public static class SheetComposer
                         out frameX, out frameY, out frameWidth, out frameHeight, out double cropOriginX, out double cropOriginY))
                 {
                     effectiveScale = scale;
+                    // A crop-drawn detail the file parked off the page is laid out in a bottom row above its own
+                    // title (A104's four details): anchor the frame on the decoded title label instead of the
+                    // file offset. The title text tops out ~20 mm above its line on A104, so the frame bottom
+                    // clears it there.
+                    if (detailSection
+                        && !(centerX > 40 && centerX < stripLeft - 40 && centerY > 40 && centerY < layout.HeightMillimetres - 40)
+                        && element.ViewportLabelOrigin is { Length: >= 2 } cropLabelOrigin
+                        && element.ViewportLabelLength is double cropLabelLength && cropLabelLength > 0)
+                    {
+                        const double DetailTitleGapMillimetres = 20;
+                        double titleCxMm = (cropLabelOrigin[0] * FeetToMillimetres - originX)
+                            + cropLabelLength * FeetToMillimetres / 2;
+                        double titleYmm = cropLabelOrigin[1] * FeetToMillimetres - originY;
+                        double relocateX = titleCxMm;
+                        double relocateY = titleYmm + DetailTitleGapMillimetres + frameHeight / 2;
+                        if (TryCropFrame(relocateX, relocateY, scale, crop, elevation.MinX, elevation.MinY,
+                            out double relocatedX, out double relocatedY, out _, out _,
+                            out double relocatedOriginX, out double relocatedOriginY))
+                        {
+                            centerX = relocateX;
+                            centerY = relocateY;
+                            frameX = relocatedX;
+                            frameY = relocatedY;
+                            cropOriginX = relocatedOriginX;
+                            cropOriginY = relocatedOriginY;
+                        }
+                    }
                     // The crop rectangle in content units, so only the crop is drawn: the scorer counts
                     // vectors, not the page clip, and the whole model would count without this.
                     var (cropX0, cropY0, cropX1, cropY1) = CropContentRect(crop);
@@ -396,6 +431,28 @@ public static class SheetComposer
                     frameWidth = (elevation.MaxX - elevation.MinX) / drawScale
                         + ElevationPrinter.LabelMarginMillimetres;
                     frameHeight = (elevation.MaxY - elevation.MinY) / drawScale;
+                    if (detailRelocated)
+                    {
+                        // A windowed detail the file parked off the page is drawn above its own title line, centered
+                        // on it, at nominal scale: the reference lays such callouts out in a bottom row this way.
+                        // Measured on A104: the reference content bottom sits ~30 mm above its title line.
+                        const double DetailTitleGapMillimetres = 30;
+                        double titleCxMm = (element.ViewportLabelOrigin![0] * FeetToMillimetres - originX)
+                            + element.ViewportLabelLength!.Value * FeetToMillimetres / 2;
+                        double titleYmm = element.ViewportLabelOrigin[1] * FeetToMillimetres - originY;
+                        centerX = titleCxMm;
+                        centerY = titleYmm + DetailTitleGapMillimetres + frameHeight / 2;
+                        frameX = centerX - frameWidth / 2;
+                        frameY = centerY - frameHeight / 2;
+                        effectiveScale = scale;
+                        page2.BeginClip(frameX, frameY, Math.Max(0, frameWidth), Math.Max(0, frameHeight));
+                        ElevationPrinter.DrawContent(page2, elevation, drawScale, frameX, frameY,
+                            direction == "section" ? 0.82 : 1, document);
+                        page2.EndClip();
+                        placedRects.Add((frameX, frameY, frameWidth, frameHeight));
+                    }
+                    else
+                    {
                     // A view whose drawing would not fit its place on the sheet (a stair detail at 1:20 is taller than
                     // the page) is drawn at a scale that fits, and one the file places off the page is put in the free
                     // space of the sheet.
@@ -469,6 +526,7 @@ public static class SheetComposer
                         direction == "section" ? 0.82 : 1, document);
                     page2.EndClip();
                     placedRects.Add((frameX, frameY, frameWidth, frameHeight));
+                    }
                 }
             }
             if (placed && frameWidth > 0)

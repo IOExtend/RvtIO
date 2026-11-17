@@ -98,7 +98,7 @@ public static class ElevationPrinter
     ];
 
     internal static ElevationContent? Collect(RvtDocument document, string direction, bool stairsOnly = false,
-        Element? planeView = null, (double Width, double Height)? window = null)
+        Element? planeView = null, (double Width, double Height)? window = null, bool isDetail = false)
     {
         double[] planeOrigin = [];
         bool cut = false;
@@ -272,9 +272,9 @@ public static class ElevationPrinter
         var deduped = DedupeEdges(edgeFaces, D, cut ? planeOrigin : null);
         var occluded = OccludeEdges(faces, faceMinDepths, deduped);
         List<CollectedEdge> edges = MergeOverlaps(occluded);
-        // A windowed detail keeps its fine construction lines; anywhere else coincident modeling
+        // A detail keeps its fine construction lines; anywhere else coincident modeling
         // (a railing family drawing the same board four times) inks once.
-        if (window == null) edges = ConsolidateCoincident(edges);
+        if (window == null && !isDetail) edges = ConsolidateCoincident(edges);
         // The site around the building is drawn, but it does not decide the frame: the building does, with a little
         // air around it for the trees and the ground. Context beyond that air (a tree far down the site) is dropped,
         // so the drawing stays the size of the building.
@@ -353,10 +353,10 @@ public static class ElevationPrinter
         }
         grids.Sort((left, right) => left.X.CompareTo(right.X));
         context.Sort((left, right) => right.Depth.CompareTo(left.Depth));
-        // A detail window carries no level lines or grid bubbles: it is a detail of the construction, not a drawing of
+        // A detail carries no level lines or grid bubbles: it is a detail of the construction, not a drawing of
         // the levels. A stair detail keeps the levels whose height falls in its crop (Level 1, Ceiling and Level 2
         // on the sample: exactly the three bands the reference draws) with no level suppression of its own.
-        if (window != null)
+        if (window != null || isDetail)
         {
             distinctLevels.Clear();
             grids.Clear();

@@ -186,6 +186,43 @@ public class ViewCropTests
     }
 
     [Fact]
+    public void SampleFile_WallRoofDetailCropMatchesFile()
+    {
+        // The Typical Wall Roof Connection detail: its file crop (660 x 837 mm at roof height) is the detail's
+        // true extent, while the old plane-origin window sat floors below it and showed the wrong slice.
+        // The absolute crop edges map through DrawContent's mapping exactly onto the TryCropFrame corners,
+        // and a crop-collected detail carries no datum annotation of its own.
+        string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+        Element? view = null;
+        foreach (var e in document.Elements)
+            if (e.CategoryId == (int)BuiltInCategory.OST_Views && e.Name == "Typical Wall Roof Connection") view = e;
+        if (view?.ViewCrop is not { Active: true } crop) throw new SkipException("Typical Wall Roof Connection has no crop.");
+        Assert.True(SheetComposer.ViewBasisMatches(view, crop));
+        Assert.Equal(660, (crop.X1 - crop.X0) * 304.8, 0);
+        Assert.Equal(837, (crop.Y1 - crop.Y0) * 304.8, 0);
+        Element? viewport = null;
+        foreach (var e in document.Elements)
+            if (e.CategoryId == (int)BuiltInCategory.OST_Viewports && e.ViewportViewId == view.Id) viewport = e;
+        int scale = view.LookupParameter(BuiltInParameter.VIEW_SCALE)?.Value is int value && value > 0
+            ? value : viewport?.ViewportScale ?? 100;
+        double centerX = viewport?.ViewportOffset is { Length: >= 2 } offset ? offset[0] * 304.8 : 0;
+        double centerY = viewport?.ViewportOffset is { Length: >= 2 } off ? off[1] * 304.8 : 0;
+
+        var content = ElevationPrinter.Collect(document, "section", false, view, null, isDetail: true);
+        Assert.NotNull(content);
+        Assert.Empty(content!.Levels);
+        Assert.Empty(content.Grids);
+        Assert.True(SheetComposer.TryCropFrame(centerX, centerY, scale, crop, content.MinX, content.MinY,
+            out double frameX, out double frameY, out _, out _, out double originX, out double originY));
+        var (x0, y0, x1, y1) = SheetComposer.CropContentRect(crop);
+        Assert.Equal(frameX, originX + (x0 - content.MinX) / scale, 6);
+        Assert.Equal(frameY, originY + (y0 - content.MinY) / scale, 6);
+        Assert.Equal(frameX + (x1 - x0) / scale, originX + (x1 - content.MinX) / scale, 6);
+    }
+
+    [Fact]
     public void SampleFile_ViewportTitleLineMatchesReference()
     {
         // The South viewport's title extension line: the file stores its origin on the sheet and its length

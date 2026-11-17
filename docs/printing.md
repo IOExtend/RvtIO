@@ -121,9 +121,12 @@ Walls cut pen where the category decodes none); every other projected edge of a 
 as the reference draws cut boundaries heavy and projection linework light. Grids are datum elements: they ink with the
 annotation pen table (pen 1 is 0.1 mm at every scale on the reference), not the scale-dependent model table.
 
-A detail section (1:10 to 1:50) is printed when its plane is decoded: the cut is drawn inside a window of about
-3.0 x 2.2 metres around the point of the plane, the area a wall or roof detail covers, and only when the viewport sits on
-the drawable part of the page (the file places some detail viewports outside it). A stair detail (1:20) instead takes
+A detail section (1:10 to 1:50) is printed when its plane is decoded: the cut is drawn inside the view's
+own file crop frame (the detail's true extent: a roof detail's crop sits at roof height), clipped to it at
+generation time. Without a usable crop the cut falls back to a window of about 3.0 x 2.2 metres around the
+point of the plane. A detail the file parks against the border or outside the page is still printed: Revit lays
+such callouts out in a bottom row above their own titles (A104's four details), so the frame is anchored on the
+decoded title label instead of the file offset. A stair detail (1:20) instead takes
 the file's own crop frame, the way the reference places it next to the stair section; it keeps its grid bubbles
 and the level lines whose height falls in its crop (Level 1, Ceiling, Level 2: the three bands the reference draws
 at the same heights; the bands run to the label margin past the crop, while the reference ends each at its own
@@ -216,10 +219,10 @@ selection nor drawing.
 
 ## What is still not drawn
 
-- **The crop region of a view**: a plan or elevation viewport whose view decoded a crop box draws the crop at the view\&\#8217;s own scale (the frame is the crop rectangle, placed by the viewport offset); the axes the view was collected with must match the crop basis. A detail section (1:10 to 1:50) keeps its windowed enclosure, and a view without a decoded crop, with the crop region off or with a rotated basis keeps the whole-model frame.
+- **The crop region of a view**: a plan or elevation viewport whose view decoded a crop box draws the crop at the view's own scale (the frame is the crop rectangle, placed by the viewport offset); the axes the view was collected with must match the crop basis. A detail section (1:10 to 1:50) is drawn from its own file crop frame the same way, and a view without a decoded crop, with the crop region off or with a rotated basis keeps the whole-model frame.
 - **The four details of A104**: the "Typical Wall Roof Connection", "Typical Floor Wall Connection", "Typical
-  Foundation Detail" and "Typ. Wall Section" viewports are placed outside the page by the file (x = 813 mm on an 841 mm
-  page, y = -300 mm) and the record stores no other position for them, so they are not printed.
+  Foundation Detail" and "Typ. Wall Section" viewports are placed outside the page by the file, so they are laid
+  out in a bottom row above their own decoded title labels, the way Revit places such callouts.
 - **A schedule's body rows**: the block of a schedule view stores its visible columns (the "How do I" schedule of the sample
   stores Level, Topic, What view, Reviewed?; the revision schedule No., Description, Date; the planting schedule
   Type Mark, Common Name, Count), its shown sections with the title height, the merged title bands and the body rows
@@ -263,5 +266,5 @@ Measured on the sample project `rac_basic_sample_project.rvt` against the refere
 | A101 Site Plan | the planting tags T1... with their leaders, the north arrow, the planting schedule with Type Mark / Common Name / Count in a ruled table at its instance origin | the property and setback lines (no decoded geometry yet), the spot elevations, the solar-analysis diagram, the file's own tag positions |
 | A102 Plans | both plans with the room colours of the reference, furniture, stairs, door and window tags, dimensions on all four sides, the room legend, the room tags, and the section marks of the viewports they belong to (cut to the viewport frame at generation) | the view reference marks (annotation elements whose positions the reader does not decode); the Building Section trace repeats in the Level 2 plan, whose own mark the file hides elsewhere |
 | A103 Elevations/Sections | South elevation and the Longitudinal Section cut at its true plane (feet-to-mm), level markers, the faded site; stacked wall layers hide on the silhouette, coincident modeling inks once, coplanar triangulation diagonals not inked, crop-filtered at generation; level lines follow their datum envelopes near the crop with a label-margin cap for narrow viewports, and the grids dash coarsely ([36 9 9 9] pt from the grid type's line pattern), as the reference does | per-view level ends and markers (not decoded) and the long footing/grade model edges (footing instances lack decoded geometry) |
-| A104 Elev/Sec/Det | West elevation and the Building Section cut at its plane, the four detail sections windowed at generation; cut-created edges ink heavy, projection edges thin | the four detail sections: the file places their viewports outside the page and stores no other position |
+| A104 Elev/Sec/Det | West elevation and the Building Section cut at its plane, the four detail sections drawn from their own file crop frames in a bottom row above their titles; cut-created edges ink heavy, projection edges thin | the fine placement of the four details (laid out from the decoded title labels with a 20 mm gap while the reference varies) and per-view visibility rules |
 | A105 Elev/Stair Sections | Stair Section cut at its true plane with restored level lines, Main Stair Detail on the file's own crop frame with grid bubbles and the three in-crop level bands at the reference heights, East elevation, hidden lines removed; the crop filter runs in the true slice (origin-relative rectangle offset by the view origin); cut edges ink with their own category's pen | the stair cut profile (floor-slab and railing-board edges the reference omits: per-view visibility rules not decoded) and the level-line ends at the reference's own markers (bubble positions not decoded) |

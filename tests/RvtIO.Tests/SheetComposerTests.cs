@@ -190,6 +190,39 @@ public class SheetComposerTests
         Assert.True(found, "South title extension line (1485 pt at y1104.3) not drawn.");
     }
 
+    [Fact]
+    public void Render_DrawsOffPageWindowedDetailsAboveTheirTitles()
+    {
+        // The four A104 wall/roof/foundation details sit off the drawable page in the file, but Revit prints
+        // them in a bottom row above their own titles. The composer anchors each frame on its decoded title
+        // label instead of dropping the viewport.
+        string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+        Element? sheet = null;
+        foreach (var e in document.Elements)
+            if (e.CategoryId == (int)BuiltInCategory.OST_Sheets
+                && e.LookupParameter(BuiltInParameter.SHEET_NUMBER)?.Value as string == "A104") sheet = e;
+        Assert.NotNull(sheet);
+
+        PdfDocument pdf = SheetComposer.Render(document, sheet!.Id);
+        using var stream = new MemoryStream();
+        pdf.Save(stream);
+        string content = PdfTestContent.Read(stream.ToArray());
+
+        // Detail linework inks in the bottom band (above the titles at y~106): any stroked segment there
+        // comes from a relocated detail, since no other A104 viewport draws that low.
+        bool found = false;
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
+            content, @"([\d.]+) ([\d.]+) m ([\d.]+) ([\d.]+) l S"))
+        {
+            double y1 = double.Parse(m.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
+            double y2 = double.Parse(m.Groups[4].Value, System.Globalization.CultureInfo.InvariantCulture);
+            if (y1 > 150 && y1 < 320 && y2 > 150 && y2 < 320) found = true;
+        }
+        Assert.True(found, "No relocated detail linework in the bottom band.");
+    }
+
     private static SitePrinter.SiteContent Site(
         List<List<(double X, double Y)>>? topography = null,
         List<(double X1, double Y1, double X2, double Y2, double Z)>? contours = null,
