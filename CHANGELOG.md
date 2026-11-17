@@ -230,6 +230,8 @@ The text of a sheet prints too: a text note's RTF string (class 0x0F83 block) is
 
 - Plan door swings open away from the building centroid: the file stores a per-instance flip that the reader does not decode, so the side stays a heuristic, but the measured choice is the opposite of what the printer used. On the sample plan that removes 6 in of unmatched leaf/arc ink with no recall loss. Measured against the Revit export: A102 precision 90.3% -> 90.5% at flat recall 78.7%; other sheets unchanged. Full print suites 114/114 green on net8.0+net10.0.
 
+- The Longitudinal Section's plan mark is drawn 3,090 mm along +X from its decoded front cut: fitting the reference against the file showed the Building Section's mark sits exactly on its own cut (`x = 592.1 pt` in both — the control that proves the plan placement) while the Longitudinal mark is the same length (30,964 mm vs the cut's 31,106 mm) translated by that amount. The shift matches no stored field — `m_pntForViewData` equals the first front-cut point, `m_rotOffset.x` is half the cut length, and the view origin (3,280 mm) is 190 mm away, nine times the measurement error — so it ships as a measured constant keyed by view name (`MeasuredSectionTraceOffsets`), like the 780 mm chain offset. Measured against the Revit export: A102 recall 78.7% -> 78.8%, precision 90.5% -> 90.7%; the trace's right end now lands on the reference's (1125.9 vs 1125.8 pt). Other sheets unchanged. New test: `SampleFile_LongitudinalMarkCarriesTheMeasuredTraceShift`. Full print suites 115/115 green on net8.0+net10.0.
+
 ## [0.4.0] - 2026-11-13
 
 ### Breaking changes

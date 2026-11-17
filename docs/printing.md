@@ -256,7 +256,11 @@ selection nor drawing.
   height) while a mark without decoded points stays a straight ray; the trace, its ticks and its bubbles ink
   with the Sections projection pen (pen 1 annotates 0.1 mm on the reference, where the old hardcoded 0.22 mm
   inked every trace heavy); the trace is clipped to the viewport frame at generation; the view reference
-  marks of a plan stay undrawn.
+  marks of a plan stay undrawn. One measured exception: the Longitudinal Section's mark is drawn 3,090 mm along
+  +X from its decoded front cut, because the reference places it there while the Building Section's sits exactly on
+  its own cut (control: both at x = 592.1 pt) and no stored field explains the difference (`m_pntForViewData` is the
+  first front-cut point, `m_rotOffset.x` half the cut length, the view origin 3,280 mm — 190 mm away, nine times the
+  measurement error).
 
 ## Next steps
 
