@@ -10,6 +10,25 @@ internal static class PenWidths
     private const double MinPt = 0.24;
     private const double MmPerPt = 25.4 / 72.0;
 
+    /// <summary>The pen number a category's cut (isCut) or projection lines use, from the document's
+    /// Object Styles. False when the category has no style for that kind.</summary>
+    internal static bool TryGetPenNumber(RvtDocument document, int categoryId, bool isCut, out int pen)
+    {
+        pen = 0;
+        var styles = document.RawData.GraphicsStylePens;
+        if (styles == null) return false;
+        int kind = isCut ? 2 : 1;
+        foreach (var style in styles.Values)
+        {
+            if (style.CategoryId == categoryId && style.OwnerId == -1 && style.GStyleType == kind)
+            {
+                pen = style.PenNumber;
+                return true;
+            }
+        }
+        return false;
+    }
+
     /// <summary>Width in millimetres a category's cut (isCut) or projection lines print at for a view scale
     /// denominator (100 for 1:100). False when the category has no style for that kind or the table did not decode.</summary>
     internal static bool TryGetWidth(RvtDocument document, int categoryId, bool isCut, int scaleDenominator, out double widthMillimetres)

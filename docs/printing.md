@@ -116,14 +116,16 @@ are clipped, and the faces behind it are filled grey. The stored point is file f
 converted to millimetres before the cut. On the sample, the Longitudinal Section of A103 shows the rooms,
 walls and the stair cut at the section line. A view whose plane is not decoded falls back to the direction taken from its
 name (North, South, East, West, Section projected along the short axis of the building). The edges the cut itself
-creates ink with the Walls cut pen; every other projected edge of a section inks thin with the projection pen,
-as the reference draws cut boundaries heavy and projection linework light.
+creates ink with their own category's cut pen (a railing cuts thinner than a wall, falling back to the
+Walls cut pen where the category decodes none); every other projected edge of a section inks thin with the projection pen,
+as the reference draws cut boundaries heavy and projection linework light. Grids are datum elements: they ink with the
+annotation pen table (pen 1 is 0.1 mm at every scale on the reference), not the scale-dependent model table.
 
 A detail section (1:10 to 1:50) is printed when its plane is decoded: the cut is drawn inside a window of about
 3.0 x 2.2 metres around the point of the plane, the area a wall or roof detail covers, and only when the viewport sits on
 the drawable part of the page (the file places some detail viewports outside it). A stair detail (1:20) instead takes
-the file's own crop frame, the way the reference places it next to the stair section; its level lines and grid bubbles
-stay suppressed until per-view placement of datum annotation is decoded. A view the file places off the page
+the file's own crop frame, the way the reference places it next to the stair section; it keeps its grid bubbles
+(the reference draws grids across it) but no level lines (the reference draws none in the detail). A view the file places off the page
 (a stair section whose stored centre is x = 0) is moved into the free space of the sheet, a drawing larger than its
 place is drawn at a scale that fits, and every drawing is kept inside the page. Two drawings the file places on top of each other are separated: the later
 one moves to the free place of the top row. A view of the section class whose name carries no compass word (a "Main
@@ -260,4 +262,4 @@ Measured on the sample project `rac_basic_sample_project.rvt` against the refere
 | A102 Plans | both plans with the room colours of the reference, furniture, stairs, door and window tags, dimensions on all four sides, the room legend, the room tags, and the section marks of the viewports they belong to (cut to the viewport frame at generation) | the view reference marks (annotation elements whose positions the reader does not decode); the Building Section trace repeats in the Level 2 plan, whose own mark the file hides elsewhere |
 | A103 Elevations/Sections | South elevation and the Longitudinal Section cut at its true plane (feet-to-mm), level markers, the faded site; stacked wall layers hide on the silhouette, coincident modeling inks once, coplanar triangulation diagonals not inked, crop-filtered at generation; level lines follow their datum envelopes near the crop with a label-margin cap for narrow viewports, and the grids dash coarsely ([36 9 9 9] pt from the grid type's line pattern), as the reference does | per-view level ends and markers (not decoded) and the long footing/grade model edges (footing instances lack decoded geometry) |
 | A104 Elev/Sec/Det | West elevation and the Building Section cut at its plane, the four detail sections windowed at generation; cut-created edges ink heavy, projection edges thin | the four detail sections: the file places their viewports outside the page and stores no other position |
-| A105 Elev/Stair Sections | Stair Section cut at its true plane with restored level lines, Main Stair Detail on the file's own crop frame, East elevation, hidden lines removed; the crop filter runs in the true slice (origin-relative rectangle offset by the view origin) | the stair cut profile inks with the Walls cut pen while the reference inks it thin (per-category cut pens, next), and the detail's grids stay suppressed while the reference draws them |
+| A105 Elev/Stair Sections | Stair Section cut at its true plane with restored level lines, Main Stair Detail on the file's own crop frame with grid bubbles, East elevation, hidden lines removed; the crop filter runs in the true slice (origin-relative rectangle offset by the view origin); cut edges ink with their own category's pen | the stair cut profile inks heavier than the reference (the file's stair pens give no thinner weight; Revit's stair representation rules are not decoded) |

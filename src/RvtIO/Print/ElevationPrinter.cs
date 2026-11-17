@@ -150,8 +150,9 @@ public static class ElevationPrinter
         // The plants, the topography and the site surfaces print as the faded background of an elevation, behind the
         // building, the way the reference export fades them.
         var context = new List<(List<(double X, double Y)> Points, double Depth)>();
-        // The outlined faces for the shared-edge pass below, with their 3D rings for midpoint depths.
-        var edgeFaces = new List<(List<(double X, double Y)> Points, List<double[]> Ring, double Depth, long Nx, long Ny, long Nz, long Off, int FaceIndex)>();
+        // The outlined faces for the shared-edge pass below, with their 3D rings for midpoint depths
+        // and the category of the element they came from (a cut edge inks with its own category's pen).
+        var edgeFaces = new List<(List<(double X, double Y)> Points, List<double[]> Ring, double Depth, long Nx, long Ny, long Nz, long Off, int FaceIndex, int CategoryId)>();
         // Every face for the occlusion pass below: its smallest corner depth, so an edge hidden
         // behind nearer mass is not inked even though the painter's fills cover it only visually. A face counts
         // as nearer when its nearest corner stands nearer, even a face turned away from the view.
@@ -263,7 +264,7 @@ public static class ElevationPrinter
                     edgeFaces.Add((points, corners, depth,
                         (long)Math.Round(nx * 1000), (long)Math.Round(ny * 1000), (long)Math.Round(nz * 1000),
                         (long)Math.Round((nx * corner[0] + ny * corner[1] + nz * corner[2]) * 2.0),
-                        faces.Count - 1));
+                        faces.Count - 1, element.CategoryId ?? 0));
                 }
             }
         }
@@ -353,13 +354,12 @@ public static class ElevationPrinter
         grids.Sort((left, right) => left.X.CompareTo(right.X));
         context.Sort((left, right) => right.Depth.CompareTo(left.Depth));
         // A detail window carries no level lines or grid bubbles: it is a detail of the construction, not a drawing of
-        // the levels. A stair detail at 1:20 keeps none either for now: its datum annotation lands off the page
-        // until per-view placement is decoded, while the reference draws only three in-crop level bands there.
+        // the levels. A stair detail at 1:20 keeps its grid bubbles (the reference draws grids across it) but no
+        // level lines (the reference draws none in the detail).
         if (window != null || suppressDatums)
-        {
             distinctLevels.Clear();
+        if (window != null)
             grids.Clear();
-        }
         // The grid bubbles print above the frame: without grids (a windowed detail) the frame ends at the model.
         if (grids.Count > 0) maxY += 4500;
         return new ElevationContent(faces, distinctLevels, grids, context, edges, minX, minY, maxX, maxY);
@@ -367,10 +367,10 @@ public static class ElevationPrinter
 
     /// <summary>A projected edge for inking: its ends in view millimetres, the painter's depth of its face,
     /// the depth of its midpoint for occlusion, the incident faces (FaceB is -1 when single), its plane key
-    /// for coplanar merging, and whether the section cut created it (inked with the cut pen; other edges
-    /// use the projection pen).</summary>
+    /// for coplanar merging, whether the section cut created it (inked with its own category's cut pen;
+    /// other edges use the projection pen), and the category of the face it came from.</summary>
     internal sealed record CollectedEdge(double X1, double Y1, double X2, double Y2, double Depth, double MidDepth,
-        int FaceA, int FaceB, long Nx, long Ny, long Nz, long Off, bool IsCut = false);
+        int FaceA, int FaceB, long Nx, long Ny, long Nz, long Off, bool IsCut = false, int CategoryId = 0);
 
     /// <summary>Visible edges of the projected faces: an edge shared by exactly two coplanar faces is a
     /// triangulation diagonal inside a flat surface and is not inked; every other edge is drawn once, so a
@@ -378,7 +378,7 @@ public static class ElevationPrinter
     /// and plane offsets to 0.5 mm. Each edge carries its 3D midpoint depth and its incident faces. An edge
     /// both of whose 3D ends lie on the cut plane (within a millimetre) is cut-created.</summary>
     internal static List<CollectedEdge> DedupeEdges(
-        List<(List<(double X, double Y)> Points, List<double[]> Ring, double Depth, long Nx, long Ny, long Nz, long Off, int FaceIndex)> edgeFaces,
+        List<(List<(double X, double Y)> Points, List<double[]> Ring, double Depth, long Nx, long Ny, long Nz, long Off, int FaceIndex, int CategoryId)> edgeFaces,
         double[] viewDir, double[]? cutOrigin = null)
     {
         var byEdge = new Dictionary<(long Ax, long Ay, long Bx, long By), List<int>>();
@@ -401,7 +401,7 @@ public static class ElevationPrinter
         var seen = new HashSet<(long Ax, long Ay, long Bx, long By)>();
         for (int f = 0; f < edgeFaces.Count; f++)
         {
-            var (points, ring, depth, nx, ny, nz, off, faceIndex) = edgeFaces[f];
+            var (points, ring, depth, nx, ny, nz, off, faceIndex, categoryId) = edgeFaces[f];
             // Window-clipped polygons lose the one-to-one vertex correspondence with the 3D ring;
             // those small details fall back to the face-average depth.
             bool hasRing = ring.Count == points.Count;
@@ -440,7 +440,7 @@ public static class ElevationPrinter
                         isCut = Math.Abs(da) <= 1.0 && Math.Abs(db) <= 1.0;
                     }
                 }
-                edges.Add(new CollectedEdge(a.X, a.Y, b.X, b.Y, depth, midDepth, faceIndex, otherFace, nx, ny, nz, off, isCut));
+                edges.Add(new CollectedEdge(a.X, a.Y, b.X, b.Y, depth, midDepth, faceIndex, otherFace, nx, ny, nz, off, isCut, categoryId));
             }
         }
         edges.Sort((left, right) => right.Depth.CompareTo(left.Depth));
@@ -859,17 +859,18 @@ public static class ElevationPrinter
     {
         double ToX(double x) => (x - content.MinX) / scale + originX;
         double ToY(double y) => (y - content.MinY) / scale + originY;
-        // The pen widths of the document's Object Styles, when they decoded: a section cuts its mass with the
-        // Walls cut pen, an elevation outlines it with the Walls projection pen. Only the edges the cut
-        // created ink heavy; the projected edges of a section ink thin like the reference does.
+        // The pen widths of the document's Object Styles, when they decoded: a section cuts its mass with each
+        // category's own cut pen (a railing cuts thinner than a wall), an elevation outlines it with the Walls
+        // projection pen. Only the edges the cut created ink cut; the projected edges of a section ink thin
+        // like the reference does.
         bool isSection = faceFill < 1;
         double faceLine = 0.2, projLine = 0.1;
+        int penScale = (int)Math.Round(scale);
         if (document != null)
         {
-            int scaleDenominator = (int)Math.Round(scale);
-            if (PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Walls, isSection, scaleDenominator, out double w))
+            if (PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Walls, isSection, penScale, out double w))
                 faceLine = w;
-            if (isSection && PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Walls, false, scaleDenominator, out double p))
+            if (isSection && PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Walls, false, penScale, out double p))
                 projLine = p;
         }
         // An elevation has no cut: every edge inks with the face line as before.
@@ -907,7 +908,14 @@ public static class ElevationPrinter
             double x1 = edge.X1, y1 = edge.Y1, x2 = edge.X2, y2 = edge.Y2;
             if (clipRect.HasValue && !ClipSegment(x1, y1, x2, y2, clipX0, clipY0, clipX1, clipY1,
                 out x1, out y1, out x2, out y2)) continue;
-            page.DrawLine(ToX(x1), ToY(y1), ToX(x2), ToY(y2), edge.IsCut ? faceLine : projLine);
+            // A cut edge inks with its own category's cut pen (falling back to the Walls cut pen when the
+            // category decodes none); anything else inks with the projection pen.
+            double width = projLine;
+            if (edge.IsCut)
+                width = document != null
+                    && PenWidths.TryGetWidth(document, edge.CategoryId, true, penScale, out double cutWidth)
+                    ? cutWidth : faceLine;
+            page.DrawLine(ToX(x1), ToY(y1), ToX(x2), ToY(y2), width);
         }
 
         // Grids first, then the levels: light over the faces the way an elevation prints them. The grids
@@ -915,13 +923,12 @@ public static class ElevationPrinter
         // their bubbles print solid like the reference.
         if (content.Grids.Count > 0)
         {
+            // Grids are datum elements: they ink with the annotation pen table (fixed weights), not the
+            // scale-dependent model table — pen 1 annotates 0.1 mm (0.283 pt) at every scale on the reference.
             double gridLine = 0.1;
-            if (document != null)
-            {
-                int scaleDenominator = (int)Math.Round(scale);
-                if (PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Grids, false, scaleDenominator, out double g))
-                    gridLine = g;
-            }
+            if (document != null && PenWidths.TryGetPenNumber(document, (int)BuiltInCategory.OST_Grids, false, out int gridPen)
+                && PenWidths.TryAnnotationWidth(document, gridPen, out double g))
+                gridLine = g;
             double[]? dashes = document != null && LinePatterns.TryGetGridDashes(document, out var decoded)
                 ? decoded
                 // Measured on the reference export (the file's own "Grid Line" pattern decodes to the same

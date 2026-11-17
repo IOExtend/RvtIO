@@ -1,3 +1,4 @@
+using RvtIO.BuiltIns;
 using RvtIO.Model;
 using RvtIO.Parsing;
 using RvtIO.Print;
@@ -127,6 +128,22 @@ public class PensDecodeTests
         // (|50-60|/50 = 0.2 vs |100-60|/100 = 0.4, the rvt-prt nearest-row rule).
         Assert.True(PenWidths.TryGetWidth(document, -2000011, true, 60, out double widthMm));
         Assert.Equal(0.001 * 864.0 * 25.4 / 72.0, widthMm, 6);
+    }
+
+    [Fact]
+    public void GridProjection_UsesAnnotationPenOne()
+    {
+        // Grids are datum elements: the reference inks them 0.283 pt at every scale, which is annotation
+        // pen 1 (0.1 mm), not the scale-dependent model table (0.18 mm at 1:50). The file decodes the
+        // grids-projection style to pen 1.
+        string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+
+        Assert.True(PenWidths.TryGetPenNumber(document, (int)BuiltInCategory.OST_Grids, false, out int pen));
+        Assert.Equal(1, pen);
+        Assert.True(PenWidths.TryAnnotationWidth(document, pen, out double mm));
+        Assert.Equal(0.1, mm, 3);
     }
 
     [Fact]

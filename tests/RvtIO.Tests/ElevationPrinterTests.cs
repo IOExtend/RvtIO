@@ -55,7 +55,8 @@ public class ElevationPrinterTests
         };
     }
 
-    private static Element QuadWall(int id, double[][] vertices, double[] normal)
+    private static Element QuadWall(int id, double[][] vertices, double[] normal,
+        int category = (int)BuiltInCategory.OST_Walls)
     {
         var face = new GeoFace
         {
@@ -68,7 +69,7 @@ public class ElevationPrinterTests
         return new Element
         {
             Id = id,
-            CategoryId = (int)BuiltInCategory.OST_Walls,
+            CategoryId = category,
             Geometry = new GeometryData { Faces = [face] },
         };
     }
@@ -162,6 +163,43 @@ public class ElevationPrinterTests
         Assert.Equal(1.5 * FeetToMillimetres, cut.Y1, 0);
         Assert.Equal(1.5 * FeetToMillimetres, cut.Y2, 0);
         Assert.Contains(content.Edges, e => !e.IsCut);
+    }
+
+    [Fact]
+    public void Collect_TagsCutEdgesWithTheirCategory()
+    {
+        // A railing slat straddling the section plane: the cut edge carries the railing category, so it
+        // inks with the railing cut pen (0.25 mm at 1:20) rather than the wall cut pen (0.35 mm).
+        var view = SectionView(900, [10, 0, 5]);
+        var document = Document(
+            QuadWall(601, [[8, 0, 0], [12, 0, 3], [12, 4, 3], [8, 4, 0]], [-0.6, 0, 0.8],
+                (int)BuiltInCategory.OST_StairsRailing),
+            view);
+
+        var content = ElevationPrinter.Collect(document, "section", false, view, null)!;
+
+        Assert.NotNull(content);
+        var cut = Assert.Single(content!.Edges, e => e.IsCut);
+        Assert.Equal((int)BuiltInCategory.OST_StairsRailing, cut.CategoryId);
+        Assert.All(content.Edges, e => Assert.Equal((int)BuiltInCategory.OST_StairsRailing, e.CategoryId));
+    }
+
+    [Fact]
+    public void SampleFile_StairDetailKeepsGridsWithoutLevels()
+    {
+        // The reference draws grid bubbles across the Main Stair Detail but no level lines there.
+        string? path = TestFiles.TryFind("Test_2022.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+        var view = document.Elements.FirstOrDefault(e =>
+            e.CategoryId == (int)BuiltInCategory.OST_Views && e.Name == "Main Stair Detail");
+        Assert.NotNull(view);
+
+        var content = ElevationPrinter.Collect(document, "section", false, view, null, suppressDatums: true);
+
+        Assert.NotNull(content);
+        Assert.Empty(content!.Levels);
+        Assert.NotEmpty(content.Grids);
     }
 
     private static RvtDocument Document(params Element[] elements) =>
