@@ -83,6 +83,50 @@ public class PlanPrinterTests
         Assert.Equal(2, content!.Furniture.Count);
     }
 
+    [Fact]
+    public void CollectLevel_ReadsAStairByItsBaseLevel()
+    {
+        // A stair names its base level (STAIRS_BASE_LEVEL_PARAM), not a level: the plan of that level
+        // draws its treads, the way the reference draws every stair of the level.
+        var stair = new Element { Id = 801, Name = "Stair", CategoryId = (int)BuiltInCategory.OST_Stairs };
+        Add(stair, BuiltInParameter.STAIRS_BASE_LEVEL_PARAM, StorageType.ElementId, 500);
+        stair.Geometry = new GeometryData
+        {
+            Faces =
+            [
+                new GeoFace
+                {
+                    Normal = [0, 0, 1],
+                    OuterVertices = [[3, 0, 1], [4, 0, 1], [4, 1, 1], [3, 1, 1]],
+                },
+            ],
+        };
+        var document = RvtDocument.FromInfo(new RevitFileInfo
+        {
+            Elements = { Level(500, "Level 1", 0), Wall(600, 500, 0, 0, 10, 0), stair },
+        });
+
+        var content = PlanPrinter.CollectLevel(document, 500);
+
+        Assert.NotNull(content);
+        Assert.Single(content!.Furniture);
+    }
+
+    [Fact]
+    public void SampleFile_Level1PlanDrawsTheStairTreads()
+    {
+        // The file's main stair (665557) names Level 1 (311) as its base level: the Level 1 plan collects
+        // its tread outlines (x 11602..13062 mm), which the reference draws.
+        string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+
+        var content = PlanPrinter.CollectLevel(document, 311);
+
+        Assert.NotNull(content);
+        Assert.Contains(content!.Furniture, outline => outline.All(point => point.X > 9000));
+    }
+
     private static double Area(List<(double X, double Y)> points)
     {
         double sum = 0;

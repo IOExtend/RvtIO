@@ -941,7 +941,11 @@ public static class PlanPrinter
         element.CategoryId is (int)BuiltInCategory.OST_Columns or (int)BuiltInCategory.OST_StructuralColumns;
 
     private static int? LevelOf(Element element) =>
-        element.LookupParameter(BuiltInParameter.LEVEL_PARAM)?.Value is int level && level > 0 ? level : null;
+        element.LookupParameter(BuiltInParameter.LEVEL_PARAM)?.Value is int level && level > 0 ? level
+        // A stair names its base level instead of a level (STAIRS_BASE_LEVEL_PARAM): without the fallback
+        // no plan draws it, while the reference draws every stair of the level.
+        : element.LookupParameter(BuiltInParameter.STAIRS_BASE_LEVEL_PARAM)?.Value is int stair && stair > 0 ? stair
+        : null;
 
     private static double? WidthOf(Element element) =>
         element.LookupParameter(BuiltInParameter.WALL_ATTR_WIDTH_PARAM)?.Value is double width && width > 0

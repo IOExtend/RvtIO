@@ -205,7 +205,7 @@ stays empty.
 | Floors | the sketch loops of the floors of the level, light under the walls |
 | Rooms | the floor face of the room's decoded boundary, filled with the colour the reference plan uses for that kind of room (master bedroom blue violet, master bath magenta, bedroom cyan, linen teal, hall blue, entry hall yellow, living light green, kitchen tan, laundry brown, mech green, bath green) and tagged with the room number and the area in m² in a rounded white box at the middle of the room, as the reference plan tags it (the legend carries the names) |
 | Doors | the leaf at one jamb, perpendicular to the wall on the side the door opens into, and the quarter arc it sweeps |
-| Furniture | the horizontal faces of the furniture, casework, plumbing fixtures, specialty equipment, stairs and railings of the level, seen from above as light outlines |
+| Furniture | the horizontal faces of the furniture, casework, plumbing fixtures, specialty equipment, stairs and railings of the level, seen from above as light outlines (a stair names its base level, STAIRS_BASE_LEVEL_PARAM, not a level) |
 | Door and window marks | a door's Mark in a circle beside the opening, a window's type mark in a hexagon, each on a leader line from the opening |
 | Dimensions | a chain between neighbouring grid lines on all four sides of the building, with the distance in millimetres, as the reference plan dimensions it |
 | Room legend | below the plan: a colour swatch and the name of every kind of room on it |
