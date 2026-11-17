@@ -69,16 +69,11 @@ strip.
 
 ## Printing a site plan
 
-A view named "Site" or "Site Plan" is drawn from the site itself, not from the walls of a level: the topography is a
-light green wash with its outer edge inked (the edges shared by two mesh triangles are dropped), each planting is a
-circle with four spokes at its position and size, and the house stands on the same plan: the rooms of the level with most
-walls are filled dark under its walls, so the building reads as a mass, the way the reference fills it.
-
-The cars and the people of the site (the entourage) print as their footprints seen from above, as the reference site plan
-shows a car on the drive. The terrain is sliced at every half metre (a metre on a high site) and the slices print as the contours of the
-ground, every fifth one an index contour drawn heavier, the way the reference site plan shows the fall of the site. Each kind of plant is tagged the way the planting schedule
-tags it (T1, T2, ... in the order of the schedule) on a leader
-line from the plant, a north arrow stands at the lower right of the site, and a planting schedule under the plan lists
+A view named "Site" or "Site Plan" draws only the planting tags and the north arrow over the paper: the reference
+site plan shows no building, terrain, contours, planting graphics or entourage, only the tags with their leaders
+(the fall of the ground reads from its spot elevations, the planting from its schedule). Each kind of plant is
+tagged the way the planting schedule tags it (T1, T2, ... with the real type marks) on a leader line from the
+plant, a north arrow stands at the lower right of the site, and a planting schedule under the plan lists
 every kind of plant with its count.
 
 ## Printing an elevation
@@ -227,7 +222,7 @@ selection nor drawing.
 
 1. Decode the crop region of a rotated view and of a crop region switched off with live bounds, and the annotation crop that keeps titles and labels outside the model crop. Decode the record that places a viewport the file puts off the page.
 2. Evaluate the body rows of element schedules from the model (the How-do-I reference body is computed, not stored).
-3. Decode the geometry of the property lines and the linework of a drafting view.
+3. Decode the geometry of the property lines (with their bearing/distance labels) and the spot elevations, the solar-analysis diagram of a site sheet, and the file's own tag positions with leaders.
 4. Hide the remaining occluded detail the painter's fills cover only visually (edges whose midpoint test misses, near-coincident stacked faces), and draw grid lines dashed as the reference does.
 5. Widen the same printing to the releases the reader supports in its own schema.
 ## Comparison with the reference export
@@ -238,7 +233,7 @@ Measured on the sample project `rac_basic_sample_project.rvt` against the refere
 | Sheet | Printed | Still different |
 |---|---|---|
 | A001 Title Sheet | the title texts, the five renderings from the file, the logo, the "How do I" table with its title, long-text band, header and body grid at its instance origin, and every revision table with its header and empty body grid to its fixed height | the evaluated body text of the "How do I" table (computed by Revit, not stored) |
-| A101 Site Plan | topography with its outline and contours (every fifth an index contour), the house as a dark mass, the planting and its tags T1..., the north arrow, the planting schedule with Type Mark / Common Name / Count in a ruled table at its instance origin | the property and setback lines (the file stores no geometry for them) |
+| A101 Site Plan | the planting tags T1... with their leaders, the north arrow, the planting schedule with Type Mark / Common Name / Count in a ruled table at its instance origin | the property and setback lines (no decoded geometry yet), the spot elevations, the solar-analysis diagram, the file's own tag positions |
 | A102 Plans | both plans with the room colours of the reference, furniture, stairs, door and window tags, dimensions on all four sides, the room legend, the room tags, and the section marks (the trace of every decoded section plane, cut to the walls) | the view reference marks (annotation elements whose positions the reader does not decode) |
 | A103 Elevations/Sections | South elevation and the Longitudinal Section cut at its plane, level markers, the faded site; hidden lines removed, coplanar triangulation diagonals not inked, crop-filtered at generation | residual hidden detail and solid grid lines where the reference dashes them |
 | A104 Elev/Sec/Det | West elevation and the Building Section cut at its plane, the four detail sections windowed at generation | the four detail sections: the file places their viewports outside the page and stores no other position |

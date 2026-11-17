@@ -294,29 +294,11 @@ public static class SheetComposer
             }
             else if (placed && name.Contains("site", StringComparison.OrdinalIgnoreCase))
             {
-                // A site view: the topography and the planting, not the plan of a level.
+                // A site view: the planting tags over the paper, not the plan of a level. The reference
+                // site plan draws no building, terrain or planting graphics, so no level is collected for it.
                 var site = SitePrinter.Collect(document);
                 if (site != null)
                 {
-                    // The building stands on the site: the walls of the level with most walls go on the same plan,
-                    // without its rooms, furniture and dimensions, which a site plan does not show. Found first so
-                    // the site context can be kept to the building and its air, like an elevation drops a far tree.
-                    PlanPrinter.PlanContent? sitePlan = null;
-                    {
-                        int? bestLevel = null;
-                        int bestCount = 0;
-                        foreach (var level in PlanPrinter.Levels(document))
-                        {
-                            var content = PlanPrinter.CollectLevel(document, level.LevelId);
-                            if (content == null || content.Walls.Count <= bestCount) continue;
-                            bestLevel = level.LevelId;
-                            bestCount = content.Walls.Count;
-                        }
-                        if (bestLevel is int levelId)
-                            sitePlan = PlanPrinter.CollectLevel(document, levelId);
-                    }
-                    if (sitePlan != null)
-                        site = KeepSiteNearBuilding(site, sitePlan);
                     double drawScale = scale;
                     // A site viewport whose view decoded a crop box draws the crop at the view's own scale, placed
                     // by the viewport offset, the way a plan viewport does: the frame is the crop rectangle and the
@@ -346,42 +328,6 @@ public static class SheetComposer
                     }
                     SitePrinter.DrawContent(page2, site, drawScale, siteDrawOriginX, siteDrawOriginY);
                     effectiveScale = (int)Math.Round(drawScale);
-                    if (sitePlan is { } building)
-                    {
-                        var wallsOnly = new PlanPrinter.PlanContent(building.Walls, building.Columns,
-                            new List<(double X1, double Y1, double X2, double Y2, string Name)>(),
-                            sitePlan.Gaps, sitePlan.WindowGaps, sitePlan.DoorGaps,
-                            sitePlan.FloorLoops,
-                            new List<List<(double X, double Y)>>(),
-                            new List<(List<(double X, double Y)> Polygon, string Name, string Number, double AreaSquareFeet)>(),
-                            new List<List<(double X, double Y)>>(),
-                            new List<(double MidX, double MidY, double Nx, double Ny, string Text, bool IsWindow)>(),
-                            sitePlan.MinX, sitePlan.MinY, sitePlan.MaxX, sitePlan.MaxY);
-                        // The house is filled dark on a site plan, the way the reference fills the building: the rooms
-                        // of the level under its walls. Inside a crop the building origin comes from the crop, like
-                        // the plan viewport's own origin; otherwise it is the site origin, as before.
-                        double wallsOriginX, wallsOriginY;
-                        if (siteCropped && view?.ViewCrop is { Active: true } wallsCrop
-                            && TryCropFrame(centerX, centerY, scale, wallsCrop, building.MinX, building.MinY,
-                                out _, out _, out _, out _, out wallsOriginX, out wallsOriginY))
-                        {
-                            // The frame stays the site frame above; only the building origin moves to its crop mapping.
-                        }
-                        else
-                        {
-                            wallsOriginX = (building.MinX - site.MinX) / drawScale + frameX;
-                            wallsOriginY = (building.MinY - site.MinY) / drawScale + frameY;
-                        }
-                        foreach (var room in building.Rooms)
-                        {
-                            var polygon = room.Polygon.Select(point => (
-                                (point.X - building.MinX) / drawScale + wallsOriginX,
-                                (point.Y - building.MinY) / drawScale + wallsOriginY)).ToList();
-                            if (polygon.Count >= 3) page2.DrawPolyline(polygon, 0, true, 0.45);
-                        }
-                        PlanPrinter.DrawContent(page2, wallsOnly, drawScale,
-                            wallsOriginX, wallsOriginY, 0.9, null, document);
-                    }
                     page2.EndClip();
                     // The planting schedule sits under the view title, clear of the site plan, unless its real
                     // instance drew at its own origin below.

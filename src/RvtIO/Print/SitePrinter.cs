@@ -156,59 +156,10 @@ public static class SitePrinter
     {
         double ToX(double x) => (x - content.MinX) / scale + originX;
         double ToY(double y) => (y - content.MinY) / scale + originY;
-        // A light green wash under the site; only the outer edge of the terrain mesh is inked, so the triangulation does
-        // not cover the plan.
-        var edges = new Dictionary<string, int>(StringComparer.Ordinal);
-        var edgeLines = new Dictionary<string, ((double X, double Y) A, (double X, double Y) B)>(StringComparer.Ordinal);
-        foreach (var polygon in content.Topography)
-        {
-            var points = polygon.Select(point => (ToX(point.X), ToY(point.Y))).ToList();
-            page.DrawPolyline(points, 0, true, new PdfColor(0.92, 0.95, 0.9));
-            for (int i = 0; i < points.Count; i++)
-            {
-                var a = points[i];
-                var b = points[(i + 1) % points.Count];
-                string ka = $"{Math.Round(a.Item1, 1)}:{Math.Round(a.Item2, 1)}";
-                string kb = $"{Math.Round(b.Item1, 1)}:{Math.Round(b.Item2, 1)}";
-                // The two triangles that share an edge walk it in opposite directions: the key ignores the direction,
-                // so a shared edge counts twice and only the outer edge of the terrain stays at one.
-                string key = string.CompareOrdinal(ka, kb) <= 0 ? ka + "|" + kb : kb + "|" + ka;
-                edges[key] = edges.TryGetValue(key, out int count) ? count + 1 : 1;
-                edgeLines[key] = (a, b);
-            }
-        }
-        foreach (var (key, count) in edges)
-        {
-            if (count != 1 || !edgeLines.TryGetValue(key, out var line)) continue;
-            page.DrawLine(line.A.Item1, line.A.Item2, line.B.Item1, line.B.Item2, 0.15, 0.45);
-        }
-        // The contours of the terrain go over the wash, under the planting; every fifth one is an index contour drawn
-        // heavier, the way a site plan reads the fall of the ground.
-        var contourLevels = content.Contours.Select(contour => contour.Z).Distinct().OrderBy(level => level).ToList();
-        foreach (var (x1, y1, x2, y2, level) in content.Contours)
-        {
-            bool index = contourLevels.IndexOf(level) % 5 == 0;
-            page.DrawLine(ToX(x1), ToY(y1), ToX(x2), ToY(y2), index ? 0.16 : 0.07, index ? 0.5 : 0.62);
-        }
-        foreach (var (x, y, radius, _, _) in content.Plants)
-        {
-            double pageX = ToX(x), pageY = ToY(y), r = radius / scale;
-            var circle = new List<(double X, double Y)>(24);
-            for (int i = 0; i < 24; i++)
-            {
-                double angle = i * Math.PI * 2 / 24;
-                circle.Add((pageX + r * Math.Cos(angle), pageY + r * Math.Sin(angle)));
-            }
-            page.DrawPolyline(circle, 0.12, true, (PdfColor?)null);
-            page.DrawLine(pageX - r, pageY, pageX + r, pageY, 0.08, 0.45);
-            page.DrawLine(pageX, pageY - r, pageX, pageY + r, 0.08, 0.45);
-        }
-
-        foreach (var polygon in content.Entourage)
-            page.DrawPolyline(polygon.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0.15, true, 0.75);
-
-        // The planting of the site is tagged with the type mark of the planting schedule (T1, T2, ...),
-        // each on a leader line from the plant; untagged kinds fall back to their order in the schedule.
+        // The reference site plan draws no terrain, contours, planting graphics or entourage over the paper:
+        // only the planting tags and the north arrow are inked (the fall of the ground reads from its spot
+        // elevations, the planting from its schedule). Each tag stands on a leader line from its plant;
+        // untagged kinds fall back to their order in the schedule.
         var types = content.Plants.Where(plant => plant.Type.Length > 0).Select(plant => plant.Type)
             .Distinct().OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToList();
         var tagged = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);

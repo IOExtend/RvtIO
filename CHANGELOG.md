@@ -186,6 +186,8 @@ The text of a sheet prints too: a text note's RTF string (class 0x0F83 block) is
 
 - Sheets pad revision tables with empty rows to their decoded fixed height (ScheduleSegmentRec.m_height, 0.434 ft on the sample): the reference draws 21 empty body rows at the measured 16.30 pt pitch under the header even though no revision is explicitly present, and the previous header-only tables missed that whole grid on every sheet. The revision body pitch is measured on the sample's reference (rvt-prt's 0.2559 in overshoots here and drifts out of tolerance). Measured against the Revit export: A001 recall 92.6% -> 99.4% at 100% precision, A101 72.5% -> 86.3% / 50.8% -> 55.4%, A102 72.8% -> 76.8% / 74.9% -> 76.3%, A103 74.0% -> 84.9% / 54.3% -> 56.6%, A104 55.1% -> 63.0% / 52.7% -> 55.1%, A105 58.9% -> 69.2% / 56.5% -> 59.5%; no regressions. New tests: revision FixedHeightFt assertion.
 
+- Sheets draw the site plan the way the reference does: no building, terrain, contours, planting graphics or entourage (the reference site view shows none of these, only tags with leaders), so the walls overlay, the near-building filter, the topo wash and outlines, the contour slicing, the plant circles and crosses and the entourage outlines are gone from site views; only the planting tags with their leaders and the north arrow print. Measured against the Revit export of the sample: A101 precision 55.4% -> 97.0% at recall 86.3% (ours 935 -> 520 in); other sheets unchanged. New tests: none (collection unchanged; 61/61 print suites green on net8.0+net10.0).
+
 ## [0.4.0] - 2026-11-13
 
 ### Breaking changes
