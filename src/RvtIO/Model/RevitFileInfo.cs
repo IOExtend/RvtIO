@@ -98,6 +98,11 @@ namespace RvtIO.Model
         [System.Text.Json.Serialization.JsonIgnore]
         internal IReadOnlyDictionary<int, (int ParentViewId, double CoarserScale)>? SectionViews { get; set; }
 
+        /// <summary>Grid type element id (GridAttributes root) -> the center-segment category id whose
+        /// projection graphics style inks the grid's center line, for the types whose block decoded
+        /// exactly once.</summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        internal IReadOnlyDictionary<int, int>? GridCenterCategories { get; set; }
         /// <summary>CategoryElem id -> its name, for the category elements whose block decoded exactly once.</summary>
         [System.Text.Json.Serialization.JsonIgnore]
         internal IReadOnlyDictionary<int, string>? CategoryNames { get; set; }

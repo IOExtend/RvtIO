@@ -67,6 +67,11 @@ internal static partial class TfBlockDeserializer
         double[] EndPoint, double[] CutVector, double[]? LevelInterval = null, double[]? XVector = null,
         double[]? Envelope = null, double[]? Origin = null, double[]? YVector = null);
 
+    /// <summary>The datum plane of a Level (DatumPlane.m_pSurface): its parameter envelope [u0, v0, u1, v1],
+    /// world origin and X / Y vectors, feet. An elevation spans the level line across the envelope projected
+    /// on the view's right axis, the way Revit draws it past the crop.</summary>
+    internal sealed record LevelDatum(double[] Envelope, double[] Origin, double[] XVector, double[] YVector);
+
     internal sealed record CurtainFamilyHost(int HostId, ushort ReferenceClass, int? ReplacementElementId = null);
 
     /// <summary>Own FamilyInstance.m_refs containing one complete CurtainCellFamRef or
@@ -5761,6 +5766,60 @@ internal static partial class TfBlockDeserializer
         return double.IsFinite(elevation) ? elevation : null;
     }
 
+    /// <summary>Decode the datum plane of a Level block (class 2299): the envelope, origin and axes its
+    /// level line spans in an elevation. Null when the surface does not decode.</summary>
+    internal static LevelDatum? TryExtractLevelDatum(byte[] d, int blockStart, uint dataSize,
+        ushort classId)
+    {
+        if (classId != 2299) return null;
+        var surface = ExtractDatumPlaneSurface(d, blockStart, dataSize, classId);
+        if (surface == null) return null;
+        var (envelope, origin, xVector, yVector) = surface.Value;
+        if (envelope.Length != 4 || origin.Length != 3 || xVector.Length != 3 || yVector.Length != 3)
+            return null;
+        if (!envelope.Concat(origin).Concat(xVector).Concat(yVector).All(double.IsFinite)) return null;
+        return new LevelDatum(envelope.ToArray(), origin.ToArray(), xVector.ToArray(), yVector.ToArray());
+    }
+
+    /// <summary>Decode the center-segment category of a GridAttributes block (class 2109): the category id
+    /// whose projection graphics style inks the grid's center line (its line pattern). Null when it does
+    /// not decode; -1 and other nonpositive ids mean no category.</summary>
+    internal static int? TryExtractGridCenterCategory(byte[] d, int blockStart, uint dataSize,
+        ushort classId)
+    {
+        if (classId != 2109) return null;
+        var fields = SerializationFields(classId);
+        if (fields == null) return null;
+        int payloadStart = blockStart + 14;
+        int payloadEnd = blockStart + 16 + (int)dataSize;
+        if (blockStart < 0 || dataSize > int.MaxValue || payloadEnd > d.Length || payloadEnd - payloadStart < 6
+            || BitConverter.ToUInt32(d, blockStart + 8) != dataSize
+            || BitConverter.ToUInt16(d, blockStart + 12) != classId
+            || BitConverter.ToUInt32(d, payloadEnd - 4) != dataSize)
+            return null;
+        var cur = new Cursor
+        {
+            D = d,
+            Pos = payloadStart,
+            End = payloadEnd - 4,
+            RootClassId = classId,
+            TailWalk = true,
+        };
+        var queue = new List<(ushort Cls, uint Id)>();
+        cur.RootQueue = queue;
+        try
+        {
+            foreach (var field in fields)
+            {
+                if (field is { Declaring: 2109, Name: "m_categoryForCenterSegment", Type: 14, Mods: 0, Ref: 20 })
+                    return ReadI32(cur);
+                ReadField(cur, field, queue, 0, null);
+            }
+        }
+        catch (DecodeFail) { }
+        return null;
+    }
+
     private static (double[] Envelope, double[] Origin, double[] XVector, double[] YVector)?
         ExtractDatumPlaneSurface(byte[] d, int blockStart, uint dataSize, ushort classId)
     {
@@ -6424,6 +6483,12 @@ internal static partial class TfBlockDeserializer
     {
         switch (f.Declaring, f.Name)
         {
+            // An attribute symbol's line-and-text attributes are an inline LineAndTextAttr struct (font id,
+            // category id, background, bold/italic/underline flags: 15 bytes), not the polymorphic pointer
+            // the typeless field would read (which drifts every later field of a GridAttributes root).
+            case (624, "m_lineAndTextAttr") when f.Type == 14 && f.Mods == 0 && f.Ref == null:
+                if (!c.Take(15)) throw Fail;
+                return true;
             // A mullion's nominal axis belongs to the first reference of its own symbol, not its trimmed solid.
             case (1829, "m_refs") when IsSubclassOf(c.RootClassId, 1829) && f.Type == 14 && f.Mods == 81
                 && ReferenceEquals(queue, c.RootQueue):

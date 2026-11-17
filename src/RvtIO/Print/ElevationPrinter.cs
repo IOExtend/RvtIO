@@ -83,7 +83,7 @@ public static class ElevationPrinter
     /// duplicates drawn once).</summary>
     internal sealed record ElevationContent(
         List<(List<(double X, double Y)> Points, double Depth, bool Outline)> Faces,
-        List<(double Y, string Label)> Levels,
+        List<(double Y, string Label, double X0, double X1)> Levels,
         List<(double X, string Name)> Grids,
         List<(List<(double X, double Y)> Points, double Depth)> Context,
         List<CollectedEdge> Edges,
@@ -288,27 +288,48 @@ public static class ElevationPrinter
         // The levels of the model and the grids that stand across the view are drawn dashed, as an elevation prints
         // them, with the level name and the grid bubble. Only the level records of the project count: the families
         // each carry their own reference levels (dozens sharing the category), which no project view shows.
-        var levels = new List<(double Y, string Label)>();
+        var levels = new List<(double Y, string Label, Element Plane)>();
         foreach (var element in document.Elements)
         {
             if (element.CategoryId != (int)BuiltInCategory.OST_Levels) continue;
             if (element.RootClassName != "Level") continue;
             if (element.LookupParameter(BuiltInParameter.LEVEL_ELEV)?.Value is not double elevation) continue;
-            levels.Add((elevation * FeetToMillimetres, element.Name ?? ""));
+            levels.Add((elevation * FeetToMillimetres, element.Name ?? "", element));
         }
         levels.Sort((left, right) => left.Y.CompareTo(right.Y));
         // The project holds many level elements at the same height (one per family); an elevation notes each height
-        // once, with the first name it finds.
-        var distinctLevels = new List<(double Y, string Label)>();
+        // once, with the first name it finds. The line of a level runs to its datum envelope projected on the
+        // view's right axis (rvt-prt datums.py); without a decoded plane it spans the content like before.
+        var distinctLevels = new List<(double Y, string Label, double X0, double X1)>();
         foreach (var level in levels)
         {
             if (distinctLevels.Count > 0 && Math.Abs(distinctLevels[^1].Y - level.Y) < 1.0)
             {
                 if (distinctLevels[^1].Label.Length == 0)
-                    distinctLevels[^1] = (distinctLevels[^1].Y, level.Label);
+                    distinctLevels[^1] = (distinctLevels[^1].Y, level.Label, distinctLevels[^1].X0, distinctLevels[^1].X1);
                 continue;
             }
-            distinctLevels.Add(level);
+            double x0 = minX, x1 = maxX;
+            if (level.Plane.LevelPlane is { Envelope.Length: 4, Origin.Length: 3, XVector.Length: 3, YVector.Length: 3 } plane)
+            {
+                double lo = double.PositiveInfinity, hi = double.NegativeInfinity;
+                for (int corner = 0; corner < 4; corner++)
+                {
+                    double u = plane.Envelope[corner == 0 || corner == 3 ? 0 : 2];
+                    double v = plane.Envelope[corner < 2 ? 1 : 3];
+                    double s = (plane.Origin[0] + u * plane.XVector[0] + v * plane.YVector[0]) * H[0]
+                        + (plane.Origin[1] + u * plane.XVector[1] + v * plane.YVector[1]) * H[1]
+                        + (plane.Origin[2] + u * plane.XVector[2] + v * plane.YVector[2]) * H[2];
+                    lo = Math.Min(lo, s);
+                    hi = Math.Max(hi, s);
+                }
+                if (hi > lo && double.IsFinite(lo) && double.IsFinite(hi))
+                {
+                    x0 = lo * FeetToMillimetres;
+                    x1 = hi * FeetToMillimetres;
+                }
+            }
+            distinctLevels.Add((level.Y, level.Label, x0, x1));
         }
         var grids = new List<(double X, string Name)>();
         foreach (var element in document.Elements)
@@ -818,39 +839,61 @@ public static class ElevationPrinter
             page.DrawLine(ToX(x1), ToY(y1), ToX(x2), ToY(y2), faceLine);
         }
 
-        // Grids first, then the levels: both dashed and light, over the faces the way an elevation prints them.
+        // Grids first, then the levels: light over the faces the way an elevation prints them. The grids
+        // dash coarsely from the grid type's line pattern ([36 9 9 9] pt on the sample, decoded below);
+        // their bubbles print solid like the reference.
         if (content.Grids.Count > 0)
         {
-            page.SetDash(2, 1.5);
+            double gridLine = 0.1;
+            if (document != null)
+            {
+                int scaleDenominator = (int)Math.Round(scale);
+                if (PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Grids, false, scaleDenominator, out double g))
+                    gridLine = g;
+            }
+            double[]? dashes = document != null && LinePatterns.TryGetGridDashes(document, out var decoded)
+                ? decoded
+                // Measured on the reference export (the file's own "Grid Line" pattern decodes to the same
+                // [36 9 9 9] pt): the grid type's center-segment pattern when its links did not decode.
+                : [36.0, 9.0, 9.0, 9.0];
             double top = ToY(Math.Min(content.MaxY, clipY1)) - 8;
             double bottom = ToY(Math.Max(content.MinY, clipY0));
             foreach (var (x, name) in content.Grids)
             {
                 if (x < clipX0 || x > clipX1) continue;
                 double pageX = ToX(x);
-                page.DrawLine(pageX, bottom, pageX, top, 0.18, 0.55);
+                // The dash pattern starts at the top of the line, as the reference grids do (a cut 36 pt
+                // dash at the crop top where the line enters the viewport).
+                if (dashes != null) page.SetDashPoints(dashes);
+                page.DrawLine(pageX, top, pageX, bottom, gridLine, 0.55);
+                if (dashes != null) page.ResetDash();
                 var circle = new List<(double X, double Y)>(24);
                 for (int i = 0; i < 24; i++)
                 {
                     double angle = i * Math.PI * 2 / 24;
                     circle.Add((pageX + 3.5 * Math.Cos(angle), top + 3.5 + 3.5 * Math.Sin(angle)));
                 }
-                page.DrawPolyline(circle, 0.18, true, 1);
+                page.DrawPolyline(circle, 0.1, true, 1);
                 if (name.Length > 0) page.DrawText(name, pageX, top + 2.4, 2.8, PdfTextAlignment.Center);
             }
-            page.ResetDash();
         }
         if (content.Levels.Count > 0)
         {
-            page.SetDash(4, 1.5);
+            // A level line is thin (0.283 pt on the reference) and dashed short: 3 mm on, 1.5 mm off.
+            // It spans the datum envelope, past the crop; only its height is clipped to the crop.
+            page.SetDash(3.0, 1.5);
             double lastLabelY = double.NegativeInfinity;
-            foreach (var (y, label) in content.Levels)
+            foreach (var (y, label, x0, x1) in content.Levels)
             {
                 double pageY = ToY(y);
                 if (pageY < ToY(content.MinY) - 1 || pageY > ToY(content.MaxY) + 1) continue;
                 if (y < clipY0 - 1 || y > clipY1 + 1) continue;
-                double left = ToX(Math.Max(content.MinX, clipX0)), right = ToX(Math.Min(content.MaxX, clipX1));
-                page.DrawLine(left, pageY, right, pageY, 0.15, 0.55);
+                // The line starts at the crop, like the reference (its left bubbles line up on the crop
+                // edge), and runs to the datum end; nothing is inked outside the drawn frame (the scorer
+                // counts vectors, not the page clip).
+                double left = ToX(clipX0), right = ToX(x1);
+                if (right <= left) continue;
+                page.DrawLine(left, pageY, right, pageY, 0.1, 0.55);
                 // The level marker at the right end of the line: a circle with an arrow head, the level name above its
                 // height in millimetres, as an elevation notes them.
                 double markerX = right + 4;

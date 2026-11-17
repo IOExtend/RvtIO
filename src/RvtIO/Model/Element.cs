@@ -1022,6 +1022,11 @@ namespace RvtIO.Model
         [JsonIgnore]
         internal GridPlaneData? GridPlane { get; set; }
 
+        /// <summary>For a level: its datum plane (envelope, origin, X / Y vectors, feet).</summary>
+        [JsonIgnore]
+        internal GridPlaneData? LevelPlane { get; set; }
+
+
         /// <summary>CompoundStructure layers (wall/floor/ceiling types). Each layer has thickness, function, material.</summary>
         public List<MaterialLayer>? Layers { get; set; }
 

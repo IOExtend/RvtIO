@@ -4458,6 +4458,25 @@ internal static partial class ElementBuilder
     }
 
     /// <summary>
+    /// Attach decoded Level datum planes. A level keeps its plane only when its own block decoded
+    /// exactly once, like the grid datum path above. Grid center categories ride on RevitFileInfo
+    /// instead of the elements: instance TypeIds are not assigned yet when this runs.
+    /// </summary>
+    private static void ApplyLevelDatums(RevitFileInfo info, ParsingState? state)
+    {
+        if (state == null) return;
+        foreach (var element in info.Elements)
+        {
+            if (!state.LevelDatums.TryGetValue((uint)element.Id, out var levelEntry)) continue;
+            if (levelEntry is not { BlockCount: 1, Datum: not null }) continue;
+            var datum = levelEntry.Datum;
+            if (datum.Envelope is { Length: 4 } envelope && datum.Origin is { Length: 3 } origin
+                && datum.XVector is { Length: 3 } xVector && datum.YVector is { Length: 3 } yVector)
+                element.LevelPlane = new GridPlaneData(envelope, origin, xVector, yVector);
+        }
+    }
+
+    /// <summary>
     /// The unit direction of a grid line: the plane's stored X vector when it runs along the line
     /// (the sign of a zero component is kept, Revit prints it into the GlobalId of the
     /// IfcGrid), else the one from the end points.
@@ -5763,6 +5782,7 @@ internal static partial class ElementBuilder
     public static void PostProcess(RevitFileInfo rvtInfo, ParsingState? state = null, TextWriter? diag = null)
     {
         ApplyGridDatums(rvtInfo, state);
+        ApplyLevelDatums(rvtInfo, state);
         rvtInfo.GraphicsStyles = state?.GraphicsStyles
             .Where(pair => pair.Value is { BlockCount: 1, MaterialId: not null })
             .ToDictionary(pair => (int)pair.Key, pair => (pair.Value.MaterialId!.Value, pair.Value.CategoryId));
@@ -5815,6 +5835,10 @@ internal static partial class ElementBuilder
             .Where(pair => pair.Value is { BlockCount: 1, Viewdata: not null })
             .ToDictionary(pair => (int)pair.Key,
                 pair => (pair.Value.Viewdata!.ParentViewId, pair.Value.Viewdata!.CoarserScale));
+        rvtInfo.GridCenterCategories = state?.GridCenterCategories
+            .Where(pair => pair.Value is { BlockCount: 1, CategoryId: not null })
+            .ToDictionary(pair => (int)pair.Key,
+                pair => pair.Value.CategoryId!.Value);
         rvtInfo.CategoryNames = state?.CategoryNames
             .Where(pair => pair.Value is { BlockCount: 1, Name: not null })
             .ToDictionary(pair => (int)pair.Key, pair => pair.Value.Name!);

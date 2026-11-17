@@ -199,6 +199,78 @@ public class ElevationPrinterTests
         Assert.Equal("Level 1", level.Label);
     }
 
+    private static Element DatumLevel(int id, string name, double elevationFeet, double[] envelope)
+    {
+        var level = Level(id, name, elevationFeet, "Level");
+        level.LevelPlane = new GridPlaneData(envelope, [100, 200, elevationFeet], [1, 0, 0], [0, 1, 0]);
+        return level;
+    }
+
+    [Fact]
+    public void Collect_SpansLevelLinesByDatumEnvelope()
+    {
+        // A level line spans its datum envelope projected on the view's right axis (south looks along
+        // +Y, so the envelope's U range at the plane origin maps straight to X); without a decoded
+        // plane the line spans the content like before.
+        var document = Document(
+            WallWithFace(600),
+            DatumLevel(700, "Wide", 0, [-10, 0, 20, 5]),
+            ProjectLevel(701, "Plain", 3.28084));
+
+        var content = ElevationPrinter.Collect(document, "south")!;
+
+        Assert.Equal(2, content.Levels.Count);
+        var wide = content.Levels[0];
+        Assert.Equal("Wide", wide.Label);
+        // Envelope U -10..20 ft about origin X 100 ft, in millimetres.
+        Assert.Equal((100 - 10) * FeetToMillimetres, wide.X0, 3);
+        Assert.Equal((100 + 20) * FeetToMillimetres, wide.X1, 3);
+        var plain = content.Levels[1];
+        Assert.Equal("Plain", plain.Label);
+        Assert.Equal(content.MinX, plain.X0, 6);
+        Assert.Equal(content.MaxX, plain.X1, 6);
+    }
+
+    [Fact]
+    public void SampleFile_DecodesLevelDatumPlanes()
+    {
+        string? path = TestFiles.TryFind("Test_2022.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+
+        var levels = document.Elements
+            .Where(e => e.CategoryId == (int)BuiltInCategory.OST_Levels && e.RootClassName == "Level")
+            .ToList();
+        Assert.NotEmpty(levels);
+        // Every project level decoded its datum plane with a finite envelope, origin and axes.
+        foreach (var level in levels)
+        {
+            Assert.NotNull(level.LevelPlane);
+            var plane = level.LevelPlane!;
+            Assert.Equal(4, plane.Envelope.Length);
+            Assert.Equal(3, plane.Origin.Length);
+            Assert.All(plane.Envelope.Concat(plane.Origin).Concat(plane.XVector).Concat(plane.YVector),
+                v => Assert.True(double.IsFinite(v)));
+        }
+        // The sample's Foundation datum runs past the building, the way the reference draws it.
+        var widest = levels.MaxBy(e => e.LevelPlane!.Envelope[2] - e.LevelPlane!.Envelope[0])!;
+        Assert.True(widest.LevelPlane!.Envelope[2] - widest.LevelPlane!.Envelope[0] > 150,
+            $"widest level span is {widest.LevelPlane.Envelope[2] - widest.LevelPlane.Envelope[0]:0.#} ft");
+    }
+
+    [Fact]
+    public void SampleFile_ResolvesGridCenterDashes()
+    {
+        string? path = TestFiles.TryFind("Test_2022.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+
+        // The grid type's center-segment style decodes to the file's "Grid Line" pattern,
+        // the coarse [36 9 9 9] pt dash the reference draws.
+        Assert.True(LinePatterns.TryGetGridDashes(document, out double[] dashes));
+        Assert.Equal(new[] { 36.0, 9.0, 9.0, 9.0 }, dashes);
+    }
+
     [Fact]
     public void Collect_MergesOverlappingCoplanarEdges()
     {

@@ -1903,6 +1903,32 @@ public partial class RvtFileReader
             : (1, read ? name : null, read ? segs : null);
     }
 
+    internal static void RecordLevelDatum(
+        ParsingState state, byte[] data, int start, uint size, ushort classId, uint owner)
+    {
+        if (classId != 2299) return;
+        TfBlockDeserializer.LevelDatum? datum = start >= 0 && start <= data.Length - 4
+            && BitConverter.ToUInt32(data, start) == owner
+            ? TfBlockDeserializer.TryExtractLevelDatum(data, start, size, classId)
+            : null;
+        state.LevelDatums[owner] = state.LevelDatums.TryGetValue(owner, out var old)
+            ? (old.BlockCount + 1, null)
+            : (1, datum);
+    }
+
+    internal static void RecordGridCenterCategory(
+        ParsingState state, byte[] data, int start, uint size, ushort classId, uint owner)
+    {
+        if (classId != 2109) return;
+        int? categoryId = start >= 0 && start <= data.Length - 4
+            && BitConverter.ToUInt32(data, start) == owner
+            ? TfBlockDeserializer.TryExtractGridCenterCategory(data, start, size, classId)
+            : null;
+        state.GridCenterCategories[owner] = state.GridCenterCategories.TryGetValue(owner, out var old)
+            ? (old.BlockCount + 1, null)
+            : (1, categoryId);
+    }
+
     internal static void RecordTitleBlockLines(
         ParsingState state, byte[] data, int start, uint size, ushort classId, uint owner)
     {
@@ -2476,6 +2502,8 @@ public partial class RvtFileReader
             RecordGraphicsStyle(state, seg, bs, ds, cls, eid);
             RecordPenWidthTable(state, seg, bs, ds, cls, eid);
             RecordLinePattern(state, seg, bs, ds, cls, eid);
+            RecordLevelDatum(state, seg, bs, ds, cls, eid);
+            RecordGridCenterCategory(state, seg, bs, ds, cls, eid);
             RecordTitleBlockLines(state, seg, bs, ds, cls, eid);
             RecordScheduleInstance(state, seg, bs, ds, cls, eid);
             RecordScheduleTable(state, seg, bs, ds, cls, eid);

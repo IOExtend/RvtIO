@@ -403,6 +403,20 @@ public sealed class PdfPage
         _content.Append('[').Append(Number(Points(dashMillimetres))).Append(' ')
             .Append(Number(Points(gapMillimetres))).Append("] 0 d\n");
 
+    /// <summary>Sets an arbitrary dash pattern of the following strokes, in PDF points
+    /// (a dash array alternating dash and gap lengths, starting with a dash).</summary>
+    /// <param name="points">Dash and gap lengths in points.</param>
+    public void SetDashPoints(double[] points)
+    {
+        _content.Append('[');
+        for (int i = 0; i < points.Length; i++)
+        {
+            if (i > 0) _content.Append(' ');
+            _content.Append(Number(points[i]));
+        }
+        _content.Append("] 0 d\n");
+    }
+
     /// <summary>Clears the dash pattern.</summary>
     public void ResetDash() => _content.Append("[] 0 d\n");
 

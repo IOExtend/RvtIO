@@ -436,6 +436,15 @@ internal class ParsingState
     /// name remains authoritative for the grid mark because datum text may name its head type.</summary>
     public Dictionary<uint, GridDatumData> GridDatums { get; } = new();
 
+    /// <summary>Datum plane of a Level block (class 2299): envelope, origin and X / Y vectors (feet).
+    /// Null when the block did not decode; a repeated block clears it.</summary>
+    public Dictionary<uint, (int BlockCount, Parsing.TfBlockDeserializer.LevelDatum? Datum)> LevelDatums { get; } = new();
+
+    /// <summary>GridAttributes block (class 2109) -> the center-segment category id whose projection
+    /// graphics style inks the grid's center line. Null when the block did not decode; a repeated
+    /// block clears it.</summary>
+    public Dictionary<uint, (int BlockCount, int? CategoryId)> GridCenterCategories { get; } = new();
+
     /// <summary>Line-style element id for 0x0346 curves whose GStyleElemId was a real id
     /// (not -1): these are detail/model lines, keyed by owner eid.</summary>
     public Dictionary<uint, int> DetailCurveStyles { get; set; } = new();
