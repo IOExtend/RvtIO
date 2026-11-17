@@ -126,6 +126,26 @@ public class ElevationPrinterTests
     }
 
     [Fact]
+    public void SampleFile_RoofDetailDrawsItsOwnAnnotationCurves()
+    {
+        // A detail's annotation lines belong to the view itself: the file stores them as curve elements that
+        // name the view as owner (OST_InsulationLines and OST_Lines), in model feet on the view plane, and no
+        // solid face reaches them. Without this the roof detail printed only its wall and window.
+        string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+        Element? view = null;
+        foreach (var e in document.Elements)
+            if (e.CategoryId == (int)BuiltInCategory.OST_Views && e.Name == "Typical Wall Roof Connection") view = e;
+        Assert.NotNull(view);
+
+        var content = ElevationPrinter.Collect(document, "section", false, view, null, isDetail: true);
+
+        Assert.NotNull(content);
+        Assert.Contains(content!.Edges, edge => edge.CategoryId == (int)BuiltInCategory.OST_InsulationLines);
+    }
+
+    [Fact]
     public void SampleFile_StairSectionIncludesTreadAndRiserMass()
     {
         // Treads and risers are their own categories (OST_StairsTrisers). A stair section that skipped

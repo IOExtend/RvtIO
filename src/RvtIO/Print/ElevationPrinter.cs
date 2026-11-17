@@ -300,6 +300,40 @@ public static class ElevationPrinter
         var deduped = DedupeEdges(edgeFaces, D, cut ? planeOrigin : null);
         var occluded = OccludeEdges(faces, faceMinDepths, deduped);
         List<CollectedEdge> edges = MergeOverlaps(occluded);
+        // A detail's own annotation curves: Revit stores detail and insulation lines of a view as curve
+        // elements that name the view as their owner (OST_Lines, OST_InsulationLines), with their points in
+        // model feet — they lie on the view plane and belong to no solid, so no face ever reaches them.
+        if (planeView != null)
+        {
+            foreach (var element in document.Elements)
+            {
+                if (element.OwnerViewId != planeView.Id || element.Location is not { CurveType: "Line" } curve)
+                    continue;
+                if (element.CategoryId is not ((int)BuiltInCategory.OST_Lines
+                    or (int)BuiltInCategory.OST_InsulationLines or (int)BuiltInCategory.OST_SketchLines))
+                    continue;
+                if (curve.StartPoint.Length < 3 || curve.EndPoint.Length < 3) continue;
+                var a = curve.StartPoint;
+                var b = curve.EndPoint;
+                double ax = (a[0] * H[0] + a[1] * H[1] + a[2] * H[2]) * FeetToMillimetres;
+                double ay = (a[0] * V[0] + a[1] * V[1] + a[2] * V[2]) * FeetToMillimetres;
+                double bx = (b[0] * H[0] + b[1] * H[1] + b[2] * H[2]) * FeetToMillimetres;
+                double by = (b[0] * V[0] + b[1] * V[1] + b[2] * V[2]) * FeetToMillimetres;
+                if (Math.Abs(bx - ax) + Math.Abs(by - ay) < 1e-6) continue;
+                // The file keeps annotation the viewport does not show (a line drawn past the crop edge):
+                // only the part inside the crop is printed, and it does not stretch the drawing's frame.
+                if (cropWindow is { } curveCrop)
+                {
+                    if (!ClipSegment(ax, ay, bx, by, curveCrop.X0, curveCrop.Y0, curveCrop.X1, curveCrop.Y1,
+                        out ax, out ay, out bx, out by)) continue;
+                    if (Math.Abs(bx - ax) + Math.Abs(by - ay) < 1e-6) continue;
+                }
+                edges.Add(new CollectedEdge(ax, ay, bx, by, 0, 0, -1, -1, 0, 0, 0, 0,
+                    false, element.CategoryId ?? 0));
+                minX = Math.Min(minX, Math.Min(ax, bx)); maxX = Math.Max(maxX, Math.Max(ax, bx));
+                minY = Math.Min(minY, Math.Min(ay, by)); maxY = Math.Max(maxY, Math.Max(ay, by));
+            }
+        }
         // A detail keeps its fine construction lines; anywhere else coincident modeling
         // (a railing family drawing the same board four times) inks once.
         if (window == null && !isDetail) edges = ConsolidateCoincident(edges);
