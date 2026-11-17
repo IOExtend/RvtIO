@@ -29,6 +29,38 @@ public class PlanSectionMarkTests
         Assert.True(withMarks > without);
     }
 
+    [Fact]
+    public void DrawContent_InksTracesWithTheSectionsProjectionPen()
+    {
+        // A section trace inks thin like the reference (0.283 pt, annotation pen 1) instead of the old
+        // hardcoded 0.22 mm that inked every trace heavy.
+        var content = new PlanPrinter.PlanContent(
+            [], [], [], [], [], [], [], [], [], [], [], 0, 0, 10000, 10000);
+        var marks = new List<SectionMark>
+        {
+            new([(5000, 5000), (5001, 5000)], false, "Building Section"),
+        };
+
+        string text;
+        using (var stream = new MemoryStream())
+        {
+            Drawn(content, marks).Save(stream);
+            text = PdfTestContent.Read(stream.ToArray());
+        }
+
+        Assert.Contains("0.2835 w", text);
+        Assert.DoesNotContain("0.6236 w", text);
+    }
+
+    private static PdfDocument Drawn(PlanPrinter.PlanContent content,
+        IReadOnlyList<SectionMark>? marks)
+    {
+        var pdf = new PdfDocument { Font = PdfFonts.TryFind(out _) };
+        PdfPage page = pdf.AddPage(PdfPageSize.A3);
+        PlanPrinter.DrawContent(page, content, 100, 20, 20, 0.9, marks);
+        return pdf;
+    }
+
     private static int LineCount(PlanPrinter.PlanContent content,
         IReadOnlyList<SectionMark>? marks)
     {

@@ -465,15 +465,18 @@ public static class PlanPrinter
         double ToY(double y) => (y - content.MinY) / scale + originY;
 
         // The pen widths of the document's Object Styles, when they decoded: a cut wall prints with the Walls
-        // cut pen at the view scale, a grid with the Grids projection pen, furniture with its own.
+        // cut pen at the view scale, a grid with the Grids projection pen, furniture with its own, and a
+        // section trace with the Sections projection pen (pen 1 annotates 0.1 mm on the reference, where
+        // the old hardcoded 0.22 mm inked every trace heavy).
         int scaleDenominator = (int)Math.Round(scale);
-        double wallLine = 0.2, gridLine = 0.18, furnitureLine = 0.12, columnLine = 0.2;
+        double wallLine = 0.2, gridLine = 0.18, furnitureLine = 0.12, columnLine = 0.2, sectionLine = 0.1;
         if (document != null)
         {
             if (PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Walls, true, scaleDenominator, out double w)) wallLine = w;
             if (PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Columns, true, scaleDenominator, out double c)) columnLine = c;
             if (PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Grids, false, scaleDenominator, out double g)) gridLine = g;
             if (PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Furniture, false, scaleDenominator, out double f)) furnitureLine = f;
+            if (PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Sections, false, scaleDenominator, out double s)) sectionLine = s;
         }
 
         foreach (var floor in content.FloorLoops)
@@ -498,8 +501,8 @@ public static class PlanPrinter
             page.DrawLine(ToX(grid.X1), ToY(grid.Y1), ToX(grid.X2), ToY(grid.Y2), gridLine, 0.45);
             if (gridDashes != null) page.ResetDash();
             if (page.Owner.Font == null || grid.Name.Length == 0) continue;
-            Bubble(page, ToX(grid.X1), ToY(grid.Y1), grid.Name);
-            Bubble(page, ToX(grid.X2), ToY(grid.Y2), grid.Name);
+            Bubble(page, ToX(grid.X1), ToY(grid.Y1), grid.Name, gridLine);
+            Bubble(page, ToX(grid.X2), ToY(grid.Y2), grid.Name, gridLine);
         }
 
         var wallById = new Dictionary<int, (int Id, double X1, double Y1, double X2, double Y2, double Width)>();
@@ -627,7 +630,7 @@ public static class PlanPrinter
         foreach (var column in content.Columns)
             page.DrawRectangle(ToX(column.X), ToY(column.Y), column.Width / scale, column.Height / scale, columnLine, 1);
 
-        if (sectionMarks is { Count: > 0 }) DrawSectionMarks(page, content, scale, originX, originY, sectionMarks, frame);
+        if (sectionMarks is { Count: > 0 }) DrawSectionMarks(page, content, scale, originX, originY, sectionMarks, frame, sectionLine);
     }
 
     /// <summary>Draws the plan of a level as one page of the document.</summary>
@@ -702,7 +705,7 @@ public static class PlanPrinter
     /// ends and a bubble with the letter of the view, as a plan shows where it is cut.</summary>
     private static void DrawSectionMarks(PdfPage page, PlanContent content, double scale, double originX,
         double originY, IReadOnlyList<SectionMark> marks,
-        (double X0, double Y0, double X1, double Y1)? frame = null)
+        (double X0, double Y0, double X1, double Y1)? frame = null, double sectionLine = 0.1)
     {
         double ToX(double x) => (x - content.MinX) / scale + originX;
         double ToY(double y) => (y - content.MinY) / scale + originY;
@@ -771,7 +774,7 @@ public static class PlanPrinter
             if (runs.Count == 0) continue;
             foreach (var run in runs)
                 for (int i = 0; i + 1 < run.Count; i++)
-                    page.DrawLine(run[i].X, run[i].Y, run[i + 1].X, run[i + 1].Y, 0.22, 0.2);
+                    page.DrawLine(run[i].X, run[i].Y, run[i + 1].X, run[i + 1].Y, sectionLine, 0.2);
             index++;
             string label = mark.Name.Length > 0 ? mark.Name[..1].ToUpperInvariant() : index.ToString();
             // A short tick across the trace and the bubble at each end, square to the leg it sits on.
@@ -785,13 +788,13 @@ public static class PlanPrinter
                 double angle = Math.Atan2(y - otherY, x - otherX);
                 // A short tick across the trace and the bubble at its end.
                 page.DrawLine(x - Math.Sin(angle) * 1.4, y + Math.Cos(angle) * 1.4, x + Math.Sin(angle) * 1.4,
-                    y - Math.Cos(angle) * 1.4, 0.22, 0.2);
-                Bubble(page, x, y, label);
+                    y - Math.Cos(angle) * 1.4, sectionLine, 0.2);
+                Bubble(page, x, y, label, sectionLine);
             }
         }
     }
 
-    private static void Bubble(PdfPage page, double x, double y, string name)
+    private static void Bubble(PdfPage page, double x, double y, string name, double widthMillimetres)
     {
         const double radius = 3.5;
         var points = new List<(double X, double Y)>(24);
@@ -800,7 +803,7 @@ public static class PlanPrinter
             double angle = i * Math.PI * 2 / 24;
             points.Add((x + radius * Math.Cos(angle), y + radius * Math.Sin(angle)));
         }
-        page.DrawPolyline(points, 0.18, true, 1);
+        page.DrawPolyline(points, widthMillimetres, true, 1);
         page.DrawText(name, x, y - 1.4, 3, PdfTextAlignment.Center);
     }
 

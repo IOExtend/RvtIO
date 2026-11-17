@@ -220,6 +220,8 @@ The text of a sheet prints too: a text note's RTF string (class 0x0F83 block) is
 
 - Plan grids dash with the file's center-segment pattern like elevation grids do: `DrawContent` wraps each grid line in the decoded `LinePatterns.TryGetGridDashes` pattern (fallback `[36 9 9 9]` pt, same as elevations) with solid bubbles. The reference draws dashed centerlines, not solids. Measured against the Revit export of the sample: no vector-score movement (A102 stays 78.5%/87.1%; the scorer samples path geometry and is blind to dash patterns and pen widths), but the rastered side-by-side now shows dashed grids; other sheets unchanged. New test: `DrawContent_DashesGridsWithTheCenterSegmentPattern`. Full print suites 102/102 green on net8.0+net10.0.
 
+- Plan section traces, their ticks and bubbles ink with the Sections projection pen (pen 1 annotates 0.1 mm = 0.283 pt): the file's Sections projection pen is pen 1, rvt-prt draws datums at annotation pen 1, and the reference draws every trace, tick and bubble at 0.283 pt, while the old hardcoded 0.22 mm (0.624 pt) inked them heavy — verified by dumping both PDFs (zero 0.624 linework left on A102; the Building jog horizontal now matches the reference segment-for-segment at y512.5 x592-724). Measured against the Revit export of the sample: no vector-score movement (A102 stays 78.5%/87.1%; the scorer samples path geometry and is blind to pen widths); other sheets unchanged. New test: `DrawContent_InksTracesWithTheSectionsProjectionPen` (0.2835 w present, 0.6236 w absent). Full print suites 103/103 green on net8.0+net10.0.
+
 ## [0.4.0] - 2026-11-13
 
 ### Breaking changes

@@ -250,8 +250,10 @@ selection nor drawing.
   details stay in their parent views, undecodable views mark nothing), only when the file gives it an extent
   record (the Architectural Section has none, so it marks nothing instead of inventing a trace); a decoded
   front-cut polyline draws its jogs (the Building Section turns at its jog instead of running the full frame
-  height) while a mark without decoded points stays a straight ray; the trace is clipped to the viewport
-  frame at generation; the view reference marks of a plan stay undrawn.
+  height) while a mark without decoded points stays a straight ray; the trace, its ticks and its bubbles ink
+  with the Sections projection pen (pen 1 annotates 0.1 mm on the reference, where the old hardcoded 0.22 mm
+  inked every trace heavy); the trace is clipped to the viewport frame at generation; the view reference
+  marks of a plan stay undrawn.
 
 ## Next steps
 
