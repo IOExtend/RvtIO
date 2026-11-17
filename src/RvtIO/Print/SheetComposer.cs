@@ -376,7 +376,9 @@ public static class SheetComposer
                     && element.ViewportLabelLength is double labelLen && labelLen > 0;
                 var elevation =
                     ElevationPrinter.Collect(document, direction, stairsOnly, viewElement, detailWindow,
-                        isDetail: detailSection);
+                        isDetail: detailSection,
+                        cropWindow: detailSection && detailCropUsable && viewElement?.ViewCrop is { Active: true } dc
+                            ? CropContentRect(dc) : null);
                 // A viewport whose view decoded a crop frame draws the crop at the view's own scale, placed by
                 // the viewport offset (sheet = offset + view / scale): the frame is the crop rectangle and the
                 // content is clipped to it, nothing is reduced to fit. The crop applies only where the collection
@@ -393,8 +395,9 @@ public static class SheetComposer
                     effectiveScale = scale;
                     // A crop-drawn detail the file parked off the page is laid out in a bottom row above its own
                     // title (A104's four details): anchor the frame on the decoded title label instead of the
-                    // file offset. The title text tops out ~20 mm above its line on A104, so the frame bottom
-                    // clears it there.
+                    // file offset. The viewport center anchors the view origin (view coordinates 0, 0), not the
+                    // frame center, so back out the crop offset: the frame lands centered on the title with its
+                    // bottom clearing the title text (about 20 mm above its line on A104).
                     if (detailSection
                         && !(centerX > 40 && centerX < stripLeft - 40 && centerY > 40 && centerY < layout.HeightMillimetres - 40)
                         && element.ViewportLabelOrigin is { Length: >= 2 } cropLabelOrigin
@@ -404,8 +407,9 @@ public static class SheetComposer
                         double titleCxMm = (cropLabelOrigin[0] * FeetToMillimetres - originX)
                             + cropLabelLength * FeetToMillimetres / 2;
                         double titleYmm = cropLabelOrigin[1] * FeetToMillimetres - originY;
-                        double relocateX = titleCxMm;
-                        double relocateY = titleYmm + DetailTitleGapMillimetres + frameHeight / 2;
+                        double kRelocate = FeetToMillimetres / scale;
+                        double relocateX = titleCxMm - (crop.X1 - crop.X0) * kRelocate / 2 - crop.X0 * kRelocate;
+                        double relocateY = titleYmm + DetailTitleGapMillimetres - crop.Y0 * kRelocate;
                         if (TryCropFrame(relocateX, relocateY, scale, crop, elevation.MinX, elevation.MinY,
                             out double relocatedX, out double relocatedY, out _, out _,
                             out double relocatedOriginX, out double relocatedOriginY))

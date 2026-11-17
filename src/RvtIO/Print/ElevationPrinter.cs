@@ -98,7 +98,8 @@ public static class ElevationPrinter
     ];
 
     internal static ElevationContent? Collect(RvtDocument document, string direction, bool stairsOnly = false,
-        Element? planeView = null, (double Width, double Height)? window = null, bool isDetail = false)
+        Element? planeView = null, (double Width, double Height)? window = null, bool isDetail = false,
+        (double X0, double Y0, double X1, double Y1)? cropWindow = null)
     {
         double[] planeOrigin = [];
         bool cut = false;
@@ -228,6 +229,14 @@ public static class ElevationPrinter
                         minX = Math.Min(minX, point.X); maxX = Math.Max(maxX, point.X);
                         minY = Math.Min(minY, point.Y); maxY = Math.Max(maxY, point.Y);
                     }
+                }
+                if (cropWindow is { } cropRect && cut && planeOrigin.Length == 3)
+                {
+                    // A crop-drawn detail filters by its file crop rectangle instead of the invented window:
+                    // the occlusion pass below needs the tight in-crop faces, not the whole model (whose coarse
+                    // grid hides the fine construction lines), and the frame maps onto the crop either way.
+                    points = ClipToWindow(points, cropRect.X0, cropRect.X1, cropRect.Y0, cropRect.Y1);
+                    if (points.Count < 3) continue;
                 }
                 foreach (var corner in corners)
                 {

@@ -223,6 +223,36 @@ public class ViewCropTests
     }
 
     [Fact]
+    public void SampleFile_WallRoofDetailCropWindowKeepsInCropEdges()
+    {
+        // Filtering by the file crop rectangle at collection (not just at draw time) keeps the occlusion
+        // pass tight: the whole-model pass starves the crop slice (18 edges touch it), while the file's
+        // own crop window keeps the dense in-crop construction linework, bounded by the crop.
+        string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+        Element? view = null;
+        foreach (var e in document.Elements)
+            if (e.CategoryId == (int)BuiltInCategory.OST_Views && e.Name == "Typical Wall Roof Connection") view = e;
+        if (view?.ViewCrop is not { Active: true } crop) throw new SkipException("Typical Wall Roof Connection has no crop.");
+        Assert.True(SheetComposer.ViewBasisMatches(view, crop));
+        var (x0, y0, x1, y1) = SheetComposer.CropContentRect(crop);
+
+        var content = ElevationPrinter.Collect(document, "section", false, view, null, isDetail: true,
+            cropWindow: (x0, y0, x1, y1));
+
+        Assert.NotNull(content);
+        // The collected bounds stay within the crop up to a small slop from clipping arithmetic; what
+        // matters is that the slice is dense, not starved the way the whole-model pass left it (18 edges
+        // touched the crop there).
+        Assert.True(content!.MinX >= x0 - 25 && content.MaxX <= x1 + 25,
+            $"Content X[{content.MinX:F0},{content.MaxX:F0}] escapes crop X[{x0:F0},{x1:F0}].");
+        Assert.True(content.MinY >= y0 - 25 && content.MaxY <= y1 + 25,
+            $"Content Y[{content.MinY:F0},{content.MaxY:F0}] escapes crop Y[{y0:F0},{y1:F0}].");
+        Assert.True(content.Edges.Count > 18, $"Crop slice starved: {content.Edges.Count} edges.");
+    }
+
+    [Fact]
     public void SampleFile_ViewportTitleLineMatchesReference()
     {
         // The South viewport's title extension line: the file stores its origin on the sheet and its length

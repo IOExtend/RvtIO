@@ -212,6 +212,8 @@ The text of a sheet prints too: a text note's RTF string (class 0x0F83 block) is
 
 - Plans draw only their viewport crop at generation time: walls, furniture and opening frames outside the decoded crop rectangle are dropped and crossing edges cut without inking the crop boundary (the scorer counts vectors, not the page clip, so unclipped spill past the page top counted against precision). Grids keep running past the crop to their bubbles, as the reference draws them to the bubble row (clipping them lost the bubble zone and cost recall). Measured against the Revit export of the sample: A102 precision 81.6% -> 85.9% at flat recall 78.6%; other sheets unchanged. New tests: `DrawContent_ClipsWallsToTheCropRect`, `DrawContent_KeepsGridsPastTheCropRect`. Full print suites 97/97 green on net8.0+net10.0.
 
+- Detail sections collect within their file crop rectangle, not just clip to it at draw time: the crop filter ran after occlusion on the whole model, whose coarse grid hid the fine construction lines (the crop slice kept only 18 edges where the reference draws hundreds), so the relocated details printed nearly empty. `Collect` takes the absolute crop rect as a collection window; the frame mapping is unchanged (it cancels out). Also fixed the relocation anchor: the viewport center anchors the view origin, not the frame center, so the crop offset is backed out and the frame lands centered above its title instead of one crop-width off the page. Measured against the Revit export of the sample: A104 recall 70.8% -> 74.0% (details draw in place), precision 76.0% -> 75.4%; other sheets unchanged. New tests: `SampleFile_WallRoofDetailCropWindowKeepsInCropEdges`. Full print suites 98/98 green on net8.0+net10.0.
+
 ## [0.4.0] - 2026-11-13
 
 ### Breaking changes
