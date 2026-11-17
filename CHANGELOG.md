@@ -238,6 +238,8 @@ The text of a sheet prints too: a text note's RTF string (class 0x0F83 block) is
 
 - A stair draws on both plans of its flight: `PlanPrinter` treated a stair as belonging to its base level only, so the main Level 1 -> Level 2 stair was absent from the Level 2 plan while the reference shows the arriving flight. The plan now takes the stair whose top level is the plan's level too, and inks the outlines of its horizontal faces (tread and landing tops) as the tread courses, clipped to the viewport. Measured against the Revit export: A102 recall 82.0% -> 83.6%, precision 90.8% -> 91.0%; other sheets unchanged. New test: `SampleFile_Level2DrawsTheArrivingStair`. Full print suites 119/119 green on net8.0+net10.0.
 
+- Plans draw the elements below the level that the view range shows: `PlanViewRange2` is a nested object of the view's block (five offsets in feet — cut plane, top clip, bottom clip, view depth, reserved — and the five level ids), captured from the view's record and validated against the plan's level. The plan inks the railing top rails whose geometry stands between the bottom and top clips, so the observation deck's rail on the roof below Level 2 prints as the double line along the deck edge the reference draws. Measured against the Revit export: A102 recall 83.6% -> 84.3%, precision 91.0% -> 91.2%; other sheets unchanged. New tests: `SampleFile_DecodesTheLevel2PlanViewRange`, `SampleFile_Level2DrawsTheDeckTopRail`. Full print suites 121/121 green on net8.0+net10.0.
+
 ## [0.4.0] - 2026-11-13
 
 ### Breaking changes

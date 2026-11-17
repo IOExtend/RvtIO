@@ -63,7 +63,8 @@ public static class PlanPrinter
         List<(double MidX, double MidY, double Nx, double Ny, string Text, bool IsWindow)> Tags,
         double MinX, double MinY, double MaxX, double MaxY,
         List<(List<(double X, double Y)> Polygon, IReadOnlyList<TfBlockDeserializer.PatternGrid> Grids)>? RoomPatterns = null,
-        List<(double X1, double Y1, double X2, double Y2)>? StairLines = null);
+        List<(double X1, double Y1, double X2, double Y2)>? StairLines = null,
+        List<(double X1, double Y1, double X2, double Y2)>? RailLines = null);
 
     /// <summary>The levels a plan can be printed for: those that own at least one wall or column with a location line,
     /// by elevation and then name.</summary>
@@ -212,8 +213,10 @@ public static class PlanPrinter
     }
 
     /// <summary>Collects what the plan of a level draws: its walls (cut at the openings of their doors and windows),
-    /// columns and grids, and the extents they span in model millimetres. Null when the level has nothing to draw.</summary>
-    internal static PlanContent? CollectLevel(RvtDocument document, int levelId)
+    /// columns and grids, and the extents they span in model millimetres. Null when the level has nothing to draw.
+    /// <paramref name="viewId"/> adds the view's own view range, so elements below the level that the range shows
+    /// (a roof deck's top rail) are collected too.</summary>
+    internal static PlanContent? CollectLevel(RvtDocument document, int levelId, int? viewId = null)
     {
         var walls = new List<(int Id, double X1, double Y1, double X2, double Y2, double Width)>();
         var columns = new List<(double X, double Y, double Width, double Height)>();
@@ -471,9 +474,11 @@ public static class PlanPrinter
         minX -= annotation; minY -= annotation; maxX += annotation; maxY += annotation;
         var stairLines = new List<(double X1, double Y1, double X2, double Y2)>();
         CollectStairLines(document, levelId, stairLines);
+        var railLines = new List<(double X1, double Y1, double X2, double Y2)>();
+        CollectRailingLines(document, levelId, viewId, railLines);
 
         return new PlanContent(walls, columns, grids, gaps, windowGaps, doorGaps, floorLoops, openingLoops, rooms,
-            furniture, tags, minX, minY, maxX, maxY, roomPatterns, stairLines);
+            furniture, tags, minX, minY, maxX, maxY, roomPatterns, stairLines, railLines);
     }
 
     /// <summary>True when the element belongs to the plan of the level. A stair runs from its base level to its top
@@ -506,6 +511,67 @@ public static class PlanPrinter
                     double x1 = a[0] * FeetToMillimetres, y1 = a[1] * FeetToMillimetres;
                     double x2 = b[0] * FeetToMillimetres, y2 = b[1] * FeetToMillimetres;
                     if (Math.Abs(x2 - x1) + Math.Abs(y2 - y1) < 20) continue;
+                    string key = x1 <= x2
+                        ? $"{x1:0}:{y1:0}:{x2:0}:{y2:0}"
+                        : $"{x2:0}:{y2:0}:{x1:0}:{y1:0}";
+                    if (keys.Add(key)) lines.Add((x1, y1, x2, y2));
+                }
+            }
+        }
+    }
+
+    /// <summary>The plan outline of the railing top rails the view range shows: a top rail's horizontal faces
+    /// (the top and bottom of its 50 mm bar) outline the rail path, which a plan draws as the double line along
+    /// the deck edge. The view range's top and bottom clips decide which rails are visible (a roof deck's rails
+    /// stand below the plan's level but above its bottom clip), so an element outside the band is skipped; a
+    /// view without a decoded range keeps only the rails of the plan's own level.</summary>
+    private static void CollectRailingLines(RvtDocument document, int levelId, int? viewId,
+        List<(double X1, double Y1, double X2, double Y2)> lines)
+    {
+        double levelElevation = document.GetElement(levelId)?.LookupParameter(BuiltInParameter.LEVEL_ELEV)?.Value
+            is double elevation ? elevation : 0;
+        double[]? rangeOffsets = viewId is int view
+            && document.RawData.PlanViewRanges is { } ranges
+            && ranges.TryGetValue(view, out var range)
+            && range.LevelIds.Contains(levelId) ? range.Offsets : null;
+        bool banded = rangeOffsets is { Length: >= 3 };
+        double bottom = 0, top = 0;
+        if (banded)
+        {
+            bottom = levelElevation + rangeOffsets![2];
+            top = levelElevation + rangeOffsets[1];
+        }
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var element in document.Elements)
+        {
+            if (element.CategoryId != (int)BuiltInCategory.OST_RailingTopRail) continue;
+            if (element.Geometry is not { Faces.Count: > 0 } geometry) continue;
+            if (banded)
+            {
+                double z0 = double.MaxValue, z1 = double.MinValue;
+                foreach (var face in geometry.Faces)
+                {
+                    if (face.OuterVertices == null) continue;
+                    foreach (var vertex in face.OuterVertices)
+                    {
+                        if (vertex[2] < z0) z0 = vertex[2];
+                        if (vertex[2] > z1) z1 = vertex[2];
+                    }
+                }
+                if (z1 < bottom || z0 > top) continue;
+            }
+            else if (LevelOf(element) != levelId) continue;
+            foreach (var face in geometry.Faces)
+            {
+                if (Math.Abs(face.Normal[2]) < 0.9) continue;
+                if (face.OuterVertices is not { Count: >= 3 } vertices) continue;
+                for (int i = 0; i < vertices.Count; i++)
+                {
+                    var a = vertices[i];
+                    var b = vertices[(i + 1) % vertices.Count];
+                    double x1 = a[0] * FeetToMillimetres, y1 = a[1] * FeetToMillimetres;
+                    double x2 = b[0] * FeetToMillimetres, y2 = b[1] * FeetToMillimetres;
+                    if (Math.Abs(x2 - x1) + Math.Abs(y2 - y1) < 100) continue;
                     string key = x1 <= x2
                         ? $"{x1:0}:{y1:0}:{x2:0}:{y2:0}"
                         : $"{x2:0}:{y2:0}:{x1:0}:{y1:0}";
@@ -685,6 +751,18 @@ public static class PlanPrinter
             }
             else
                 page.DrawLine(ToX(line.X1), ToY(line.Y1), ToX(line.X2), ToY(line.Y2), furnitureLine, 0.35);
+        }
+        foreach (var line in content.RailLines ?? [])
+        {
+            if (clipRect is { } railClip)
+            {
+                if (!ElevationPrinter.ClipSegment(line.X1, line.Y1, line.X2, line.Y2,
+                    railClip.X0, railClip.Y0, railClip.X1, railClip.Y1,
+                    out double rx0, out double ry0, out double rx1, out double ry1)) continue;
+                page.DrawLine(ToX(rx0), ToY(ry0), ToX(rx1), ToY(ry1), furnitureLine, 0.3);
+            }
+            else
+                page.DrawLine(ToX(line.X1), ToY(line.Y1), ToX(line.X2), ToY(line.Y2), furnitureLine, 0.3);
         }
 
         // A door is drawn as its leaf and the quarter arc it sweeps: the leaf stands at one jamb, perpendicular to the

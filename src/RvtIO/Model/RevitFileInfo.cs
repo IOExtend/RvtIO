@@ -108,6 +108,12 @@ namespace RvtIO.Model
         [System.Text.Json.Serialization.JsonIgnore]
         internal IReadOnlyDictionary<int, (string Name, IReadOnlyList<Parsing.TfBlockDeserializer.PatternGrid> Grids)>? FillPatterns { get; set; }
 
+        /// <summary>Plan view id -> its view range: five offsets in feet (cut plane, top clip, bottom clip, view
+        /// depth, reserved) and the five level ids they are measured from, for the views whose PlanViewRange2
+        /// block decoded exactly once.</summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        internal IReadOnlyDictionary<int, (double[] Offsets, int[] LevelIds)>? PlanViewRanges { get; set; }
+
         /// <summary>Grid type element id (GridAttributes root) -> the center-segment category id whose
         /// projection graphics style inks the grid's center line, for the types whose block decoded
         /// exactly once.</summary>

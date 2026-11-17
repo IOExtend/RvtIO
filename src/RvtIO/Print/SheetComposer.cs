@@ -255,7 +255,7 @@ public static class SheetComposer
             else if (placed && plans.TryGetValue(viewId, out var plan))
             {
                 double viewScale = plan.Scale;
-                var content = PlanPrinter.CollectLevel(document, plan.LevelId);
+                var content = PlanPrinter.CollectLevel(document, plan.LevelId, viewId);
                 if (content != null)
                 {
                     double drawScale = viewScale;

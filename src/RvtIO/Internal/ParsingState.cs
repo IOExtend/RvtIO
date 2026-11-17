@@ -304,6 +304,10 @@ internal class ParsingState
     /// for the blocks that decoded exactly once.</summary>
     public Dictionary<uint, (int BlockCount, string? Name, List<Parsing.TfBlockDeserializer.PatternGrid>? Grids)> FillPatterns { get; } = new();
 
+    /// <summary>Plan view id -> its view range (five offsets in feet relative to the five level ids), for the
+    /// views whose PlanViewRange2 block decoded exactly once.</summary>
+    public Dictionary<uint, (int BlockCount, double[]? Offsets, int[]? LevelIds)> PlanViewRanges { get; } = new();
+
     /// <summary>FamilySymbol (class 1829) of a title block -> its GLine linework in symbol feet. Null when the block
     /// did not decode; a repeated block clears it.</summary>
     public Dictionary<uint, (int BlockCount, List<Parsing.TfBlockDeserializer.TitleBlockLine>? Lines)> TitleBlockLines { get; } = new();

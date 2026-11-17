@@ -52,6 +52,11 @@ internal static partial class TfBlockDeserializer
 
         /// <summary>FamilyParams.m_params items in stored order (family parameters of the element).</summary>
         public List<NamedParamRecord> NamedParams { get; } = new();
+
+        /// <summary>A plan view's PlanViewRange2: five offsets in feet and the five level ids they are measured
+        /// from, captured from the view's own block (the range is a nested object, not an element block).</summary>
+        public double[]? PlanViewRangeOffsets { get; set; }
+        public int[]? PlanViewRangeLevelIds { get; set; }
         public int Count => Doubles.Count + Ints.Count + Strings.Count + ElementIds.Count
             + Fields.Count + DoubleFields.Count + StringFields.Count;
     }
@@ -668,6 +673,32 @@ internal static partial class TfBlockDeserializer
                         walked?.Append(queue[qi].Cls).Append("<").Append(origin).Append("@").Append(cur.Pos).Append(qf == null ? "!," : ",");
                         if (walked != null && WalkHexClasses.Contains(queue[qi].Cls)) walked.Append("[").Append(Convert.ToHexString(cur.D, cur.Pos, Math.Min(800, cur.End - cur.Pos))).Append("]");
                         if (qf == null) break;
+                        if (queue[qi].Cls == 2974)
+                        {
+                            // PlanViewRange2: two five-element arrays of the view's own block. Keeping its
+                            // offsets and level ids lets a plan decide which elements below the level it shows.
+                            var offsets = new double[5];
+                            var levelIds = new int[5];
+                            int offsetCount = 0, levelCount = 0;
+                            foreach (var sf in qf)
+                            {
+                                if (sf is { Declaring: 2974, Name: "m_offsets", Type: 7, Mods: 16 })
+                                {
+                                    for (int i = 0; i < 5; i++) offsets[offsetCount++] = ReadF64(cur);
+                                }
+                                else if (sf is { Declaring: 2974, Name: "m_levelIds", Type: 14, Mods: 16 })
+                                {
+                                    for (int i = 0; i < 5; i++) levelIds[levelCount++] = ReadI32(cur);
+                                }
+                                else ReadField(cur, sf, queue, 1, tail);
+                            }
+                            if (offsetCount == 5 && levelCount == 5)
+                            {
+                                tail.PlanViewRangeOffsets = offsets;
+                                tail.PlanViewRangeLevelIds = levelIds;
+                            }
+                            continue;
+                        }
                         if (queue[qi].Cls == 715)
                         {
                             var item = new NativeParams();
@@ -3628,6 +3659,101 @@ internal static partial class TfBlockDeserializer
             return name != null;
         }
         catch (DecodeFail) { return false; }
+    }
+
+    /// <summary>Reads a plan view's view range: PlanViewRange2 (class 2974) stores five offsets in feet (the cut
+    /// plane, the top clip, the bottom clip, the view depth, and one reserved) and five level ids they are
+    /// measured from. The level ids are read as the plain ElementIds Revit stores; a missing (-1) level means the
+    /// plane follows the view's own level.</summary>
+    internal static bool TryExtractPlanViewRange(
+        byte[] d, int blockStart, uint dataSize, ushort classId, out double[] offsets, out int[] levelIds)
+    {
+        offsets = [];
+        levelIds = [];
+        if (classId != 2974
+            || blockStart < 0
+            || dataSize > int.MaxValue
+            || (long)blockStart + 16 + dataSize > d.Length
+            || dataSize < 6
+            || BitConverter.ToUInt32(d, blockStart + 8) != dataSize
+            || BitConverter.ToUInt16(d, blockStart + 12) != classId)
+            return false;
+        var fields = SerializationFields(classId);
+        if (fields == null) return false;
+        int payloadEnd = blockStart + 16 + (int)dataSize;
+        if (BitConverter.ToUInt32(d, payloadEnd - 4) != dataSize) return false;
+        var cur = new Cursor { D = d, Pos = blockStart + 14, End = payloadEnd - 4 };
+        var queue = new List<(ushort Cls, uint Id)>();
+        var readOffsets = new double[5];
+        var readLevels = new int[5];
+        int offsetIndex = 0, levelIndex = 0;
+        try
+        {
+            foreach (var field in fields)
+            {
+                if (field is { Declaring: 2974, Name: "m_offsets", Type: 7, Mods: 16 })
+                {
+                    for (int i = 0; i < 5; i++)
+                        readOffsets[offsetIndex++] = ReadF64(cur);
+                }
+                else if (field is { Declaring: 2974, Name: "m_levelIds", Type: 14, Mods: 16 })
+                {
+                    for (int i = 0; i < 5; i++)
+                        readLevels[levelIndex++] = ReadI32(cur);
+                }
+                else
+                    ReadField(cur, field, queue, 1, null);
+            }
+            if (offsetIndex != 5 || levelIndex != 5) return false;
+            offsets = readOffsets;
+            levelIds = readLevels;
+            return true;
+        }
+        catch (DecodeFail) { return false; }
+    }
+
+    /// <summary>Scans a view's block for its PlanViewRange2 record when the generic deferred walk stops at a
+    /// class it cannot decode (the view's display settings). The record is five doubles (feet) followed by five
+    /// level ids; the ids are validated as -1 or plausible element ids with at least three equal, and every
+    /// offset as finite and bounded, so a random byte pattern does not pass.</summary>
+    internal static bool TryScanPlanViewRange(
+        byte[] d, int blockStart, uint dataSize, out double[] offsets, out int[] levelIds)
+    {
+        offsets = [];
+        levelIds = [];
+        if (blockStart < 0 || dataSize > int.MaxValue || (long)blockStart + 16 + dataSize > d.Length) return false;
+        int start = blockStart + 14;
+        int end = blockStart + 16 + (int)dataSize - 4;
+        for (int pos = start + 40; pos + 20 <= end; pos++)
+        {
+            var ids = new int[5];
+            int equalRun = 1, bestRun = 1;
+            bool valid = true;
+            for (int i = 0; i < 5; i++)
+            {
+                int id = BitConverter.ToInt32(d, pos + i * 4);
+                if (id != -1 && (id <= 0 || id > 100_000_000)) { valid = false; break; }
+                ids[i] = id;
+                if (i > 0)
+                {
+                    equalRun = id == ids[i - 1] ? equalRun + 1 : 1;
+                    if (equalRun > bestRun) bestRun = equalRun;
+                }
+            }
+            if (!valid || bestRun < 3) continue;
+            var readOffsets = new double[5];
+            for (int i = 0; i < 5; i++)
+            {
+                double value = BitConverter.ToDouble(d, pos - 40 + i * 8);
+                if (double.IsNaN(value) || double.IsInfinity(value) || Math.Abs(value) > 1000) { valid = false; break; }
+                readOffsets[i] = value;
+            }
+            if (!valid) continue;
+            offsets = readOffsets;
+            levelIds = ids;
+            return true;
+        }
+        return false;
     }
 
     /// <summary>Reads a graphics style: the GStyleElem root (class 2050) owns exactly one deferred GStyle (class 2046)

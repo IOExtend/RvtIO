@@ -5849,6 +5849,10 @@ internal static partial class ElementBuilder
             .Where(pair => pair.Value is { Name: not null, Grids: not null })
             .ToDictionary(pair => (int)pair.Key,
                 pair => (pair.Value.Name!, (IReadOnlyList<TfBlockDeserializer.PatternGrid>)pair.Value.Grids!));
+        rvtInfo.PlanViewRanges = state?.PlanViewRanges
+            .Where(pair => pair.Value is { Offsets: not null, LevelIds: not null })
+            .ToDictionary(pair => (int)pair.Key,
+                pair => (pair.Value.Offsets!, pair.Value.LevelIds!));
         rvtInfo.GridCenterCategories = state?.GridCenterCategories
             .Where(pair => pair.Value is { BlockCount: 1, CategoryId: not null })
             .ToDictionary(pair => (int)pair.Key,

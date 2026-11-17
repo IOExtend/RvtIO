@@ -1869,6 +1869,22 @@ public partial class RvtFileReader
             : (1, read ? name : null, read ? grids : null);
     }
 
+    internal static void RecordPlanViewRange(
+        ParsingState state, byte[] data, int start, uint size, ushort classId, uint owner)
+    {
+        // PlanViewRange2 is a nested object of the view's block (captured by ExtractParams), not an element
+        // block of its own; this hook stays for files that serialize it as a separate record.
+        if (classId != 2974) return;
+        double[]? offsets = null;
+        int[]? levelIds = null;
+        bool read = start >= 0 && start <= data.Length - 4
+            && BitConverter.ToUInt32(data, start) == owner
+            && TfBlockDeserializer.TryExtractPlanViewRange(data, start, size, classId, out offsets, out levelIds);
+        state.PlanViewRanges[owner] = state.PlanViewRanges.TryGetValue(owner, out var old)
+            ? (old.BlockCount + 1, old.Offsets ?? offsets, old.LevelIds ?? levelIds)
+            : (read ? 1 : 0, read ? offsets : null, read ? levelIds : null);
+    }
+
     internal static void RecordGraphicsStyle(
         ParsingState state, byte[] data, int start, uint size, ushort classId, uint owner)
     {
@@ -2518,6 +2534,7 @@ public partial class RvtFileReader
             RecordWallEndJoins(state, seg, bs, ds, cls, eid);
             RecordMaterialName(state, seg, bs, ds, cls, eid);
             RecordFillPattern(state, seg, bs, ds, cls, eid);
+            RecordPlanViewRange(state, seg, bs, ds, cls, eid);
             RecordGraphicsStyle(state, seg, bs, ds, cls, eid);
             RecordPenWidthTable(state, seg, bs, ds, cls, eid);
             RecordLinePattern(state, seg, bs, ds, cls, eid);
@@ -2554,6 +2571,10 @@ public partial class RvtFileReader
                         np.DoubleFields["__levelElevation"] = levelElevation;
                 }
                 if (np is { Count: > 0 }) state.NativeParams[eid] = np;
+                if (np is { PlanViewRangeOffsets: { Length: 5 } viewOffsets, PlanViewRangeLevelIds: { Length: 5 } viewLevels })
+                    state.PlanViewRanges[eid] = state.PlanViewRanges.TryGetValue(eid, out var oldRange)
+                        ? (oldRange.BlockCount + 1, oldRange.Offsets ?? viewOffsets, oldRange.LevelIds ?? viewLevels)
+                        : (1, viewOffsets, viewLevels);
                 if (cls == 0x083C
                     && TfBlockDeserializer.ExtractGridDatum(seg, bs, (uint)ds, cls)
                         is { } gridDatum)
@@ -2566,6 +2587,11 @@ public partial class RvtFileReader
             }
             else if (state.R22View && rootClassBlock && TfBlockDeserializer.IsSubclassOf(cls, 1794) && state.NativeParams.TryGetValue(eid, out var fieldNp))
                 AddDriveCurveFromRewrittenBlock(fieldNp, TfBlockDeserializer.ExtractParams(seg, bs, (uint)ds, cls));
+            if ((cls == 1005 || TfBlockDeserializer.IsSubclassOf(cls, 1005))
+                && !state.PlanViewRanges.ContainsKey(eid)
+                && TfBlockDeserializer.TryScanPlanViewRange(seg, bs, (uint)ds,
+                    out var scannedOffsets, out var scannedLevels))
+                state.PlanViewRanges[eid] = (1, scannedOffsets, scannedLevels);
             if (cls == 480) // BasePoint: internal + shared positions
             {
                 var coordinates = TfBlockDeserializer.ExtractBasePointCoordinates(
