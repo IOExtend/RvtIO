@@ -62,7 +62,8 @@ public static class PlanPrinter
         List<List<(double X, double Y)>> Furniture,
         List<(double MidX, double MidY, double Nx, double Ny, string Text, bool IsWindow)> Tags,
         double MinX, double MinY, double MaxX, double MaxY,
-        List<(List<(double X, double Y)> Polygon, IReadOnlyList<TfBlockDeserializer.PatternGrid> Grids)>? RoomPatterns = null);
+        List<(List<(double X, double Y)> Polygon, IReadOnlyList<TfBlockDeserializer.PatternGrid> Grids)>? RoomPatterns = null,
+        List<(double X1, double Y1, double X2, double Y2)>? StairLines = null);
 
     /// <summary>The levels a plan can be printed for: those that own at least one wall or column with a location line,
     /// by elevation and then name.</summary>
@@ -468,9 +469,50 @@ public static class PlanPrinter
         // them, so the page (or the viewport frame) is a little larger than the walls.
         const double annotation = 1000;
         minX -= annotation; minY -= annotation; maxX += annotation; maxY += annotation;
+        var stairLines = new List<(double X1, double Y1, double X2, double Y2)>();
+        CollectStairLines(document, levelId, stairLines);
 
         return new PlanContent(walls, columns, grids, gaps, windowGaps, doorGaps, floorLoops, openingLoops, rooms,
-            furniture, tags, minX, minY, maxX, maxY, roomPatterns);
+            furniture, tags, minX, minY, maxX, maxY, roomPatterns, stairLines);
+    }
+
+    /// <summary>True when the element belongs to the plan of the level. A stair runs from its base level to its top
+    /// level and both plans draw it: Level 1 shows it going up, Level 2 the flight arriving there.</summary>
+    private static bool OnLevel(Element element, int levelId)
+    {
+        if (LevelOf(element) == levelId) return true;
+        return element.CategoryId == (int)BuiltInCategory.OST_Stairs
+            && element.LookupParameter(BuiltInParameter.STAIRS_TOP_LEVEL_PARAM)?.Value is int top && top == levelId;
+    }
+
+    /// <summary>The plan linework of a stair: the outlines of its horizontal faces (tread and landing tops) seen from
+    /// above, which is what a plan draws as the tread courses between the stair's sides.</summary>
+    private static void CollectStairLines(RvtDocument document, int levelId,
+        List<(double X1, double Y1, double X2, double Y2)> lines)
+    {
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var element in document.Elements)
+        {
+            if (element.CategoryId != (int)BuiltInCategory.OST_Stairs || !OnLevel(element, levelId)) continue;
+            if (element.Geometry is not { Faces.Count: > 0 } geometry) continue;
+            foreach (var face in geometry.Faces)
+            {
+                if (Math.Abs(face.Normal[2]) < 0.9) continue;
+                if (face.OuterVertices is not { Count: >= 3 } vertices) continue;
+                for (int i = 0; i < vertices.Count; i++)
+                {
+                    var a = vertices[i];
+                    var b = vertices[(i + 1) % vertices.Count];
+                    double x1 = a[0] * FeetToMillimetres, y1 = a[1] * FeetToMillimetres;
+                    double x2 = b[0] * FeetToMillimetres, y2 = b[1] * FeetToMillimetres;
+                    if (Math.Abs(x2 - x1) + Math.Abs(y2 - y1) < 20) continue;
+                    string key = x1 <= x2
+                        ? $"{x1:0}:{y1:0}:{x2:0}:{y2:0}"
+                        : $"{x2:0}:{y2:0}:{x1:0}:{y1:0}";
+                    if (keys.Add(key)) lines.Add((x1, y1, x2, y2));
+                }
+            }
+        }
     }
 
     /// <summary>Draws collected plan content on a page: the model point (content.MinX, content.MinY) goes to
@@ -629,6 +671,21 @@ public static class PlanPrinter
 
         foreach (var outline in content.Furniture)
             DrawClippedOutline(page, outline, ToX, ToY, furnitureLine, new PdfColor(0.55, 0.55, 0.55), clipRect);
+
+        // A stair of the level, as the tread courses its horizontal faces outline in plan; both plans of a flight
+        // draw it (base level going up, top level arriving), as the reference does.
+        foreach (var line in content.StairLines ?? [])
+        {
+            if (clipRect is { } stairClip)
+            {
+                if (!ElevationPrinter.ClipSegment(line.X1, line.Y1, line.X2, line.Y2,
+                    stairClip.X0, stairClip.Y0, stairClip.X1, stairClip.Y1,
+                    out double sx0, out double sy0, out double sx1, out double sy1)) continue;
+                page.DrawLine(ToX(sx0), ToY(sy0), ToX(sx1), ToY(sy1), furnitureLine, 0.35);
+            }
+            else
+                page.DrawLine(ToX(line.X1), ToY(line.Y1), ToX(line.X2), ToY(line.Y2), furnitureLine, 0.35);
+        }
 
         // A door is drawn as its leaf and the quarter arc it sweeps: the leaf stands at one jamb, perpendicular to the
         // wall and on the side of the building the door opens into.
