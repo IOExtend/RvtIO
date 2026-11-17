@@ -8,6 +8,7 @@ using Xunit;
 using Cls = RvtIO.Tests.SchemaStreamEditorTests.Cls;
 using Fld = RvtIO.Tests.SchemaStreamEditorTests.Fld;
 using NoRef = RvtIO.Tests.SchemaStreamEditorTests.NoRef;
+using Back = RvtIO.Tests.SchemaStreamEditorTests.Back;
 
 namespace RvtIO.Tests;
 
@@ -64,12 +65,53 @@ public sealed class RvtWriterTests : IDisposable
             // Sample domain class with one int32 field (type 0x05) so WideBlockWalker walks it cleanly!
             writer.Top(new Cls("SyntheticItem", new NoRef(), 2, [new Fld("m_code", 0x05)], ["00112233445566778899aabbccddeeff"]));
             writer.Top(new Cls("RvtLinkSymbol", new NoRef(), 1, [new Fld("m_code", 0x05)], ["112233445566778899aabbccddeeff00"]));
+            // Element-table support classes so Global/ElemTable streams decode by the file's own
+            // schema (28-byte rows with 4-byte ids up to 2023, 40-byte rows with 8-byte ids from 2024).
+            AddElemTableClasses(writer, wideIds: release >= 2024);
         }
 
         while (writer.Placed.Count < totalClasses)
             writer.Top(new Cls("TailClass" + writer.Placed.Count, new NoRef(), 1, [], []));
 
         return writer.Build();
+    }
+
+    /// <summary>Appends Identifier/ElementId/OriginalElementId/EpisodeId/ElementHistory/PartitionId/ElemRec/ElemTable
+    /// after the classes above (all references point backward). Names, field order and widths follow
+    /// <c>FormatsSchemaTests</c> for the narrow (28-byte) and wide (40-byte) layouts.</summary>
+    internal static void AddElemTableClasses(SchemaStreamEditorTests.Writer writer, bool wideIds)
+    {
+        int NextId() => 12 + writer.Placed.Count;
+        byte idType = wideIds ? (byte)0x0B : (byte)0x04;
+        string idName = wideIds ? "m_id64" : "m_id";
+
+        int identifierId = NextId();
+        writer.Top(new Cls("Identifier", new NoRef(), 1, [new Fld(idName, idType)], []));
+        int elementIdId = NextId();
+        writer.Top(new Cls("ElementId", new NoRef(), 1, [new Fld("m_id", 0x0E, 0, 0, null, new Back(identifierId))], []));
+        int originalIdId = NextId();
+        writer.Top(new Cls("OriginalElementId", new NoRef(), 1, [new Fld(idName, idType)], []));
+        int episodeIdId = NextId();
+        writer.Top(new Cls("EpisodeId", new NoRef(), 1, [new Fld("m_id", 0x04)], []));
+        int historyId = NextId();
+        writer.Top(new Cls("ElementHistory", new NoRef(), 8,
+            [new Fld("m_originalElementId", 0x0E, 0, 0, null, new Back(originalIdId)),
+             new Fld("m_creationDate", 0x0E, 0, 0, null, new Back(episodeIdId)),
+             new Fld("m_lastModificationDate", 0x0E, 0, 0, null, new Back(episodeIdId)),
+             new Fld("m_lastUserModificationDate", 0x0E, 0, 0, null, new Back(episodeIdId))], []));
+        int partitionIdId = NextId();
+        writer.Top(new Cls("PartitionId", new NoRef(), 1, [new Fld("m_id", 0x04)], []));
+        int elemRecId = NextId();
+        Fld historyField = new("m_history", 0x0E, 0, 0, null, new Back(historyId));
+        Fld idField = new("m_id", 0x0E, 0, 0, null, new Back(elementIdId));
+        Fld ownerField = new("m_OwningElementId", 0x0E, 0, 0, null, new Back(elementIdId));
+        Fld partitionField = new("m_partitionId", 0x0E, 0, 0, null, new Back(partitionIdId));
+        writer.Top(new Cls("ElemRec", new NoRef(), 10,
+            wideIds ? [historyField, idField, ownerField, partitionField] : [idField, historyField, partitionField, ownerField], []));
+        int elemTableId = NextId();
+        writer.Top(new Cls("ElemTable", new NoRef(), 9,
+            [new Fld("m_elemArr", 0x0E, 0x50, 0, null, new Back(elemRecId)), new Fld("m_bExpandAllOnLoad", 0x01)], []));
+        _ = elemTableId;
     }
 
     internal static byte[] BuildBasicFileInfoBytes(
@@ -140,6 +182,9 @@ public sealed class RvtWriterTests : IDisposable
         public bool IncludeSchema { get; init; } = true;
         public bool IncludeFramingMarkers { get; init; } = true;
         public bool IncludePartitions { get; init; } = true;
+        /// <summary>Writes Global/ElemTable with rows for the project-block owners, encoded by the file's own schema
+        /// (requires <see cref="IncludeFramingMarkers"/> schema classes). Default false keeps existing fixtures byte-identical.</summary>
+        public bool IncludeElemTable { get; init; }
         public string? LinkedPath { get; init; } = @"links\Arch_Link.rvt";
         public string LinkedPathType { get; init; } = "Relative";
         public string LinkedLoadState { get; init; } = "Loaded";
@@ -267,7 +312,54 @@ public sealed class RvtWriterTests : IDisposable
             p1.Write(partBytes);
         }
 
+        // Element table (opt-in): one row per project-block owner, encoded in the file's own ElemRec layout.
+        if (opt.IncludeElemTable && parsedSchema is not null && opt.IncludeFramingMarkers && opt.SchemaRelease >= 2020)
+        {
+            var elemSchema = new FormatsSchema(parsedSchema);
+            if (elemSchema.Get("ElemRec") is { } elemRec
+                && elemSchema.Get("ElemTable") is { } elemTable
+                && ElemTableLayout.RowLength(elemSchema) is int elemRowLength
+                && ElemTableLayout.IdWidth(elemSchema) is int elemWidth)
+            {
+                var owners = new List<ulong> { 101UL, 202UL };
+                if (opt.IncludeRevitLinkRecord) owners.Add(501UL);
+                using var ms = new MemoryStream();
+                using var bw = new BinaryWriter(ms);
+                bw.Write((ushort)elemTable.Id);
+                bw.Write((uint)owners.Count);
+                foreach (ulong owner in owners)
+                    WriteElemTableRow(bw, elemSchema, elemRec, elemRowLength, elemWidth, owner);
+                bw.Write((byte)0); // m_bExpandAllOnLoad
+                using var et = global.CreateStream("ElemTable");
+                et.Write(PagedStreamCodec.Encode([0, 0, 0, 0, 0, 0, 0, 0], ms.ToArray()));
+            }
+        }
+
         return path;
+    }
+
+    internal static void WriteElemTableRow(BinaryWriter bw, FormatsSchema schema, FormatsSchema.ClassDef rec, int rowLength, int idWidth, ulong id)
+    {
+        byte[] row = new byte[rowLength];
+        void PutId(string[] path, long value)
+        {
+            int off = ElemTableLayout.Offset(schema, rec, path)!.Value;
+            if (idWidth == 8) BinaryPrimitives.WriteInt64LittleEndian(row.AsSpan(off, 8), value);
+            else BinaryPrimitives.WriteUInt32LittleEndian(row.AsSpan(off, 4), unchecked((uint)value));
+        }
+        void PutInt(string[] path, int value)
+        {
+            int off = ElemTableLayout.Offset(schema, rec, path)!.Value;
+            BinaryPrimitives.WriteInt32LittleEndian(row.AsSpan(off, 4), value);
+        }
+        PutId(["m_id"], (long)id);
+        PutId(["m_history", "m_originalElementId"], (long)id);
+        PutInt(["m_history", "m_creationDate"], 0);
+        PutInt(["m_history", "m_lastModificationDate"], 0);
+        PutInt(["m_history", "m_lastUserModificationDate"], 0);
+        PutInt(["m_partitionId"], 1);
+        PutId(["m_OwningElementId"], -1);
+        bw.Write(row);
     }
 
     private static string FileSha256(string path) => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)));

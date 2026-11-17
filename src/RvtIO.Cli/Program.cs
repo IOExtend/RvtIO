@@ -81,10 +81,11 @@ internal static partial class Program
           --dev-collisions <tsv>            compact JSON: write user parameters that share a group and label
           --dev-solids <tsv>                compact JSON: write the solid quantities; with --dev-solids-only stop after it
           --dev-native <ids>                compact JSON: print the native record of elements
-          downgrade <source.rvt> --target-profile <file> --check [--guid-rule exact|minimal] [--report <report.json>]
+          downgrade <source.rvt> --target-profile <file> (--check | --output <file>) [--guid-rule exact|minimal] [--report <report.json>]
                                             (first argument) plan the class table edit that would let an older release load a newer
-                                            project and report it; the profile is a project or family saved by that older release;
-                                            writes nothing but the report; exit code 5 when the releases are out of scope
+                                            project (--check) and write a downgraded copy with BasicFileInfo pointed
+                                            at the target release (--output, same-width edit or cross-width transcode); the profile is a project or
+                                            family saved by that older release; exit code 5 when the releases are out of scope
           save-as <source.rvt|source.rfa> [<output.rvt|output.rfa>] [--check] [--report <report.json>]
                                             (first argument) inspect the write-capability matrix (--check) or write a verified lossless
                                             copy of a local 2020-2027 project or family; exit code 5 when refused by the matrix

@@ -190,7 +190,6 @@ public sealed class DowngradeCommandTests : IDisposable
     // ---- refusals ----------------------------------------------------------------------------------------------------------------
 
     [Theory]
-    [InlineData(Marker2027, Marker2025, "source-too-new")]
     [InlineData(Marker2025, Marker2025, "profile-not-older")]
     [InlineData(Marker2026, Marker2026, "profile-not-older")]
     [InlineData(Marker2025, Marker2026, "profile-not-older")]
@@ -372,11 +371,12 @@ public sealed class DowngradeCommandTests : IDisposable
     }
 
     [Fact]
-    public void WithoutCheck_NoFileCanBeWritten_AndTheMessageSaysSo()
+    public void WithoutCheckOrOutput_NoFileCanBeWritten_AndTheMessageSaysSo()
     {
         var (exit, _, error) = Run(Source(), "--target-profile", Profile());
 
         Assert.Equal(1, exit);
-        Assert.Contains("add --check", error);
+        Assert.Contains("--check", error);
+        Assert.Contains("--output", error);
     }
 }

@@ -87,8 +87,9 @@ internal static class ElemTableLayout
     }
 
     /// <summary>Byte offset inside a row of the leaf reached by the field names in <paramref name="path"/>, followed down through
-    /// single-field wrapper classes (ElementId -> Identifier) until a leaf; null when a name is missing.</summary>
-    private static int? Offset(FormatsSchema schema, FormatsSchema.ClassDef def, string[] path)
+    /// single-field wrapper classes (ElementId -> Identifier) until a leaf; null when a name is missing. Internal for the
+    /// downgrade ElemTable transcoder, which reuses the same offsets to copy leaves between layouts.</summary>
+    internal static int? Offset(FormatsSchema schema, FormatsSchema.ClassDef def, string[] path)
     {
         int offset = 0;
         for (int step = 0; step < path.Length; step++)

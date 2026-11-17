@@ -65,7 +65,7 @@ internal sealed class DowngradePlan
 internal static class DowngradePlanner
 {
     /// <summary>The newest release tested as a source.</summary>
-    internal const int NewestSourceRelease = 2026;
+    internal const int NewestSourceRelease = 2027;
 
     /// <summary>The plan from two parsed schemas. <paramref name="elementCounts"/> maps class names to the elements the source file holds
     /// (null: not counted).</summary>

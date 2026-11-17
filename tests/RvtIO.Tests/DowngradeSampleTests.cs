@@ -145,11 +145,10 @@ public class DowngradeSampleTests(ITestOutputHelper output)
     }
 
     [SkippableFact]
-    public void ARelease2027Source_AndASourceNotNewerThanTheProfile_AreRefused()
+    public void ASourceNotNewerThanTheProfile_IsRefused()
     {
         string profile = Find(2025);
 
-        Assert.Equal("source-too-new", Assert.Throws<DowngradeRefusedException>(() => DowngradePlanner.Plan(Find(2027), profile, GuidRule.Exact)).Kind);
         Assert.Equal("profile-not-older", Assert.Throws<DowngradeRefusedException>(() => DowngradePlanner.Plan(profile, profile, GuidRule.Exact)).Kind);
         Assert.Equal("profile-not-older", Assert.Throws<DowngradeRefusedException>(() => DowngradePlanner.Plan(profile, Find(2026), GuidRule.Exact)).Kind);
     }

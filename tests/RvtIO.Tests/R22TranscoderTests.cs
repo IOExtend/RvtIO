@@ -91,6 +91,51 @@ public class R22TranscoderTests
     }
 
     [Fact]
+    public void Payload_TakesARenamedNarrowedFieldFromTheSource()
+    {
+        var source = new SchemaDocument
+        {
+            Classes =
+            [
+                new(1, "Identifier", 0, 2, [Field("m_id64", 11)], []),
+                new(2, "ElementId", 0, 1, [Field("m_id", 14, 0, 1)], []),
+                new(30, "Holder", 0, 1, [Field("m_nodes", 14, 0x50, 31)], []),
+                new(31, "TreeItemData", 0, 1, [Field("m_identifier", 11), Field("m_parentOrOtherDataId", 11), Field("m_type", 4)], []),
+            ],
+        };
+        var target = new SchemaDocument
+        {
+            Classes =
+            [
+                new(1, "Identifier", 0, 1, [Field("m_id", 4)], []),
+                new(2, "ElementId", 0, 1, [Field("m_id", 14, 0, 1)], []),
+                new(40, "Holder", 0, 1, [Field("m_nodes", 14, 0x50, 41)], []),
+                new(41, "TreeItemData", 0, 1, [Field("m_id", 4), Field("m_parentIdOrOtherData", 4), Field("m_type", 4)], []),
+            ],
+        };
+        var block = Bytes(w =>
+        {
+            w.Write((ushort)30);
+            w.Write(2u);
+            w.Write(1069808L); w.Write(1069828L); w.Write(5);
+            w.Write(1069463L); w.Write(1069433L); w.Write(1);
+        });
+        var expected = Bytes(w =>
+        {
+            w.Write((ushort)40);
+            w.Write(2u);
+            w.Write(1069808); w.Write(1069828); w.Write(5);
+            w.Write(1069463); w.Write(1069433); w.Write(1);
+        });
+
+        var result = new R22Transcoder(source, target, 8).Payload(block, 0, block.Length);
+
+        Assert.Equal(expected, result);
+        var walk = new WideBlockWalker(target, (_, _) => null, []).Run(result!, 0, result!.Length, 40);
+        Assert.True(walk.Exact, walk.Error);
+    }
+
+    [Fact]
     public void Payload_BytesAfterTheObjectAreNotRewritten_AndSayWhy()
     {
         var block = Bytes(w => { w.Write((ushort)6); w.Write(1); w.Write(2); w.Write(77L); w.Write((ushort)0); });
