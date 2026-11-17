@@ -226,6 +226,8 @@ The text of a sheet prints too: a text note's RTF string (class 0x0F83 block) is
 
 - Plan dimension chains match the reference: the top chain now sits 780 mm beyond the outer wall face (the reference's measured 22.1 pt above the north face at 1:100; the old rule used the wall's location line + 550 mm, i.e. 11.6 pt from the face, so every reference segment missed ours by more than the 2.16 pt tolerance), and the three invented chains on the bottom, left and right are gone — the reference's Level 1 draws a single top chain and carries short per-element dimensions on the other sides. Measured against the Revit export of the sample: A102 recall 78.5% -> 78.6%, precision 87.1% -> 90.1%; other sheets unchanged (the same 0.15 mm chain pen, so no width-driven effect). New test: `DrawContent_DrawsOneDimensionChainAboveTheWallFace` (the wall face plus one chain at the computed offset). Full print suites 114/114 green on net8.0+net10.0.
 
+- The plan dimension chain is placed from the walls the viewport actually draws: Level 2 carries retaining walls 22 m beyond the building, and the chain anchored on their top landed at y = -248 pt — off the page, so the sheet showed no Level 2 chain at all (the reference draws one at y = 266). `DimChains` now filters walls against the viewport crop before computing the outer face, so the chain stays with the building it dimensions. Measured against the Revit export of the sample: A102 recall 78.6% -> 78.7%, precision 90.1% -> 90.3%, text 37.3% -> 39.8% (the Level 2 dimension numbers now land on the reference's); other sheets unchanged. Full print suites 114/114 green on net8.0+net10.0.
+
 ## [0.4.0] - 2026-11-13
 
 ### Breaking changes

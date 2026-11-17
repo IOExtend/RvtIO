@@ -622,7 +622,7 @@ public static class PlanPrinter
             page.DrawArc(ToX(hx), ToY(hy), width / scale, a0, a1, 0.15, 0.4);
         }
 
-        DimChains(page, content, ToX, ToY);
+        DimChains(page, content, ToX, ToY, clipRect);
 
         foreach (var opening in content.OpeningLoops)
             DrawClippedOutline(page, opening, ToX, ToY, 0.18, (PdfColor?)null, clipRect);
@@ -810,7 +810,7 @@ public static class PlanPrinter
     /// <summary>Draws the dimension chains between the grid lines: a horizontal chain across the top of the plan and a
     /// vertical chain down its right side, each between neighbouring grids with the distance in millimetres.</summary>
     private static void DimChains(PdfPage page, PlanContent content, Func<double, double> toX,
-        Func<double, double> toY)
+        Func<double, double> toY, (double X0, double Y0, double X1, double Y1)? clipRect = null)
     {
         if (page.Owner.Font == null) return;
         var xs = new List<double>();
@@ -830,12 +830,20 @@ public static class PlanPrinter
         xs = Dedupe(xs);
 
         // The chain stands just outside the building itself, not at the edge of the annotation margin.
+        // Only walls that the viewport actually draws count: Level 2 carries retaining walls 22 m beyond
+        // the building whose top would push the chain off the page entirely (measured: it landed at
+        // y = -248 pt, invisible), while the reference dimensions the building it shows.
         double wallMaxY = double.MinValue;
         foreach (var wall in content.Walls)
+        {
+            if (clipRect is { } clip
+                && (Math.Min(wall.Y1, wall.Y2) > clip.Y1 || Math.Max(wall.Y1, wall.Y2) < clip.Y0)) continue;
             wallMaxY = Math.Max(wallMaxY, Math.Max(wall.Y1, wall.Y2));
+        }
         foreach (var column in content.Columns)
             wallMaxY = Math.Max(wallMaxY, column.Y + column.Height);
         if (content.Walls.Count == 0 && content.Columns.Count == 0) return;
+        if (wallMaxY == double.MinValue) return;
         // The reference draws the top chain just outside the building's outer wall face, not at the
         // stored location line (which sits at the wall's centre): measured on the sample plan the chain
         // is 22.1 pt above the north face at 1:100, i.e. 780 mm in the model. The old rule used the
@@ -847,6 +855,8 @@ public static class PlanPrinter
         {
             // A wall's stored location line runs along its centre: the face is half its width beyond.
             if (Math.Abs(wall.Y2 - wall.Y1) > Math.Abs(wall.X2 - wall.X1)) continue;
+            if (clipRect is { } clip
+                && (Math.Min(wall.Y1, wall.Y2) > clip.Y1 || Math.Max(wall.Y1, wall.Y2) < clip.Y0)) continue;
             faceMaxY = Math.Max(faceMaxY, Math.Max(wall.Y1, wall.Y2) + wall.Width / 2);
         }
         double top = toY(faceMaxY + DimChainOffsetMillimetres);
