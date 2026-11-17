@@ -149,9 +149,10 @@ public static class ElevationPrinter
         var context = new List<(List<(double X, double Y)> Points, double Depth)>();
         // The outlined faces for the shared-edge pass below, with their 3D rings for midpoint depths.
         var edgeFaces = new List<(List<(double X, double Y)> Points, List<double[]> Ring, double Depth, long Nx, long Ny, long Nz, long Off, int FaceIndex)>();
-        // Every face for the occlusion pass below: its largest corner depth, so an edge hidden behind nearer
-        // mass is not inked even though the painter's fills cover it only visually.
-        var faceMaxDepths = new List<double>();
+        // Every face for the occlusion pass below: its smallest corner depth, so an edge hidden
+        // behind nearer mass is not inked even though the painter's fills cover it only visually. A face counts
+        // as nearer when its nearest corner stands nearer, even a face turned away from the view.
+        var faceMinDepths = new List<double>();
         double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
         foreach (var element in document.Elements)
         {
@@ -205,7 +206,7 @@ public static class ElevationPrinter
                     if (corners.Count < 3) continue;
                 }
                 var points = new List<(double X, double Y)>(corners.Count);
-                double depth = 0, maxDepth = double.NegativeInfinity;
+                double depth = 0, minDepth = double.PositiveInfinity;
                 foreach (var corner in corners)
                     points.Add((corner[0] * H[0] + corner[1] * H[1] + corner[2] * H[2],
                         corner[0] * V[0] + corner[1] * V[1] + corner[2] * V[2]));
@@ -227,7 +228,7 @@ public static class ElevationPrinter
                 foreach (var corner in corners)
                 {
                     depth += corner[0] * D[0] + corner[1] * D[1] + corner[2] * D[2];
-                    maxDepth = Math.Max(maxDepth, corner[0] * D[0] + corner[1] * D[1] + corner[2] * D[2]);
+                    minDepth = Math.Min(minDepth, corner[0] * D[0] + corner[1] * D[1] + corner[2] * D[2]);
                 }
                 // A sliver of a face adds a line to the page and nothing to the drawing.
                 double projected = 0;
@@ -247,7 +248,7 @@ public static class ElevationPrinter
                 }
                 bool outline = facing > 0.5;
                 faces.Add((points, depth, outline));
-                faceMaxDepths.Add(maxDepth);
+                faceMinDepths.Add(minDepth);
                 if (outline)
                 {
                     // The plane of the face for edge sharing: a triangulation diagonal is the edge of two
@@ -265,7 +266,7 @@ public static class ElevationPrinter
         }
         if (faces.Count == 0) return null;
         List<CollectedEdge> edges =
-            MergeOverlaps(OccludeEdges(faces, faceMaxDepths, DedupeEdges(edgeFaces, D)));
+            MergeOverlaps(OccludeEdges(faces, faceMinDepths, DedupeEdges(edgeFaces, D)));
         // The site around the building is drawn, but it does not decide the frame: the building does, with a little
         // air around it for the trees and the ground. Context beyond that air (a tree far down the site) is dropped,
         // so the drawing stays the size of the building.
@@ -285,11 +286,13 @@ public static class ElevationPrinter
         faces.Sort((left, right) => right.Depth.CompareTo(left.Depth));
 
         // The levels of the model and the grids that stand across the view are drawn dashed, as an elevation prints
-        // them, with the level name and the grid bubble.
+        // them, with the level name and the grid bubble. Only the level records of the project count: the families
+        // each carry their own reference levels (dozens sharing the category), which no project view shows.
         var levels = new List<(double Y, string Label)>();
         foreach (var element in document.Elements)
         {
             if (element.CategoryId != (int)BuiltInCategory.OST_Levels) continue;
+            if (element.RootClassName != "Level") continue;
             if (element.LookupParameter(BuiltInParameter.LEVEL_ELEV)?.Value is not double elevation) continue;
             levels.Add((elevation * FeetToMillimetres, element.Name ?? ""));
         }
@@ -405,10 +408,13 @@ public static class ElevationPrinter
 
     /// <summary>Edges with their midpoint hidden behind nearer mass removed: an edge whose midpoint lies inside
     /// another face strictly nearer the viewer (1 mm or more) is occluded. A uniform grid over the frame keeps
-    /// each edge to the faces overlapping its cell; the edge's own incident faces never occlude it.</summary>
+    /// each edge to the faces overlapping its cell; the edge's own incident faces never occlude it. A midpoint
+    /// on the boundary of the nearer face counts as inside (half a millimetre): stacked wall layers and window
+    /// frames project their edges onto the silhouette of the mass in front, and the reference draws that
+    /// silhouette once.</summary>
     internal static List<CollectedEdge> OccludeEdges(
         List<(List<(double X, double Y)> Points, double Depth, bool Outline)> faces,
-        List<double> faceMaxDepths,
+        List<double> faceMinDepths,
         List<CollectedEdge> edges)
     {
         const int Cells = 128;
@@ -451,8 +457,9 @@ public static class ElevationPrinter
                 foreach (int f in candidates)
                 {
                     if (f == edge.FaceA || f == edge.FaceB) continue;
-                    if (faceMaxDepths[f] >= edge.MidDepth - 1.0) continue;
-                    if (PointInPolygon(mx, my, faces[f].Points)) { hidden = true; break; }
+                    if (faceMinDepths[f] >= edge.MidDepth - 1.0) continue;
+                    if (PointInPolygon(mx, my, faces[f].Points)
+                        || DistToPolygon(mx, my, faces[f].Points) <= 0.5) { hidden = true; break; }
                 }
             }
             if (!hidden) kept.Add(edge);
@@ -543,6 +550,25 @@ public static class ElevationPrinter
                 inside = !inside;
         }
         return inside;
+    }
+
+    /// <summary>The distance from a point to the boundary of a polygon, in the polygon's units.</summary>
+    private static double DistToPolygon(double x, double y, List<(double X, double Y)> polygon)
+    {
+        double best = double.PositiveInfinity;
+        for (int i = 0, j = polygon.Count - 1; i < polygon.Count; j = i++)
+        {
+            var (ax, ay) = polygon[j];
+            var (bx, by) = polygon[i];
+            double dx = bx - ax, dy = by - ay;
+            double lengthSquared = dx * dx + dy * dy;
+            double t = lengthSquared > 1e-18 ? ((x - ax) * dx + (y - ay) * dy) / lengthSquared : 0;
+            t = Math.Clamp(t, 0, 1);
+            double px = ax + t * dx, py = ay + t * dy;
+            double dist = Math.Sqrt((x - px) * (x - px) + (y - py) * (y - py));
+            if (dist < best) best = dist;
+        }
+        return best;
     }
 
     /// <summary>Prints one elevation view to a one-page PDF document at the view's scale.</summary>

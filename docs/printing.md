@@ -82,7 +82,10 @@ every kind of plant with its count.
 model (walls, floors, roofs, columns, windows and doors) is projected on the vertical plane of the view and painted
 white from the farthest to the nearest, so nearer mass covers what stands behind it. Only the shared edge set is
 inked: an edge two coplanar faces share is a triangulation diagonal inside a flat surface and is left out, every
-other edge is drawn once, and an edge whose midpoint hides behind nearer mass is occluded. Plants, topography and
+other edge is drawn once, and an edge whose midpoint hides behind nearer mass is occluded. A face counts as nearer
+by its nearest corner (a wall end turned away from the view still covers what stands behind it), and a midpoint on
+the boundary of the nearer face counts as inside (half a millimetre): stacked wall layers and window frames project
+onto the silhouette of the mass in front, and the reference draws that silhouette once. Plants, topography and
 site surfaces are left out of the building itself: they print as light shapes without outlines behind it, the faded
 context the reference export shows around an elevation (their faces of a few square metres, so the ground mesh does
 not bury the building). Where the viewport decoded an axis-aligned crop box, the drawing is filtered to its rectangle
@@ -90,8 +93,10 @@ at generation time (the scorer counts vectors, not the page clip), and levels, g
 
 The level lines are dashed and end in the marker the reference export uses: a circle with an arrow head at the right of
 the drawing, the level name above and its height in millimetres below (Roof Line 6000, Level 2 3000, Ceiling 2700,
-Level 1 0, Level 1 Living Rm. -550, Foundation -800 on the sample). Each height is printed once even though the project
-holds many level elements at the same height, and the drawing reserves a label margin on the right.
+Level 1 0, Level 1 Living Rm. -550, Foundation -800 on the sample). Only the level records of the project are drawn:
+the families each carry their own reference levels under the same category, which no project view shows. Each height
+is printed once even though the project holds many level elements at the same height, and the drawing reserves a label
+margin on the right.
 
 The plane of a view is decoded from the view's own block (class 0x3F8): the block stores a point of the plane, the view
 scale, the vertical axis and the camera direction, so an elevation is projected on the exact axes of the view and a
@@ -225,7 +230,7 @@ selection nor drawing.
 1. Decode the crop region of a rotated view and of a crop region switched off with live bounds, and the annotation crop that keeps titles and labels outside the model crop. Decode the record that places a viewport the file puts off the page. Draw section marks from their decoded front-cut segments assigned to the right viewport (the duplicate Building trace on Level 2, the short callout bubbles with sheet references).
 2. Evaluate the body rows of element schedules from the model (the How-do-I reference body is computed, not stored).
 3. Decode the geometry of the property lines (with their bearing/distance labels) and the spot elevations, the solar-analysis diagram of a site sheet, and the file's own tag positions with leaders.
-4. Hide the remaining occluded detail the painter's fills cover only visually (edges whose midpoint test misses, near-coincident stacked faces), and draw grid lines dashed as the reference does.
+4. Span the level lines by their decoded datum extents (they run past our crop on the sample) and draw grid lines dashed as the reference does.
 5. Widen the same printing to the releases the reader supports in its own schema.
 ## Comparison with the reference export
 
@@ -237,6 +242,6 @@ Measured on the sample project `rac_basic_sample_project.rvt` against the refere
 | A001 Title Sheet | the title texts, the five renderings from the file, the logo, the "How do I" table with its title, long-text band, header and body grid at its instance origin, and every revision table with its header and empty body grid to its fixed height | the evaluated body text of the "How do I" table (computed by Revit, not stored) |
 | A101 Site Plan | the planting tags T1... with their leaders, the north arrow, the planting schedule with Type Mark / Common Name / Count in a ruled table at its instance origin | the property and setback lines (no decoded geometry yet), the spot elevations, the solar-analysis diagram, the file's own tag positions |
 | A102 Plans | both plans with the room colours of the reference, furniture, stairs, door and window tags, dimensions on all four sides, the room legend, the room tags, and the section marks of the viewports they belong to (cut to the viewport frame at generation) | the view reference marks (annotation elements whose positions the reader does not decode); the Building Section trace repeats in the Level 2 plan, whose own mark the file hides elsewhere |
-| A103 Elevations/Sections | South elevation and the Longitudinal Section cut at its plane, level markers, the faded site; hidden lines removed, coplanar triangulation diagonals not inked, crop-filtered at generation | residual hidden detail and solid grid lines where the reference dashes them |
+| A103 Elevations/Sections | South elevation and the Longitudinal Section cut at its plane, level markers, the faded site; stacked wall layers and window frames hide on the silhouette in front, coplanar triangulation diagonals not inked, crop-filtered at generation | the level lines span the file's datum extents (past our crop) and the grids dash coarsely where ours dash fine |
 | A104 Elev/Sec/Det | West elevation and the Building Section cut at its plane, the four detail sections windowed at generation | the four detail sections: the file places their viewports outside the page and stores no other position |
 | A105 Elev/Stair Sections | Stair Section, Main Stair Detail (cut), East elevation, hidden lines removed | the layout is tighter than the reference (placements are derived, not stored) |

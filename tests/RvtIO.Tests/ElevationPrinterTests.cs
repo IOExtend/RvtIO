@@ -155,7 +155,7 @@ public class ElevationPrinterTests
     public void Collect_KeepsTheCreaseBetweenDifferentPlanes()
     {
         // Two quads sharing an edge at 45 degrees: the crease is drawn once, not twice and not removed --
-        // but the leaning-back top of the tilted quad hides behind the front wall, leaving five segments.
+        // but the leaning-back sides hide on the silhouette of the front wall, leaving its four segments.
         var document = Document(
             QuadWall(600, [[0, 0, 0], [4, 0, 0], [4, 0, 3], [0, 0, 3]], [0, 1, 0]),
             QuadWall(601, [[0, 0, 0], [4, 0, 0], [4, 1, 1], [0, 1, 1]], [0, -0.7071, 0.7071]));
@@ -163,7 +163,40 @@ public class ElevationPrinterTests
         var content = ElevationPrinter.Collect(document, "south")!;
 
         Assert.Equal(2, content.Faces.Count);
-        Assert.Equal(5, content.Edges.Count);
+        Assert.Equal(4, content.Edges.Count);
+    }
+
+    private static Element ProjectLevel(int id, string name, double elevationFeet) => Level(id, name, elevationFeet, "Level");
+
+    private static Element FamilyLevel(int id, string name, double elevationFeet) => Level(id, name, elevationFeet, null);
+
+    private static Element Level(int id, string name, double elevationFeet, string? rootClassName)
+    {
+        var level = new Element
+        {
+            Id = id,
+            CategoryId = (int)BuiltInCategory.OST_Levels,
+            NativeRootClassName = rootClassName,
+            Name = name,
+        };
+        Add(level, BuiltInParameter.LEVEL_ELEV, StorageType.Double, elevationFeet);
+        return level;
+    }
+
+    [Fact]
+    public void Collect_ShowsOnlyProjectLevels()
+    {
+        // The families each carry their own reference levels under the same category; an elevation notes
+        // only the level records of the project, not the family ones.
+        var document = Document(
+            WallWithFace(600),
+            ProjectLevel(700, "Level 1", 0),
+            FamilyLevel(701, "Ref. Level", 0.5));
+
+        var content = ElevationPrinter.Collect(document, "south")!;
+
+        var level = Assert.Single(content.Levels);
+        Assert.Equal("Level 1", level.Label);
     }
 
     [Fact]
