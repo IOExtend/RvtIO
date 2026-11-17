@@ -483,12 +483,20 @@ public static class PlanPrinter
             page.DrawPolyline(room.Polygon.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0, true,
                 RoomFill(room.Name));
 
+        // Plan grids dash with the file's center-segment pattern like elevation grids do (the reference
+        // draws dashed centerlines, not solids; a solid fills the dash gaps with unscored extras while the
+        // dashes themselves already match). Bubbles stay solid.
+        double[]? gridDashes = document != null && LinePatterns.TryGetGridDashes(document, out var decodedGrid)
+            ? decodedGrid
+            : [36.0, 9.0, 9.0, 9.0];
         foreach (var grid in content.Grids)
         {
             // Grids run past the crop to their bubbles (the reference draws them to the bubble row, like
             // rvt-prt growing the crop by the type end length): cutting them at the crop edge loses the
             // bubble zone, so they stay unclipped while walls and furniture clip.
+            if (gridDashes != null) page.SetDashPoints(gridDashes);
             page.DrawLine(ToX(grid.X1), ToY(grid.Y1), ToX(grid.X2), ToY(grid.Y2), gridLine, 0.45);
+            if (gridDashes != null) page.ResetDash();
             if (page.Owner.Font == null || grid.Name.Length == 0) continue;
             Bubble(page, ToX(grid.X1), ToY(grid.Y1), grid.Name);
             Bubble(page, ToX(grid.X2), ToY(grid.Y2), grid.Name);

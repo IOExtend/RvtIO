@@ -166,6 +166,23 @@ public class PlanPrinterTests
         Assert.True(maxX > 300, $"Grid line clipped (ends at {maxX} pt).");
     }
 
+    [Fact]
+    public void DrawContent_DashesGridsWithTheCenterSegmentPattern()
+    {
+        // Plan grids dash with the center-segment pattern like elevation grids do (the reference draws
+        // dashed centerlines, not solids; a solid fills the dash gaps with unscored extras).
+        var document = Document(Level(500, "Level 1", 0),
+            Wall(600, 500, 0, 0, 40, 0), Grid(700, 0, 0, 30, 0));
+        var content = PlanPrinter.CollectLevel(document, 500)!;
+        var pdf = new PdfDocument();
+        var page = pdf.AddPage(new PdfPageSize(1000, 1000));
+        PlanPrinter.DrawContent(page, content, 100, 10, 10, 0.9, null, document, null, (0, -1000, 3048, 1000));
+
+        string text = Content(pdf);
+        Assert.Contains("[36", text);
+        Assert.Contains("[] 0 d", text);
+    }
+
     private static double Area(List<(double X, double Y)> points)
     {
         double sum = 0;
