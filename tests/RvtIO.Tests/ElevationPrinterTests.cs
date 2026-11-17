@@ -185,9 +185,11 @@ public class ElevationPrinterTests
     }
 
     [Fact]
-    public void SampleFile_StairDetailKeepsGridsWithoutLevels()
+    public void SampleFile_StairDetailKeepsGridsAndInCropLevels()
     {
-        // The reference draws grid bubbles across the Main Stair Detail but no level lines there.
+        // The reference draws grid bubbles across the Main Stair Detail and exactly the three level
+        // bands whose height falls in its crop (Level 1, Ceiling, Level 2); DrawContent height-clips
+        // the rest, so only the in-crop ones can ink.
         string? path = TestFiles.TryFind("Test_2022.rvt");
         if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
         var document = RvtDocument.Open(path);
@@ -195,11 +197,17 @@ public class ElevationPrinterTests
             e.CategoryId == (int)BuiltInCategory.OST_Views && e.Name == "Main Stair Detail");
         Assert.NotNull(view);
 
-        var content = ElevationPrinter.Collect(document, "section", false, view, null, suppressDatums: true);
+        var content = ElevationPrinter.Collect(document, "section", false, view, null);
 
         Assert.NotNull(content);
-        Assert.Empty(content!.Levels);
-        Assert.NotEmpty(content.Grids);
+        Assert.NotEmpty(content!.Grids);
+        var crop = view!.ViewCrop;
+        Assert.NotNull(crop);
+        Assert.True(crop!.Active);
+        double oyv = (crop.OriginX * crop.Up[0] + crop.OriginY * crop.Up[1] + crop.OriginZ * crop.Up[2]) * 304.8;
+        double cy0 = oyv + Math.Min(crop.Y0, crop.Y1) * 304.8, cy1 = oyv + Math.Max(crop.Y0, crop.Y1) * 304.8;
+        int inCrop = content.Levels.Count(l => l.Y >= cy0 - 1 && l.Y <= cy1 + 1);
+        Assert.Equal(3, inCrop);
     }
 
     private static RvtDocument Document(params Element[] elements) =>

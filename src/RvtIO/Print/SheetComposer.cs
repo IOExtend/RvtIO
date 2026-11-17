@@ -365,8 +365,7 @@ public static class SheetComposer
                 bool detailOnPage = !detailSection || (centerX > 40 && centerX < stripLeft - 40
                     && centerY > 40 && centerY < layout.HeightMillimetres - 40);
                 var elevation = detailOnPage
-                    ? ElevationPrinter.Collect(document, direction, stairsOnly, viewElement, detailWindow,
-                        suppressDatums: stairSection && scale < 50)
+                    ? ElevationPrinter.Collect(document, direction, stairsOnly, viewElement, detailWindow)
                     : null;
                 // A viewport whose view decoded a crop frame draws the crop at the view's own scale, placed by
                 // the viewport offset (sheet = offset + view / scale): the frame is the crop rectangle and the

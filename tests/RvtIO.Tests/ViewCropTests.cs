@@ -174,7 +174,7 @@ public class ViewCropTests
         double centerX = viewport?.ViewportOffset is { Length: >= 2 } offset ? offset[0] * 304.8 : 0;
         double centerY = viewport?.ViewportOffset is { Length: >= 2 } off ? off[1] * 304.8 : 0;
 
-        var content = ElevationPrinter.Collect(document, "section", false, view, null, suppressDatums: true);
+        var content = ElevationPrinter.Collect(document, "section", false, view, null);
         Assert.NotNull(content);
         Assert.True(SheetComposer.TryCropFrame(centerX, centerY, scale, crop, content!.MinX, content.MinY,
             out double frameX, out double frameY, out _, out _, out double originX, out double originY));

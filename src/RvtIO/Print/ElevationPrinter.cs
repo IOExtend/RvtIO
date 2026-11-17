@@ -98,7 +98,7 @@ public static class ElevationPrinter
     ];
 
     internal static ElevationContent? Collect(RvtDocument document, string direction, bool stairsOnly = false,
-        Element? planeView = null, (double Width, double Height)? window = null, bool suppressDatums = false)
+        Element? planeView = null, (double Width, double Height)? window = null)
     {
         double[] planeOrigin = [];
         bool cut = false;
@@ -354,12 +354,13 @@ public static class ElevationPrinter
         grids.Sort((left, right) => left.X.CompareTo(right.X));
         context.Sort((left, right) => right.Depth.CompareTo(left.Depth));
         // A detail window carries no level lines or grid bubbles: it is a detail of the construction, not a drawing of
-        // the levels. A stair detail at 1:20 keeps its grid bubbles (the reference draws grids across it) but no
-        // level lines (the reference draws none in the detail).
-        if (window != null || suppressDatums)
-            distinctLevels.Clear();
+        // the levels. A stair detail keeps the levels whose height falls in its crop (Level 1, Ceiling and Level 2
+        // on the sample: exactly the three bands the reference draws) with no level suppression of its own.
         if (window != null)
+        {
+            distinctLevels.Clear();
             grids.Clear();
+        }
         // The grid bubbles print above the frame: without grids (a windowed detail) the frame ends at the model.
         if (grids.Count > 0) maxY += 4500;
         return new ElevationContent(faces, distinctLevels, grids, context, edges, minX, minY, maxX, maxY);
