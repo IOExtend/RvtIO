@@ -479,13 +479,44 @@ public static class SheetComposer
             // A viewport whose view prints nothing (a wall section at 1:20, a schedule) is not titled either.
             if (options.DrawViewLabels && pdf.Font != null && (!placed || frameHeight > 0))
             {
-                // The view title as Revit draws it: a circled detail number, the view name beside it, the scale below and
-                // a rule over the title.
+                // The view title as Revit draws it: a circled detail number, the view name beside it, the scale below
+                // and the extension line under the title. The file stores the line's origin on the sheet and its
+                // length per viewport (m_labelOrigin, m_labelLength); without them the rule spans the frame as before.
                 string detail = element.LookupParameter(BuiltInParameter.VIEWPORT_DETAIL_NUMBER)?.Value as string ?? "";
                 // A title stays on the page even when its drawing reaches the lower border.
                 double labelY = placed && frameHeight > 0 ? Math.Max(frameY - 5, 10) : centerY;
                 double textX = frameX;
-                if (detail.Length > 0)
+                double ruleY = labelY + 6, ruleX0 = frameX, ruleX1 = frameX + Math.Min(Math.Max(frameWidth, 40), 120);
+                double gridPen = 0.2;
+                if (element.ViewportLabelOrigin is { Length: >= 2 } labelOrigin
+                    && element.ViewportLabelLength is double labelLength && labelLength > 0)
+                {
+                    // File-faithful title: the circle's left edge at the label origin, the extension line from there
+                    // for the stored length (rvt-prt render/sheet.py), the name above the line and the scale below.
+                    const double CircleRadiusMm = 0.125 * 25.4;
+                    double lx = labelOrigin[0] * FeetToMillimetres - originX;
+                    double ly = labelOrigin[1] * FeetToMillimetres - originY;
+                    labelY = ly;
+                    textX = lx + 0.079 * 25.4;
+                    ruleX0 = lx;
+                    ruleX1 = lx + labelLength * FeetToMillimetres;
+                    ruleY = ly;
+                    if (PenWidths.TryAnnotationWidth(document, 1, out double annotationPen))
+                        gridPen = annotationPen;
+                    if (detail.Length > 0)
+                    {
+                        var circle = new List<(double X, double Y)>(20);
+                        for (int i = 0; i < 20; i++)
+                        {
+                            double angle = i * Math.PI * 2 / 20;
+                            circle.Add((lx - CircleRadiusMm + CircleRadiusMm * Math.Cos(angle),
+                                ly + CircleRadiusMm * Math.Sin(angle)));
+                        }
+                        page2.DrawPolyline(circle, 0.15, true, 1);
+                        page2.DrawText(detail, lx - CircleRadiusMm, ly + 0.2, 2.4, PdfTextAlignment.Center);
+                    }
+                }
+                else if (detail.Length > 0)
                 {
                     var circle = new List<(double X, double Y)>(20);
                     for (int i = 0; i < 20; i++)
@@ -497,7 +528,7 @@ public static class SheetComposer
                     page2.DrawText(detail, frameX + 3, labelY + 0.2, 2.4, PdfTextAlignment.Center);
                     textX = frameX + 8;
                 }
-                page2.DrawLine(frameX, labelY + 6, frameX + Math.Min(Math.Max(frameWidth, 40), 120), labelY + 6, 0.2);
+                page2.DrawLine(ruleX0, ruleY, ruleX1, ruleY, gridPen);
                 page2.DrawText(name, textX, labelY, 3.5);
                 page2.DrawText($"1:{effectiveScale}", textX, labelY - 3.5, 2.5, PdfTextAlignment.Left, 0.45);
             }

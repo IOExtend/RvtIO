@@ -2932,6 +2932,11 @@ internal static partial class ElementBuilder
             if (!state.ViewportPlacements.TryGetValue((uint)element.Id, out var placement)) continue;
             element.ViewportViewId = placement.ViewId;
             element.ViewportOffset = [placement.X, placement.Y, placement.Z];
+            if (state.ViewportLabels.TryGetValue((uint)element.Id, out var label))
+            {
+                element.ViewportLabelOrigin = label.Origin;
+                element.ViewportLabelLength = label.Length;
+            }
         }
     }
 

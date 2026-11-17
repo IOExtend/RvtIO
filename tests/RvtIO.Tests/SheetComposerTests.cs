@@ -156,6 +156,40 @@ public class SheetComposerTests
         Assert.Contains("not a numbered sheet", error.Message);
     }
 
+    [Fact]
+    public void Render_DrawsViewportTitlesAtTheirStoredOriginAndLength()
+    {
+        // The South viewport's title extension line: the file stores its origin on the sheet and its length
+        // (m_labelOrigin, m_labelLength), and the reference inks it 1485 pt long at y579.4 (x102.9..1588.1).
+        // In PDF points (bottom-up): x 102.9, y 1104.3, length 1485.
+        string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+        Element? sheet = null;
+        foreach (var e in document.Elements)
+            if (e.CategoryId == (int)BuiltInCategory.OST_Sheets
+                && e.LookupParameter(BuiltInParameter.SHEET_NUMBER)?.Value as string == "A103") sheet = e;
+        Assert.NotNull(sheet);
+
+        PdfDocument pdf = SheetComposer.Render(document, sheet!.Id);
+        using var stream = new MemoryStream();
+        pdf.Save(stream);
+        string content = PdfTestContent.Read(stream.ToArray());
+
+        bool found = false;
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
+            content, @"([\d.]+) ([\d.]+) m ([\d.]+) ([\d.]+) l S"))
+        {
+            double x1 = double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            double y1 = double.Parse(m.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
+            double x2 = double.Parse(m.Groups[3].Value, System.Globalization.CultureInfo.InvariantCulture);
+            double y2 = double.Parse(m.Groups[4].Value, System.Globalization.CultureInfo.InvariantCulture);
+            if (Math.Abs(y2 - y1) < 0.5 && Math.Abs(x2 - x1) is >= 1475 and <= 1495 && Math.Abs(y1 - 1104.3) < 12)
+                found = true;
+        }
+        Assert.True(found, "South title extension line (1485 pt at y1104.3) not drawn.");
+    }
+
     private static SitePrinter.SiteContent Site(
         List<List<(double X, double Y)>>? topography = null,
         List<(double X1, double Y1, double X2, double Y2, double Z)>? contours = null,

@@ -146,7 +146,7 @@ row and the plan page title name that scale, not the nominal one.
 `rvtio print project.rvt sheets.pdf --sheet A102` composes a sheet the way Revit prints it: the page is the size the
 title block spans (a composed sheet keeps that paper whatever `--paper` says; the option applies to plans and views) (the extent of the title block instance's type, snapped to A4 to A0), every placed viewport draws its
 view at the offset the file stores for it (the viewport record also stores the reciprocal of the view scale, used when
-the view's own scale parameter is missing), each view is titled as Revit titles it: the circled viewport number, the view name, its scale and a rule over the title, and the sheet's own text notes
+the view's own scale parameter is missing), each view is titled as Revit titles it: the circled viewport number, the view name, its scale and the extension line under the title, drawn from the viewport record's own label origin and length (m_labelOrigin, m_labelLength) in the annotation pen, and the sheet's own text notes
 are written at their positions.
 
 Measured on the Revit sample project (rac_basic_sample_project.rvt, six sheets A001 and A101 to A105): all six pages are

@@ -10,7 +10,8 @@ namespace RvtIO.Tests;
 
 /// <summary>Viewport crop boxes (BlockParser.CollectViewCrops), their join to views
 /// (ElementBuilder.ApplyViewCrops) and the sheet frame math (SheetComposer.TryCropFrame):
-/// the crop rectangle a viewport draws at the view's own scale (rvt-prt's to_sheet).</summary>
+/// the crop rectangle a viewport draws at the view's own scale (rvt-prt's to_sheet). Also the
+/// viewport title extension lines (m_labelOrigin, m_labelLength per viewport).</summary>
 public class ViewCropTests
 {
     private static byte[] ChunkWithViewerBlock(uint eid, double[] origin, double[][] basis,
@@ -182,6 +183,53 @@ public class ViewCropTests
         Assert.Equal(frameX, originX + (x0 - content.MinX) / scale, 6);
         Assert.Equal(frameY, originY + (y0 - content.MinY) / scale, 6);
         Assert.Equal(frameX + (x1 - x0) / scale, originX + (x1 - content.MinX) / scale, 6);
+    }
+
+    [Fact]
+    public void SampleFile_ViewportTitleLineMatchesReference()
+    {
+        // The South viewport's title extension line: the file stores its origin on the sheet and its length
+        // (m_labelOrigin, m_labelLength). Probed from rac_basic_sample_project.rvt and cross-checked against
+        // rvt-prt's viewports.py plus the reference export itself, where the line inks at x102.9..1588.1,
+        // y579.4: (0.1273 * 304.8 - 2.5) * 72/25.4 = 102.9 and (0.1273 + 1.719) maps to 1587.9.
+        string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+        Element? view = null;
+        foreach (var e in document.Elements)
+            if (e.CategoryId == (int)BuiltInCategory.OST_Views && e.Name == "South") view = e;
+        Assert.NotNull(view);
+        Element? viewport = null;
+        foreach (var e in document.Elements)
+            if (e.CategoryId == (int)BuiltInCategory.OST_Viewports && e.ViewportViewId == view!.Id) viewport = e;
+        Assert.NotNull(viewport);
+        Assert.NotNull(viewport!.ViewportLabelOrigin);
+        Assert.Equal(0.1273, viewport.ViewportLabelOrigin![0], 3);
+        Assert.Equal(1.2749, viewport.ViewportLabelOrigin[1], 3);
+        Assert.NotNull(viewport.ViewportLabelLength);
+        Assert.Equal(1.719, viewport.ViewportLabelLength.Value, 3);
+    }
+
+    [Fact]
+    public void SampleFile_StairDetailTitleLineMatchesReference()
+    {
+        // The Main Stair Detail viewport's title line, same record: origin (1.1061, 0.8355) ft, length 1.126 ft.
+        string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+        Element? view = null;
+        foreach (var e in document.Elements)
+            if (e.CategoryId == (int)BuiltInCategory.OST_Views && e.Name == "Main Stair Detail") view = e;
+        Assert.NotNull(view);
+        Element? viewport = null;
+        foreach (var e in document.Elements)
+            if (e.CategoryId == (int)BuiltInCategory.OST_Viewports && e.ViewportViewId == view!.Id) viewport = e;
+        Assert.NotNull(viewport);
+        Assert.NotNull(viewport!.ViewportLabelOrigin);
+        Assert.Equal(1.1061, viewport.ViewportLabelOrigin![0], 3);
+        Assert.Equal(0.8354998, viewport.ViewportLabelOrigin[1], 6);
+        Assert.NotNull(viewport.ViewportLabelLength);
+        Assert.Equal(1.126, viewport.ViewportLabelLength.Value, 3);
     }
 
     [Fact]

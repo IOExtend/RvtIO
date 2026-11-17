@@ -2285,6 +2285,15 @@ internal static class BlockParser
         double reciprocal = BitConverter.ToDouble(d, payload + 0x87);
         if (double.IsFinite(reciprocal) && reciprocal is > 0.0005 and < 0.6)
             state.ViewportScales[eid] = (int)Math.Round(1 / reciprocal);
+        // The view title's extension line: its origin on the sheet (feet) and its length in feet
+        // (m_labelOrigin, m_labelLength), the line Revit's own export draws under each viewport title.
+        double lx = BitConverter.ToDouble(d, payload + 0x5F);
+        double ly = BitConverter.ToDouble(d, payload + 0x67);
+        double lz = BitConverter.ToDouble(d, payload + 0x6F);
+        double ll = BitConverter.ToDouble(d, payload + 0x7F);
+        if (double.IsFinite(lx) && double.IsFinite(ly) && double.IsFinite(lz) && double.IsFinite(ll)
+            && Math.Abs(lx) < 1e4 && Math.Abs(ly) < 1e4 && Math.Abs(lz) < 1e4 && ll > 0 && ll < 100)
+            state.ViewportLabels[eid] = ([lx, ly, lz], ll);
     }
 
     /// <summary>

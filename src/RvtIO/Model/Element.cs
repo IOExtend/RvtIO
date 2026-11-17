@@ -290,6 +290,16 @@ namespace RvtIO.Model
         [JsonIgnore]
         public double[]? ViewportOffset { get; set; }
 
+        /// <summary>For a viewport: the origin of the view title's extension line on the sheet (feet), [x, y, z];
+        /// null when the reader did not decode it.</summary>
+        [JsonIgnore]
+        public double[]? ViewportLabelOrigin { get; set; }
+
+        /// <summary>For a viewport: the length of the view title's extension line (feet); null when the reader
+        /// did not decode it.</summary>
+        [JsonIgnore]
+        public double? ViewportLabelLength { get; set; }
+
         /// <summary>For a view: the crop frame of its viewer (the crop region Revit prints), in view feet: the
         /// origin and the right/up axes of the view, and the crop rectangle. Null when the reader did not decode
         /// it; <see cref="ViewCropFrame.Active"/> is false when no side is active (Revit prints the whole model)

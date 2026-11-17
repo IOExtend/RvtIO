@@ -565,6 +565,11 @@ internal class ParsingState
     /// view on the sheet in feet. Key = viewport element id.</summary>
     public Dictionary<uint, (int ViewId, double X, double Y, double Z)> ViewportPlacements { get; set; } = new();
 
+    /// <summary>The view-title label of a viewport decoded from its 0x07C6 block: the origin of the title's
+    /// extension line on the sheet in feet and the line's length in feet (m_labelOrigin, m_labelLength).
+    /// Key = viewport element id.</summary>
+    public Dictionary<uint, (double[] Origin, double Length)> ViewportLabels { get; } = new();
+
     /// <summary>The crop box of a viewer decoded from its record: the origin, the three basis rows (right, up,
     /// looking), the six m_boundOffset values ([max, min] per axis) with the six m_boundActive flags, and the
     /// viewed element id stored after the box. Key = the viewer record's element id.</summary>
