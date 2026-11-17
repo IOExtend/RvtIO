@@ -540,8 +540,11 @@ public static class SheetComposer
                 effectiveScales[effectiveScale] = effectiveScales.TryGetValue(effectiveScale, out int counted)
                     ? counted + 1 : 1;
             }
-            // A viewport whose view prints nothing (a wall section at 1:20, a schedule) is not titled either.
-            if (options.DrawViewLabels && pdf.Font != null && (!placed || frameHeight > 0))
+            // A viewport whose view prints nothing vector (a wall section at 1:20, a schedule, a sun study whose
+            // study is a raster) is not titled either — except the analysis views: their title line and label are
+            // sheet annotation the reference prints, even though the study itself is an image.
+            if (options.DrawViewLabels && pdf.Font != null
+                && (!placed || frameHeight > 0 || IsAnalysisView(view)))
             {
                 // The view title as Revit draws it: a circled detail number, the view name beside it, the scale below
                 // and the extension line under the title. The file stores the line's origin on the sheet and its

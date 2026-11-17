@@ -240,6 +240,8 @@ The text of a sheet prints too: a text note's RTF string (class 0x0F83 block) is
 
 - Plans draw the elements below the level that the view range shows: `PlanViewRange2` is a nested object of the view's block (five offsets in feet — cut plane, top clip, bottom clip, view depth, reserved — and the five level ids), captured from the view's record and validated against the plan's level. The plan inks the railing top rails whose geometry stands between the bottom and top clips, so the observation deck's rail on the roof below Level 2 prints as the double line along the deck edge the reference draws. Measured against the Revit export: A102 recall 83.6% -> 84.3%, precision 91.0% -> 91.2%; other sheets unchanged. New tests: `SampleFile_DecodesTheLevel2PlanViewRange`, `SampleFile_Level2DrawsTheDeckTopRail`. Full print suites 121/121 green on net8.0+net10.0.
 
+- Analysis viewports keep their title: a sun study's content is a raster image, so the composer draws no vector frame for its viewport and the title (the circled number, the view name and the extension line) was dropped with the frame. The reference prints it — the Solar Analysis title line alone is 9.3 in of A101's missing ink. Titles now render for analysis views even without a frame, using the viewport's stored label origin and length. Measured against the Revit export: A101 recall 89.6% -> 91.2%, precision 97.9% -> 97.8%, text 49.1% -> 50.9%; other sheets unchanged. New test: `SampleFile_SolarAnalysisViewportIsTitled`. Full print suites 122/122 green on net8.0+net10.0.
+
 ## [0.4.0] - 2026-11-13
 
 ### Breaking changes
