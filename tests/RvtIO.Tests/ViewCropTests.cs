@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using RvtIO.BuiltIns;
 using RvtIO.Internal;
 using RvtIO.Model;
 using RvtIO.Parsing;
@@ -133,6 +134,54 @@ public class ViewCropTests
         ElementBuilder.ApplyViewCrops(info, state);
 
         Assert.Null(view.ViewCrop);
+    }
+
+    [Fact]
+    public void CropContentRect_OffsetsOriginRelativeCropByViewOrigin()
+    {
+        // The Main Stair Detail crop from the sample file: origin-relative view feet plus the view
+        // origin's projection on the basis rows, in millimetres (probed from rac_basic_sample_project.rvt).
+        var crop = new ViewCropFrame(40.5470, -23.9636, 12.1369, [0, 1, 0], [0, 0, 1], [-1, 0, 0],
+            11.9093, -12.3500, 35.2041, 2.1365, true);
+
+        var (x0, y0, x1, y1) = SheetComposer.CropContentRect(crop);
+
+        Assert.Equal((-23.9636 + 11.9093) * 304.8, x0, 3);
+        Assert.Equal((-23.9636 + 35.2041) * 304.8, x1, 3);
+        Assert.Equal((12.1369 - 12.3500) * 304.8, y0, 3);
+        Assert.Equal((12.1369 + 2.1365) * 304.8, y1, 3);
+    }
+
+    [Fact]
+    public void SampleFile_StairDetailClipLandsOnItsFrame()
+    {
+        // End to end on the sample model: the detail's absolute crop edges map through DrawContent's
+        // (content - Min) / scale + origin mapping exactly onto the TryCropFrame frame corners. With the
+        // origin-relative rectangle the clip used to miss the frame by origin / scale (365 mm at 1:20).
+        string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+        Element? view = null;
+        foreach (var e in document.Elements)
+            if (e.CategoryId == (int)BuiltInCategory.OST_Views && e.Name == "Main Stair Detail") view = e;
+        if (view?.ViewCrop is not { Active: true } crop) throw new SkipException("Main Stair Detail has no crop.");
+        Assert.True(SheetComposer.ViewBasisMatches(view, crop));
+        Element? viewport = null;
+        foreach (var e in document.Elements)
+            if (e.CategoryId == (int)BuiltInCategory.OST_Viewports && e.ViewportViewId == view.Id) viewport = e;
+        int scale = view.LookupParameter(BuiltInParameter.VIEW_SCALE)?.Value is int value && value > 0
+            ? value : viewport?.ViewportScale ?? 100;
+        double centerX = viewport?.ViewportOffset is { Length: >= 2 } offset ? offset[0] * 304.8 : 0;
+        double centerY = viewport?.ViewportOffset is { Length: >= 2 } off ? off[1] * 304.8 : 0;
+
+        var content = ElevationPrinter.Collect(document, "section", false, view, null, suppressDatums: true);
+        Assert.NotNull(content);
+        Assert.True(SheetComposer.TryCropFrame(centerX, centerY, scale, crop, content!.MinX, content.MinY,
+            out double frameX, out double frameY, out _, out _, out double originX, out double originY));
+        var (x0, y0, x1, y1) = SheetComposer.CropContentRect(crop);
+        Assert.Equal(frameX, originX + (x0 - content.MinX) / scale, 6);
+        Assert.Equal(frameY, originY + (y0 - content.MinY) / scale, 6);
+        Assert.Equal(frameX + (x1 - x0) / scale, originX + (x1 - content.MinX) / scale, 6);
     }
 
     [Fact]

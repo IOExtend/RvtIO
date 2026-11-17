@@ -93,7 +93,10 @@ onto the silhouette of the mass in front, and the reference draws that silhouett
 site surfaces are left out of the building itself: they print as light shapes without outlines behind it, the faded
 context the reference export shows around an elevation (their faces of a few square metres, so the ground mesh does
 not bury the building). Where the viewport decoded an axis-aligned crop box, the drawing is filtered to its rectangle
-at generation time (the scorer counts vectors, not the page clip), and levels, grids and the outline follow it.
+at generation time (the scorer counts vectors, not the page clip), and levels, grids and the outline follow it. The
+stored rectangle is origin-relative view feet (rvt-prt's viewer_frames), while the collected content runs in absolute
+projected millimetres, so the filter offsets it by the view origin's projection; without the offset the frame lands
+right but the wrong slice of the model is drawn (the stair viewport missed by 146 mm, the 1:20 detail by 365 mm).
 
 The level lines are thin and dashed (3 mm on, 1.5 mm off on the reference). Each spans its decoded datum
 envelope while the datum stays near the crop; where the datum runs far past a narrow crop (the stair at 1:50),
@@ -257,4 +260,4 @@ Measured on the sample project `rac_basic_sample_project.rvt` against the refere
 | A102 Plans | both plans with the room colours of the reference, furniture, stairs, door and window tags, dimensions on all four sides, the room legend, the room tags, and the section marks of the viewports they belong to (cut to the viewport frame at generation) | the view reference marks (annotation elements whose positions the reader does not decode); the Building Section trace repeats in the Level 2 plan, whose own mark the file hides elsewhere |
 | A103 Elevations/Sections | South elevation and the Longitudinal Section cut at its true plane (feet-to-mm), level markers, the faded site; stacked wall layers hide on the silhouette, coincident modeling inks once, coplanar triangulation diagonals not inked, crop-filtered at generation; level lines follow their datum envelopes near the crop with a label-margin cap for narrow viewports, and the grids dash coarsely ([36 9 9 9] pt from the grid type's line pattern), as the reference does | per-view level ends and markers (not decoded) and the long footing/grade model edges (footing instances lack decoded geometry) |
 | A104 Elev/Sec/Det | West elevation and the Building Section cut at its plane, the four detail sections windowed at generation; cut-created edges ink heavy, projection edges thin | the four detail sections: the file places their viewports outside the page and stores no other position |
-| A105 Elev/Stair Sections | Stair Section cut at its true plane with restored level lines, Main Stair Detail on the file's own crop frame, East elevation, hidden lines removed | viewport and per-view datum placement still decoded file-verbally while the reference resolves overlaps side by side; the layout is tighter than the reference (placements are derived, not stored) |
+| A105 Elev/Stair Sections | Stair Section cut at its true plane with restored level lines, Main Stair Detail on the file's own crop frame, East elevation, hidden lines removed; the crop filter runs in the true slice (origin-relative rectangle offset by the view origin) | the stair cut profile inks with the Walls cut pen while the reference inks it thin (per-category cut pens, next), and the detail's grids stay suppressed while the reference draws them |

@@ -384,10 +384,7 @@ public static class SheetComposer
                     effectiveScale = scale;
                     // The crop rectangle in content units, so only the crop is drawn: the scorer counts
                     // vectors, not the page clip, and the whole model would count without this.
-                    double cropX0 = Math.Min(crop.X0, crop.X1) * FeetToMillimetres;
-                    double cropX1 = Math.Max(crop.X0, crop.X1) * FeetToMillimetres;
-                    double cropY0 = Math.Min(crop.Y0, crop.Y1) * FeetToMillimetres;
-                    double cropY1 = Math.Max(crop.Y0, crop.Y1) * FeetToMillimetres;
+                    var (cropX0, cropY0, cropX1, cropY1) = CropContentRect(crop);
                     page2.BeginClip(frameX, frameY, Math.Max(0, frameWidth), Math.Max(0, frameHeight));
                     ElevationPrinter.DrawContent(page2, elevation, scale, cropOriginX, cropOriginY,
                         direction == "section" ? 0.82 : 1, document, (cropX0, cropY0, cropX1, cropY1));
@@ -1110,6 +1107,20 @@ public static class SheetComposer
             }
         }
         return new PdfPageSize(width, height);
+    }
+
+    /// <summary>The crop rectangle in content millimetres: the viewer stores origin-relative view feet
+    /// (rvt-prt's viewer_frames) while elevation content runs in absolute projected millimetres, so the
+    /// view origin's projection on the basis rows offsets it. DrawContent's mapping sends these edges
+    /// exactly onto the TryCropFrame frame corners.</summary>
+    internal static (double X0, double Y0, double X1, double Y1) CropContentRect(ViewCropFrame crop)
+    {
+        double originXV = (crop.OriginX * crop.Right[0] + crop.OriginY * crop.Right[1] + crop.OriginZ * crop.Right[2]) * FeetToMillimetres;
+        double originYV = (crop.OriginX * crop.Up[0] + crop.OriginY * crop.Up[1] + crop.OriginZ * crop.Up[2]) * FeetToMillimetres;
+        return (originXV + Math.Min(crop.X0, crop.X1) * FeetToMillimetres,
+            originYV + Math.Min(crop.Y0, crop.Y1) * FeetToMillimetres,
+            originXV + Math.Max(crop.X0, crop.X1) * FeetToMillimetres,
+            originYV + Math.Max(crop.Y0, crop.Y1) * FeetToMillimetres);
     }
 
     /// <summary>Sheet frame and content origin for a viewport with an axis-aligned crop frame: the frame is the
