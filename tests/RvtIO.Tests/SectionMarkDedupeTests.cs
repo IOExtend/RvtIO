@@ -36,11 +36,11 @@ public class SectionMarkDedupeTests
                 SectionView(101, "Typ. Wall Section", [10, -1.5, 6], 1001),
                 SectionView(102, "Longitudinal Section", [4, 8, 6], 1002),
             },
-            SectionViews = new Dictionary<int, (int ParentViewId, double CoarserScale)>
+            SectionViews = new Dictionary<int, (int ParentViewId, double CoarserScale, IReadOnlyList<double[]>? FrontCut)>
             {
-                [1000] = (-1, 0.01),
-                [1001] = (-1, 0.01),
-                [1002] = (-1, 0.01),
+                [1000] = (-1, 0.01, new List<double[]> { new[] { 10.0, -1.5, 6.0 }, new[] { 10.0, 15.0, 6.0 } }),
+                [1001] = (-1, 0.01, new List<double[]> { new[] { 10.0, -1.5, 6.0 }, new[] { 10.0, 15.0, 6.0 } }),
+                [1002] = (-1, 0.01, new List<double[]> { new[] { 4.0, 8.0, 6.0 }, new[] { 20.0, 8.0, 6.0 } }),
             },
         });
 
@@ -63,9 +63,9 @@ public class SectionMarkDedupeTests
                 SectionView(100, "Building Section", [10, -1.5, 6], 1000),
                 SectionView(103, "Architectural Section", [45, 0, 4], -1),
             },
-            SectionViews = new Dictionary<int, (int ParentViewId, double CoarserScale)>
+            SectionViews = new Dictionary<int, (int ParentViewId, double CoarserScale, IReadOnlyList<double[]>? FrontCut)>
             {
-                [1000] = (-1, 0.01),
+                [1000] = (-1, 0.01, new List<double[]> { new[] { 10.0, -1.5, 6.0 }, new[] { 10.0, 15.0, 6.0 } }),
             },
         });
 

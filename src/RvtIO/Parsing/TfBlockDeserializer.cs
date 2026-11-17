@@ -3725,8 +3725,9 @@ internal static partial class TfBlockDeserializer
         double FixedHeightFt);
 
     /// <summary>A section annotation (class 3545) boiled down to what places its mark on a plan: the parent view
-    /// (a section/elevation view for a callout, -1 for a top-level section) and the coarsest scale it shows at.</summary>
-    internal sealed record SectionViewdata(int ParentViewId, double CoarserScale);
+    /// (a section/elevation view for a callout, -1 for a top-level section), the coarsest scale it shows at,
+    /// and the front-cut polyline in model feet (null when undecodable; the trace the reference draws).</summary>
+    internal sealed record SectionViewdata(int ParentViewId, double CoarserScale, List<double[]>? FrontCut);
 
     internal static bool TryExtractSectionViewdata(
         byte[] d, int blockStart, uint dataSize, ushort classId, out SectionViewdata viewdata)
@@ -3738,7 +3739,7 @@ internal static partial class TfBlockDeserializer
     internal static bool TryExtractSectionViewdata(
         byte[] d, int blockStart, uint dataSize, ushort classId, out SectionViewdata viewdata, out string failure)
     {
-        viewdata = new(0, 0);
+        viewdata = new(0, 0, null);
         failure = "ok";
         if (classId != 3545
             || blockStart < 0
@@ -3810,10 +3811,45 @@ internal static partial class TfBlockDeserializer
             if (!parentRead || !coarserRead) { failure = "missing"; return false; }
             if (parentViewId is < -1 or > 100_000_000) { failure = "bad-parent"; return false; }
             if (!(coarserScale >= 0) || coarserScale > 1) { failure = "bad-coarser"; return false; }
-            viewdata = new(parentViewId, coarserScale);
+            // The loop stopped at the front-cut polyline: a count-prefixed array of XYZ points in model
+            // feet. A failure here never loses the parent/scale facts above; the mark just falls back
+            // to its straight-line trace.
+            viewdata = new(parentViewId, coarserScale, TryReadFrontCut(cur));
             return true;
         }
         catch (DecodeFail) { failure = $"decodefail pos={cur.Pos}"; return false; }
+    }
+
+    /// <summary>Reads the front-cut polyline (class 2249 m_frontCut) at the cursor: a u32 count followed by
+    /// that many XYZ points of eight-byte doubles in model feet (a 0xFFFFFFFF count reads as empty).
+    /// Null when the payload does not hold a sane polyline; the caller keeps the parent/scale facts.</summary>
+    private static List<double[]>? TryReadFrontCut(Cursor cur)
+    {
+        try
+        {
+            if (cur.Pos + 4 > cur.End || cur.Pos < 0) return null;
+            uint n = BitConverter.ToUInt32(cur.D, cur.Pos);
+            if (n == 0xFFFFFFFF) return new List<double[]>();
+            if (n == 0) return new List<double[]>();
+            if (n > 10000 || cur.Pos + 4L + n * 24 > cur.End) return null;
+            cur.Pos += 4;
+            var points = new List<double[]>((int)n);
+            for (uint i = 0; i < n; i++)
+            {
+                double x = BitConverter.ToDouble(cur.D, cur.Pos);
+                double y = BitConverter.ToDouble(cur.D, cur.Pos + 8);
+                double z = BitConverter.ToDouble(cur.D, cur.Pos + 16);
+                if (!double.IsFinite(x) || !double.IsFinite(y) || !double.IsFinite(z)) return null;
+                if (Math.Abs(x) > 1_000_000 || Math.Abs(y) > 1_000_000 || Math.Abs(z) > 1_000_000) return null;
+                points.Add([x, y, z]);
+                cur.Pos += 24;
+            }
+            return points;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>Reads a schedule instance (class 3532): the DBViewSchedule it shows and its top-left origin in

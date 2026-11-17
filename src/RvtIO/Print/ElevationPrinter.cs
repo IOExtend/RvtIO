@@ -12,6 +12,11 @@ using RvtIO.Pdf;
 /// <param name="Scale">The view scale denominator.</param>
 public sealed record ElevationView(int ViewId, string Name, string Direction, int Scale);
 
+/// <summary>A section trace on a plan: the polyline points in model millimetres and whether they are
+/// the file's decoded extent (bounded: drawn as-is) or a legacy straight-line mark (a ray through the
+/// two points, extended to the drawing bounds the way an undecodable trace was always drawn).</summary>
+internal sealed record SectionMark(List<(double X, double Y)> Points, bool Bounded, string Name);
+
 /// <summary>
 /// Prints an elevation from the 3D geometry the reader decodes: every planar face of the model (walls, floors, roofs,
 /// columns, windows and doors) is projected on the vertical plane of the view, painted white from the farthest to the
@@ -817,10 +822,10 @@ public static class ElevationPrinter
     /// section annotation names a section or elevation parent (a callout belongs to that view, not to a plan),
     /// when the viewport scale is coarser than the section allows, and when its section names another plan as
     /// parent. Without a viewport context no viewport filtering applies.</summary>
-    internal static List<(double X, double Y, double Dx, double Dy, string Name)> SectionMarks(RvtDocument document,
+    internal static List<SectionMark> SectionMarks(RvtDocument document,
         int? viewportViewId = null, double? viewportScaleDenominator = null)
     {
-        var marks = new List<(double X, double Y, double Dx, double Dy, string Name)>();
+        var marks = new List<SectionMark>();
         foreach (var view in document.Elements)
         {
             if (view.CategoryId != (int)BuiltInCategory.OST_Views) continue;
@@ -859,10 +864,41 @@ public static class ElevationPrinter
             if (length < 0.2) continue;
             double x = origin[0] * FeetToMillimetres, y = origin[1] * FeetToMillimetres;
             double ux = dx / length, uy = dy / length;
+            // The file's front-cut polyline is the true trace (a jogged section draws its jogs); without a
+            // decoded extent the mark stays a straight ray through the plane origin, as before.
+            List<(double X, double Y)> points;
+            bool bounded;
+            if (section.FrontCut is { Count: >= 2 } cut)
+            {
+                points = cut.Select(p => (p[0] * FeetToMillimetres, p[1] * FeetToMillimetres)).ToList();
+                bounded = true;
+            }
+            else if (section.FrontCut != null)
+            {
+                continue;
+            }
+            else
+            {
+                points = [(x, y), (x + ux, y + uy)];
+                bounded = false;
+            }
             // A detail section that shares the plane of the building section marks the same cut: one mark is enough.
-            if (marks.Any(mark => Math.Abs(mark.X - x) < 50 && Math.Abs(mark.Y - y) < 50
-                && Math.Abs(mark.Dx * ux + mark.Dy * uy) > 0.99)) continue;
-            marks.Add((x, y, ux, uy, name));
+            var (sx, sy) = points[0];
+            var (ex, ey) = points[^1];
+            double sdx = ex - sx, sdy = ey - sy;
+            double slen = Math.Sqrt(sdx * sdx + sdy * sdy);
+            if (slen < 1e-9) continue;
+            if (marks.Any(mark =>
+            {
+                var (mx, my) = mark.Points[0];
+                var (mex, mey) = mark.Points[^1];
+                double mdx = mex - mx, mdy = mey - my;
+                double mlen = Math.Sqrt(mdx * mdx + mdy * mdy);
+                if (mlen < 1e-9) return false;
+                return Math.Abs(mark.Points[0].X - sx) < 50 && Math.Abs(mark.Points[0].Y - sy) < 50
+                    && Math.Abs((mdx * sdx + mdy * sdy) / (mlen * slen)) > 0.99;
+            })) continue;
+            marks.Add(new SectionMark(points, bounded, name));
         }
         return marks;
     }

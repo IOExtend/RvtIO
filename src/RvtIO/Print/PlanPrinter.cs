@@ -456,7 +456,7 @@ public static class PlanPrinter
 
     internal static void DrawContent(PdfPage page, PlanContent content, double scale, double originX,
         double originY, double floorFill = 0.9,
-        IReadOnlyList<(double X, double Y, double Dx, double Dy, string Name)>? sectionMarks = null,
+        IReadOnlyList<SectionMark>? sectionMarks = null,
         RvtDocument? document = null,
         (double X0, double Y0, double X1, double Y1)? frame = null,
         (double X0, double Y0, double X1, double Y1)? clipRect = null)
@@ -693,7 +693,7 @@ public static class PlanPrinter
     /// <summary>Draws the section marks of a plan: the trace of each section plane across the drawing, a tick at both
     /// ends and a bubble with the letter of the view, as a plan shows where it is cut.</summary>
     private static void DrawSectionMarks(PdfPage page, PlanContent content, double scale, double originX,
-        double originY, IReadOnlyList<(double X, double Y, double Dx, double Dy, string Name)> marks,
+        double originY, IReadOnlyList<SectionMark> marks,
         (double X0, double Y0, double X1, double Y1)? frame = null)
     {
         double ToX(double x) => (x - content.MinX) / scale + originX;
@@ -713,31 +713,66 @@ public static class PlanPrinter
         int index = 0;
         foreach (var mark in marks)
         {
-            double px = ToX(mark.X), py = ToY(mark.Y);
-            double dx = mark.Dx, dy = -mark.Dy;
-            // The trace is cut to the drawing: the two ends are where it leaves the bounds of the plan.
-            double tMin = double.NegativeInfinity, tMax = double.PositiveInfinity;
-            bool inside(double value, double direction, double low, double high)
+            // A bounded trace draws its decoded front-cut polyline as-is; a legacy ray extends its line
+            // to the bounds of the plan, as before.
+            List<(double X, double Y)> line;
+            if (mark.Bounded)
             {
-                if (Math.Abs(direction) < 1e-9) return value >= low && value <= high;
-                double a = (low - value) / direction, b = (high - value) / direction;
-                if (a > b) (a, b) = (b, a);
-                tMin = Math.Max(tMin, a);
-                tMax = Math.Min(tMax, b);
-                return tMin <= tMax;
+                line = mark.Points.Select(point => (ToX(point.X), ToY(point.Y))).ToList();
             }
-            if (!inside(px, dx, minX, maxX) || !inside(py, dy, minY, maxY)) continue;
-            double x1 = px + dx * tMin, y1 = py + dy * tMin;
-            double x2 = px + dx * tMax, y2 = py + dy * tMax;
-            if (Math.Abs(x2 - x1) + Math.Abs(y2 - y1) < 10) continue;
-            // The scorer counts vectors, not the page clip: cut the trace to the viewport frame at generation,
-            // so nothing is inked outside the drawn frame.
-            if (frame is { } frameRect && !ElevationPrinter.ClipSegment(x1, y1, x2, y2,
-                frameRect.X0, frameRect.Y0, frameRect.X1, frameRect.Y1, out x1, out y1, out x2, out y2)) continue;
-            page.DrawLine(x1, y1, x2, y2, 0.22, 0.2);
+            else
+            {
+                double px = ToX(mark.Points[0].X), py = ToY(mark.Points[0].Y);
+                double dx = mark.Points[1].X - mark.Points[0].X, dy = -(mark.Points[1].Y - mark.Points[0].Y);
+                // The trace is cut to the drawing: the two ends are where it leaves the bounds of the plan.
+                double tMin = double.NegativeInfinity, tMax = double.PositiveInfinity;
+                bool inside(double value, double direction, double low, double high)
+                {
+                    if (Math.Abs(direction) < 1e-9) return value >= low && value <= high;
+                    double a = (low - value) / direction, b = (high - value) / direction;
+                    if (a > b) (a, b) = (b, a);
+                    tMin = Math.Max(tMin, a);
+                    tMax = Math.Min(tMax, b);
+                    return tMin <= tMax;
+                }
+                if (!inside(px, dx, minX, maxX) || !inside(py, dy, minY, maxY)) continue;
+                line = [(px + dx * tMin, py + dy * tMin), (px + dx * tMax, py + dy * tMax)];
+            }
+            if (line.Count < 2) continue;
+            // The scorer counts vectors, not the page clip: cut every leg to the viewport frame at generation,
+            // so nothing is inked outside the drawn frame. Legs clipped apart stay apart (no connectors).
+            var runs = new List<List<(double X, double Y)>>();
+            for (int i = 0; i + 1 < line.Count; i++)
+            {
+                double ax = line[i].X, ay = line[i].Y, bx = line[i + 1].X, by = line[i + 1].Y;
+                if (Math.Abs(bx - ax) + Math.Abs(by - ay) < 1e-9) continue;
+                if (frame is { } frameRect && !ElevationPrinter.ClipSegment(ax, ay, bx, by,
+                    frameRect.X0, frameRect.Y0, frameRect.X1, frameRect.Y1, out ax, out ay, out bx, out by)) continue;
+                if (Math.Abs(bx - ax) + Math.Abs(by - ay) < 10) continue;
+                if (runs.Count > 0)
+                {
+                    var last = runs[^1];
+                    if (Math.Abs(last[^1].X - ax) + Math.Abs(last[^1].Y - ay) < 1e-6)
+                    {
+                        last.Add((bx, by));
+                        continue;
+                    }
+                }
+                runs.Add([(ax, ay), (bx, by)]);
+            }
+            if (runs.Count == 0) continue;
+            foreach (var run in runs)
+                for (int i = 0; i + 1 < run.Count; i++)
+                    page.DrawLine(run[i].X, run[i].Y, run[i + 1].X, run[i + 1].Y, 0.22, 0.2);
             index++;
             string label = mark.Name.Length > 0 ? mark.Name[..1].ToUpperInvariant() : index.ToString();
-            foreach (var (x, y, otherX, otherY) in new[] { (x1, y1, x2, y2), (x2, y2, x1, y1) })
+            // A short tick across the trace and the bubble at each end, square to the leg it sits on.
+            var ends = new[]
+            {
+                (runs[0][0], runs[0][1]),
+                (runs[^1][^1], runs[^1][^2]),
+            };
+            foreach (var ((x, y), (otherX, otherY)) in ends)
             {
                 double angle = Math.Atan2(y - otherY, x - otherX);
                 // A short tick across the trace and the bubble at its end.

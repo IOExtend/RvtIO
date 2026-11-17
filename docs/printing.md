@@ -248,12 +248,14 @@ selection nor drawing.
   the decoded elements, not read from the file's own annotation elements; a section mark prints only where its
   section answers to no view or to a plan at a scale no coarser than its own (wall-section callouts and fine
   details stay in their parent views, undecodable views mark nothing), only when the file gives it an extent
-  record (the Architectural Section has none, so it marks nothing instead of inventing a trace), and the trace
-  is clipped to the viewport frame at generation; the view reference marks of a plan stay undrawn.
+  record (the Architectural Section has none, so it marks nothing instead of inventing a trace); a decoded
+  front-cut polyline draws its jogs (the Building Section turns at its jog instead of running the full frame
+  height) while a mark without decoded points stays a straight ray; the trace is clipped to the viewport
+  frame at generation; the view reference marks of a plan stay undrawn.
 
 ## Next steps
 
-1. Decode the crop region of a rotated view and of a crop region switched off with live bounds, and the annotation crop that keeps titles and labels outside the model crop. Decode the record that places a viewport the file puts off the page. Draw section marks from their decoded front-cut segments assigned to the right viewport (the duplicate Building trace on Level 2, the short callout bubbles with sheet references).
+1. Decode the crop region of a rotated view and of a crop region switched off with live bounds, and the annotation crop that keeps titles and labels outside the model crop. Decode the record that places a viewport the file puts off the page. Assign section-mark ends per viewport (the Longitudinal trace matches the reference length but sits ~88 pt left of it while the Building jog legs match; the short callout bubbles with sheet references).
 2. Evaluate the body rows of element schedules from the model (the How-do-I reference body is computed, not stored).
 3. Decode the geometry of the property lines (with their bearing/distance labels) and the spot elevations, the solar-analysis diagram of a site sheet, and the file's own tag positions with leaders.
 4. Decode per-view placement of viewports and datum annotation: our stair/detail frames follow the file offset while the reference resolves overlapping viewports side by side, and the reference lines its level marks up on the crop edge and ends each line at its own marker while ours run datum spans (clipped only past a label margin). Hide the exposed second-floor railing boards the reference does not draw (per-view detail level or occluder gap), and restore the long footing/grade model edges the file's footing instances never decode into geometry.

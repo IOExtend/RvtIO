@@ -35,6 +35,31 @@ public class SectionMarkViewportTests
     }
 
     [Fact]
+    public void SampleFile_DecodesSectionFrontCut()
+    {
+        // The Section m_frontCut polyline in model feet, cross-checked against rvt-prt's datums.read:
+        // the Building Section jogs (10.14,15.14)-(10.14,-13.32)-(25.40,-13.32)-(25.40,-20.37),
+        // the Longitudinal Section runs straight (-40.27,-7.16)-(61.79,-7.16).
+        var document = SampleFile();
+        var sections = document.RawData.SectionViews;
+        Assert.NotNull(sections);
+        Assert.True(sections!.TryGetValue(243253, out var building));
+        Assert.NotNull(building.FrontCut);
+        Assert.Equal(4, building.FrontCut!.Count);
+        Assert.Equal(10.14, building.FrontCut[0][0], 2);
+        Assert.Equal(15.14, building.FrontCut[0][1], 2);
+        Assert.Equal(-13.32, building.FrontCut[1][1], 2);
+        Assert.Equal(25.40, building.FrontCut[2][0], 2);
+        Assert.Equal(-20.37, building.FrontCut[3][1], 2);
+        Assert.True(sections.TryGetValue(247013, out var longitudinal));
+        Assert.NotNull(longitudinal.FrontCut);
+        Assert.Equal(2, longitudinal.FrontCut!.Count);
+        Assert.Equal(-40.27, longitudinal.FrontCut[0][0], 2);
+        Assert.Equal(61.79, longitudinal.FrontCut[1][0], 2);
+        Assert.Equal(-7.16, longitudinal.FrontCut[0][1], 2);
+    }
+
+    [Fact]
     public void SampleFile_ShowsOnlyVisibleMarksOnLevel1()
     {
         var document = SampleFile();
@@ -52,5 +77,23 @@ public class SectionMarkViewportTests
         // The Architectural Section has no decoded extent record (viewer -1): the file gives it no
         // trace geometry, so it marks nothing instead of inventing a full-height vertical.
         Assert.DoesNotContain(marks, mark => mark.Name == "Architectural Section");
+    }
+
+    [Fact]
+    public void SampleFile_Level1MarksFollowDecodedExtents()
+    {
+        // The Building mark draws its decoded jog (four points), not an infinite line: the trace turns
+        // at the jog instead of running the full frame height. The Longitudinal mark runs straight.
+        var document = SampleFile();
+
+        var marks = ElevationPrinter.SectionMarks(document, viewportViewId: 312, viewportScaleDenominator: 100);
+
+        var building = Assert.Single(marks, mark => mark.Name == "Building Section");
+        Assert.True(building.Bounded);
+        Assert.Equal(4, building.Points.Count);
+        Assert.Equal(10.14, building.Points[0].X / 304.8, 2);
+        var longitudinal = Assert.Single(marks, mark => mark.Name == "Longitudinal Section");
+        Assert.True(longitudinal.Bounded);
+        Assert.Equal(2, longitudinal.Points.Count);
     }
 }

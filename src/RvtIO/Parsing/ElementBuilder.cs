@@ -5839,7 +5839,8 @@ internal static partial class ElementBuilder
         rvtInfo.SectionViews = state?.SectionViews
             .Where(pair => pair.Value is { BlockCount: 1, Viewdata: not null })
             .ToDictionary(pair => (int)pair.Key,
-                pair => (pair.Value.Viewdata!.ParentViewId, pair.Value.Viewdata!.CoarserScale));
+                pair => (pair.Value.Viewdata!.ParentViewId, pair.Value.Viewdata!.CoarserScale,
+                    (IReadOnlyList<double[]>?)pair.Value.Viewdata!.FrontCut));
         rvtInfo.GridCenterCategories = state?.GridCenterCategories
             .Where(pair => pair.Value is { BlockCount: 1, CategoryId: not null })
             .ToDictionary(pair => (int)pair.Key,

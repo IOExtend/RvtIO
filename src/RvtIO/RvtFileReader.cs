@@ -1994,7 +1994,7 @@ public partial class RvtFileReader
         ParsingState state, byte[] data, int start, uint size, ushort classId, uint owner)
     {
         if (classId != 3545) return;
-        TfBlockDeserializer.SectionViewdata viewdata = new(0, 0);
+        TfBlockDeserializer.SectionViewdata viewdata = new(0, 0, null);
         bool read = start >= 0 && start <= data.Length - 4
             && BitConverter.ToUInt32(data, start) == owner
             && TfBlockDeserializer.TryExtractSectionViewdata(data, start, size, classId, out viewdata);

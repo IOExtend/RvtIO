@@ -17,9 +17,9 @@ public class PlanSectionMarkTests
     {
         var content = new PlanPrinter.PlanContent(
             [], [], [], [], [], [], [], [], [], [], [], 0, 0, 10000, 10000);
-        var marks = new List<(double X, double Y, double Dx, double Dy, string Name)>
+        var marks = new List<SectionMark>
         {
-            (5000, 5000, 1, 0, "Building Section"),
+            new([(5000, 5000), (5001, 5000)], false, "Building Section"),
         };
 
         int withMarks = LineCount(content, marks);
@@ -30,7 +30,7 @@ public class PlanSectionMarkTests
     }
 
     private static int LineCount(PlanPrinter.PlanContent content,
-        IReadOnlyList<(double X, double Y, double Dx, double Dy, string Name)>? marks)
+        IReadOnlyList<SectionMark>? marks)
     {
         var pdf = new PdfDocument { Font = PdfFonts.TryFind(out _) };
         PdfPage page = pdf.AddPage(PdfPageSize.A3);

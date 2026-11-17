@@ -96,7 +96,7 @@ namespace RvtIO.Model
         /// <summary>Section annotation element id -> its parent view and coarsest scale, for the sections whose
         /// block decoded exactly once.</summary>
         [System.Text.Json.Serialization.JsonIgnore]
-        internal IReadOnlyDictionary<int, (int ParentViewId, double CoarserScale)>? SectionViews { get; set; }
+        internal IReadOnlyDictionary<int, (int ParentViewId, double CoarserScale, IReadOnlyList<double[]>? FrontCut)>? SectionViews { get; set; }
 
         /// <summary>Grid type element id (GridAttributes root) -> the center-segment category id whose
         /// projection graphics style inks the grid's center line, for the types whose block decoded
