@@ -430,7 +430,8 @@ public static class PlanPrinter
     internal static void DrawContent(PdfPage page, PlanContent content, double scale, double originX,
         double originY, double floorFill = 0.9,
         IReadOnlyList<(double X, double Y, double Dx, double Dy, string Name)>? sectionMarks = null,
-        RvtDocument? document = null)
+        RvtDocument? document = null,
+        (double X0, double Y0, double X1, double Y1)? frame = null)
     {
         double ToX(double x) => (x - content.MinX) / scale + originX;
         double ToY(double y) => (y - content.MinY) / scale + originY;
@@ -585,7 +586,7 @@ public static class PlanPrinter
         foreach (var column in content.Columns)
             page.DrawRectangle(ToX(column.X), ToY(column.Y), column.Width / scale, column.Height / scale, columnLine, 1);
 
-        if (sectionMarks is { Count: > 0 }) DrawSectionMarks(page, content, scale, originX, originY, sectionMarks);
+        if (sectionMarks is { Count: > 0 }) DrawSectionMarks(page, content, scale, originX, originY, sectionMarks, frame);
     }
 
     /// <summary>Draws the plan of a level as one page of the document.</summary>
@@ -659,7 +660,8 @@ public static class PlanPrinter
     /// <summary>Draws the section marks of a plan: the trace of each section plane across the drawing, a tick at both
     /// ends and a bubble with the letter of the view, as a plan shows where it is cut.</summary>
     private static void DrawSectionMarks(PdfPage page, PlanContent content, double scale, double originX,
-        double originY, IReadOnlyList<(double X, double Y, double Dx, double Dy, string Name)> marks)
+        double originY, IReadOnlyList<(double X, double Y, double Dx, double Dy, string Name)> marks,
+        (double X0, double Y0, double X1, double Y1)? frame = null)
     {
         double ToX(double x) => (x - content.MinX) / scale + originX;
         double ToY(double y) => (y - content.MinY) / scale + originY;
@@ -695,6 +697,10 @@ public static class PlanPrinter
             double x1 = px + dx * tMin, y1 = py + dy * tMin;
             double x2 = px + dx * tMax, y2 = py + dy * tMax;
             if (Math.Abs(x2 - x1) + Math.Abs(y2 - y1) < 10) continue;
+            // The scorer counts vectors, not the page clip: cut the trace to the viewport frame at generation,
+            // so nothing is inked outside the drawn frame.
+            if (frame is { } frameRect && !ElevationPrinter.ClipSegment(x1, y1, x2, y2,
+                frameRect.X0, frameRect.Y0, frameRect.X1, frameRect.Y1, out x1, out y1, out x2, out y2)) continue;
             page.DrawLine(x1, y1, x2, y2, 0.22, 0.2);
             index++;
             string label = mark.Name.Length > 0 ? mark.Name[..1].ToUpperInvariant() : index.ToString();

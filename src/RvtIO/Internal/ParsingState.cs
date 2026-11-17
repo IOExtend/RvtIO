@@ -320,6 +320,10 @@ internal class ParsingState
     /// block did not decode; a repeated block clears it.</summary>
     public Dictionary<uint, (int BlockCount, List<int>? RevisionIds)> SheetRevisions { get; } = new();
 
+    /// <summary>Section annotation element id (class 3545 block) -> its parent view and coarsest scale. Null when
+    /// the block did not decode; a repeated block clears it.</summary>
+    public Dictionary<uint, (int BlockCount, Parsing.TfBlockDeserializer.SectionViewdata? Viewdata)> SectionViews { get; } = new();
+
     /// <summary>CategoryElem (class 632) -> Category.m_name; every root counts, an unreadable root records null and a
     /// repeated block clears the name.</summary>
     public Dictionary<uint, (int BlockCount, string? Name)> CategoryNames { get; } = new();

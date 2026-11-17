@@ -93,6 +93,11 @@ namespace RvtIO.Model
         [System.Text.Json.Serialization.JsonIgnore]
         internal IReadOnlyDictionary<int, IReadOnlyList<int>>? ScheduleSheetRevisions { get; set; }
 
+        /// <summary>Section annotation element id -> its parent view and coarsest scale, for the sections whose
+        /// block decoded exactly once.</summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        internal IReadOnlyDictionary<int, (int ParentViewId, double CoarserScale)>? SectionViews { get; set; }
+
         /// <summary>CategoryElem id -> its name, for the category elements whose block decoded exactly once.</summary>
         [System.Text.Json.Serialization.JsonIgnore]
         internal IReadOnlyDictionary<int, string>? CategoryNames { get; set; }

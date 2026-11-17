@@ -3609,6 +3609,8 @@ internal static partial class ElementBuilder
                 e.SerializedUnplacedOwnerId = unplacedOwnerId;
             if (np.Fields.TryGetValue("m_ownerDBViewId", out int ownerDbViewId))
                 e.SerializedOwnerDbViewId = ownerDbViewId;
+            if (np.Fields.TryGetValue("m_viewerId", out int viewerId))
+                e.SectionViewerId = viewerId;
             if (np.Fields.ContainsKey("__isLevel"))
             {
                 e.IsNativeLevel = true;
@@ -5809,6 +5811,10 @@ internal static partial class ElementBuilder
             .Where(pair => pair.Value is { BlockCount: 1, RevisionIds: not null })
             .ToDictionary(pair => (int)pair.Key,
                 pair => (IReadOnlyList<int>)pair.Value.RevisionIds!);
+        rvtInfo.SectionViews = state?.SectionViews
+            .Where(pair => pair.Value is { BlockCount: 1, Viewdata: not null })
+            .ToDictionary(pair => (int)pair.Key,
+                pair => (pair.Value.Viewdata!.ParentViewId, pair.Value.Viewdata!.CoarserScale));
         rvtInfo.CategoryNames = state?.CategoryNames
             .Where(pair => pair.Value is { BlockCount: 1, Name: not null })
             .ToDictionary(pair => (int)pair.Key, pair => pair.Value.Name!);

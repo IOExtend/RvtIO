@@ -1964,6 +1964,19 @@ public partial class RvtFileReader
             : (1, read ? revisionIds : null);
     }
 
+    internal static void RecordSectionViews(
+        ParsingState state, byte[] data, int start, uint size, ushort classId, uint owner)
+    {
+        if (classId != 3545) return;
+        TfBlockDeserializer.SectionViewdata viewdata = new(0, 0);
+        bool read = start >= 0 && start <= data.Length - 4
+            && BitConverter.ToUInt32(data, start) == owner
+            && TfBlockDeserializer.TryExtractSectionViewdata(data, start, size, classId, out viewdata);
+        state.SectionViews[owner] = state.SectionViews.TryGetValue(owner, out var old)
+            ? (old.BlockCount + 1, null)
+            : (1, read ? viewdata : null);
+    }
+
     internal static void RecordCategoryName(
         ParsingState state, byte[] data, int start, uint size, ushort classId, uint owner)
     {
@@ -2467,6 +2480,7 @@ public partial class RvtFileReader
             RecordScheduleInstance(state, seg, bs, ds, cls, eid);
             RecordScheduleTable(state, seg, bs, ds, cls, eid);
             RecordSheetRevisions(state, seg, bs, ds, cls, eid);
+            RecordSectionViews(state, seg, bs, ds, cls, eid);
             RecordCategoryName(state, seg, bs, ds, cls, eid);
             if (cls == 3666)
                 RecordStackedWallTypeRoot(state, seg, bs, ds, cls, eid);

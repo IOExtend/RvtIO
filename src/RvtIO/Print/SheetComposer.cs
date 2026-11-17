@@ -284,7 +284,8 @@ public static class SheetComposer
                         ClipFrame(frameX, frameY, frameWidth, frameHeight);
                     }
                     PlanPrinter.DrawContent(page2, content, drawScale, drawOriginX, drawOriginY, 0.9,
-                        ElevationPrinter.SectionMarks(document), document);
+                        ElevationPrinter.SectionMarks(document, viewId, viewScale), document,
+                        (frameX, frameY, frameX + frameWidth, frameY + frameHeight));
                     page2.EndClip();
                     effectiveScale = (int)Math.Round(drawScale);
                     if (options.DrawRoomLegend && pdf.Font != null && content.Rooms.Count > 0)

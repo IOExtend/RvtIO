@@ -348,7 +348,7 @@ internal static partial class TfBlockDeserializer
         "m_baseRailingSymbolId", "m_stairsRailingAttrId",
         "m_analyzesAs", "m_isBuildingStory",
         // DBView
-        "m_dbViewTypeId", "m_defaultTemplateId", "m_partsVisibility",
+        "m_dbViewTypeId", "m_defaultTemplateId", "m_partsVisibility", "m_viewerId",
         // Dimension / DBViewPlan / SpotElevation
         "m_styleSymbolId", "m_dimSketchPlaneId", "m_paramId",
         "m_useEqualityFormula", "m_displayElevation",
@@ -3719,6 +3719,98 @@ internal static partial class TfBlockDeserializer
         double TitleHeightFt, List<(double HeightFt, string Text)> TitleBands, List<ScheduleBodySection> BodySections,
         double FixedHeightFt);
 
+    /// <summary>A section annotation (class 3545) boiled down to what places its mark on a plan: the parent view
+    /// (a section/elevation view for a callout, -1 for a top-level section) and the coarsest scale it shows at.</summary>
+    internal sealed record SectionViewdata(int ParentViewId, double CoarserScale);
+
+    internal static bool TryExtractSectionViewdata(
+        byte[] d, int blockStart, uint dataSize, ushort classId, out SectionViewdata viewdata)
+        => TryExtractSectionViewdata(d, blockStart, dataSize, classId, out viewdata, out _);
+
+    /// <summary>Reads a section annotation (class 3545): the parent view id and the coarsest scale. Stops before
+    /// the front-cut polyline (a composite the generic walk cannot stride); every earlier field walks generically.
+    /// False when anything fails to decode.</summary>
+    internal static bool TryExtractSectionViewdata(
+        byte[] d, int blockStart, uint dataSize, ushort classId, out SectionViewdata viewdata, out string failure)
+    {
+        viewdata = new(0, 0);
+        failure = "ok";
+        if (classId != 3545
+            || blockStart < 0
+            || dataSize > int.MaxValue
+            || (long)blockStart + 16 + dataSize > d.Length
+            || dataSize < 6
+            || BitConverter.ToUInt32(d, blockStart + 8) != dataSize
+            || BitConverter.ToUInt16(d, blockStart + 12) != classId)
+            return false;
+        var fields = SerializationFields(classId);
+        if (fields == null) return false;
+        int payloadEnd = blockStart + 16 + (int)dataSize;
+        if (BitConverter.ToUInt32(d, payloadEnd - 4) != dataSize) return false;
+
+        var cur = new Cursor
+        {
+            D = d,
+            Pos = blockStart + 14,
+            End = payloadEnd - 4,
+            RootClassId = classId,
+            TailWalk = true,
+        };
+        var queue = new List<(ushort Cls, uint Id)>();
+        cur.RootQueue = queue;
+        try
+        {
+            int parentViewId = 0;
+            double coarserScale = 0;
+            bool parentRead = false, coarserRead = false;
+            foreach (var field in fields)
+            {
+                if (field is { Declaring: 2249, Name: "m_frontCut" }) break;
+                try
+                {
+                    if (field is { Declaring: 2249, Name: "m_parentDBViewId" })
+                    {
+                        if (field is not { Type: 14, Mods: 0, Ref: 20 }) { failure = "parent-type"; return false; }
+                        parentViewId = ReadI32(cur);
+                        parentRead = true;
+                    }
+                    else if (field is { Declaring: 2249, Name: "m_coarserScale" })
+                    {
+                        if (field is not { Type: 7, Mods: 0 }) { failure = "coarser-type"; return false; }
+                        coarserScale = ReadF64(cur);
+                        coarserRead = true;
+                    }
+                    else if (field.Name == "m_boundedSpace")
+                    {
+                        // BoundedSpace inline struct in its exact measured layout (origin XYZ, basis 3xXYZ,
+                        // offsets 3x2 doubles, active flags 3x2 bytes, use flag): the generic walk
+                        // under-reads its composite arrays and misaligns every following field of a viewer root.
+                        for (int i = 0; i < 3; i++) ReadF64(cur);
+                        if (!cur.Take(72 + 48 + 6 + 1)) throw Fail;
+                    }
+                    else if (field.Name == "m_viewerFlags" && field.Type == 3)
+                    {
+                        // A two-byte flags field where the generic single-byte scalar stride would misalign
+                        // the four one-byte flags and the view-layout pointer after it.
+                        if (!cur.Take(2)) throw Fail;
+                    }
+                    else ReadField(cur, field, queue, 0, null);
+                }
+                catch (DecodeFail)
+                {
+                    failure = $"decodefail at {field.Declaring}:{field.Name} t={field.Type} m={field.Mods} pos={cur.Pos}";
+                    return false;
+                }
+            }
+            if (!parentRead || !coarserRead) { failure = "missing"; return false; }
+            if (parentViewId is < -1 or > 100_000_000) { failure = "bad-parent"; return false; }
+            if (!(coarserScale >= 0) || coarserScale > 1) { failure = "bad-coarser"; return false; }
+            viewdata = new(parentViewId, coarserScale);
+            return true;
+        }
+        catch (DecodeFail) { failure = $"decodefail pos={cur.Pos}"; return false; }
+    }
+
     /// <summary>Reads a schedule instance (class 3532): the DBViewSchedule it shows and its top-left origin in
     /// sheet feet. False when anything fails to decode.</summary>
     internal static bool TryExtractScheduleInstance(
@@ -6322,6 +6414,9 @@ internal static partial class TfBlockDeserializer
         }
     }
 
+    /// <summary>Diagnostic count of BoundedSpace override hits (temporary).</summary>
+    internal static int DiagBoundedSpaceHits;
+
     /// <summary>Dimension-chain field overrides (rules D1-D6):
     /// several Dimension/DimSegInfo fields deviate from the schema-generic encoding.</summary>
     private static bool TryFieldOverride(Cursor c, TfField f, List<(ushort, uint)> queue, int depth,
@@ -6368,6 +6463,18 @@ internal static partial class TfBlockDeserializer
             // the generic type-13 element size (Cnt x 8 per element) under-reads them.
             case (2008, "m_bBox" or "m_tightbBox") when f.Type == 13 && f.Mods == 16 && f.Cnt == 2:
                 if (!c.Take(48)) throw Fail;
+                return true;
+            // BoundedSpace (553) composites are wider than Cnt x 8 per element: the basis is 3 x XYZ (72 bytes),
+            // the bound offsets 3 pairs of doubles (48 bytes) and the active flags 3 pairs of booleans (6 bytes).
+            // The generic stride under-reads them and misaligns every following field of a viewer root.
+            case (553, "m_basis") when f.Type == 13 && f.Mods == 16 && f.Cnt == 3:
+                if (!c.Take(72)) throw Fail;
+                return true;
+            case (553, "m_boundOffset") when f.Type == 13 && f.Mods == 16 && f.Cnt == 3:
+                if (!c.Take(48)) throw Fail;
+                return true;
+            case (553, "m_boundActive") when f.Type == 13 && f.Mods == 16 && f.Cnt == 3:
+                if (!c.Take(6)) throw Fail;
                 return true;
             // BeamMiterGStep.m_miterPlane names no type; the payload is an inline Plane (Surface envelope,
             // orientation flag, origin, x and y vectors). Read as polymorphic handle it misaligned every

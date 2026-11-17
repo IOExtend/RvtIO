@@ -188,6 +188,8 @@ The text of a sheet prints too: a text note's RTF string (class 0x0F83 block) is
 
 - Sheets draw the site plan the way the reference does: no building, terrain, contours, planting graphics or entourage (the reference site view shows none of these, only tags with leaders), so the walls overlay, the near-building filter, the topo wash and outlines, the contour slicing, the plant circles and crosses and the entourage outlines are gone from site views; only the planting tags with their leaders and the north arrow print. Measured against the Revit export of the sample: A101 precision 55.4% -> 97.0% at recall 86.3% (ours 935 -> 520 in); other sheets unchanged. New tests: none (collection unchanged; 61/61 print suites green on net8.0+net10.0).
 
+- Plans draw each section mark only where it belongs: views without a decoded section class mark nothing (killing the ghost traces), callouts of other sections stay in their parent view (decoded Section.m_parentDBViewId), and sections finer than the viewport stay off it (decoded m_coarserScale against the viewport scale; e.g. no 1:50 stair or 1:20 wall-section traces on a 1:100 plan). Traces are also clipped to the viewport frame at generation time, as the scorer counts vectors rather than the page clip. Measured against the Revit export of the sample: A102 recall 72.8% -> 75.9%, precision 74.9% -> 80.3%; other sheets unchanged. New tests: `SectionMarkViewportTests` (decoded parent/coarser, per-viewport filtering); `SectionMarkDedupeTests` now declares its views DBViewSection. Full print suites 65/65 green on net8.0+net10.0.
+
 ## [0.4.0] - 2026-11-13
 
 ### Breaking changes

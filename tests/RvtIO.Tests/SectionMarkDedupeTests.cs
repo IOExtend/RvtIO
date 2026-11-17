@@ -15,6 +15,7 @@ public class SectionMarkDedupeTests
     {
         Id = id,
         CategoryId = (int)BuiltInCategory.OST_Views,
+        NativeRootClassName = "DBViewSection",
         NativeRecordClass = 1016,
         Name = name,
         ViewOrigin = origin,

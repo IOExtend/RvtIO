@@ -222,6 +222,11 @@ namespace RvtIO.Model
         [JsonIgnore]
         internal int? SerializedOwnerDbViewId { get; set; }
 
+        /// <summary>Exact serialized DBView.m_viewerId value: the section annotation element of a
+        /// section/elevation view, null when the reader decoded none.</summary>
+        [JsonIgnore]
+        internal int? SectionViewerId { get; set; }
+
         /// <summary>
         /// The id of the view that owns this element, as stored in the element's <c>m_ownerDBViewId</c>: the sheet or
         /// drawing view whose annotations and view-specific graphics hold it (a text note placed on a sheet names the
