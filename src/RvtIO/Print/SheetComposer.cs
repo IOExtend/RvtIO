@@ -271,8 +271,9 @@ public static class SheetComposer
                     // crop rectangle, the content origin is shifted so the crop lands on it, and the content is
                     // clipped to it. Nothing is reduced to fit: the scale stays true. Views without a crop keep the
                     // whole-model frame above.
-                    bool cropped = view?.ViewCrop is { Active: true } crop
-                        && TryCropFrame(centerX, centerY, viewScale, crop, content.MinX, content.MinY,
+                    RvtIO.Model.ViewCropFrame? planCrop = view?.ViewCrop is { Active: true } crop ? crop : null;
+                    bool cropped = planCrop != null
+                        && TryCropFrame(centerX, centerY, viewScale, planCrop, content.MinX, content.MinY,
                             out frameX, out frameY, out frameWidth, out frameHeight, out drawOriginX, out drawOriginY);
                     if (cropped)
                     {
@@ -285,7 +286,8 @@ public static class SheetComposer
                     }
                     PlanPrinter.DrawContent(page2, content, drawScale, drawOriginX, drawOriginY, 0.9,
                         ElevationPrinter.SectionMarks(document, viewId, viewScale), document,
-                        (frameX, frameY, frameX + frameWidth, frameY + frameHeight));
+                        (frameX, frameY, frameX + frameWidth, frameY + frameHeight),
+                        clipRect: cropped && planCrop != null ? CropContentRect(planCrop) : null);
                     page2.EndClip();
                     effectiveScale = (int)Math.Round(drawScale);
                     if (options.DrawRoomLegend && pdf.Font != null && content.Rooms.Count > 0)

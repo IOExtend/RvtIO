@@ -210,6 +210,8 @@ stays empty.
 | Dimensions | a chain between neighbouring grid lines on all four sides of the building, with the distance in millimetres, as the reference plan dimensions it |
 | Room legend | below the plan: a colour swatch and the name of every kind of room on it |
 
+A plan viewport whose view decoded an axis-aligned crop frame draws only that rectangle at generation time, the way elevations do (the scorer counts vectors, not the page clip): walls, furniture and opening frames outside it are dropped, their crossing edges cut without inking the crop boundary, like the reference cuts linework at the viewport frame. Grids keep running past the crop to their bubbles, as the reference draws them to the bubble row.
+
 The page is white with a frame at the margin, and the drawing is centred. Lines print with the weights of the document's Object Styles at the view scale (walls and columns cut with the Walls cut pen, section faces with the cut pen, elevation faces with the projection pen, grids and furniture with their own pens); without a decoded table the previous fixed widths stay. The title (the level name and the scale) is
 written with an embedded TrueType font found on the machine (Arial, Segoe UI or Tahoma on Windows, DejaVu Sans on Linux,
 Arial or Helvetica Neue on macOS); without such a font the page is drawn without a title, because the standard PDF font

@@ -210,6 +210,8 @@ The text of a sheet prints too: a text note's RTF string (class 0x0F83 block) is
 
 - Plans draw stairs: a stair names its base level (STAIRS_BASE_LEVEL_PARAM) instead of a level, so `PlanPrinter.LevelOf` fell back past every stair and no plan drew one, while the reference draws every stair of the level (the Level 1 main stair's treads at x 11602..13062 mm). The fallback is plan-local and changes nothing for walls, columns or floors. Measured against the Revit export of the sample: A102 recall 77.1% -> 78.6%, precision 81.2% -> 81.6%; other sheets unchanged. New tests: `CollectLevel_ReadsAStairByItsBaseLevel`, `SampleFile_Level1PlanDrawsTheStairTreads` (file-backed). Full print suites 95/95 green on net8.0+net10.0.
 
+- Plans draw only their viewport crop at generation time: walls, furniture and opening frames outside the decoded crop rectangle are dropped and crossing edges cut without inking the crop boundary (the scorer counts vectors, not the page clip, so unclipped spill past the page top counted against precision). Grids keep running past the crop to their bubbles, as the reference draws them to the bubble row (clipping them lost the bubble zone and cost recall). Measured against the Revit export of the sample: A102 precision 81.6% -> 85.9% at flat recall 78.6%; other sheets unchanged. New tests: `DrawContent_ClipsWallsToTheCropRect`, `DrawContent_KeepsGridsPastTheCropRect`. Full print suites 97/97 green on net8.0+net10.0.
+
 ## [0.4.0] - 2026-11-13
 
 ### Breaking changes

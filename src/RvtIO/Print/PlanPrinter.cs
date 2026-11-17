@@ -427,11 +427,39 @@ public static class PlanPrinter
         return type?.LookupParameter(BuiltInParameter.ALL_MODEL_TYPE_MARK)?.Value as string;
     }
 
+    /// <summary>Draws a filled outline clipped to the crop rectangle: the fill without stroke (fill-only
+    /// prims do not score), the edges as separately clipped strokes, so no line inks along the crop boundary
+    /// the way the reference cuts linework at the viewport frame. Without a clip rectangle the outline draws
+    /// filled and stroked at once, as before.</summary>
+    private static void DrawClippedOutline(PdfPage page, List<(double X, double Y)> polygon,
+        Func<double, double> toX, Func<double, double> toY,
+        double widthMillimetres, PdfColor? fill, (double X0, double Y0, double X1, double Y1)? clipRect)
+    {
+        if (clipRect is not { } clip)
+        {
+            page.DrawPolyline(polygon.Select(point => (toX(point.X), toY(point.Y))).ToList(),
+                widthMillimetres, true, fill);
+            return;
+        }
+        var clipped = ElevationPrinter.ClipToWindow(polygon, clip.X0, clip.X1, clip.Y0, clip.Y1);
+        if (clipped.Count >= 3)
+            page.DrawPolyline(clipped.Select(point => (toX(point.X), toY(point.Y))).ToList(), 0, true, fill);
+        for (int i = 0; i < polygon.Count; i++)
+        {
+            var a = polygon[i];
+            var b = polygon[(i + 1) % polygon.Count];
+            if (ElevationPrinter.ClipSegment(a.X, a.Y, b.X, b.Y, clip.X0, clip.Y0, clip.X1, clip.Y1,
+                out double cx0, out double cy0, out double cx1, out double cy1))
+                page.DrawLine(toX(cx0), toY(cy0), toX(cx1), toY(cy1), widthMillimetres);
+        }
+    }
+
     internal static void DrawContent(PdfPage page, PlanContent content, double scale, double originX,
         double originY, double floorFill = 0.9,
         IReadOnlyList<(double X, double Y, double Dx, double Dy, string Name)>? sectionMarks = null,
         RvtDocument? document = null,
-        (double X0, double Y0, double X1, double Y1)? frame = null)
+        (double X0, double Y0, double X1, double Y1)? frame = null,
+        (double X0, double Y0, double X1, double Y1)? clipRect = null)
     {
         double ToX(double x) => (x - content.MinX) / scale + originX;
         double ToY(double y) => (y - content.MinY) / scale + originY;
@@ -457,6 +485,9 @@ public static class PlanPrinter
 
         foreach (var grid in content.Grids)
         {
+            // Grids run past the crop to their bubbles (the reference draws them to the bubble row, like
+            // rvt-prt growing the crop by the type end length): cutting them at the crop edge loses the
+            // bubble zone, so they stay unclipped while walls and furniture clip.
             page.DrawLine(ToX(grid.X1), ToY(grid.Y1), ToX(grid.X2), ToY(grid.Y2), gridLine, 0.45);
             if (page.Owner.Font == null || grid.Name.Length == 0) continue;
             Bubble(page, ToX(grid.X1), ToY(grid.Y1), grid.Name);
@@ -479,11 +510,11 @@ public static class PlanPrinter
                 double bx = wall.X1 + ux * to, by = wall.Y1 + uy * to;
                 // The wall is poche: the stretch between its two sides is filled, the way a printed plan fills a cut
                 // wall, and the four edges are inked over it.
-                page.DrawPolyline(
+                DrawClippedOutline(page,
                 [
-                    (ToX(ax + nx), ToY(ay + ny)), (ToX(bx + nx), ToY(by + ny)),
-                    (ToX(bx - nx), ToY(by - ny)), (ToX(ax - nx), ToY(ay - ny)),
-                ], wallLine, true, new PdfColor(0.72, 0.72, 0.72));
+                    (ax + nx, ay + ny), (bx + nx, by + ny),
+                    (bx - nx, by - ny), (ax - nx, ay - ny),
+                ], ToX, ToY, wallLine, new PdfColor(0.72, 0.72, 0.72), clipRect);
             }
         }
 
@@ -523,8 +554,7 @@ public static class PlanPrinter
         }
 
         foreach (var outline in content.Furniture)
-            page.DrawPolyline(outline.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), furnitureLine, true,
-                new PdfColor(0.55, 0.55, 0.55));
+            DrawClippedOutline(page, outline, ToX, ToY, furnitureLine, new PdfColor(0.55, 0.55, 0.55), clipRect);
 
         // A door is drawn as its leaf and the quarter arc it sweeps: the leaf stands at one jamb, perpendicular to the
         // wall and on the side of the building the door opens into.
@@ -570,7 +600,10 @@ public static class PlanPrinter
             double midX = (hx + ex) / 2, midY = (hy + ey) / 2;
             double side = (centerX - midX) * nx + (centerY - midY) * ny >= 0 ? 1 : -1;
             double tipX = hx + nx * side * width, tipY = hy + ny * side * width;
-            page.DrawLine(ToX(hx), ToY(hy), ToX(tipX), ToY(tipY), 0.18);
+            double ex0 = hx, ey0 = hy, ex1 = tipX, ey1 = tipY;
+            if (clipRect is { } doorClip && !ElevationPrinter.ClipSegment(ex0, ey0, ex1, ey1,
+                doorClip.X0, doorClip.Y0, doorClip.X1, doorClip.Y1, out ex0, out ey0, out ex1, out ey1)) continue;
+            page.DrawLine(ToX(ex0), ToY(ey0), ToX(ex1), ToY(ey1), 0.18);
             double a0 = Math.Atan2(tipY - hy, tipX - hx) * 180 / Math.PI;
             double a1 = Math.Atan2(ey - hy, ex - hx) * 180 / Math.PI;
             while (a1 < a0) a1 += 360;
@@ -581,7 +614,7 @@ public static class PlanPrinter
         DimChains(page, content, ToX, ToY);
 
         foreach (var opening in content.OpeningLoops)
-            page.DrawPolyline(opening.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0.18, true);
+            DrawClippedOutline(page, opening, ToX, ToY, 0.18, (PdfColor?)null, clipRect);
 
         foreach (var column in content.Columns)
             page.DrawRectangle(ToX(column.X), ToY(column.Y), column.Width / scale, column.Height / scale, columnLine, 1);

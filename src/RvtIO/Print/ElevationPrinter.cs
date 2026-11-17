@@ -721,8 +721,9 @@ public static class ElevationPrinter
     /// millimetres of the page.</summary>
     internal const double LabelMarginMillimetres = 42;
 
-    /// <summary>The part of a projected polygon inside a rectangle: the detail window of a section.</summary>
-    private static List<(double X, double Y)> ClipToWindow(List<(double X, double Y)> polygon, double left,
+    /// <summary>The part of a projected polygon inside a rectangle: the detail window of a section,
+    /// or the crop rectangle a clipped plan draws.</summary>
+    internal static List<(double X, double Y)> ClipToWindow(List<(double X, double Y)> polygon, double left,
         double right, double bottom, double top)
     {
         var result = ClipHalfPlane(polygon, point => point.X >= left, point => point.X - left);

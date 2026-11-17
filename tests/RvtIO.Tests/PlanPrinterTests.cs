@@ -127,6 +127,45 @@ public class PlanPrinterTests
         Assert.Contains(content!.Furniture, outline => outline.All(point => point.X > 9000));
     }
 
+    [Fact]
+    public void DrawContent_ClipsWallsToTheCropRect()
+    {
+        // A wall outside the crop rectangle draws nothing (the scorer counts vectors, not the
+        // page clip); a wall inside keeps its filled poche and four inked edges.
+        var document = Document(Level(500, "Level 1", 0),
+            Wall(600, 500, 0, 0, 10, 0), Wall(601, 500, 20, 0, 30, 0));
+        var content = PlanPrinter.CollectLevel(document, 500)!;
+        var pdf = new PdfDocument();
+        var page = pdf.AddPage(new PdfPageSize(1000, 1000));
+        PlanPrinter.DrawContent(page, content, 100, 10, 10, 0.9, null, document, null, (0, -10000, 4000, 10000));
+
+        string text = Content(pdf);
+        Assert.Equal(0, Count(text, " h B"));
+        Assert.Equal(1, Count(text, " f\n"));
+        Assert.Equal(4, Count(text, " l S\n"));
+    }
+
+    [Fact]
+    public void DrawContent_KeepsGridsPastTheCropRect()
+    {
+        // Grids run past the crop to their bubbles (the reference draws them to the bubble row), so the
+        // crop clip spares them while walls clip: the wall ends at the crop edge, the grid runs on.
+        var document = Document(Level(500, "Level 1", 0),
+            Wall(600, 500, 0, 0, 40, 0), Grid(700, 0, 0, 30, 0));
+        var content = PlanPrinter.CollectLevel(document, 500)!;
+        var pdf = new PdfDocument();
+        var page = pdf.AddPage(new PdfPageSize(1000, 1000));
+        PlanPrinter.DrawContent(page, content, 100, 10, 10, 0.9, null, document, null, (0, -1000, 3048, 1000));
+
+        string text = Content(pdf);
+        double maxX = 0;
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
+            text, @"([\d.]+) ([\d.]+) m ([\d.]+) ([\d.]+) l S"))
+            maxX = Math.Max(maxX, double.Parse(m.Groups[3].Value, System.Globalization.CultureInfo.InvariantCulture));
+        // The clipped wall ends at content x 3048 mm (~143 pt); the spared grid still runs to 9144 mm (~316 pt).
+        Assert.True(maxX > 300, $"Grid line clipped (ends at {maxX} pt).");
+    }
+
     private static double Area(List<(double X, double Y)> points)
     {
         double sum = 0;
