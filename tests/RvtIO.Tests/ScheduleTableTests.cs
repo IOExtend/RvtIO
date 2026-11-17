@@ -56,6 +56,8 @@ public class ScheduleTableTests
         Assert.Equal(0.05886, revision.Columns[0].WidthFt, 4);
         Assert.Equal(0.17060, revision.Columns[1].WidthFt, 4);
         Assert.Equal(0.07894, revision.Columns[2].WidthFt, 4);
+        // The fixed height the empty body grid pads to (ScheduleSegmentRec, 21 rows at 16.30 pt).
+        Assert.Equal(0.4340, revision.FixedHeightFt, 4);
 
         // The How-do-I table: Level / Topic / What view / Reviewed? with title, headers, grid and outline.
         Assert.True(tables.ContainsKey(970087), "How-do-I table 970087 did not decode.");

@@ -1942,7 +1942,7 @@ public partial class RvtFileReader
         ParsingState state, byte[] data, int start, uint size, ushort classId, uint owner)
     {
         if (classId != 1012) return;
-        TfBlockDeserializer.ScheduleTableDef table = new(new(), 0, false, false, false, false, 0, 0, 0, new(), new());
+        TfBlockDeserializer.ScheduleTableDef table = new(new(), 0, false, false, false, false, 0, 0, 0, new(), new(), 0);
         bool read = start >= 0 && start <= data.Length - 4
             && BitConverter.ToUInt32(data, start) == owner
             && TfBlockDeserializer.TryExtractScheduleTable(data, start, size, classId, out table);

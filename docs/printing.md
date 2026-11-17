@@ -206,9 +206,11 @@ selection nor drawing.
   with their stored texts, but not evaluated body cells: Revit evaluates them from the model when it draws the schedule.
   Every per-sheet schedule instance prints at its instance origin with its decoded columns, show flags, grid and outline
   pens (the negative category ids they name, resolved against the Object Styles), title bands and body grid; revision
-  rows come from the model revisions explicitly present on that sheet (the sample lists none, like the reference) and
-  planting rows group the placed instances by their resolved type (type mark with the T{n} fallback, common name from
-  the type), with the stored leading empty rows and a header that wraps into its columns like the reference.
+  rows come from the model revisions explicitly present on that sheet (the sample lists none, like the reference),
+  padded with empty rows to the decoded fixed height (ScheduleSegmentRec: 21 rows at the measured 16.30 pt pitch
+  on the sample) the way Revit fills the table to its height; and planting rows group the placed instances by
+  their resolved type (type mark with the T{n} fallback, common name from the type), with the stored leading
+  empty rows and a header that wraps into its columns like the reference.
 - **The table grids of the title block family**: the linework, fixed texts and labels of the symbol are drawn, and the
   per-sheet schedule instances (revision tables, planting schedule, How-do-I table) print from their decoded view
   blocks; the symbol-embedded schedule template itself (the cached revision grid with GINFO_NOT_PRINTED) is left out.
@@ -224,7 +226,7 @@ selection nor drawing.
 ## Next steps
 
 1. Decode the crop region of a rotated view and of a crop region switched off with live bounds, and the annotation crop that keeps titles and labels outside the model crop. Decode the record that places a viewport the file puts off the page.
-2. Evaluate the body rows of element schedules from the model (the How-do-I reference body is computed, not stored), and account for the revision table's empty body grid.
+2. Evaluate the body rows of element schedules from the model (the How-do-I reference body is computed, not stored).
 3. Decode the geometry of the property lines and the linework of a drafting view.
 4. Hide the remaining occluded detail the painter's fills cover only visually (edges whose midpoint test misses, near-coincident stacked faces), and draw grid lines dashed as the reference does.
 5. Widen the same printing to the releases the reader supports in its own schema.
@@ -235,7 +237,7 @@ Measured on the sample project `rac_basic_sample_project.rvt` against the refere
 
 | Sheet | Printed | Still different |
 |---|---|---|
-| A001 Title Sheet | the title texts, the five renderings from the file, the logo, the "How do I" table with its title, long-text band, header and body grid at its instance origin, and every revision table with its header | the evaluated body text of the "How do I" table (computed by Revit, not stored) and the revision table's empty body grid |
+| A001 Title Sheet | the title texts, the five renderings from the file, the logo, the "How do I" table with its title, long-text band, header and body grid at its instance origin, and every revision table with its header and empty body grid to its fixed height | the evaluated body text of the "How do I" table (computed by Revit, not stored) |
 | A101 Site Plan | topography with its outline and contours (every fifth an index contour), the house as a dark mass, the planting and its tags T1..., the north arrow, the planting schedule with Type Mark / Common Name / Count in a ruled table at its instance origin | the property and setback lines (the file stores no geometry for them) |
 | A102 Plans | both plans with the room colours of the reference, furniture, stairs, door and window tags, dimensions on all four sides, the room legend, the room tags, and the section marks (the trace of every decoded section plane, cut to the walls) | the view reference marks (annotation elements whose positions the reader does not decode) |
 | A103 Elevations/Sections | South elevation and the Longitudinal Section cut at its plane, level markers, the faded site; hidden lines removed, coplanar triangulation diagonals not inked, crop-filtered at generation | residual hidden detail and solid grid lines where the reference dashes them |

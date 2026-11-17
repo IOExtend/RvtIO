@@ -86,7 +86,7 @@ namespace RvtIO.Model
         /// <summary>DBViewSchedule id -> its table definition (visible columns, category, show flags, grid and
         /// outline line styles, title-area rows and body sections), for the views whose block decoded exactly once.</summary>
         [System.Text.Json.Serialization.JsonIgnore]
-        internal IReadOnlyDictionary<int, (List<(string Heading, double WidthFt)> Columns, int CategoryId, bool ShowTitle, bool ShowHeaders, bool ShowGridLines, bool ShowOutline, int GridStyleId, int OutlineStyleId, double TitleHeightFt, List<(double HeightFt, string Text)> TitleBands, List<Parsing.TfBlockDeserializer.ScheduleBodySection> BodySections)>? ScheduleTables { get; set; }
+        internal IReadOnlyDictionary<int, (List<(string Heading, double WidthFt)> Columns, int CategoryId, bool ShowTitle, bool ShowHeaders, bool ShowGridLines, bool ShowOutline, int GridStyleId, int OutlineStyleId, double TitleHeightFt, List<(double HeightFt, string Text)> TitleBands, List<Parsing.TfBlockDeserializer.ScheduleBodySection> BodySections, double FixedHeightFt)>? ScheduleTables { get; set; }
 
         /// <summary>Sheet element id -> the revision ids explicitly present on it, for the sheets whose block
         /// decoded exactly once.</summary>

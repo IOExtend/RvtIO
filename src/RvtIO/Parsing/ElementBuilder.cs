@@ -5803,7 +5803,8 @@ internal static partial class ElementBuilder
                 pair => (pair.Value.Table!.Columns, pair.Value.Table!.CategoryId, pair.Value.Table!.ShowTitle,
                     pair.Value.Table!.ShowHeaders, pair.Value.Table!.ShowGridLines, pair.Value.Table!.ShowOutline,
                     pair.Value.Table!.GridStyleId, pair.Value.Table!.OutlineStyleId,
-                    pair.Value.Table!.TitleHeightFt, pair.Value.Table!.TitleBands, pair.Value.Table!.BodySections));
+                    pair.Value.Table!.TitleHeightFt, pair.Value.Table!.TitleBands, pair.Value.Table!.BodySections,
+                    pair.Value.Table!.FixedHeightFt));
         rvtInfo.ScheduleSheetRevisions = state?.SheetRevisions
             .Where(pair => pair.Value is { BlockCount: 1, RevisionIds: not null })
             .ToDictionary(pair => (int)pair.Key,

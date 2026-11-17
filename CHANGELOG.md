@@ -184,6 +184,8 @@ The text of a sheet prints too: a text note's RTF string (class 0x0F83 block) is
 
 - Sheets print the planting schedule the way the reference does: rows grouped by the resolved planting type (type mark with the T{n} fallback, common name from the type element) counting the placed instances, the stored leading empty rows, the stored title height, a header that wraps into its columns (Type Mark wraps to two lines, growing the header by the measured extra line pitch), and the grid/outline pens resolved from the negative category ids they name (the outline, pen 5, prints at 1.42 pt as in the reference). Measured against the Revit export of the sample: A101 recall 70.1% -> 72.5%, precision 49.4% -> 50.8%, text 44.4% -> 47.3%; other sheets unchanged. New tests: `SampleFile_GroupsPlantingRowsByType`, planting LeadingEmpty/BodyRows assertions.
 
+- Sheets pad revision tables with empty rows to their decoded fixed height (ScheduleSegmentRec.m_height, 0.434 ft on the sample): the reference draws 21 empty body rows at the measured 16.30 pt pitch under the header even though no revision is explicitly present, and the previous header-only tables missed that whole grid on every sheet. The revision body pitch is measured on the sample's reference (rvt-prt's 0.2559 in overshoots here and drifts out of tolerance). Measured against the Revit export: A001 recall 92.6% -> 99.4% at 100% precision, A101 72.5% -> 86.3% / 50.8% -> 55.4%, A102 72.8% -> 76.8% / 74.9% -> 76.3%, A103 74.0% -> 84.9% / 54.3% -> 56.6%, A104 55.1% -> 63.0% / 52.7% -> 55.1%, A105 58.9% -> 69.2% / 56.5% -> 59.5%; no regressions. New tests: revision FixedHeightFt assertion.
+
 ## [0.4.0] - 2026-11-13
 
 ### Breaking changes

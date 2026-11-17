@@ -3716,7 +3716,8 @@ internal static partial class TfBlockDeserializer
     internal sealed record ScheduleTableDef(List<(string Heading, double WidthFt)> Columns, int CategoryId,
         bool ShowTitle, bool ShowHeaders, bool ShowGridLines, bool ShowOutline,
         int GridStyleId, int OutlineStyleId,
-        double TitleHeightFt, List<(double HeightFt, string Text)> TitleBands, List<ScheduleBodySection> BodySections);
+        double TitleHeightFt, List<(double HeightFt, string Text)> TitleBands, List<ScheduleBodySection> BodySections,
+        double FixedHeightFt);
 
     /// <summary>Reads a schedule instance (class 3532): the DBViewSchedule it shows and its top-left origin in
     /// sheet feet. False when anything fails to decode.</summary>
@@ -3815,7 +3816,7 @@ internal static partial class TfBlockDeserializer
     internal static bool TryExtractScheduleTable(
         byte[] d, int blockStart, uint dataSize, ushort classId, out ScheduleTableDef table, out string failure)
     {
-        table = new(new(), 0, false, false, false, false, 0, 0, 0, new(), new());
+        table = new(new(), 0, false, false, false, false, 0, 0, 0, new(), new(), 0);
         failure = "ok";
         if (classId != 1012
             || blockStart < 0
@@ -3872,6 +3873,7 @@ internal static partial class TfBlockDeserializer
             var rowHeights = new Dictionary<int, double>();
             var rowCellQis = new Dictionary<int, List<int>>();
             var cellInfos = new Dictionary<int, (string Text, int CellType, int CoverBottom, int CoverRight)>();
+            double fixedHeightFt = 0;
             for (int qi = 0; qi < queue.Count; qi++)
             {
                 ushort queuedClass = queue[qi].Cls;
@@ -3975,6 +3977,27 @@ internal static partial class TfBlockDeserializer
                     cellInfos[qi] = (cellText, cellType, coverBottom, coverRight);
                     continue;
                 }
+                if (queuedClass == 3539)
+                {
+                    // A schedule segment record carries the table's fixed height (rvt-prt ScheduleSegmentRec):
+                    // read only the known fixed layout, otherwise the generic walk below consumes it unchanged.
+                    var segFields = SerializationFields(3539);
+                    if (segFields != null && segFields.Count == 3
+                        && segFields[0] is { Declaring: 3539, Name: "m_offset", Type: 7, Mods: 16, Cnt: 3 }
+                        && segFields[1] is { Declaring: 3539, Name: "m_height", Type: 7, Mods: 0 }
+                        && segFields[2] is { Declaring: 3539, Name: "m_scheduleInstanceIds", Type: 14, Mods: 80 })
+                    {
+                        ReadF64(cur); ReadF64(cur); ReadF64(cur);
+                        double segHeight = ReadF64(cur);
+                        uint segCount = ReadU32(cur);
+                        if (segCount != 0xFFFFFFFF)
+                        {
+                            if (segCount > 100_000 || !cur.Take(checked((int)segCount * 4))) throw Fail;
+                        }
+                        if (segHeight > fixedHeightFt && segHeight <= 1000) fixedHeightFt = segHeight;
+                        continue;
+                    }
+                }
                 var qf = SerializationFields(queuedClass);
                 if (qf == null)
                 {
@@ -4010,7 +4033,7 @@ internal static partial class TfBlockDeserializer
             AssembleScheduleTitleBody(sectionInfos, rowHeights, rowCellQis, cellInfos,
                 out double titleHeightFt, out List<(double HeightFt, string Text)> titleBands, out List<ScheduleBodySection> bodySections);
             table = new ScheduleTableDef(columns, categoryId, showTitle, showHeaders, showGridLines, showOutline,
-                gridStyleId, outlineStyleId, titleHeightFt, titleBands, bodySections);
+                gridStyleId, outlineStyleId, titleHeightFt, titleBands, bodySections, fixedHeightFt);
             return true;
         }
         catch (DecodeFail)

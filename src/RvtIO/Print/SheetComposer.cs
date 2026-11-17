@@ -629,7 +629,7 @@ public static class SheetComposer
         List<(string Heading, double WidthFt)> Columns, int CategoryId,
         bool ShowTitle, bool ShowHeaders, bool ShowGridLines, bool ShowOutline, string Title,
         double TitleHeightFt, List<(double HeightFt, string Text)> TitleBands, List<Parsing.TfBlockDeserializer.ScheduleBodySection> BodySections,
-        int GridStyleId, int OutlineStyleId);
+        int GridStyleId, int OutlineStyleId, double FixedHeightFt);
 
     /// <summary>The schedule instances placed on the sheet whose placement and table both decoded: the revision
     /// schedules of the title block, the planting schedule and the How-do-I table.</summary>
@@ -649,7 +649,7 @@ public static class SheetComposer
                 table.Columns, table.CategoryId, table.ShowTitle, table.ShowHeaders,
                 table.ShowGridLines, table.ShowOutline, title,
                 table.TitleHeightFt, table.TitleBands, table.BodySections,
-                table.GridStyleId, table.OutlineStyleId));
+                table.GridStyleId, table.OutlineStyleId, table.FixedHeightFt));
         }
         return result;
     }
@@ -671,9 +671,11 @@ public static class SheetComposer
         const double InchToMm = 25.4;
         bool revision = schedule.CategoryId == RevisionsCategoryId;
         // Measured styles (rvt-prt tables.py SCHEDULE_STYLES): the file decodes no text sizes.
+        // The revision body pitch is measured on the sample's reference (16.30 pt rows of 12 pt Arial);
+        // rvt-prt's 0.2559 in overshoots here and would drift the grid out of tolerance within a few rows.
         double titleH = revision ? 0 : 0.37 * InchToMm;
         double headH = revision ? 0.3838 * InchToMm : 0.27 * InchToMm;
-        double bodyH = revision ? 0.2559 * InchToMm : 0.2395 * InchToMm;
+        double bodyH = revision ? 16.30 * PtToMm : 0.2395 * InchToMm;
         double titlePt = 19, headPt = revision ? 19 : 12.5, bodyPt = 12.5;
         double insetMm = 0.037 * InchToMm;
         // The stored title height wins where the file decodes it (the How-do-I title area: stored 20.2 pt
@@ -847,6 +849,15 @@ public static class SheetComposer
                 if (schedule.ShowGridLines)
                     page.DrawLine(edges[0], y, edges[^1], y, gridMm);
                 firstHeader = false;
+            }
+            if (revision && schedule.FixedHeightFt > 0)
+            {
+                // A fixed-height table shows empty rows to its height (rvt-prt draw_schedule padding): the
+                // sample's revision tables list no revisions but draw empty body rows to their 0.434 ft
+                // fixed height, 21 rows at the measured 16.30 pt pitch.
+                double fixedBottomY = tableTop - schedule.FixedHeightFt * FeetToMillimetres;
+                while (body.Count < 10000 && y - (body.Count + 1) * bodyH >= fixedBottomY - 0.01 * PtToMm)
+                    body.Add(Enumerable.Repeat("", widths.Length).ToList());
             }
             foreach (var row in body)
             {
