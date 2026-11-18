@@ -1,3 +1,4 @@
+using RvtIO.Geometry;
 using RvtIO.Geometry.Meshing;
 using RvtIO.Ifc;
 using RvtIO.Model;
@@ -90,13 +91,13 @@ public class AnalyticSolidMeasureTests
                 { SourceMeasures = (12, 5) }],
         };
 
-        var shell = Assert.Single(IfcExporter.ShellsOfCurrent(geometry));
+        var shell = Assert.Single(BrepMeasures.ShellsOfCurrent(geometry));
         Assert.Equal(expected, shell.SourceMeasured);
         Assert.Equal(expected ? 12 : 4, shell.Area, 12);
         if (expected)
         {
             Assert.Equal(5, shell.Volume, 12);
-            Assert.Equal(12, IfcExporter.SurfaceAreaCurrent(geometry), 12);
+            Assert.Equal(12, BrepMeasures.SurfaceAreaCurrent(geometry), 12);
         }
     }
 

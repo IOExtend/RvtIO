@@ -1,3 +1,4 @@
+using RvtIO.Geometry;
 using RvtIO.Model;
 
 namespace RvtIO.Ifc;

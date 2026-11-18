@@ -1,5 +1,7 @@
+using static RvtIO.Geometry.ArcRuns;
 using RvtIO.Geometry.Meshing;
 using RvtIO.Model;
+using static RvtIO.Geometry.BrepMeasures;
 
 namespace RvtIO.Ifc;
 

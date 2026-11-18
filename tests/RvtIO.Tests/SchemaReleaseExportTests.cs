@@ -56,8 +56,8 @@ public class SchemaReleaseExportTests
             Assert.True(originalIfc.ExportedProducts > 0);
             Assert.Equal(originalIfc.ExportedProducts, copyIfc.ExportedProducts);
 
-            Parsing.ValidatedElementNames.Apply(expected, originalReader.LastParsingState!);
-            Parsing.ValidatedElementNames.Apply(actual, copyReader.LastParsingState!);
+            RvtIO.Export.ValidatedElementNames.Apply(expected, originalReader.LastParsingState!);
+            RvtIO.Export.ValidatedElementNames.Apply(actual, copyReader.LastParsingState!);
             var expectedIdentity = new CompactIdentity(CompactUniverse.Select(expected));
             var actualIdentity = new CompactIdentity(CompactUniverse.Select(actual));
             var expectedSource = CompactPropertySources.Create(expected, originalReader.LastParsingState, true, identity: expectedIdentity);

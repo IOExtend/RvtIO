@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using RvtIO.Geometry;
 using RvtIO.Ifc;
 using RvtIO.Model;
 using Xunit;
@@ -32,7 +33,7 @@ public class IfcExporterInsetCapsTests
         var f = Create();
         Assert.True(f.Recover(out var gross));
         Assert.Equal(6, gross.Faces.Count);
-        Assert.True(IfcExporter.IsExactFacetedShell(gross.Faces, gross.BrepSolids![0].FaceIndices));
+        Assert.True(FacetedShell.IsExactFacetedShell(gross.Faces, gross.BrepSolids![0].FaceIndices));
         Assert.True(IfcExporter.TryGetExactVerticalRectangularPrismSweptOpening(gross, out var box));
         Assert.Equal(1690, Math.Max(box.WidthFt, box.DepthFt) * 304.8, 5);
         Assert.Equal(80, Math.Min(box.WidthFt, box.DepthFt) * 304.8, 5);

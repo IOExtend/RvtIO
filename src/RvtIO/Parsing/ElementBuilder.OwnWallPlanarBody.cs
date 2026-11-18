@@ -1,3 +1,4 @@
+using RvtIO.Geometry;
 using RvtIO.Internal;
 using RvtIO.Model;
 
@@ -26,7 +27,7 @@ internal static partial class ElementBuilder
             || geometry.BrepSolids is not { Count: > 0 } solids
             || solids.Sum(solid => solid.FaceIndices.Count) != geometry.Faces.Count
             || solids.SelectMany(solid => solid.FaceIndices).Distinct().Count() != geometry.Faces.Count
-            || solids.Any(solid => !solid.IsClosed || !Ifc.IfcExporter.TryOrientExactFacetedShell(
+            || solids.Any(solid => !solid.IsClosed || !FacetedShell.TryOrientExactFacetedShell(
                 geometry.Faces, solid.FaceIndices, out _, triangulateNonPlanarFaces: false))) return false;
         // Body selection does not reinterpret legacy graphics-style/header metadata.
         geometry.GStyleElemId = element.Geometry?.GStyleElemId ?? 0;

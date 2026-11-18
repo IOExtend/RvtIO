@@ -1,3 +1,4 @@
+using RvtIO.Geometry;
 using RvtIO.Ifc;
 using RvtIO.Model;
 using RvtIO.Parsing;

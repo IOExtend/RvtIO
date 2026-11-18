@@ -3,6 +3,7 @@ using System.IO.Compression;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using RvtIO.Geometry;
 using RvtIO.Ifc;
 using RvtIO.Model;
 using Xunit;
@@ -32,7 +33,7 @@ public class IfcExporterJoinNotchTests
         var original=f.Operands[f.Wall.Id][0];
         Assert.True(f.Recover(out var gross));
         Assert.Equal(original,f.Operands[f.Wall.Id][0]);
-        Assert.True(IfcExporter.IsExactFacetedShell(gross.Faces,gross.BrepSolids![0].FaceIndices));
+        Assert.True(FacetedShell.IsExactFacetedShell(gross.Faces,gross.BrepSolids![0].FaceIndices));
         Assert.True(IfcExporter.TryGetExactVerticalRectangularPrismSweptOpening(gross,out var box));
         Assert.Equal(2500,Math.Max(box.WidthFt,box.DepthFt)*304.8,5);
         Assert.Equal(200,Math.Min(box.WidthFt,box.DepthFt)*304.8,5);

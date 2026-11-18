@@ -1,3 +1,4 @@
+using RvtIO.Geometry;
 using RvtIO.Ifc;
 using RvtIO.Internal;
 using RvtIO.Model;
@@ -2008,7 +2009,7 @@ public class IfcExporterWallGeometryTests
         var subdivided = Geometry(low, high);
 
         Assert.False(IfcExporter.IsExactVerticalExtrusionBoundary(subdivided));
-        Assert.True(IfcExporter.IsExactFacetedShell(
+        Assert.True(FacetedShell.IsExactFacetedShell(
             subdivided.Faces, subdivided.BrepSolids![0].FaceIndices));
         Assert.True(IfcExporter.TryGetExactStraightWallVerticalExtrusionDefinition(
             subdivided, location, 1, bounds,
@@ -2031,7 +2032,7 @@ public class IfcExporterWallGeometryTests
         var singleSubdivision = Geometry(singleLow, singleHigh);
         Assert.False(IfcExporter.IsExactVerticalExtrusionBoundary(
             singleSubdivision));
-        Assert.True(IfcExporter.IsExactFacetedShell(
+        Assert.True(FacetedShell.IsExactFacetedShell(
             singleSubdivision.Faces,
             singleSubdivision.BrepSolids![0].FaceIndices));
         Assert.True(IfcExporter.TryGetExactStraightWallVerticalExtrusionDefinition(
@@ -2083,7 +2084,7 @@ public class IfcExporterWallGeometryTests
         mismatchedSingleHigh[^1][2] = 0.1;
         var mismatchedSingleSubdivision =
             Geometry(singleLow, mismatchedSingleHigh);
-        Assert.True(IfcExporter.IsExactFacetedShell(
+        Assert.True(FacetedShell.IsExactFacetedShell(
             mismatchedSingleSubdivision.Faces,
             mismatchedSingleSubdivision.BrepSolids![0].FaceIndices));
         Assert.False(IfcExporter.TryGetExactStraightWallVerticalExtrusionDefinition(
@@ -2107,7 +2108,7 @@ public class IfcExporterWallGeometryTests
             [2.25, 0.5, -0.15], [1.25, 0.5, -0.15],
         ];
         var horizontalSubdivision = Geometry(horizontalLow, horizontalHigh);
-        Assert.True(IfcExporter.IsExactFacetedShell(
+        Assert.True(FacetedShell.IsExactFacetedShell(
             horizontalSubdivision.Faces,
             horizontalSubdivision.BrepSolids![0].FaceIndices));
         Assert.False(IfcExporter.TryGetExactStraightWallVerticalExtrusionDefinition(
@@ -10612,7 +10613,7 @@ public class IfcExporterWallGeometryTests
             ],
         };
         var standalone = new Dictionary<int, List<int>>();
-        Assert.True(IfcExporter.IsExactFacetedShell(
+        Assert.True(FacetedShell.IsExactFacetedShell(
             rebuiltFaces, Enumerable.Range(0, 12).ToList()));
         bool TryValidation() => IfcExporter
             .TryGetVerifiedGrossWallBoundaryFromCompleteOpenFifteenFaceContainedRedundantOpenings(
@@ -10907,7 +10908,7 @@ public class IfcExporterWallGeometryTests
                 inverseHosts, emittedCutters, emittedOperands,
                 standalone, exactPairs, out _, out _);
 
-        Assert.True(IfcExporter.IsExactFacetedShell(
+        Assert.True(FacetedShell.IsExactFacetedShell(
             rebuiltFaces, Enumerable.Range(0, 10).ToList()));
         Assert.True(IfcExporter
             .TryGetVerifiedGrossWallBoundaryFromCompleteOpenThirteenFaceDualAlternativeBottomCoincidentFamilyOpening(
@@ -11273,7 +11274,7 @@ public class IfcExporterWallGeometryTests
             BaseZFt: 0, HeightFt: WriterHeight,
             ExactDepth: true, IsFamilyCutLoop: true);
 
-        Assert.True(IfcExporter.IsExactFacetedShell(
+        Assert.True(FacetedShell.IsExactFacetedShell(
             rebuiltFaces, Enumerable.Range(0, 10).ToList()));
         Assert.True(IfcExporter
             .TryGetExactGrossWallBoundaryFromCompleteOpenTwelveFaceDetachedAlternativeFullHeightGapSource(
@@ -18728,7 +18729,7 @@ public class IfcExporterWallGeometryTests
             .SelectMany(face => face.OuterVertices!)
             .Select(point => (point[0], point[1], point[2]))
             .Distinct().Count());
-        Assert.True(IfcExporter.IsExactFacetedShell(
+        Assert.True(FacetedShell.IsExactFacetedShell(
             completed.Faces, completed.BrepSolids!.Single().FaceIndices));
         Assert.Contains(completed.Faces, face => face.OuterVertices!.Any(point =>
             point[0] == 0 && point[1] == NormalMinimum
@@ -23988,7 +23989,7 @@ public class IfcExporterWallGeometryTests
         Assert.True(Assert.Single(boundary.BrepSolids!).IsClosed);
         Assert.True(IfcExporter.TryOrientExactFacetedShell(boundary.Faces,
             Enumerable.Range(0, boundary.Faces.Count).ToArray(), out var oriented));
-        Assert.True(IfcExporter.IsExactFacetedShell(oriented,
+        Assert.True(FacetedShell.IsExactFacetedShell(oriented,
             Enumerable.Range(0, oriented.Count).ToArray()));
 
         static (double X, double Y, double Z) Newell(IReadOnlyList<double[]> ring)
@@ -24927,10 +24928,10 @@ public class IfcExporterWallGeometryTests
             Face([c, a, d]),
         };
 
-        Assert.True(IfcExporter.IsExactFacetedShell(faces, [0, 1, 2, 3]));
+        Assert.True(FacetedShell.IsExactFacetedShell(faces, [0, 1, 2, 3]));
         Assert.True(IfcExporter.TryOrientExactFacetedShell(
             faces, [0, 1, 2, 3], out var oriented));
-        Assert.True(IfcExporter.IsExactFacetedShell(oriented, [0, 1, 2, 3]));
+        Assert.True(FacetedShell.IsExactFacetedShell(oriented, [0, 1, 2, 3]));
     }
 
     [Fact]
@@ -24949,7 +24950,7 @@ public class IfcExporterWallGeometryTests
 
         Assert.True(IfcExporter.TryOrientExactFacetedShell(
             faces, Enumerable.Range(0, faces.Count).ToArray(), out var oriented));
-        Assert.True(IfcExporter.IsExactFacetedShell(
+        Assert.True(FacetedShell.IsExactFacetedShell(
             oriented, Enumerable.Range(0, oriented.Count).ToArray()));
     }
 
@@ -24984,7 +24985,7 @@ public class IfcExporterWallGeometryTests
 
         Assert.True(IfcExporter.TryOrientExactFacetedShell(
             faces, Enumerable.Range(0, faces.Count).ToArray(), out var oriented));
-        Assert.True(IfcExporter.IsExactFacetedShell(
+        Assert.True(FacetedShell.IsExactFacetedShell(
             oriented, Enumerable.Range(0, oriented.Count).ToArray()));
 
         var coplanarFace = oriented.Single(face => face.InnerVertices is { Count: 1 });
@@ -25131,10 +25132,10 @@ public class IfcExporterWallGeometryTests
             Face([c, a, d]),
         };
 
-        Assert.True(IfcExporter.IsExactFacetedShell(faces, [0, 1, 2, 3]));
+        Assert.True(FacetedShell.IsExactFacetedShell(faces, [0, 1, 2, 3]));
         Assert.True(IfcExporter.TryOrientExactFacetedShell(
             faces, [0, 1, 2, 3], out var oriented));
-        Assert.True(IfcExporter.IsExactFacetedShell(oriented, [0, 1, 2, 3]));
+        Assert.True(FacetedShell.IsExactFacetedShell(oriented, [0, 1, 2, 3]));
     }
 
     [Fact]
@@ -25150,10 +25151,10 @@ public class IfcExporterWallGeometryTests
             Face([c, a, d]),
         };
 
-        Assert.False(IfcExporter.IsExactFacetedShell(faces, [0, 1, 2, 3]));
+        Assert.False(FacetedShell.IsExactFacetedShell(faces, [0, 1, 2, 3]));
         Assert.True(IfcExporter.TryOrientExactFacetedShell(
             faces, [0, 1, 2, 3], out var oriented));
-        Assert.True(IfcExporter.IsExactFacetedShell(oriented, [0, 1, 2, 3]));
+        Assert.True(FacetedShell.IsExactFacetedShell(oriented, [0, 1, 2, 3]));
         Assert.All(oriented, face => Assert.Equal(3, face.OuterVertices!.Count));
     }
 
@@ -25180,7 +25181,7 @@ public class IfcExporterWallGeometryTests
         Assert.True(IfcExporter.TryOrientPrecisionContractedFacetedShell(
             faces, [0, 1, 2, 3], out var retained, out var oriented));
         Assert.Equal([0, 1, 2, 3], retained);
-        Assert.True(IfcExporter.IsExactFacetedShell(oriented, [0, 1, 2, 3]));
+        Assert.True(FacetedShell.IsExactFacetedShell(oriented, [0, 1, 2, 3]));
     }
 
     [Fact]
@@ -25229,7 +25230,7 @@ public class IfcExporterWallGeometryTests
             Face([c, a, d]),
         };
 
-        Assert.False(IfcExporter.IsExactFacetedShell(faces, [0, 1, 2, 3]));
+        Assert.False(FacetedShell.IsExactFacetedShell(faces, [0, 1, 2, 3]));
         Assert.False(IfcExporter.TryOrientPrecisionContractedFacetedShell(
             faces, [0, 1, 2, 3], out _, out _));
     }
@@ -25248,7 +25249,7 @@ public class IfcExporterWallGeometryTests
 
         Assert.True(IfcExporter.TryOrientExactFacetedShell(
             faces, [0, 1, 2, 3], out var oriented));
-        Assert.True(IfcExporter.IsExactFacetedShell(oriented, [0, 1, 2, 3]));
+        Assert.True(FacetedShell.IsExactFacetedShell(oriented, [0, 1, 2, 3]));
 
         double volume = 0;
         foreach (var face in oriented)
@@ -25549,7 +25550,7 @@ public class IfcExporterWallGeometryTests
             FamilyCutGeometry = BoxGeometry(-1, -0.1, 0, 1, 0.5, 4),
         };
         type.FamilyCutGeometry.Faces[0].OuterVertices!.Reverse();
-        Assert.False(IfcExporter.IsExactFacetedShell(
+        Assert.False(FacetedShell.IsExactFacetedShell(
             type.FamilyCutGeometry.Faces,
             type.FamilyCutGeometry.BrepSolids!.Single().FaceIndices));
         var instance = new Element
@@ -25648,7 +25649,7 @@ public class IfcExporterWallGeometryTests
         Assert.NotNull(opening.Boundary);
         Assert.Equal(6, opening.Boundary!.Faces.Count);
         Assert.Equal([-1, -2.25, 0, 1, 2.25, 4], opening.Boundary.BoundingBox!);
-        Assert.True(IfcExporter.IsExactFacetedShell(
+        Assert.True(FacetedShell.IsExactFacetedShell(
             opening.Boundary.Faces, opening.Boundary.BrepSolids!.Single().FaceIndices));
     }
 
@@ -26392,7 +26393,7 @@ public class IfcExporterWallGeometryTests
         var solid = Assert.Single(gross.BrepSolids!);
         Assert.True(solid.IsClosed);
         Assert.Equal(Enumerable.Range(0, 10), solid.FaceIndices);
-        Assert.True(IfcExporter.IsExactFacetedShell(
+        Assert.True(FacetedShell.IsExactFacetedShell(
             gross.Faces, solid.FaceIndices));
         Assert.True(IfcExporter
             .TryGetExactStraightWallVerticalExtrusionDefinition(
@@ -26584,7 +26585,7 @@ public class IfcExporterWallGeometryTests
         var solid = Assert.Single(gross.BrepSolids!);
         Assert.True(solid.IsClosed);
         Assert.Equal(Enumerable.Range(0, 6), solid.FaceIndices);
-        Assert.True(IfcExporter.IsExactFacetedShell(
+        Assert.True(FacetedShell.IsExactFacetedShell(
             gross.Faces, solid.FaceIndices));
         Assert.True(IfcExporter.CanExportStandardCaseWallAsSweptSolid(
             data.Wall, data.Wall.BoundingBox!, gross));
@@ -27202,7 +27203,7 @@ public class IfcExporterWallGeometryTests
         var grossSolid = Assert.Single(gross.BrepSolids!);
         Assert.True(grossSolid.IsClosed);
         Assert.Equal(Enumerable.Range(0, 6), grossSolid.FaceIndices);
-        Assert.True(IfcExporter.IsExactFacetedShell(
+        Assert.True(FacetedShell.IsExactFacetedShell(
             gross.Faces, grossSolid.FaceIndices));
         var grossTopology = ExactTopology(gross, grossSolid.FaceIndices);
         Assert.Equal((8, 12, 1), grossTopology.Summary);

@@ -1,5 +1,7 @@
+using RvtIO.Geometry;
 using System.Globalization;
 using RvtIO.Model;
+using static RvtIO.Geometry.BrepMeasures;
 
 namespace RvtIO.Ifc;
 
@@ -923,19 +925,6 @@ public partial class IfcExporter
     private static (double Volume, double Area)? SolidTotalsCurrent(IReadOnlyList<ShellInfo> shells) =>
         shells.Count == 0 ? null
             : (shells.Sum(shell => shell.Volume) * CubicFeetToCubicMetres, shells.Sum(shell => shell.Area) * SquareFeetToSquareMetres);
-
-    /// <summary>Volume (m3) and surface area (m2) of the solids the exporter takes: the sum of the surface integrals of the Geometry nodes it takes
-    /// (a cutting node, whose measure has a negative volume, is not taken). Null unless every node of the geometry has its integrals.</summary>
-    internal static (double Volume, double Area)? NodeSolidTotalsCurrent(GeometryData? geometry)
-    {
-        if (geometry?.NodeMeasures is not { Count: > 0 } measures || geometry.Faces.Count == 0) return null;
-        var byNode = new Dictionary<int, RvtIO.Parsing.MeshNodeMeasure>();
-        foreach (var measure in measures) byNode.TryAdd(measure.Node, measure);
-        if (geometry.Faces.Any(face => face.GeometryNode > 0 && !byNode.ContainsKey(face.GeometryNode))) return null;
-        var taken = byNode.Values.Where(measure => measure.Volume > 0).ToList();
-        if (taken.Count == 0) return null;
-        return (taken.Sum(measure => measure.Volume) * CubicFeetToCubicMetres, taken.Sum(measure => measure.Area) * SquareFeetToSquareMetres);
-    }
 
     /// <summary>Volume (m3) of a foundation of several solids, node by node: the measure of the node when it has surface integrals, else the
     /// volume of its closed shells, else the volume of its open straight prism (<see cref="StraightPrismVolumeCurrent"/>), else nothing.

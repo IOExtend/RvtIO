@@ -1,3 +1,4 @@
+using RvtIO.Geometry;
 using System.Globalization;
 using RvtIO.Ifc;
 using RvtIO.Model;
