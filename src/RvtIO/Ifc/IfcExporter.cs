@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using RvtIO.Geometry;
 using RvtIO.Lookup;
 using RvtIO.Model;
 using RvtIO.Parsing;
@@ -1724,13 +1725,13 @@ public partial class IfcExporter
             !e.IsBlockOnly && visibleWallIds.Contains(e.Id) && e.Location is { ArcRadius: null }).ToList();
 
         // Robust model centre: median of element bbox centres.
-        bool InvalidBbox(double[] b) => !BoundsAreValid(b);
+        bool InvalidBbox(double[] b) => !GeometryValidation.BoundsAreValid(b);
 
         void Skip(Element skipped, string why) { skippedCount++; SkipLog?.Add(skipped.Id, RvtIO.SkipLog.ClassOf(skipped), why); }
         // The bounds of a 64-bit-id file count as decoded when any element carries valid ones: damaged bounds are a failure of the
         // decoder of that element, not a sign that the bounds of the file are read.
         bool boundsDecoded = info.GeometryUndecoded
-            && info.Elements.Any(e => BoundsAreValid(e.DecodedBox ?? e.Geometry?.BoundingBox));
+            && info.Elements.Any(e => GeometryValidation.BoundsAreValid(e.DecodedBox ?? e.Geometry?.BoundingBox));
         // A 64-bit-id file read without the R22 layout decodes no geometry at all, and then a wall without a body is the rule, not a
         // finding: the bodies of the file count as decoded when any element holds one.
         bool bodiesDecoded = info.GeometryUndecoded && AnyElementHoldsABody(info.Elements);
@@ -1909,7 +1910,7 @@ public partial class IfcExporter
                         || ResolveHostedElementHostIds(
                             elem, elemById, visibleWallIds, inverseHostedHostIds).Count > 0;
                     // A freestanding door or window that has a body is a real product; one without valid bounds has nothing to write.
-                    if (!hasHost && !BoundsAreValid(elem.DecodedBox ?? elem.Geometry?.BoundingBox))
+                    if (!hasHost && !GeometryValidation.BoundsAreValid(elem.DecodedBox ?? elem.Geometry?.BoundingBox))
                     { Skip(elem, "hosted-element-without-host"); continue; }
                 }
                 else
@@ -63872,15 +63873,6 @@ public partial class IfcExporter
         !hasEmittedRepresentation
         && !isEmittedAggregateParent
         && IsIfcElementSubclassProduct(ifcType);
-
-    /// <summary>Whether bounds are six finite values, each minimum not above its maximum. Bounds of an element whose decoding failed are not.</summary>
-    internal static bool BoundsAreValid(double[]? bounds)
-    {
-        if (bounds is not { Length: >= 6 }) return false;
-        for (int i = 0; i < 6; i++)
-            if (!double.IsFinite(bounds[i])) return false;
-        return bounds[0] <= bounds[3] && bounds[1] <= bounds[4] && bounds[2] <= bounds[5];
-    }
 
     /// <summary>The classes that are written without a representation because they only group other products.</summary>
     internal static bool IsRepresentationlessContainerClass(string ifcType) =>

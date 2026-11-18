@@ -1,5 +1,6 @@
 using System.Text.Json;
 using OpenMcdf;
+using RvtIO.Internal;
 using RvtIO.Model;
 using RvtIO.Parsing;
 using Xunit;
@@ -47,16 +48,16 @@ public class ExportReportTests
             File.WriteAllText(input, "x");
             string viaDots = Path.Combine(folder, "sub", "..", "a.rvt");
 
-            Assert.True(ExportReport.SameFile(input, input));
-            Assert.True(ExportReport.SameFile(input, viaDots));
-            Assert.False(ExportReport.SameFile(input, other));
+            Assert.True(FileIdentity.SameFile(input, input));
+            Assert.True(FileIdentity.SameFile(input, viaDots));
+            Assert.False(FileIdentity.SameFile(input, other));
             if (OperatingSystem.IsWindows())
-                Assert.True(ExportReport.SameFile(input, input.ToUpperInvariant()));
+                Assert.True(FileIdentity.SameFile(input, input.ToUpperInvariant()));
 
             string link = Path.Combine(folder, "link.rvt");
             try { File.CreateSymbolicLink(link, input); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { throw new SkipException("symbolic links cannot be created here"); }
-            Assert.True(ExportReport.SameFile(link, input));
+            Assert.True(FileIdentity.SameFile(link, input));
         }
         finally { Directory.Delete(folder, true); }
     }
@@ -108,14 +109,14 @@ public class ExportReportTests
             File.WriteAllText(input, "x");
             string alias = Junction(Path.Combine(folder, "alias"), real);
 
-            Assert.True(ExportReport.SameFile(Path.Combine(alias, "model.rvt"), input));
-            Assert.True(ExportReport.SameFile(input, Path.Combine(alias, "model.rvt")));
+            Assert.True(FileIdentity.SameFile(Path.Combine(alias, "model.rvt"), input));
+            Assert.True(FileIdentity.SameFile(input, Path.Combine(alias, "model.rvt")));
             // a report that does not exist yet is resolved through its existing parent
-            Assert.True(ExportReport.SameFile(Path.Combine(alias, "out.ifc"), Path.Combine(real, "out.ifc")));
-            Assert.False(ExportReport.SameFile(Path.Combine(alias, "report.json"), input));
+            Assert.True(FileIdentity.SameFile(Path.Combine(alias, "out.ifc"), Path.Combine(real, "out.ifc")));
+            Assert.False(FileIdentity.SameFile(Path.Combine(alias, "report.json"), input));
             // a junction to a junction
             string nested = Junction(Path.Combine(folder, "nested"), alias);
-            Assert.True(ExportReport.SameFile(Path.Combine(nested, "model.rvt"), input));
+            Assert.True(FileIdentity.SameFile(Path.Combine(nested, "model.rvt"), input));
         }
         finally { Cleanup(folder); }
     }
@@ -132,9 +133,9 @@ public class ExportReportTests
             File.WriteAllText(input, "x");
             string alias = DirectorySymlink(Path.Combine(folder, "alias"), real);
 
-            Assert.True(ExportReport.SameFile(Path.Combine(alias, "model.rvt"), input));
-            Assert.True(ExportReport.SameFile(Path.Combine(alias, "out.ifc"), Path.Combine(real, "out.ifc")));
-            Assert.False(ExportReport.SameFile(Path.Combine(alias, "report.json"), input));
+            Assert.True(FileIdentity.SameFile(Path.Combine(alias, "model.rvt"), input));
+            Assert.True(FileIdentity.SameFile(Path.Combine(alias, "out.ifc"), Path.Combine(real, "out.ifc")));
+            Assert.False(FileIdentity.SameFile(Path.Combine(alias, "report.json"), input));
         }
         finally { Cleanup(folder); }
     }
@@ -181,9 +182,9 @@ public class ExportReportTests
             File.Copy(input, copy);
             CreateHardLink(hard, input);
 
-            Assert.True(ExportReport.SameFile(hard, input));
-            Assert.True(ExportReport.SameFile(input, hard));
-            Assert.False(ExportReport.SameFile(copy, input));
+            Assert.True(FileIdentity.SameFile(hard, input));
+            Assert.True(FileIdentity.SameFile(input, hard));
+            Assert.False(FileIdentity.SameFile(copy, input));
 
             var coverageError = new StringWriter();
             Assert.Equal(RvtExitCodes.Usage, RvtIO.Cli.CoverageCommand.Run([input, "--report", hard], TextWriter.Null, coverageError));
@@ -201,11 +202,11 @@ public class ExportReportTests
     [Fact]
     public void RealPathKeepsAPathWithoutLinksAndTheComponentsThatDoNotExist()
     {
-        string tempRoot = ExportReport.RealPath(Path.GetFullPath(Path.GetTempPath()));
+        string tempRoot = FileIdentity.RealPath(Path.GetFullPath(Path.GetTempPath()));
         string folder = Path.Combine(tempRoot, "rvt-realpath-" + Guid.NewGuid().ToString("N"), "a", "b.json");
-        Assert.Equal(folder, ExportReport.RealPath(folder));
+        Assert.Equal(folder, FileIdentity.RealPath(folder));
         string root = Path.GetPathRoot(folder)!;
-        Assert.Equal(root, ExportReport.RealPath(root));
+        Assert.Equal(root, FileIdentity.RealPath(root));
     }
 
     [Fact]

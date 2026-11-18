@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using RvtIO.Geometry;
 using RvtIO.Ifc;
 using RvtIO.Model;
 using Xunit;
@@ -80,15 +81,15 @@ public class IfcExporterCurrentFaceBoundsTests
     public void AllVerticesStrictlyInside_ABoundaryVertexIsNotInside()
     {
         var outer = Square(0, 4);
-        Assert.True(IfcExporter.AllVerticesStrictlyInside(Square(1, 3), outer));
-        Assert.False(IfcExporter.AllVerticesStrictlyInside(Square(5, 6), outer));
-        Assert.False(IfcExporter.AllVerticesStrictlyInside(Square(0, 2), outer));   // shares the corner with the outer loop
-        Assert.False(IfcExporter.AllVerticesStrictlyInside(Square(2, 6), outer));   // one vertex inside, the others out
+        Assert.True(GeometryValidation.AllVerticesStrictlyInside(Square(1, 3), outer));
+        Assert.False(GeometryValidation.AllVerticesStrictlyInside(Square(5, 6), outer));
+        Assert.False(GeometryValidation.AllVerticesStrictlyInside(Square(0, 2), outer));   // shares the corner with the outer loop
+        Assert.False(GeometryValidation.AllVerticesStrictlyInside(Square(2, 6), outer));   // one vertex inside, the others out
         // a polygon of a vertical plane: the projection drops the axis along which the plane is flat
         var wall = new List<double[]> { new[] { 0.0, 0, 0 }, new[] { 0.0, 4, 0 }, new[] { 0.0, 4, 4 }, new[] { 0.0, 0, 4 } };
         var window = new List<double[]> { new[] { 0.0, 1, 1 }, new[] { 0.0, 3, 1 }, new[] { 0.0, 3, 3 }, new[] { 0.0, 1, 3 } };
-        Assert.True(IfcExporter.AllVerticesStrictlyInside(window, wall));
-        Assert.False(IfcExporter.AllVerticesStrictlyInside(wall, window));
+        Assert.True(GeometryValidation.AllVerticesStrictlyInside(window, wall));
+        Assert.False(GeometryValidation.AllVerticesStrictlyInside(wall, window));
     }
 
 

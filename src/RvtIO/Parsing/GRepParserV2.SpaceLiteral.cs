@@ -1,3 +1,4 @@
+using RvtIO.Geometry;
 using RvtIO.Internal;
 
 namespace RvtIO.Parsing;
@@ -30,7 +31,7 @@ internal static partial class GRepParserV2
             //
             int outer = 0;
             for (int index = 1; index < rings.Count; index++)
-                if (!Enumerable.Range(0, index).Any(earlier => Ifc.IfcExporter.AllVerticesStrictlyInside(rings[index], rings[earlier]))) outer = index;
+                if (!Enumerable.Range(0, index).Any(earlier => GeometryValidation.AllVerticesStrictlyInside(rings[index], rings[earlier]))) outer = index;
             var (normal, _) = NewellNormalArea(rings[outer]);
             faces.Add(new GRepFace
             {

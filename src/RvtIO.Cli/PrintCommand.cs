@@ -1,4 +1,5 @@
 using System.Globalization;
+using RvtIO.Internal;
 using RvtIO;
 using RvtIO.Pdf;
 using RvtIO.Print;
@@ -89,10 +90,8 @@ internal static class PrintCommand
             return Usage(error, "--where selects sheets; it needs --sheet, --all-sheets or --list-sheets.");
         bool listing = listLevels || listViews || listSheets;
         if (!listing && outputPath == null) return Usage(error, "print requires the output PDF path.");
-        // The comparison is the file's identity, not the spelling of the paths: an output path that is a hard link,
-        // symbolic link or junction to the input PDF would truncate the model. ExportReport.SameFile guards the other
-        // writing commands the same way.
-        if (outputPath != null && ExportReport.SameFile(outputPath, file))
+        // File identity also catches when a link in the output path points to the input model.
+        if (outputPath != null && FileIdentity.SameFile(outputPath, file))
         {
             error.WriteLine("The output path is the input file. Nothing was read or written.");
             return RvtExitCodes.Usage;
