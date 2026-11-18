@@ -207,6 +207,34 @@ public class ElevationPrinterTests
     }
 
     [Fact]
+    public void Collect_KeepsCutEdgesWhenTheCropWindowClipsTheFace()
+    {
+        // A detail view clips its faces to the file crop before the edge pass. Clipping only the projected points
+        // broke the one-to-one correspondence with the 3D ring, so `isCut` was never computed and the detail lost
+        // its cut profile (the sample's Stair Section had 13 cut edges without a window and 0 with one). The ring
+        // is clipped in 3D now and the projected points are rebuilt from it.
+        string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+        var view = document.Elements.FirstOrDefault(e => e.CategoryId == (int)BuiltInCategory.OST_Views
+            && e.Name == "Stair Section");
+        Assert.NotNull(view);
+        if (view!.ViewCrop is not { Active: true } crop)
+            throw new SkipException("The sample's Stair Section has no active crop.");
+
+        var withoutWindow = ElevationPrinter.Collect(document, "section", false, view);
+        var withWindow = ElevationPrinter.Collect(document, "section", false, view,
+            cropWindow: SheetComposer.CropContentRect(crop));
+
+        Assert.NotNull(withoutWindow);
+        Assert.NotNull(withWindow);
+        Assert.NotEmpty(withoutWindow!.Edges.Where(edge => edge.IsCut));
+        Assert.NotEmpty(withWindow!.Edges.Where(edge => edge.IsCut));
+        // The wall's cut face at x = 3982 mm is inside the crop in both runs.
+        Assert.Contains(withWindow.Edges, edge => edge.IsCut && Math.Abs(edge.X1 - 3982) < 5 && Math.Abs(edge.X2 - 3982) < 5);
+    }
+
+    [Fact]
     public void Collect_TagsCutEdgesWithTheirCategory()
     {
         // A railing slat straddling the section plane: the cut edge carries the railing category, so it

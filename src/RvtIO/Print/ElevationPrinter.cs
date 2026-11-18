@@ -254,8 +254,14 @@ public static class ElevationPrinter
                     // A crop-drawn detail filters by its file crop rectangle instead of the invented window:
                     // the occlusion pass below needs the tight in-crop faces, not the whole model (whose coarse
                     // grid hides the fine construction lines), and the frame maps onto the crop either way.
-                    points = ClipToWindow(points, cropRect.X0, cropRect.X1, cropRect.Y0, cropRect.Y1);
-                    if (points.Count < 3) continue;
+                    // The clip runs on the 3D ring and projects afterwards: clipping the projected points alone
+                    // broke the one-to-one correspondence with the ring, and `isCut` (which reads the ring) was
+                    // never computed, so every detail view lost its cut profile.
+                    corners = ClipToWindow3(corners, H, V, cropRect.X0, cropRect.X1, cropRect.Y0, cropRect.Y1);
+                    if (corners.Count < 3) continue;
+                    points = corners.Select(corner => (
+                        corner[0] * H[0] + corner[1] * H[1] + corner[2] * H[2],
+                        corner[0] * V[0] + corner[1] * V[1] + corner[2] * V[2])).ToList();
                 }
                 foreach (var corner in corners)
                 {
@@ -820,7 +826,45 @@ public static class ElevationPrinter
         }
         return result;
     }
-    /// <summary>The part of a segment inside a rectangle (Liang-Barsky), false when nothing is left.</summary>
+    /// <summary>The part of a 3D ring whose projection lies inside a rectangle (the crop of a detail), with the
+    /// crossing points interpolated in 3D so the ring keeps a vertex per projected point: the cut test reads the
+    /// ring, and a projected-only clip lost that correspondence.</summary>
+    internal static List<double[]> ClipToWindow3(List<double[]> ring, double[] horizontal, double[] vertical,
+        double left, double right, double bottom, double top)
+    {
+        double U(double[] p) => p[0] * horizontal[0] + p[1] * horizontal[1] + p[2] * horizontal[2];
+        double V(double[] p) => p[0] * vertical[0] + p[1] * vertical[1] + p[2] * vertical[2];
+        var result = ClipHalfPlane3(ring, U, u => u - left);
+        result = ClipHalfPlane3(result, U, u => right - u);
+        result = ClipHalfPlane3(result, V, v => v - bottom);
+        return ClipHalfPlane3(result, V, v => top - v);
+    }
+
+    /// <summary>Clips a 3D ring by one half-plane of its projected coordinates: <paramref name="distance"/> is
+    /// positive inside, so the crossing parameter is <c>da / (da - db)</c> and the new vertex interpolates in 3D.
+    /// </summary>
+    private static List<double[]> ClipHalfPlane3(List<double[]> ring, Func<double[], double> coordinate,
+        Func<double, double> distance)
+    {
+        var result = new List<double[]>(ring.Count + 2);
+        for (int i = 0; i < ring.Count; i++)
+        {
+            var a = ring[i];
+            var b = ring[(i + 1) % ring.Count];
+            double da = distance(coordinate(a)), db = distance(coordinate(b));
+            bool insideA = da >= 0, insideB = db >= 0;
+            if (insideA) result.Add(a);
+            if (insideA != insideB)
+            {
+                double t = da / (da - db);
+                result.Add([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t,
+                    a[2] + (b[2] - a[2]) * t]);
+            }
+        }
+        return result;
+    }
+
+
     internal static bool ClipSegment(double x0, double y0, double x1, double y1,
         double rx0, double ry0, double rx1, double ry1,
         out double cx0, out double cy0, out double cx1, out double cy1)
