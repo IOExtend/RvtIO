@@ -1,12 +1,12 @@
 using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Text;
-using RvtIO.Print;
+using RvtIO.Parsing;
 using Xunit;
 
 namespace RvtIO.Tests;
 
-/// <summary>The raster reader (src/RvtIO/Print/RvtRaster): a PNG decoded to the RGB raster the PDF writer embeds.
+/// <summary>The raster reader decodes PNG data to RGB pixels.
 /// </summary>
 public class RvtRasterTests
 {
@@ -59,9 +59,10 @@ public class RvtRasterTests
         var image = RvtRaster.DecodePng(png);
 
         Assert.NotNull(image);
-        Assert.Equal(2, image!.Width);
-        Assert.Equal(1, image.Height);
-        Assert.Equal([255, 0, 0, 0, 0, 255], image.Rgb);
+        var (width, height, rgb) = image.Value;
+        Assert.Equal(2, width);
+        Assert.Equal(1, height);
+        Assert.Equal([255, 0, 0, 0, 0, 255], rgb);
     }
 
     [Fact]

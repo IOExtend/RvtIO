@@ -1,5 +1,6 @@
 using RvtIO.BuiltIns;
 using RvtIO.Model;
+using RvtIO.Parsing;
 using RvtIO.Pdf;
 
 namespace RvtIO.Print;
@@ -512,8 +513,8 @@ public static class SheetComposer
             {
                 if (element.OwnerViewId != key.ViewId || element.RootClassName != "ImageSymbol") continue;
                 if (element.TypeId <= 0) continue;
-                var image = RvtRaster.FindJpeg(key.Path, element.TypeId);
-                if (image != null) return image;
+                if (RvtRaster.FindJpeg(key.Path, element.TypeId) is { } jpeg)
+                    return new PdfJpegImage(jpeg.Bytes, jpeg.Header);
             }
             return null;
         });
@@ -532,11 +533,12 @@ public static class SheetComposer
                     || element.ImageHeight is not int height) continue;
                 if (element.Name is not { Length: > 0 } name
                     || !name.Contains("logo", StringComparison.OrdinalIgnoreCase)) continue;
-                var image = RvtRaster.FindPng(key, width, height);
-                if (image != null) return image;
+                if (RvtRaster.FindPng(key, width, height) is { } image)
+                    return new PdfRasterImage(image.Width, image.Height, image.Rgb);
             }
             // The image-symbol sizes are not decoded for every file: fall back to the widest logo-shaped PNG.
-            return RvtRaster.FindLogo(key);
+            return RvtRaster.FindLogo(key) is { } logo
+                ? new PdfRasterImage(logo.Width, logo.Height, logo.Rgb) : null;
         });
     }
 
