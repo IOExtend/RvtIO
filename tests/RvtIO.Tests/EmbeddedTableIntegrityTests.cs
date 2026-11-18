@@ -1,5 +1,6 @@
 using System.Globalization;
 using RvtIO.Compact;
+using RvtIO.Lookup;
 using Xunit;
 
 namespace RvtIO.Tests;
@@ -44,11 +45,11 @@ public class EmbeddedTableIntegrityTests
         Assert.Equal(groups.Count, groups.Select(r => r[0]).Distinct().Count());
         foreach (var row in groups)
         {
-            Assert.True(CompactLabels.TryGetGroupLabel(int.Parse(row[0], CultureInfo.InvariantCulture), out string label), row[0]);
+            Assert.True(ParameterGroupLabels.TryGetGroupLabel(int.Parse(row[0], CultureInfo.InvariantCulture), out string label), row[0]);
             Assert.Equal(row[1], label);
         }
         foreach (int group in EmbeddedTables.Rows("compact_builtin_parameters.tsv", 3).Select(r => int.Parse(r[1], CultureInfo.InvariantCulture)).Distinct())
-            Assert.True(group == CompactLabels.InvalidGroupId || CompactLabels.TryGetGroupLabel(group, out _), group.ToString());
+            Assert.True(group == ParameterGroupLabels.InvalidGroupId || ParameterGroupLabels.TryGetGroupLabel(group, out _), group.ToString());
     }
 
     [Fact]

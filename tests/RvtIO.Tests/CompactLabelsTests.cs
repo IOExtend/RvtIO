@@ -86,7 +86,7 @@ public class CompactLabelsTests
     {
         // Category (ELEM_CATEGORY_PARAM): its definition has no group.
         Assert.True(CompactLabels.TryGetParameterGroupId(-1140362, out int group));
-        Assert.Equal(CompactLabels.InvalidGroupId, group);
+        Assert.Equal(ParameterGroupLabels.InvalidGroupId, group);
         Assert.True(CompactLabels.TryGetParameterGroupLabel(-1140362, out string label));
         Assert.Equal("Invalid group", label);
     }
@@ -127,12 +127,12 @@ public class CompactLabelsTests
     {
         int known = 0;
         for (int group = -5000300; group <= -5000001; group++)
-            if (CompactLabels.TryGetGroupLabel(group, out _)) known++;
+            if (ParameterGroupLabels.TryGetGroupLabel(group, out _)) known++;
         Assert.Equal(120, known);
         foreach (var group in Enum.GetValues<BuiltInParameterGroup>().Where(g => g != BuiltInParameterGroup.INVALID))
             if (group.ToEnglishLabel(out string enumLabel))
             {
-                Assert.True(CompactLabels.TryGetGroupLabel((int)group, out string label), group.ToString());
+                Assert.True(ParameterGroupLabels.TryGetGroupLabel((int)group, out string label), group.ToString());
                 Assert.Equal(enumLabel, label);
             }
     }
