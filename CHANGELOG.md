@@ -272,6 +272,8 @@ The text of a sheet prints too: a text note's RTF string (class 0x0F83 block) is
 
 - Windows and doors ink through their host wall: a window sits inside its wall, whose face decodes with no opening, so the wall face up to half a metre in front of a window or door edge no longer hides it — before, the whole window vanished behind its own wall (the West elevation drew no windows at all in the sampled bay). A genuinely separate mass further in front still hides them. The sampled bay now draws the four window frames with their sashes where the reference draws them (its dashed diagonals are family symbolism with no decoded source — the types carry only degenerate points). Measured: raster line score recall 34.6% -> 35.7% (A104), 42.5% -> 42.8% (A103), 36.3% -> 36.8% (A105) with precision 56.3% -> 56.5%, 73.3% -> 73.0%, 73.5% -> 73.1%; `rvt_prt compare` recall up on A103-A105 (92.0%, 78.5%, 88.4%) with lower vector-only precision on the raster-backed pages. New test: `OccludeEdges_KeepsWindowsSetIntoTheirWall`. Full print suites 138/138 green on net8.0+net10.0.
 
+  Documented dead end: filling each subdivided layer span with its decoded cut pattern (Sand, Diagonal up 1.5 mm and the like resolve for the thin skins, while the structural core has none) added ~190 in of vector ink with zero recall gain on A104 (measured `rvt_prt` 79.1% / 64.1% -> 79.1% / 60.2% with the hatch, raster flat at 35.7% / 56.5%). The decoded patterns do not match what the reference draws inside these strips, so only the layer boundaries ink. No code ships for this; the ground hatch has no source either (the file holds no terrain mesh, the pad type has no material, no pattern is referenced by any ground element).
+
 ## [0.4.0] - 2026-11-13
 
 ### Breaking changes
