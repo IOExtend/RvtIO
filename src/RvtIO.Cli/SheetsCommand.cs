@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using RvtIO;
+using RvtIO.Internal;
 using RvtIO.Sheets;
 
 namespace RvtIO.Cli;
@@ -85,7 +86,7 @@ internal static class SheetsCommand
             error.WriteLine(Usage);
             return RvtExitCodes.Usage;
         }
-        if (outputPath != null && ExportReport.SameFile(file, outputPath))
+        if (outputPath != null && FileIdentity.SameFile(file, outputPath))
         {
             error.WriteLine("The output path is the input file. Nothing was read or written.");
             return RvtExitCodes.Usage;

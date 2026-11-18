@@ -52,6 +52,11 @@ dotnet test
 The library is in `src/RvtIO`, the CLI in `src/RvtIO.Cli`, and tests in
 `tests/RvtIO.Tests`.
 
+Keep file and geometry operations shared by the reader, writer and exporters
+in the library's format or geometry code. For example, polygon and bounds
+validation belong in `Geometry`, and path identity belongs in `Internal`.
+`RvtIO.Scene` builds on the public RvtIO API and references IOScene separately.
+
 Tests that need real Revit files are skipped with a message when private
 fixtures are unavailable. Set `RVTIO_TEST_FILES` to the folder containing
 your private fixtures to run them. The repository ships no Revit models.

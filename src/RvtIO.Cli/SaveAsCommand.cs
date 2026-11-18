@@ -1,4 +1,5 @@
 using System.Globalization;
+using RvtIO.Internal;
 
 namespace RvtIO.Cli;
 
@@ -112,7 +113,7 @@ internal static class SaveAsCommand
             if (report is null) return null;
             Path.GetFullPath(report);
             if (Directory.Exists(report)) return "--report names a directory, not a file.";
-            if (ExportReport.SameFile(report, source) || (destination is not null && ExportReport.SameFile(report, destination)))
+            if (FileIdentity.SameFile(report, source) || (destination is not null && FileIdentity.SameFile(report, destination)))
                 return "--report must not name the source or output file.";
             return null;
         }

@@ -2,6 +2,7 @@ using RvtIO.Ifc;
 using RvtIO.Model;
 using System.Text.RegularExpressions;
 using Xunit;
+using RvtIO.Geometry;
 
 namespace RvtIO.Tests;
 
@@ -127,7 +128,7 @@ public class IfcExporterBodylessProductGateTests
     [InlineData(new double[] { 0, 0, 0, double.NegativeInfinity, 1, 1 }, false)]
     [InlineData(new double[] { 1, 0, 0, 0, 1, 1 }, false)]
     public void Bounds_AreValidWhenSixFiniteValuesInOrder(double[]? bounds, bool expected) =>
-        Assert.Equal(expected, IfcExporter.BoundsAreValid(bounds));
+        Assert.Equal(expected, GeometryValidation.BoundsAreValid(bounds));
 
     [Fact]
     public void FootingWithBounds_IsWrittenAsAnIfcFooting()

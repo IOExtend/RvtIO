@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using RvtIO.Internal;
 using RvtIO;
 using RvtIO.Compact;
 using RvtIO.BuiltIns;
@@ -33,7 +34,7 @@ internal static partial class Program
                 Console.Error.WriteLine($"{opt} requires a non-empty path.");
                 return 1;
             }
-            if (ExportReport.SameFile(outPath, rvtPath))
+            if (FileIdentity.SameFile(outPath, rvtPath))
             {
                 Console.Error.WriteLine($"An export destination must not name the input file: '{outPath}'. Nothing was read or written.");
                 return 1;
@@ -44,7 +45,7 @@ internal static partial class Program
         {
             for (int j = i + 1; j < exportOutputs.Count; j++)
             {
-                if (ExportReport.SameFile(exportOutputs[i].Path, exportOutputs[j].Path))
+                if (FileIdentity.SameFile(exportOutputs[i].Path, exportOutputs[j].Path))
                 {
                     Console.Error.WriteLine($"Export destinations must not name the same file: '{exportOutputs[i].Path}'. Nothing was read or written.");
                     return 1;
@@ -88,10 +89,10 @@ internal static partial class Program
             Console.Error.WriteLine("--report requires one value: the path of the JSON report.");
             return 1;
         }
-        if (reportPath != null && (ExportReport.SameFile(reportPath, rvtPath)
-            || exportOutputs.Any(outPath => ExportReport.SameFile(reportPath, outPath.Path))
-            || (externalDumpPath != null && ExportReport.SameFile(reportPath, externalDumpPath))
-            || RvtIO.Cli.ReportPathOption.OutputPaths(args, rvtPath, exportOutputs.FirstOrDefault().Path, externalDumpPath).Any(path => ExportReport.SameFile(reportPath, path))))
+        if (reportPath != null && (FileIdentity.SameFile(reportPath, rvtPath)
+            || exportOutputs.Any(outPath => FileIdentity.SameFile(reportPath, outPath.Path))
+            || (externalDumpPath != null && FileIdentity.SameFile(reportPath, externalDumpPath))
+            || RvtIO.Cli.ReportPathOption.OutputPaths(args, rvtPath, exportOutputs.FirstOrDefault().Path, externalDumpPath).Any(path => FileIdentity.SameFile(reportPath, path))))
         {
             Console.Error.WriteLine("--report must not name the input file or an output of the run; nothing was read or written.");
             return 1;

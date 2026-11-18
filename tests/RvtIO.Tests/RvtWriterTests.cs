@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 using OpenMcdf;
+using RvtIO.Internal;
 using RvtIO.Parsing;
 using RvtIO.Writing;
 using Xunit;
@@ -833,7 +834,7 @@ public sealed class RvtWriterTests : IDisposable
         // Precondition: the relative reference in input/host.rvt resolves to the real linked.rvt file on disk.
         string initialResolved = ResolveExternalReferenceTarget(hostFile);
         Assert.True(File.Exists(initialResolved));
-        Assert.True(ExportReport.SameFile(linkedFile, initialResolved));
+        Assert.True(FileIdentity.SameFile(linkedFile, initialResolved));
 
         byte[] schemaBytes = BuildSchemaBytesForRelease(2022);
         ushort itemTag = (ushort)TfSchemaReader.Parse(schemaBytes).Classes.Single(c => c.Name == "SyntheticItem").Id;
@@ -853,25 +854,25 @@ public sealed class RvtWriterTests : IDisposable
         Assert.Equal(0, saveAsRes.ReplacedStreamCount);
         string sameSaveAsResolved = ResolveExternalReferenceTarget(sameSaveAs);
         Assert.True(File.Exists(sameSaveAsResolved));
-        Assert.True(ExportReport.SameFile(linkedFile, sameSaveAsResolved));
+        Assert.True(FileIdentity.SameFile(linkedFile, sameSaveAsResolved));
 
         string sameDocSaveAs = Path.Combine(inputDir, "host_doc_saveas.rvt");
         RvtDocument.Open(hostFile).SaveAs(sameDocSaveAs);
         string sameDocResolved = ResolveExternalReferenceTarget(sameDocSaveAs);
         Assert.True(File.Exists(sameDocResolved));
-        Assert.True(ExportReport.SameFile(linkedFile, sameDocResolved));
+        Assert.True(FileIdentity.SameFile(linkedFile, sameDocResolved));
 
         string sameRewrite = Path.Combine(inputDir, "host_rewrite.rvt");
         var rewriteRes = RvtWriter.Rewrite(hostFile, sameRewrite, rewriteRequest);
         Assert.Equal(1, rewriteRes.RewrittenRecordCount);
         string sameRewriteResolved = ResolveExternalReferenceTarget(sameRewrite);
         Assert.True(File.Exists(sameRewriteResolved));
-        Assert.True(ExportReport.SameFile(linkedFile, sameRewriteResolved));
+        Assert.True(FileIdentity.SameFile(linkedFile, sameRewriteResolved));
 
         // 2. Different-directory destinations would break ../links/linked.rvt resolution and must be refused before publishing output.
         string brokenCandidateTarget = Path.GetFullPath(Path.Combine(nestedDir, "..", "links", "linked.rvt"));
         Assert.False(File.Exists(brokenCandidateTarget));
-        Assert.False(ExportReport.SameFile(linkedFile, brokenCandidateTarget));
+        Assert.False(FileIdentity.SameFile(linkedFile, brokenCandidateTarget));
 
         string nestedSaveAs = Path.Combine(nestedDir, "host_saveas.rvt");
         var exSaveAs = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SaveAs(hostFile, nestedSaveAs));
@@ -931,7 +932,7 @@ public sealed class RvtWriterTests : IDisposable
         Assert.Equal(2, reopenedAbs.TransmissionData!.ExternalReferences.Count);
         string resolvedAbs = Path.GetFullPath(reopenedAbs.TransmissionData.ExternalReferences[0].Path!);
         Assert.True(File.Exists(resolvedAbs));
-        Assert.True(ExportReport.SameFile(linkedFile, resolvedAbs));
+        Assert.True(FileIdentity.SameFile(linkedFile, resolvedAbs));
 
         string nestedAbsRewrite = Path.Combine(nestedDir, "host_abs_rewrite.rvt");
         RvtWriter.Rewrite(absHost, nestedAbsRewrite, new RvtWriteRequest

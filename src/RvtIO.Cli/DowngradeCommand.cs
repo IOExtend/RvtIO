@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using RvtIO.Internal;
 using RvtIO.Writing;
 
 namespace RvtIO.Cli;
@@ -100,7 +101,7 @@ internal static class DowngradeCommand
             Path.GetFullPath(profile);
             if (report == null) return null;
             if (Directory.Exists(report)) return "--report names a directory, not a file.";
-            if (ExportReport.SameFile(report, source) || ExportReport.SameFile(report, profile)) return "--report must not name the source file or the profile file.";
+            if (FileIdentity.SameFile(report, source) || FileIdentity.SameFile(report, profile)) return "--report must not name the source file or the profile file.";
             return null;
         }
         catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException or IOException or UnauthorizedAccessException)

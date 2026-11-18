@@ -4,6 +4,7 @@ using System.Text;
 using System.Xml;
 using ICSharpCode.SharpZipLib.Checksum;
 using OpenMcdf;
+using RvtIO.Internal;
 using RvtIO.Parsing;
 using RvtIO.Writing;
 
@@ -744,7 +745,7 @@ public static class RvtWriter
                 ex);
         }
 
-        if (!ExportReport.SameFile(sourceTarget, outputTarget))
+        if (!FileIdentity.SameFile(sourceTarget, outputTarget))
         {
             throw new RvtWriteRefusedException(
                 "relative-reference-relocation",
@@ -833,7 +834,7 @@ public static class RvtWriter
         string trimmedSource = Path.TrimEndingDirectorySeparator(Path.GetFullPath(sourceDir));
         string trimmedOutput = Path.TrimEndingDirectorySeparator(Path.GetFullPath(outputDir));
         return string.Equals(trimmedSource, trimmedOutput, comparison)
-            && ExportReport.SameFile(trimmedSource, trimmedOutput);
+            && FileIdentity.SameFile(trimmedSource, trimmedOutput);
     }
 
     private static bool IsRootedOrUriLikePath(string rawPath)

@@ -1,4 +1,5 @@
 using System.Globalization;
+using RvtIO.Internal;
 
 namespace RvtIO.Cli;
 
@@ -132,7 +133,7 @@ internal static class CoverageCommand
             Path.GetFullPath(file);
             if (report == null) return null;
             if (Directory.Exists(report)) return "--report names a directory, not a file.";
-            return ExportReport.SameFile(report, file) ? "--report must not name the input file." : null;
+            return FileIdentity.SameFile(report, file) ? "--report must not name the input file." : null;
         }
         catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException or IOException or UnauthorizedAccessException)
         {

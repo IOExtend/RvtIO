@@ -1,3 +1,4 @@
+using RvtIO.Geometry;
 using RvtIO.Model;
 
 namespace RvtIO.Ifc;
@@ -54,7 +55,7 @@ public partial class IfcExporter
             var loops = face.SourceLoops!;
             int outer = 0;
             for (int index = 1; index < loops.Count; index++)
-                if (!Enumerable.Range(0, index).Any(earlier => AllVerticesStrictlyInside(loops[index], loops[earlier]))) outer = index;
+                if (!Enumerable.Range(0, index).Any(earlier => GeometryValidation.AllVerticesStrictlyInside(loops[index], loops[earlier]))) outer = index;
             var bounds = new List<int>();
             for (int index = 0; index < loops.Count; index++)
             {
