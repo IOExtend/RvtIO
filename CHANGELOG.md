@@ -254,6 +254,8 @@ The text of a sheet prints too: a text note's RTF string (class 0x0F83 block) is
 
 - Plan furniture is drawn as its silhouette: the boundary of the union of every face projected on XY, traced on a 5 mm grid. The chairs on A102 store no 2D symbolic lines at all (`Bar Chair` type 988018: 43 objects, 17 Face/Plane, zero GLine/GArc), so Revit builds their plan from the 3D model; the old single horizontal face drew an octagon seat and lost the back. A convex hull was measured first and rejected (A102 F1 0.876 -> 0.874, it cuts the non-convex back). Grid tuning on the same sheet: 10 mm -> 84.1/91.6, 5 mm -> 84.1/92.2, 2.5 mm -> 83.1/93.4; 5 mm keeps the best F1. Measured against the Revit export: A102 recall 84.3% -> 84.1%, precision 91.2% -> 92.2% (1514 -> 1817 in, F1 0.8763 -> 0.8796); A001, A101, A103, A104 and A105 unchanged. New test: `SampleFile_Level1FurnitureIsASilhouette`. Full print suites 126/126 green on net8.0+net10.0.
 
+- A stair railing's continuous rails are not inked in a vertical view: seen on end they project as long diagonals across the stair (3.8 m each at the Main Stair Detail's 1:20), and the reference's detail contains no diagonal at all (measured: zero segments with both |dx| and |dy| above 40 pt in the detail area), while its balusters are drawn and match. Only railing edges diagonal in both axes go; vertical balusters and posts stay. Measured against the Revit export: A105 recall 89.5% -> 89.5%, precision 80.8% -> 82.3% (982 -> 961 in); A104 74.6% / 81.1% -> 74.6% / 81.2%; A001, A101, A102 and A103 unchanged. New test: `SampleFile_StairDetailKeepsBalustersButNoRailDiagonals`. Full print suites 127/127 green on net8.0+net10.0.
+
 ## [0.4.0] - 2026-11-13
 
 ### Breaking changes

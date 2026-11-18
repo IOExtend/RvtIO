@@ -438,6 +438,13 @@ public static class ElevationPrinter
         }
         // The grid bubbles print above the frame: without grids (a windowed detail) the frame ends at the model.
         if (grids.Count > 0) maxY += 4500;
+        // A stair railing's continuous rails, seen on end, project as long diagonals; the reference draws the
+        // balustrade as its balusters and no diagonal rail across the stair (measured on A105's Main Stair Detail:
+        // the two 3.8 m railing diagonals are unmatched while the vertical balusters are). Only the diagonal edges
+        // go; the balusters and posts stay.
+        if (planeView != null)
+            edges = edges.Where(edge => !(edge.CategoryId == (int)BuiltInCategory.OST_StairsRailing
+                && Math.Abs(edge.X2 - edge.X1) > 100 && Math.Abs(edge.Y2 - edge.Y1) > 100)).ToList();
         return new ElevationContent(faces, distinctLevels, grids, context, edges, minX, minY, maxX, maxY);
     }
 

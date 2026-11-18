@@ -61,6 +61,32 @@ public class ElevationSheetLinesTests
     }
 
     [Fact]
+    public void SampleFile_StairDetailKeepsBalustersButNoRailDiagonals()
+    {
+        // A railing's continuous rails project as long diagonals across the stair, which the reference does not
+        // draw (the Main Stair Detail has no diagonal at all); its balusters are drawn and stay.
+        string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+        var view = document.Elements.FirstOrDefault(e => e.CategoryId == (int)BuiltInCategory.OST_Views
+            && e.Name == "Main Stair Detail");
+        Assert.NotNull(view);
+        if (view!.ViewCrop is not { Active: true } crop)
+            throw new SkipException("The sample's Main Stair Detail has no active crop.");
+
+        var content = ElevationPrinter.Collect(document, "section", false, view,
+            cropWindow: SheetComposer.CropContentRect(crop));
+
+        Assert.NotNull(content);
+        Assert.DoesNotContain(content!.Edges, edge =>
+            edge.CategoryId == (int)BuiltInCategory.OST_StairsRailing
+            && Math.Abs(edge.X2 - edge.X1) > 100 && Math.Abs(edge.Y2 - edge.Y1) > 100);
+        Assert.Contains(content.Edges, edge =>
+            edge.CategoryId == (int)BuiltInCategory.OST_StairsRailing
+            && Math.Abs(edge.X2 - edge.X1) <= 100);
+    }
+
+    [Fact]
     public void SampleFile_WorkBelowTheLowestLevelStaysUninked()
     {
         // Below the model's lowest level the work is buried: the reference draws no foundation line in an
