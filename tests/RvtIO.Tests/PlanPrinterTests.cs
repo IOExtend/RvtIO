@@ -460,4 +460,38 @@ public class PlanPrinterTests
         while ((at = text.IndexOf(value, at, StringComparison.Ordinal)) >= 0) { count++; at += value.Length; }
         return count;
     }
+
+    [Fact]
+    public void InViewBasis_RotatesWallsRoomsAndBounds()
+    {
+        // The building overlay of a turned site plan uses the same view axes as the site: a quarter turn maps
+        // (x, y) to (y, -x), so the wall and the room move with the plan and the bounds swap.
+        var plan = new PlanPrinter.PlanContent(
+            Walls: [(1, 0, 0, 1000, 0, 200)],
+            Columns: [(500, 250, 100, 100)],
+            Grids: [],
+            Gaps: new Dictionary<int, List<(double From, double To)>> { [1] = [(100, 200)] },
+            WindowGaps: [],
+            DoorGaps: [],
+            FloorLoops: [[(0, 0), (1000, 0), (1000, 500), (0, 500)]],
+            OpeningLoops: [],
+            Rooms: [([(0, 0), (1000, 0), (1000, 500), (0, 500)], "Living", "101", 500)],
+            Furniture: [],
+            Tags: [(500, 250, 1, 0, "Tag", false)],
+            MinX: 0, MinY: 0, MaxX: 1000, MaxY: 500);
+
+        var turned = PlanPrinter.InViewBasis(plan, [0, 1, 0], [-1, 0, 0]);
+
+        var wall = Assert.Single(turned.Walls);
+        Assert.Equal(0, wall.X1, 6);
+        Assert.Equal(0, wall.Y1, 6);
+        Assert.Equal(0, wall.X2, 6);
+        Assert.Equal(-1000, wall.Y2, 6);
+        var room = Assert.Single(turned.Rooms);
+        Assert.Contains(room.Polygon, point => Math.Abs(point.X - 500) < 1e-6 && Math.Abs(point.Y + 1000) < 1e-6);
+        Assert.Equal(-1000, turned.MinY, 6);
+        Assert.Equal(500, turned.MaxX, 6);
+        // The gaps stay attached to their wall and keep their span along it.
+        Assert.Equal([(100.0, 200.0)], turned.Gaps[1]);
+    }
 }

@@ -67,6 +67,84 @@ public static class PlanPrinter
         List<(double X1, double Y1, double X2, double Y2)>? RailLines = null,
         List<(double X1, double Y1, double X2, double Y2)>? FurnitureLines = null);
 
+    /// <summary>The same plan seen in a rotated view: every point is projected on the view's own axes, so a site
+    /// plan whose crop basis is turned draws its building turned with it. Wall-relative data (gaps, door and
+    /// window spans) is kept by wall id and stays valid because the wall keeps its identity and length.</summary>
+    internal static PlanContent InViewBasis(PlanContent content, double[] right, double[] up)
+    {
+        (double X, double Y) Map(double x, double y) =>
+            (x * right[0] + y * right[1], x * up[0] + y * up[1]);
+        List<(double X, double Y)> MapPolygon(List<(double X, double Y)> polygon) =>
+            polygon.Select(point => Map(point.X, point.Y)).ToList();
+        var walls = content.Walls.Select(wall =>
+        {
+            var a = Map(wall.X1, wall.Y1);
+            var b = Map(wall.X2, wall.Y2);
+            return (Id: wall.Id, X1: a.X, Y1: a.Y, X2: b.X, Y2: b.Y, Width: wall.Width);
+        }).ToList();
+        var columns = content.Columns.Select(column =>
+        {
+            var centre = Map(column.X, column.Y);
+            return (centre.X, centre.Y, column.Width, column.Height);
+        }).ToList();
+        var grids = content.Grids.Select(grid =>
+        {
+            var a = Map(grid.X1, grid.Y1);
+            var b = Map(grid.X2, grid.Y2);
+            return (a.X, a.Y, b.X, b.Y, grid.Name);
+        }).ToList();
+        var floorLoops = content.FloorLoops.Select(MapPolygon).ToList();
+        var openingLoops = content.OpeningLoops.Select(MapPolygon).ToList();
+        var rooms = content.Rooms.Select(room =>
+        {
+            var polygon = MapPolygon(room.Polygon);
+            return (polygon, room.Name, room.Number, room.AreaSquareFeet);
+        }).ToList();
+        var furniture = content.Furniture.Select(MapPolygon).ToList();
+        var tags = content.Tags.Select(tag =>
+        {
+            var point = Map(tag.MidX, tag.MidY);
+            return (point.X, point.Y, tag.Nx, tag.Ny, tag.Text, tag.IsWindow);
+        }).ToList();
+        var roomPatterns = content.RoomPatterns?
+            .Select(entry => (MapPolygon(entry.Polygon), entry.Grids)).ToList();
+        var stairLines = content.StairLines?.Select(line =>
+        {
+            var a = Map(line.X1, line.Y1);
+            var b = Map(line.X2, line.Y2);
+            return (a.X, a.Y, b.X, b.Y);
+        }).ToList();
+        var railLines = content.RailLines?.Select(line =>
+        {
+            var a = Map(line.X1, line.Y1);
+            var b = Map(line.X2, line.Y2);
+            return (a.X, a.Y, b.X, b.Y);
+        }).ToList();
+        var furnitureLines = content.FurnitureLines?.Select(line =>
+        {
+            var a = Map(line.X1, line.Y1);
+            var b = Map(line.X2, line.Y2);
+            return (a.X, a.Y, b.X, b.Y);
+        }).ToList();
+        double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
+        void Grow(double x, double y)
+        {
+            minX = Math.Min(minX, x); maxX = Math.Max(maxX, x);
+            minY = Math.Min(minY, y); maxY = Math.Max(maxY, y);
+        }
+        foreach (var wall in walls) { Grow(wall.X1, wall.Y1); Grow(wall.X2, wall.Y2); }
+        foreach (var column in columns) Grow(column.Item1, column.Item2);
+        foreach (var polygon in floorLoops.Concat(openingLoops))
+            foreach (var point in polygon) Grow(point.X, point.Y);
+        foreach (var room in rooms)
+            foreach (var point in room.polygon) Grow(point.X, point.Y);
+        if (minX > maxX)
+            return content with { MinX = content.MinX, MinY = content.MinY, MaxX = content.MaxX, MaxY = content.MaxY };
+        return new PlanContent(walls, columns, grids, content.Gaps, content.WindowGaps, content.DoorGaps,
+            floorLoops, openingLoops, rooms, furniture, tags, minX, minY, maxX, maxY,
+            roomPatterns, stairLines, railLines, furnitureLines);
+    }
+
     /// <summary>The levels a plan can be printed for: those that own at least one wall or column with a location line,
     /// by elevation and then name.</summary>
     /// <param name="document">The opened document.</param>

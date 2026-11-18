@@ -60,4 +60,28 @@ public class SitePrinterTests
     {
         Assert.Null(SitePrinter.Collect(RvtDocument.FromInfo(new RevitFileInfo())));
     }
+
+    [Fact]
+    public void InViewBasis_RotatesThePlanOntoTheViewAxes()
+    {
+        // A plan whose crop basis is turned (the Site view of the sample: right = (0.7986, -0.6018)) prints turned
+        // with the view. A quarter turn maps (x, y) to (y, -x), so the square's bounds swap and its corners move.
+        var site = new SitePrinter.SiteContent(
+            Topography: [[(0, 0), (1000, 0), (1000, 500), (0, 500)]],
+            Contours: [(0, 0, 500, 0, 100)],
+            Plants: [(200, 300, 150, "Maple", "T1")],
+            Entourage: [[(0, 0), (100, 0), (100, 100)]],
+            MinX: 0, MinY: 0, MaxX: 1000, MaxY: 500);
+
+        var turned = SitePrinter.InViewBasis(site, [0, 1, 0], [-1, 0, 0]);
+
+        var polygon = Assert.Single(turned.Topography);
+        Assert.Contains(polygon, point => Math.Abs(point.X - 0) < 1e-6 && Math.Abs(point.Y - 0) < 1e-6);
+        Assert.Contains(polygon, point => Math.Abs(point.X - 500) < 1e-6 && Math.Abs(point.Y + 1000) < 1e-6);
+        var plant = Assert.Single(turned.Plants);
+        Assert.Equal(300, plant.X, 6);
+        Assert.Equal(-200, plant.Y, 6);
+        Assert.Equal(-1000, turned.MinY, 6);
+        Assert.Equal(500, turned.MaxX, 6);
+    }
 }

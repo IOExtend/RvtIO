@@ -22,6 +22,45 @@ public static class SitePrinter
         List<List<(double X, double Y)>> Entourage,
         double MinX, double MinY, double MaxX, double MaxY);
 
+    /// <summary>The same site seen in a rotated view: every point is projected on the view's own axes
+    /// (<paramref name="right"/> across the sheet, <paramref name="up"/> up the sheet), so a site plan whose crop
+    /// basis is turned prints turned the way the reference draws it. The bounds are recomputed in the new axes.
+    /// Text stays upright because the tags are drawn in page space after this projection.</summary>
+    internal static SiteContent InViewBasis(SiteContent site, double[] right, double[] up)
+    {
+        (double X, double Y) Map(double x, double y) =>
+            (x * right[0] + y * right[1], x * up[0] + y * up[1]);
+        var topography = site.Topography
+            .Select(polygon => polygon.Select(point => Map(point.X, point.Y)).ToList()).ToList();
+        var contours = site.Contours.Select(contour =>
+        {
+            var a = Map(contour.X1, contour.Y1);
+            var b = Map(contour.X2, contour.Y2);
+            return (a.X, a.Y, b.X, b.Y, contour.Z);
+        }).ToList();
+        var plants = site.Plants.Select(plant =>
+        {
+            var centre = Map(plant.X, plant.Y);
+            return (centre.X, centre.Y, plant.Radius, plant.Type, plant.Mark);
+        }).ToList();
+        var entourage = site.Entourage
+            .Select(polygon => polygon.Select(point => Map(point.X, point.Y)).ToList()).ToList();
+        double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
+        void Grow(double x, double y)
+        {
+            minX = Math.Min(minX, x); maxX = Math.Max(maxX, x);
+            minY = Math.Min(minY, y); maxY = Math.Max(maxY, y);
+        }
+        foreach (var polygon in topography)
+            foreach (var point in polygon) Grow(point.X, point.Y);
+        foreach (var (x1, y1, x2, y2, _) in contours) { Grow(x1, y1); Grow(x2, y2); }
+        foreach (var plant in plants) Grow(plant.X, plant.Y);
+        foreach (var polygon in entourage)
+            foreach (var point in polygon) Grow(point.X, point.Y);
+        if (minX > maxX) return site;
+        return new SiteContent(topography, contours, plants, entourage, minX, minY, maxX, maxY);
+    }
+
     /// <summary>Projects the topography and the planting of the document on the plan. Null when the model has neither.
     /// </summary>
     internal static SiteContent? Collect(RvtDocument document)

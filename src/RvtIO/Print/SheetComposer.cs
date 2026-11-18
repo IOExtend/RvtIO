@@ -321,6 +321,16 @@ public static class SheetComposer
                     }
                     if (sitePlan != null)
                         site = KeepSiteNearBuilding(site, sitePlan);
+                    // A site view whose crop basis is turned prints its plan turned: the Site view's crop Right is
+                    // (0.7986, -0.6018), a -37 degree view, and the reference site plan is drawn turned with it.
+                    // Project the graphics on the view's own axes; the tags and the north arrow stay upright.
+                    if (view?.ViewCrop is { Active: true } basisCrop
+                        && Math.Abs(basisCrop.Right[1]) > 1e-6)
+                    {
+                        site = SitePrinter.InViewBasis(site, basisCrop.Right, basisCrop.Up);
+                        if (sitePlan != null)
+                            sitePlan = PlanPrinter.InViewBasis(sitePlan, basisCrop.Right, basisCrop.Up);
+                    }
                     double drawScale = scale;
                     // A site viewport whose view decoded a crop box draws the crop at the view's own scale, placed
                     // by the viewport offset, the way a plan viewport does: the frame is the crop rectangle and the
@@ -329,7 +339,7 @@ public static class SheetComposer
                     bool siteCropped = view?.ViewCrop is { Active: true } siteCrop
                         && TryCropFrame(centerX, centerY, scale, siteCrop, site.MinX, site.MinY,
                             out frameX, out frameY, out frameWidth, out frameHeight,
-                            out siteOriginX, out siteOriginY);
+                            out siteOriginX, out siteOriginY, requireAxisAligned: false);
                     double siteDrawOriginX = frameX, siteDrawOriginY = frameY;
                     if (siteCropped)
                     {
@@ -368,18 +378,11 @@ public static class SheetComposer
                         // The house is filled dark on a site plan, the way the reference fills the building: the rooms
                         // of the level under its walls. Inside a crop the building origin comes from the crop, like
                         // the plan viewport's own origin; otherwise it is the site origin, as before.
-                        double wallsOriginX, wallsOriginY;
-                        if (siteCropped && view?.ViewCrop is { Active: true } wallsCrop
-                            && TryCropFrame(centerX, centerY, scale, wallsCrop, building.MinX, building.MinY,
-                                out _, out _, out _, out _, out wallsOriginX, out wallsOriginY))
-                        {
-                            // The frame stays the site frame above; only the building origin moves to its crop mapping.
-                        }
-                        else
-                        {
-                            wallsOriginX = (building.MinX - site.MinX) / drawScale + frameX;
-                            wallsOriginY = (building.MinY - site.MinY) / drawScale + frameY;
-                        }
+                        // The building sits in the same projected frame as the site: its origin is the site content
+                        // origin plus the building's offset from the site's own minimum corner. (Using the crop
+                        // frame corner here put the building outside the plan when the site drew through a crop.)
+                        double wallsOriginX = (building.MinX - site.MinX) / drawScale + siteDrawOriginX;
+                        double wallsOriginY = (building.MinY - site.MinY) / drawScale + siteDrawOriginY;
                         foreach (var room in building.Rooms)
                         {
                             var polygon = room.Polygon.Select(point => (
@@ -1290,10 +1293,14 @@ public static class SheetComposer
     internal static bool TryCropFrame(double centerXMm, double centerYMm, double scale, ViewCropFrame crop,
         double contentMinX, double contentMinY,
         out double frameX, out double frameY, out double frameWidth, out double frameHeight,
-        out double originX, out double originY)
+        out double originX, out double originY, bool requireAxisAligned = true)
     {
         frameX = frameY = frameWidth = frameHeight = originX = originY = 0;
-        if (!AxisAligned(crop.Right) || !AxisAligned(crop.Up)
+        // The crop maps onto the content through its own axes: a rotated but orthonormal basis is fine when the
+        // caller has already projected the content onto those axes (the site plan does); the axis-aligned guard
+        // stays for callers whose content is still in model coordinates.
+        if ((requireAxisAligned && (!AxisAligned(crop.Right) || !AxisAligned(crop.Up)))
+            || !Orthonormal(crop.Right, crop.Up)
             || !(scale > 0) || crop.X1 <= crop.X0 || crop.Y1 <= crop.Y0) return false;
         double k = FeetToMillimetres / scale;
         frameX = centerXMm + crop.X0 * k;
@@ -1335,6 +1342,16 @@ public static class SheetComposer
     private static bool AxisAligned(double[] v) =>
         v is { Length: 3 } && v.Count(c => Math.Abs(Math.Abs(c) - 1) < 1e-6) == 1
         && v.All(c => Math.Abs(c) < 1e-6 || Math.Abs(Math.Abs(c) - 1) < 1e-6);
+
+    /// <summary>True when the two vectors are unit length and perpendicular: a view basis a crop can map through,
+    /// including a rotated plan's.</summary>
+    private static bool Orthonormal(double[] right, double[] up)
+    {
+        if (right is not { Length: 3 } || up is not { Length: 3 }) return false;
+        static double Length(double[] v) => Math.Sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        double dot = right[0] * up[0] + right[1] * up[1] + right[2] * up[2];
+        return Math.Abs(Length(right) - 1) < 1e-4 && Math.Abs(Length(up) - 1) < 1e-4 && Math.Abs(dot) < 1e-4;
+    }
 
     /// <summary>The site content kept to the building and its air: topography, contours, plants and entourage
     /// outside the building breadth plus a margin are dropped, the way an elevation drops a far tree, so a far
