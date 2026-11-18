@@ -113,7 +113,12 @@ internal static class DowngradePartitionRewriter
             // rewritten in the target grammar, are left out of the block: Revit refuses an unknown
             // class tag and a record body left as 0xFFFE ("can't find PersistentClass"), so the
             // element's header, data and geometry records all go and the block owner count follows.
-            var dropOwners = knownDropped ?? DetectDroppedOwners(chains, transcoder, sourceTerminator, sourceWidth);
+            // A payload that only fails once the element universe is set (dangling-id rule)
+            // is also left out: the known set was built before the universe existed.
+            var freshDropped = DetectDroppedOwners(chains, transcoder, sourceTerminator, sourceWidth);
+            HashSet<ulong> dropOwners;
+            if (knownDropped is null) dropOwners = freshDropped;
+            else { dropOwners = new HashSet<ulong>(knownDropped); dropOwners.UnionWith(freshDropped); }
             uint writeOwners = expectedOwners;
             if (dropOwners.Count > 0)
             {
@@ -193,6 +198,37 @@ internal static class DowngradePartitionRewriter
     private static HashSet<ulong> DetectDroppedOwners(List<ChainSpan> chains, R22Transcoder transcoder, ulong sourceTerminator, int sourceWidth)
     {
         var dropOwners = new HashSet<ulong>();
+        var forcedSpecs = Environment.GetEnvironmentVariable("RVTIO_FORCE_DROP_CLASSES")?
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToArray();
+        bool ForceDrop(string? className, ulong owner)
+        {
+            if (forcedSpecs is null || forcedSpecs.Length == 0) return false;
+            if (className is null) return false;
+            foreach (var spec in forcedSpecs)
+            {
+                if (spec.Equals(className, StringComparison.Ordinal)) return true;
+                if (spec.StartsWith(className + ">=", StringComparison.Ordinal)
+                    && ulong.TryParse(spec.AsSpan(className.Length + 2), out ulong ge) && owner >= ge) return true;
+                if (spec.StartsWith(className + "<=", StringComparison.Ordinal)
+                    && ulong.TryParse(spec.AsSpan(className.Length + 2), out ulong le) && owner <= le) return true;
+                if (spec.StartsWith(className + ">", StringComparison.Ordinal)
+                    && ulong.TryParse(spec.AsSpan(className.Length + 1), out ulong gt) && owner > gt) return true;
+                if (spec.StartsWith(className + "<", StringComparison.Ordinal)
+                    && ulong.TryParse(spec.AsSpan(className.Length + 1), out ulong lt) && owner < lt) return true;
+                if (spec.StartsWith(className + "=", StringComparison.Ordinal)
+                    && ulong.TryParse(spec.AsSpan(className.Length + 1), out ulong eq) && owner == eq) return true;
+                int colon = spec.IndexOf(':');
+                if (colon > 0 && spec.AsSpan(0, colon).Equals(className, StringComparison.Ordinal))
+                {
+                    var range = spec.AsSpan(colon + 1);
+                    int dash = range.IndexOf('-');
+                    if (dash > 0 && ulong.TryParse(range[..dash], out ulong lo) && ulong.TryParse(range[(dash + 1)..], out ulong hi)
+                        && owner >= lo && owner <= hi) return true;
+                }
+            }
+            return false;
+        }
         foreach (var chain in chains)
         {
             if (chain.Channel is not (102 or 103)) continue;
@@ -200,6 +236,11 @@ internal static class DowngradePartitionRewriter
             {
                 if (owner == sourceTerminator || recordBody.Length < 2 || dropOwners.Contains(owner)) continue;
                 int classTag = BinaryPrimitives.ReadUInt16LittleEndian(recordBody.Span);
+                if (chain.Channel == 102 && ForceDrop(transcoder.SourceClassName(classTag), owner))
+                {
+                    dropOwners.Add(owner);
+                    continue;
+                }
                 if (!transcoder.HasSourceClass(classTag))
                 {
                     // A data record must name a class of the file; an unknown geometry tag is
@@ -266,8 +307,8 @@ internal static class DowngradePartitionRewriter
             var chains = ReadBlockChains(body, ref pos, sourceTags);
             foreach (var chain in chains)
             {
-                if (chain.Channel != 101) continue;
-                foreach (var (owner, _) in ReadRecords(chain.Inflated, 101, sourceWidth))
+                if (chain.Channel is not (101 or 102 or 103)) continue;
+                foreach (var (owner, _) in ReadRecords(chain.Inflated, chain.Channel, sourceWidth))
                     if (owner != sourceTerminator) owners.Add(owner);
             }
             dropped.UnionWith(DetectDroppedOwners(chains, transcoder, sourceTerminator, sourceWidth));

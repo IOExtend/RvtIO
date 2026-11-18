@@ -201,7 +201,64 @@ internal static class DowngradeWriter
             .Where(id => id <= uint.MaxValue && !knownDropped.Contains(id))
             .Select(id => (uint)id)
             .ToHashSet();
-        transcoder.SetElementUniverse(presentElements, presentElements.Count == 0 ? 0u : presentElements.Max());
+        var droppedElements = knownDropped
+            .Where(id => id <= uint.MaxValue)
+            .Select(id => (uint)id)
+            .ToHashSet();
+        transcoder.SetElementUniverse(presentElements, presentElements.Count == 0 ? 0u : presentElements.Max(), droppedElements);
+        // Orphaned rows: an element whose owning element is left out cannot stay, or the
+        // older release reports a missing owner and fails the open. Close over the source
+        // element table together with payload failures, or the rewrite keeps the orphan.
+        List<(long Id, long Owning)>? sourceElemRows = null;
+        if (sourceElemTableStored is not null)
+        {
+            try
+            {
+                var sourceElemDecompressed = PagedGzipStream.Decompress(sourceElemTableStored);
+                var sourceElemParsed = sourceElemDecompressed is null ? null
+                    : ElemTableLayout.TryParse(sourceElemDecompressed, new FormatsSchema(sourceDoc));
+                if (sourceElemParsed is not null)
+                    sourceElemRows = sourceElemParsed.Select(r => (r.Id, r.OwningId)).ToList();
+            }
+            catch (Exception ex) when (ex is InvalidDataException or ArgumentException or OverflowException)
+            {
+                sourceElemRows = null;
+            }
+        }
+        // A payload that only fails once the universe is set (dangling-id rule) leaves
+        // its owner out as well: close the dropped set before writing, or the rewrite
+        // keeps an unknown 0xFFFE tag the older release refuses with verifyClass.
+        for (int iter = 0; iter < 10; iter++)
+        {
+            var added = new HashSet<ulong>();
+            foreach (var (_, raw) in sourcePartitions)
+            {
+                var restate = DowngradePartitionRewriter.Inspect(raw, sourceTags, sourceWidth, transcoder);
+                knownOwners.UnionWith(restate.Owners);
+                foreach (var id in restate.Dropped)
+                    if (!knownDropped.Contains(id)) added.Add(id);
+            }
+            if (sourceElemRows is not null)
+            {
+                foreach (var (id, owning) in sourceElemRows)
+                {
+                    if (id <= 0 || owning <= 0) continue;
+                    ulong uid = unchecked((ulong)id), uown = unchecked((ulong)owning);
+                    if (!knownDropped.Contains(uid) && knownDropped.Contains(uown)) added.Add(uid);
+                }
+            }
+            if (added.Count == 0) break;
+            knownDropped.UnionWith(added);
+            presentElements = knownOwners
+                .Where(id => id <= uint.MaxValue && !knownDropped.Contains(id))
+                .Select(id => (uint)id)
+                .ToHashSet();
+            droppedElements = knownDropped
+                .Where(id => id <= uint.MaxValue)
+                .Select(id => (uint)id)
+                .ToHashSet();
+            transcoder.SetElementUniverse(presentElements, presentElements.Count == 0 ? 0u : presentElements.Max(), droppedElements);
+        }
 
         byte[] patchedBfi;
         try { patchedBfi = BasicFileInfoPatcher.Patch(sourceBfi, planResult.SourceRelease, planResult.TargetRelease, sourceBfiProfile); }
@@ -234,6 +291,8 @@ internal static class DowngradeWriter
                 throw new DowngradeRefusedException("global-transcode-failed",
                     $"Global/{name} cannot be transcoded to release {planResult.TargetRelease}: {exception.Message}");
             }
+            if (string.Equals(name, "DocumentIncrementTable", StringComparison.OrdinalIgnoreCase))
+                rewritten = DocumentIncrementFixup.RefreshTotals(rewritten, profileDoc, (uint)presentElements.Count);
             if (ReferenceEquals(rewritten, decompressed)) continue;
             replacements["Global/" + entry.Name] = PagedStreamCodec.Encode(PagedStreamCodec.ReadPrefix(entry.Stored), rewritten);
         }

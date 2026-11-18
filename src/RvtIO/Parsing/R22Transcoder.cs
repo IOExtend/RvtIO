@@ -30,12 +30,16 @@ internal sealed class R22Transcoder
     private readonly Dictionary<int, SchemaClass> _target;
     private readonly SchemaDocument _targetDocument;
     private readonly Dictionary<string, int> _targetByName;
+    /// <summary>Diagnostics: element-id invalidations and array-item drops across payloads.</summary>
+    internal int DiagDropItem, DiagMinusOne;
+
     private readonly Dictionary<int, int> _tagMap = new();
     private readonly int _sourceWidth;
     private readonly int _sourceIdentifier;
     private readonly int _targetIdentifierWidth;
     private readonly bool _tagMapping;
     private HashSet<uint> _presentElements = [];
+    private HashSet<uint> _droppedElements = [];
     private uint _maxElementId;
     private readonly SchemaField[]?[]? _entityFields;
     private readonly Dictionary<Guid, int>? _entityIndexOf;
@@ -94,16 +98,39 @@ internal sealed class R22Transcoder
     /// <summary>True when the file's own class table declares the class.</summary>
     internal bool HasSourceClass(int sourceClass) => _source.ContainsKey(sourceClass);
 
+    /// <summary>Pointer class tags that do not derive from the field's declared class in the target table (diagnostics).</summary>
+    internal Dictionary<string, int> PointerMismatches { get; } = new(StringComparer.Ordinal);
+
+    private string NameOfSource(int classId) => _source.GetValueOrDefault(classId)?.Name ?? classId.ToString();
+
+    private string NameOfTarget(int classId) => _target.GetValueOrDefault(classId)?.Name ?? classId.ToString();
+
+    private bool IsTargetKindOf(int classId, int baseClassId)
+    {
+        for (int guard = 0; classId != 0 && guard < 64; guard++)
+        {
+            if (classId == baseClassId) return true;
+            if (!_target.TryGetValue(classId, out var c)) return false;
+            classId = c.Base;
+        }
+        return false;
+    }
+
+    /// <summary>The class name of a source class tag (diagnostics).</summary>
+    internal string? SourceClassName(int sourceClass) => _source.GetValueOrDefault(sourceClass)?.Name;
+
     /// <summary>
-    /// The element ids the written file holds (<paramref name="present"/>) and the highest one:
-    /// a reference to an id inside that range which is not present is dangling and is written as
-    /// invalid (<c>-1</c>), so the older Revit does not follow it into an element that is gone.
-    /// Ids above the highest present one are left alone: the upgrade may create them.
+    /// The element ids the written file holds (<paramref name="present"/>) and the highest one, plus
+    /// the ids explicitly left out (<paramref name="dropped"/>): only a reference to a dropped id is
+    /// dangling and is written as invalid (<c>-1</c>) or leaves its array, so the older Revit does not
+    /// follow it into an element that is gone. Ids that were never held (built-in elements without
+    /// owner records) and ids above the highest present one are left alone.
     /// </summary>
-    internal void SetElementUniverse(IReadOnlySet<uint> present, uint maxElementId)
+    internal void SetElementUniverse(IReadOnlySet<uint> present, uint maxElementId, IReadOnlySet<uint>? dropped = null)
     {
         _presentElements = [.. present];
         _maxElementId = maxElementId;
+        _droppedElements = dropped is null ? [] : [.. dropped];
     }
 
 
@@ -343,6 +370,18 @@ internal sealed class R22Transcoder
         public string? LastForgeText;
         /// <summary>The built-in parameter group element id the current ParamDef names (its source has a type id instead).</summary>
         public int? GroupElementId;
+        /// <summary>The m_bByRange value of the color fill entry being read (its target has a lowest-entry flag the source lacks).</summary>
+        public byte LastByRange;
+        /// <summary>The index of the item being read in its counted array.</summary>
+        public int ArrayItemIndex;
+        /// <summary>A counted-array item holds a reference to a dropped element and goes out with it.</summary>
+        public bool DropItem;
+        /// <summary>Diagnostics: element-id reads by outcome.</summary>
+        public int DiagMinusOne, DiagDropItem;
+        /// <summary>Inside a counted array whose items can be left out (fixed-size arrays keep every item).</summary>
+        public bool Droppable;
+        /// <summary>Inside a fixed-size array (its items keep their places; a dangling id becomes invalid).</summary>
+        public bool InFixedArray;
     }
 
     /// <summary>The payload (class tag first) in the 2022 layout, or null when it cannot be rewritten.</summary>
@@ -431,6 +470,8 @@ internal sealed class R22Transcoder
         try
         {
             byte[] assembled = Assemble(c, offset, c.Pos);
+            DiagDropItem += c.DiagDropItem;
+            DiagMinusOne += c.DiagMinusOne;
             if (c.NeedsValidation)
             {
                 var checkWalker = new WideBlockWalker(_targetDocument, (_, _) => null, []);
@@ -786,7 +827,10 @@ internal sealed class R22Transcoder
         if (hi == 6) { ReadScalar(c, declaring, f, depth); return; }
         if (hi == 1)
         {
+            bool outerFixed = c.InFixedArray;
+            c.InFixedArray = true;
             for (int i = 0; i < (f.Fixed ?? 0); i++) ReadScalar(c, declaring, f, depth);
+            c.InFixedArray = outerFixed;
             return;
         }
         if (hi == 5)
@@ -797,13 +841,37 @@ internal sealed class R22Transcoder
             if (n > 5_000_000) throw new Fail("count");
             if (f.Type is 1 or 2 && (f.Mods & 15) == 0) { Take(c, (int)n); return; }
             int before = c.Dropped;
-            bool outer = c.InArray, outerDeep = c.DeepInArray;
+            bool outer = c.InArray, outerDeep = c.DeepInArray, outerDrop = c.DropItem;
+            bool outerDroppable = c.Droppable, outerFixed = c.InFixedArray;
+            int outerIndex = c.ArrayItemIndex;
             c.InArray = true;
             c.DeepInArray = true;
-            for (uint i = 0; i < n; i++) ReadScalar(c, declaring, f, depth);
+            c.Droppable = true;
+            c.InFixedArray = false;
+            int itemsDropped = 0;
+            for (uint i = 0; i < n; i++)
+            {
+                c.ArrayItemIndex = (int)i;
+                int itemStart = c.Pos, itemQueue = c.Queue.Count;
+                c.DropItem = false;
+                ReadScalar(c, declaring, f, depth);
+                if (c.DropItem && c.Queue.Count == itemQueue)
+                {
+                    // an inline item that names a dropped element: it leaves the array with it,
+                    // so ordered containers keep their order and no dangling reference survives
+                    c.Edits.RemoveAll(e => e.Start > itemStart || (e.Start == itemStart && e.End > itemStart));
+                    c.Edits.Add(new(itemStart, c.Pos, []));
+                    itemsDropped++;
+                }
+            }
+            c.DropItem = outerDrop;
             c.InArray = outer;
             c.DeepInArray = outerDeep;
-            if (c.Dropped > before) c.Edits.Add(new(countAt, countAt + 4, BitConverter.GetBytes(n - (uint)(c.Dropped - before))));
+            c.Droppable = outerDroppable;
+            c.InFixedArray = outerFixed;
+            c.ArrayItemIndex = outerIndex;
+            if (c.Dropped > before || itemsDropped > 0)
+                c.Edits.Add(new(countAt, countAt + 4, BitConverter.GetBytes(n - (uint)(c.Dropped - before) - (uint)itemsDropped)));
             return;
         }
         ReadScalar(c, declaring, f, depth);
@@ -813,7 +881,13 @@ internal sealed class R22Transcoder
     {
         switch (f.Type)
         {
-            case 1: case 2: Take(c, 1); return;
+            case 1: case 2:
+            {
+                int p = Take(c, 1);
+                if (!c.Cutting && declaring == "ColorFillData" && f.Name == "m_bByRange")
+                    c.LastByRange = c.D[p];
+                return;
+            }
             case 3: Take(c, 2); return;
             case 4: case 5: case 6: Take(c, 4); return;
             case 7: Take(c, 8); return;
@@ -874,7 +948,19 @@ internal sealed class R22Transcoder
             }
             int handleAt = Take(c, 4);
             if (BitConverter.ToUInt32(c.D, handleAt) == 0) return;
+            int tagAt = c.Pos;
             Pointer(c, handleAt);
+            if (!c.Cutting)
+            {
+                int objectTag = BitConverter.ToUInt16(c.D, tagAt);
+                if (_tagMap.TryGetValue(objectTag, out int mapped) && mapped != 0
+                    && f.Ref is int declared && _tagMap.TryGetValue(declared, out int declaredTarget) && declaredTarget != 0
+                    && !IsTargetKindOf(mapped, declaredTarget))
+                {
+                    string key = (declaring ?? "?") + "." + f.Name + ": " + NameOfSource(objectTag) + " for " + NameOfTarget(declaredTarget);
+                    PointerMismatches[key] = PointerMismatches.GetValueOrDefault(key) + 1;
+                }
+            }
             return;
         }
         if (f.Ref is int reference)
@@ -885,9 +971,21 @@ internal sealed class R22Transcoder
                 if (_sourceWidth == 8 && _targetIdentifierWidth == 4 && !c.Cutting)
                 {
                     long id = BitConverter.ToInt64(c.D, p);
-                    if (!c.DeepInArray && id is > 0 and <= uint.MaxValue && _presentElements.Count > 0
-                        && id <= _maxElementId && !_presentElements.Contains((uint)id))
-                        id = -1;
+                    bool dangling = id is > 0 and <= uint.MaxValue && _presentElements.Count > 0
+                        && id <= _maxElementId && _droppedElements.Contains((uint)id);
+                    if (dangling && c.Droppable && c.DeepInArray && !c.InFixedArray)
+                    {
+                        // an item of a counted array that names a dropped element: the item leaves
+                        // the array with it (ordered containers keep their order); the loop cuts its bytes.
+                        // A provisional invalidation stays for items the loop cannot cut (they queued
+                        // objects): the cut removes it together with the item bytes.
+                        c.DropItem = true;
+                        c.DiagDropItem++;
+                        c.Edits.Add(new(p, p + 8, BitConverter.GetBytes(-1)));
+                        return;
+                    }
+                    if (dangling && !c.DeepInArray) { id = -1; c.DiagMinusOne++; }
+                    else if (dangling && c.InFixedArray) { id = -1; c.DiagMinusOne++; }
                     if (id < int.MinValue || id > uint.MaxValue) throw new Fail("id beyond 32 bits: " + id);
                     c.Edits.Add(new(p, p + 8, BitConverter.GetBytes(unchecked((int)id))));
                 }
@@ -1044,11 +1142,15 @@ internal sealed class R22Transcoder
     };
 
     /// <summary>A default that depends on the object being read: the 2027 ParamDef names its
-    /// parameter group by a group type id, the 2023 field wants the group element id.</summary>
+    /// parameter group by a group type id, the 2023 field wants the group element id; the 2027
+    /// color fill entry has no lowest-range flag, the 2020 field marks the first entry of a
+    /// by-range container (as the native files do).</summary>
     private byte[] DefaultFor(Context c, (SchemaClass Declaring, SchemaField Field) target)
     {
         if (target.Declaring.Name == "ParamDef" && target.Field.Name == "m_groupElemId" && c.GroupElementId is int group)
             return BitConverter.GetBytes(group);
+        if (target.Declaring.Name == "ColorFillData" && target.Field.Name == "m_bIsLowest")
+            return [(byte)(c.LastByRange == 1 && c.ArrayItemIndex == 0 ? 1 : 0)];
         return Default(target);
     }
 
