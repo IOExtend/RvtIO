@@ -1,17 +1,16 @@
 using System.Buffers.Binary;
 using System.IO.Compression;
 using OpenMcdf;
-using RvtIO.Parsing;
-using RvtIO.Pdf;
+using RvtIO.Internal;
 
-namespace RvtIO.Print;
+namespace RvtIO.Parsing;
 
 /// <summary>Reads a raster image out of a Revit file and decodes a PNG to an RGB raster: Revit keeps the image files it
-/// places in the partition streams, and the print writer embeds them with Flate compression.</summary>
+/// places in the partition streams.</summary>
 internal static class RvtRaster
 {
     /// <summary>Finds and decodes the PNG of the given size in the file's streams, or null when there is none.</summary>
-    internal static PdfRasterImage? FindPng(string path, int width, int height)
+    internal static (int Width, int Height, byte[] Rgb)? FindPng(string path, int width, int height)
     {
         try
         {
@@ -50,10 +49,9 @@ internal static class RvtRaster
         return null;
     }
 
-    /// <summary>Finds the JPEG that Revit stores in the block of the given element (class 0x0890) and returns it as an
-    /// image the PDF writer embeds as it is. A rendering of a 3D view is stored that way, in the block of its image
-    /// symbol's type.</summary>
-    internal static PdfJpegImage? FindJpeg(string path, int elementId)
+    /// <summary>Finds the encoded JPEG Revit stores in the given element's block (class 0x0890).
+    /// A 3D rendering stores its image in the block of the image symbol's type.</summary>
+    internal static (byte[] Bytes, JpegHeader Header)? FindJpeg(string path, int elementId)
     {
         try
         {
@@ -84,7 +82,8 @@ internal static class RvtRaster
                         int end = jpeg.AsSpan().LastIndexOf(new byte[] { 0xFF, 0xD9 });
                         if (end < 0) return null;
                         Array.Resize(ref jpeg, end + 2);
-                        return new PdfJpegImage(jpeg);
+                        var header = JpegHeader.Read(jpeg);
+                        return header.Width > 0 && header.Height > 0 ? (jpeg, header) : null;
                     }
                 }
             }
@@ -99,7 +98,7 @@ internal static class RvtRaster
 
     /// <summary>Finds the logo of the file: the widest PNG whose aspect (four to eight to one) is that of a title block
     /// logo, decoded to an RGB raster. Null when the file has no such image.</summary>
-    internal static PdfRasterImage? FindLogo(string path)
+    internal static (int Width, int Height, byte[] Rgb)? FindLogo(string path)
     {
         try
         {
@@ -145,7 +144,7 @@ internal static class RvtRaster
 
     /// <summary>Decodes a PNG (8 bits per channel, RGB, RGBA or palette, non-interlaced) to an RGB raster, alpha
     /// composited over white.</summary>
-    internal static PdfRasterImage? DecodePng(byte[] png)
+    internal static (int Width, int Height, byte[] Rgb)? DecodePng(byte[] png)
     {
         if (png.Length < 8 || png[0] != 0x89 || png[1] != 0x50 || png[2] != 0x4E || png[3] != 0x47)
             return null;
@@ -242,7 +241,7 @@ internal static class RvtRaster
                 rgb[target + 2] = (byte)((b * a + 255 * (255 - a)) / 255);
             }
         }
-        return new PdfRasterImage(width, height, rgb);
+        return (width, height, rgb);
     }
 
     /// <summary>The decompressed chunks of a stream; a stream that does not decode yields none.</summary>

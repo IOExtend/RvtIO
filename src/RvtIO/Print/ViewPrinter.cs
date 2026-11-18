@@ -1,5 +1,6 @@
 using RvtIO.BuiltIns;
 using RvtIO.Model;
+using RvtIO.Parsing;
 using RvtIO.Pdf;
 
 namespace RvtIO.Print;
@@ -108,8 +109,8 @@ public static class ViewPrinter
         {
             if (element.OwnerViewId != viewId || element.RootClassName != "ImageSymbol") continue;
             if (element.TypeId <= 0) continue;
-            var image = RvtRaster.FindJpeg(path, element.TypeId);
-            if (image != null) return image;
+            if (RvtRaster.FindJpeg(path, element.TypeId) is { } jpeg)
+                return new PdfJpegImage(jpeg.Bytes, jpeg.Header);
         }
         return null;
     }

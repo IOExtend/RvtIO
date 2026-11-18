@@ -177,6 +177,13 @@ public class PdfWriterTests
     }
 
     [Fact]
+    public void JpegImage_RejectsMissingDataOrFrame()
+    {
+        Assert.Throws<ArgumentNullException>("jpeg", () => new PdfJpegImage(null!));
+        Assert.Throws<ArgumentException>("jpeg", () => new PdfJpegImage([0xFF, 0xD8, 0xFF, 0xD9]));
+    }
+
+    [Fact]
     public void Compress_WritesFlateStreamsThatShrinkTheFile()
     {
         static PdfDocument Build(bool compress)
