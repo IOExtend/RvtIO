@@ -177,6 +177,11 @@ public static class ElevationPrinter
         // behind nearer mass is not inked even though the painter's fills cover it only visually. A face counts
         // as nearer when its nearest corner stands nearer, even a face turned away from the view.
         var faceMinDepths = new List<double>();
+        // The chords where the cut plane slices through a face, in page coordinates: the cut profile of
+        // solids the plane passes through. Transverse faces never outline, so the cut flag never marks their
+        // boundary, yet the plane carves a profile out of them (a wall cross-section in a detail). Outline
+        // faces keep their flagged boundary instead, so the same line is never inked twice.
+        var cutChords = new List<CollectedEdge>();
         double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
         foreach (var element in document.Elements)
         {
@@ -224,6 +229,45 @@ public static class ElevationPrinter
                 foreach (var vertex in vertices)
                     corners.Add([vertex[0] * FeetToMillimetres, vertex[1] * FeetToMillimetres,
                         vertex[2] * FeetToMillimetres]);
+                double facing = Math.Abs(face.Normal[0] * D[0] + face.Normal[1] * D[1] + face.Normal[2] * D[2]);
+                // The chords come from the unclipped ring: clipping moves or drops the plane crossings, and a
+                // window-clipped polygon loses the vertex correspondence entirely. They are projected and kept
+                // below, next to the face they were carved from.
+                List<(double[] A, double[] B)>? chords = null;
+                if (cut && planeOrigin.Length == 3 && facing <= 0.5)
+                    chords = CutChords(corners, planeOrigin, D);
+                if (chords != null)
+                {
+                    double planeDepth = planeOrigin[0] * D[0] + planeOrigin[1] * D[1] + planeOrigin[2] * D[2];
+                    foreach (var (ca, cb) in chords)
+                    {
+                        double ax = ca[0] * H[0] + ca[1] * H[1] + ca[2] * H[2];
+                        double ay = ca[0] * V[0] + ca[1] * V[1] + ca[2] * V[2];
+                        double bx = cb[0] * H[0] + cb[1] * H[1] + cb[2] * H[2];
+                        double by = cb[0] * V[0] + cb[1] * V[1] + cb[2] * V[2];
+                        if (Math.Abs(bx - ax) + Math.Abs(by - ay) < 0.5) continue;
+                        if (window is { } win && cut && planeOrigin.Length == 3)
+                        {
+                            double cx = planeOrigin[0] * H[0] + planeOrigin[1] * H[1] + planeOrigin[2] * H[2];
+                            double cy = planeOrigin[0] * V[0] + planeOrigin[1] * V[1] + planeOrigin[2] * V[2];
+                            if (!ClipSegment(ax, ay, bx, by,
+                                cx - win.Width / 2, cy - win.Height / 2,
+                                cx + win.Width / 2, cy + win.Height / 2,
+                                out ax, out ay, out bx, out by)) continue;
+                        }
+                        if (cropWindow is { } chordCrop && cut && planeOrigin.Length == 3)
+                        {
+                            if (!ClipSegment(ax, ay, bx, by,
+                                chordCrop.X0, chordCrop.Y0, chordCrop.X1, chordCrop.Y1,
+                                out ax, out ay, out bx, out by)) continue;
+                        }
+                        cutChords.Add(new CollectedEdge(ax, ay, bx, by, planeDepth, planeDepth, -1, -1,
+                            (long)Math.Round(D[0] * 1000), (long)Math.Round(D[1] * 1000), (long)Math.Round(D[2] * 1000),
+                            (long)Math.Round(planeDepth * 2.0), true, element.CategoryId ?? 0));
+                        minX = Math.Min(minX, Math.Min(ax, bx)); maxX = Math.Max(maxX, Math.Max(ax, bx));
+                        minY = Math.Min(minY, Math.Min(ay, by)); maxY = Math.Max(maxY, Math.Max(ay, by));
+                    }
+                }
                 if (cut && planeOrigin.Length == 3)
                 {
                     corners = ClipBehind(corners, planeOrigin, D);
@@ -278,7 +322,6 @@ public static class ElevationPrinter
                 }
                 if (Math.Abs(projected) / 2 < 2000) continue;
                 depth /= corners.Count;
-                double facing = Math.Abs(face.Normal[0] * D[0] + face.Normal[1] * D[1] + face.Normal[2] * D[2]);
                 foreach (var (x, y) in points)
                 {
                     minX = Math.Min(minX, x); maxX = Math.Max(maxX, x);
@@ -302,8 +345,12 @@ public static class ElevationPrinter
                 }
             }
         }
-        if (faces.Count == 0) return null;
+        if (faces.Count == 0 && cutChords.Count == 0) return null;
         var deduped = DedupeEdges(edgeFaces, D, cut ? planeOrigin : null);
+        // The carved chords join the shared-edge pass late on purpose: they are already de-duplicated by
+        // construction (one span per inside interval), and the merge below still unions the same line coming
+        // from two solids sharing the cut surface.
+        deduped.AddRange(cutChords);
         var occluded = OccludeEdges(faces, faceMinDepths, deduped);
         List<CollectedEdge> edges = MergeOverlaps(occluded);
         // Every visible edge inks, horizontals included: the reference prints the wall top, the slab and roof
@@ -889,6 +936,63 @@ public static class ElevationPrinter
         cx1 = x0 + t1 * dx; cy1 = y0 + t1 * dy;
         return (cx1 - cx0) * (cx1 - cx0) + (cy1 - cy0) * (cy1 - cy0) > 1e-12;
     }
+    /// <summary>Chords where the cut plane slices through a face: the intersection segments of the ring with the
+    /// plane, in 3D. Only a face the plane passes through (vertices strictly on both sides, 1 mm tolerance, the
+    /// same tolerance that flags a cut edge) yields chords; a face lying wholly in the plane is skipped because
+    /// its boundary is already cut-flagged when the face outlines. Crossing points interpolate along the ring
+    /// edges; consecutive points pair along the chord's dominant axis, one span per inside interval.</summary>
+    internal static List<(double[] A, double[] B)> CutChords(List<double[]> ring, double[] origin, double[] dir)
+    {
+        int n = ring.Count;
+        var dist = new double[n];
+        double min = double.MaxValue, max = double.MinValue;
+        for (int i = 0; i < n; i++)
+        {
+            dist[i] = (ring[i][0] - origin[0]) * dir[0] + (ring[i][1] - origin[1]) * dir[1]
+                + (ring[i][2] - origin[2]) * dir[2];
+            if (dist[i] < min) min = dist[i];
+            if (dist[i] > max) max = dist[i];
+        }
+        var result = new List<(double[], double[])>();
+        if (!(min < -1.0 && max > 1.0)) return result;
+        var points = new List<double[]>();
+        for (int i = 0; i < n; i++)
+        {
+            int j = (i + 1) % n;
+            if (Math.Abs(dist[i]) <= 1.0) points.Add(ring[i]);
+            if ((dist[i] < -1.0 && dist[j] > 1.0) || (dist[i] > 1.0 && dist[j] < -1.0))
+            {
+                double t = dist[i] / (dist[i] - dist[j]);
+                points.Add([ring[i][0] + (ring[j][0] - ring[i][0]) * t,
+                    ring[i][1] + (ring[j][1] - ring[i][1]) * t,
+                    ring[i][2] + (ring[j][2] - ring[i][2]) * t]);
+            }
+        }
+        var unique = new List<double[]>();
+        foreach (var point in points)
+        {
+            bool seen = false;
+            foreach (var have in unique)
+            {
+                if (Math.Abs(point[0] - have[0]) + Math.Abs(point[1] - have[1]) + Math.Abs(point[2] - have[2]) < 0.3)
+                { seen = true; break; }
+            }
+            if (!seen) unique.Add(point);
+        }
+        if (unique.Count < 2) return result;
+        double x0 = unique.Min(p => p[0]), x1 = unique.Max(p => p[0]);
+        double y0 = unique.Min(p => p[1]), y1 = unique.Max(p => p[1]);
+        double z0 = unique.Min(p => p[2]), z1 = unique.Max(p => p[2]);
+        int axis = 0;
+        double spread = x1 - x0;
+        if (y1 - y0 > spread) { axis = 1; spread = y1 - y0; }
+        if (z1 - z0 > spread) axis = 2;
+        unique.Sort((a, b) => a[axis].CompareTo(b[axis]));
+        for (int i = 0; i + 1 < unique.Count; i += 2)
+            result.Add((unique[i], unique[i + 1]));
+        return result;
+    }
+
     /// <summary>The part of a polygon that stands behind the cutting plane (the side the view direction points
     /// to), the plane crossing a polygon adding the points where it crosses the plane.</summary>
     private static List<double[]> ClipBehind(List<double[]> polygon, double[] origin, double[] direction)

@@ -207,6 +207,28 @@ public class ElevationPrinterTests
     }
 
     [Fact]
+    public void Collect_CarvesCutChordsFromTransverseFaces()
+    {
+        // A face perpendicular to the view direction never outlines, so the cut flag never marks its boundary —
+        // yet the section plane slices through it. The plane carves one chord out of the face: a vertical line
+        // at the plane crossing spanning the full height. The sliver projection keeps the face itself out of the
+        // drawing; the chord still inks.
+        var view = SectionView(900, [10, 0, 5]);
+        var document = Document(
+            QuadWall(600, [[8, 2, 0], [12, 2, 0], [12, 2, 3], [8, 2, 3]], [0, 1, 0]),
+            view);
+
+        var content = ElevationPrinter.Collect(document, "section", false, view, null)!;
+
+        Assert.NotNull(content);
+        var chord = Assert.Single(content!.Edges, e => e.IsCut);
+        Assert.Equal(chord.X1, chord.X2);
+        Assert.Equal(2 * FeetToMillimetres, chord.X1, 3);
+        Assert.Equal(0, chord.Y1, 0);
+        Assert.Equal(3 * FeetToMillimetres, chord.Y2, 0);
+    }
+
+    [Fact]
     public void Collect_KeepsCutEdgesWhenTheCropWindowClipsTheFace()
     {
         // A detail view clips its faces to the file crop before the edge pass. Clipping only the projected points
@@ -232,6 +254,29 @@ public class ElevationPrinterTests
         Assert.NotEmpty(withWindow!.Edges.Where(edge => edge.IsCut));
         // The wall's cut face at x = 3982 mm is inside the crop in both runs.
         Assert.Contains(withWindow.Edges, edge => edge.IsCut && Math.Abs(edge.X1 - 3982) < 5 && Math.Abs(edge.X2 - 3982) < 5);
+    }
+
+    [Fact]
+    public void SampleFile_WallSectionDetailsHaveCutProfiles()
+    {
+        // The sample's wall-section details previously collected zero cut edges: their planes slice the walls,
+        // but only transverse faces cross them, and transverse faces never outlined. The chords carve those
+        // cross-sections now (wall strips, slab edges, window and door frames), which is what the reference
+        // details draw.
+        string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+        var view = document.Elements.FirstOrDefault(e => e.CategoryId == (int)BuiltInCategory.OST_Views
+            && e.Name == "Typ. Wall Section");
+        Assert.NotNull(view);
+
+        var content = ElevationPrinter.Collect(document, "section", false, view);
+
+        Assert.NotNull(content);
+        var cut = content!.Edges.Where(edge => edge.IsCut).ToList();
+        Assert.True(cut.Count >= 10, $"Typ. Wall Section drew {cut.Count} cut edges");
+        Assert.Contains(cut, edge => Math.Abs(edge.X2 - edge.X1) < 0.5);
+        Assert.Contains(cut, edge => Math.Abs(edge.Y2 - edge.Y1) < 0.5);
     }
 
     [Fact]
