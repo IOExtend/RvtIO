@@ -1,5 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup Condition="'$(BuildNativeCoreOnly)' == 'true'">
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
   <PropertyGroup>
     <Description>Turns a Revit project read by RvtIO into an IOScene scene document.</Description>
     <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
