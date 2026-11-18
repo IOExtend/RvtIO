@@ -1,6 +1,6 @@
+using RvtIO.Geometry;
 using RvtIO.Internal;
 using RvtIO.Parsing;
-using RvtIO.Ifc;
 
 namespace RvtIO;
 
@@ -85,7 +85,7 @@ public partial class RvtFileReader
             || WallExtrusion.IsStandardCaseBody(nativeGeometry, helper) != false
             || WallExtrusion.TryFindVerticalExtrusion(nativeGeometry.Faces, out string reason, true,
                 nativeGeometry.Faces.Select(face => face.MeshEdgeBounds!).ToList()) || reason != "bbox"
-            || !IfcExporter.TryOrientExactFacetedShell(nativeGeometry.Faces, solid.FaceIndices, out _)) return null;
+            || !FacetedShell.TryOrientExactFacetedShell(nativeGeometry.Faces, solid.FaceIndices, out _, triangulateNonPlanarFaces: false)) return null;
         return body;
     }
 

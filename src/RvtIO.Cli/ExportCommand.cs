@@ -190,7 +190,7 @@ internal static partial class Program
             if (roomPhase != null) Console.Error.WriteLine($"IFC room export phase: {roomPhase}");
             // A 64-bit-id file has no scanned fallback names: the exporter reads the validated ones, as the JSON dump does.
             if (ifcModel.GeometryUndecoded)
-                RvtIO.Parsing.ValidatedElementNames.Apply(ifcModel, ifcState);
+                RvtIO.Export.ValidatedElementNames.Apply(ifcModel, ifcState);
             var skipLog = new SkipLog();
             var exporter = new IfcExporter(Console.Error, includeIfcRevitParameters) { SkipLog = skipLog, ExportPhaseId = exportPhase, ExportAllPhases = exportPhaseOption == "all", RoomExportPhaseId = roomPhase, ExportRoomsOfAllPhases = roomPhaseOption == "all", RevitParameterGroups = revitParameterGroups, Profile = profile, BaseQuantities = baseQuantities, OpeningQuantitiesSwapped = openingLegacyAxes, Timestamp = ifcTimestamp, LengthUnit = ifcLengthUnit };
             var swExport = System.Diagnostics.Stopwatch.StartNew();
@@ -203,7 +203,7 @@ internal static partial class Program
         if (compactJsonPath != null)
         {
             // The compact export reads Element.Name only where it is validated (the IFC branch above keeps the fallback names).
-            RvtIO.Parsing.ValidatedElementNames.Apply(jsonModel, jsonState);
+            RvtIO.Export.ValidatedElementNames.Apply(jsonModel, jsonState);
             var compactIdentity = new CompactIdentity(CompactUniverse.Select(jsonModel));
             // --dev-candidates <tsv>: measurement run without the value gate; writes (id, parameter, stored text, derived text, class) of every
             // listed parameter for the value gate. --dev-trace <tsv>: writes (id, class, parameter, reason) of every listed parameter
@@ -318,7 +318,7 @@ internal static partial class Program
             // "Name" is the Revit API element name: keep the validated names and omit the rest (null is not written).
             // Element.Name is a fallback value that scanned strings can fill with another element's name; the IFC branch above
             // keeps reading it, so only the JSON branch replaces it.
-            int validatedNames = RvtIO.Parsing.ValidatedElementNames.Apply(jsonModel, jsonState);
+            int validatedNames = RvtIO.Export.ValidatedElementNames.Apply(jsonModel, jsonState);
             Console.Error.WriteLine($"JSON names: {validatedNames} of {jsonModel.Elements.Count} elements have a validated name");
 
             // De-duplicate parameter definitions into a shared table so each element parameter only stores its value (keyed by id).

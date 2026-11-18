@@ -1,6 +1,6 @@
 using RvtIO.Model;
 
-namespace RvtIO.Ifc;
+namespace RvtIO.Geometry;
 
 /// <summary>
 /// The two geometric tests the current profile wall exporter applies to a wall body before it writes an IfcWallStandardCase:
@@ -93,7 +93,7 @@ internal static partial class WallExtrusion
     {
         exact = face.MeshArcs is not { Count: > 0 };
         if (face.OuterVertices is { Count: >= 3 } outer && face.MeshArcs is { Count: > 0 } arcs
-            && IfcExporter.FindArcRunsCurrent(outer, arcs) is var runs && runs.Count == arcs.Count)
+            && ArcRuns.FindArcRunsCurrent(outer, arcs) is var runs && runs.Count == arcs.Count)
         {
             exact = true;
             return ExactLoopArea(outer, runs);
@@ -101,7 +101,7 @@ internal static partial class WallExtrusion
         return LoopArea(face.OuterVertices);
     }
 
-    private static double ExactLoopArea(IReadOnlyList<double[]> ring, IReadOnlyList<IfcExporter.ArcRunCurrent> runs)
+    private static double ExactLoopArea(IReadOnlyList<double[]> ring, IReadOnlyList<ArcRuns.ArcRunCurrent> runs)
     {
         double[] total = [0, 0, 0];
         void Add(double[] a, double[] b, double sign)

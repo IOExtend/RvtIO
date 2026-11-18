@@ -1,3 +1,4 @@
+using RvtIO.Geometry;
 using RvtIO.Ifc;
 using RvtIO.Model;
 using Xunit;
@@ -37,7 +38,7 @@ public class CoveringFirstPieceTests
     [Fact]
     public void FirstPiece_IsOnePieceNotTheWholeSurface()
     {
-        var shells = IfcExporter.ShellsOfCurrent(TwoPieceSlab());
+        var shells = BrepMeasures.ShellsOfCurrent(TwoPieceSlab());
 
         double? piece = IfcExporter.FirstTopPieceAreaCurrent(shells);
         double whole = IfcExporter.TopSurfaceAreaCurrent(shells);
@@ -56,7 +57,7 @@ public class CoveringFirstPieceTests
             Square(20, 0, 15, 10, 1),
             Square(0, 0, 10, 0, 2),
             Square(20, 0, 15, 0, 2));
-        var shells = IfcExporter.ShellsOfCurrent(geometry);
+        var shells = BrepMeasures.ShellsOfCurrent(geometry);
 
         double? piece = IfcExporter.FirstTopPieceAreaCurrent(shells);
 
@@ -73,7 +74,7 @@ public class CoveringFirstPieceTests
             Square(20, 0, 15, 10, 2),
             Square(20, 0, 15, 0, 3),
             Square(0, 0, 10, 0, 4));
-        var shells = IfcExporter.ShellsOfCurrent(geometry);
+        var shells = BrepMeasures.ShellsOfCurrent(geometry);
 
         double? piece = IfcExporter.FirstTopPieceAreaCurrent(shells);
 
@@ -87,7 +88,7 @@ public class CoveringFirstPieceTests
         var geometry = Slabs(
             Square(0, 0, 10, 10, 1),
             Square(0, 0, 10, 0, 1));
-        var shells = IfcExporter.ShellsOfCurrent(geometry);
+        var shells = BrepMeasures.ShellsOfCurrent(geometry);
 
         Assert.Null(IfcExporter.FirstTopPieceAreaCurrent(shells));
     }
@@ -99,7 +100,7 @@ public class CoveringFirstPieceTests
             Square(0, 0, 10, 10, 1),
             Square(20, 0, 10, 10, 2),
             Square(0, 0, 5, 0, 3));
-        var shells = IfcExporter.ShellsOfCurrent(geometry);
+        var shells = BrepMeasures.ShellsOfCurrent(geometry);
 
         Assert.Null(IfcExporter.FirstTopPieceAreaCurrent(shells));
     }
@@ -113,7 +114,7 @@ public class CoveringFirstPieceTests
             Square(20, 0, 10, 12, 2),
             Square(0, 0, 10, 0, 3),
             Square(20, 0, 10, 2, 4));
-        var shells = IfcExporter.ShellsOfCurrent(geometry);
+        var shells = BrepMeasures.ShellsOfCurrent(geometry);
 
         Assert.Null(IfcExporter.FirstTopPieceAreaCurrent(shells));
     }
@@ -179,7 +180,7 @@ public class CoveringFirstPieceTests
                 new GeoBrepSolid { IsClosed = true, FaceIndices = Enumerable.Range(first.Faces.Count, second.Faces.Count).ToList() },
             ],
         };
-        var shells = IfcExporter.ShellsOfCurrent(geometry);
+        var shells = BrepMeasures.ShellsOfCurrent(geometry);
 
         Assert.Null(IfcExporter.FirstTopPieceAreaCurrent(shells));
         Assert.Equal(111.803398875 + 251.557647469, IfcExporter.TopSurfaceAreaCurrent(shells), 6);
@@ -231,7 +232,7 @@ public class CoveringFirstPieceTests
             ],
         };
 
-        Assert.Null(IfcExporter.FirstTopPieceAreaCurrent(IfcExporter.ShellsOfCurrent(geometry)));
+        Assert.Null(IfcExporter.FirstTopPieceAreaCurrent(BrepMeasures.ShellsOfCurrent(geometry)));
         var ceiling = new Element { Id = 5, CategoryId = -2000038, Geometry = geometry };
 
         var quantities = QuantitiesOf(ceiling);

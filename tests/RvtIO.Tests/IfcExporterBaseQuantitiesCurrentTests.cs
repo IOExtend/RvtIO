@@ -1,3 +1,4 @@
+using RvtIO.Geometry;
 using RvtIO.Geometry.Meshing;
 using RvtIO.Parsing;
 using System.Globalization;
@@ -47,7 +48,7 @@ public class IfcExporterBaseQuantitiesCurrentTests
         BrepSolids = [new GeoBrepSolid { IsClosed = true, FaceIndices = [0, 1, 2, 3, 4, 5] }],
     };
 
-    private static IfcExporter.ShellInfo SoleShell(GeometryData geometry) => Assert.Single(IfcExporter.ShellsOfCurrent(geometry));
+    private static BrepMeasures.ShellInfo SoleShell(GeometryData geometry) => Assert.Single(BrepMeasures.ShellsOfCurrent(geometry));
 
 
     [Fact]
@@ -91,7 +92,7 @@ public class IfcExporterBaseQuantitiesCurrentTests
         // A square hole of 1 ft2 in the top face: the face keeps 15 ft2 of its 16.
         geometry.Faces[1].InnerVertices = [[[1, 1, 1], [2, 1, 1], [2, 2, 1], [1, 2, 1]]];
 
-        Assert.Equal(15, IfcExporter.NetFaceArea(geometry.Faces[1])!.Value, 9);
+        Assert.Equal(15, BrepMeasures.NetFaceArea(geometry.Faces[1])!.Value, 9);
         Assert.Equal(16 + 15 + 16, SoleShell(geometry).Area, 9);
     }
 
@@ -108,13 +109,13 @@ public class IfcExporterBaseQuantitiesCurrentTests
     }
 
     [Fact]
-    public void Shells_NoFaces_NoShells() => Assert.Empty(IfcExporter.ShellsOfCurrent(new GeometryData()));
+    public void Shells_NoFaces_NoShells() => Assert.Empty(BrepMeasures.ShellsOfCurrent(new GeometryData()));
 
 
     [Fact]
     public void Prism_Box_IsExtrudedAlongItsLongAxis()
     {
-        var prism = IfcExporter.FindPrismCurrent(SoleShell(Box(1, 2, 5)));
+        var prism = BrepMeasures.FindPrismCurrent(SoleShell(Box(1, 2, 5)));
 
         Assert.NotNull(prism);
         Assert.Equal(5, prism!.Value.Depth, 9);
@@ -127,8 +128,8 @@ public class IfcExporterBaseQuantitiesCurrentTests
     {
         var shell = SoleShell(Box(5, 2, 1));
 
-        var any = IfcExporter.FindPrismCurrent(shell);
-        var vertical = IfcExporter.FindPrismCurrent(shell, verticalOnly: true);
+        var any = BrepMeasures.FindPrismCurrent(shell);
+        var vertical = BrepMeasures.FindPrismCurrent(shell, verticalOnly: true);
 
         Assert.Equal(5, any!.Value.Depth, 9);
         Assert.False(any.Value.Vertical);
@@ -155,7 +156,7 @@ public class IfcExporterBaseQuantitiesCurrentTests
             BrepSolids = [new GeoBrepSolid { IsClosed = true, FaceIndices = [0, 1, 2, 3] }],
         };
 
-        Assert.Null(IfcExporter.FindPrismCurrent(SoleShell(geometry)));
+        Assert.Null(BrepMeasures.FindPrismCurrent(SoleShell(geometry)));
     }
 
     [Fact]
@@ -174,7 +175,7 @@ public class IfcExporterBaseQuantitiesCurrentTests
             BrepSolids = [new GeoBrepSolid { IsClosed = true, FaceIndices = [0, 1, 2, 3, 4] }],
         };
 
-        var prism = IfcExporter.FindPrismCurrent(SoleShell(geometry));
+        var prism = BrepMeasures.FindPrismCurrent(SoleShell(geometry));
 
         Assert.Equal(2, prism!.Value.Depth, 9);
         Assert.Equal(1, prism.Value.ProfileArea, 9);
@@ -186,7 +187,7 @@ public class IfcExporterBaseQuantitiesCurrentTests
         var geometry = Box(1, 2, 3);
         geometry.Faces[2] = new GeoFace { OuterVertices = geometry.Faces[2].OuterVertices, CurvedSurface = true };
 
-        Assert.Null(IfcExporter.FindPrismCurrent(SoleShell(geometry)));
+        Assert.Null(BrepMeasures.FindPrismCurrent(SoleShell(geometry)));
     }
 
 
@@ -2673,7 +2674,7 @@ public class IfcExporterBaseQuantitiesCurrentTests
         var geometry = TakenAndUntakenBoxes(taken, untaken);
         geometry.NodeMeasures = [new RvtIO.Parsing.MeshNodeMeasure(taken, 40, 7)];
 
-        var totals = IfcExporter.NodeSolidTotalsCurrent(geometry);
+        var totals = BrepMeasures.NodeSolidTotalsCurrent(geometry);
 
         Assert.Equal(7 * CubicFeet, totals!.Value.Volume, 12);
         Assert.Equal(40 * SquareFeet, totals.Value.Area, 12);
@@ -2685,8 +2686,8 @@ public class IfcExporterBaseQuantitiesCurrentTests
         var geometry = TakenAndUntakenBoxes(3, -4);
         geometry.NodeMeasures = [new RvtIO.Parsing.MeshNodeMeasure(9, 40, 7)];
 
-        Assert.Null(IfcExporter.NodeSolidTotalsCurrent(geometry));
-        Assert.Null(IfcExporter.NodeSolidTotalsCurrent(TakenAndUntakenBoxes(3, -4)));
+        Assert.Null(BrepMeasures.NodeSolidTotalsCurrent(geometry));
+        Assert.Null(BrepMeasures.NodeSolidTotalsCurrent(TakenAndUntakenBoxes(3, -4)));
     }
 
     [Theory]
@@ -2769,7 +2770,7 @@ public class IfcExporterBaseQuantitiesCurrentTests
     [InlineData(12, 5)]
     public void NodeSolidTotals_LeaveOutTheCuttingNodes(int taken, int cutting)
     {
-        var totals = IfcExporter.NodeSolidTotalsCurrent(BoxesInNodes(taken, cutting));
+        var totals = BrepMeasures.NodeSolidTotalsCurrent(BoxesInNodes(taken, cutting));
 
         Assert.Equal(7 * CubicFeet, totals!.Value.Volume, 12);
         Assert.Equal(40 * SquareFeet, totals.Value.Area, 12);
@@ -2781,7 +2782,7 @@ public class IfcExporterBaseQuantitiesCurrentTests
         var geometry = TakenAndUntakenBoxes(3, 4);
         geometry.NodeMeasures = [new RvtIO.Parsing.MeshNodeMeasure(3, 100, -9), new RvtIO.Parsing.MeshNodeMeasure(4, 100, -9)];
 
-        Assert.Null(IfcExporter.NodeSolidTotalsCurrent(geometry));
+        Assert.Null(BrepMeasures.NodeSolidTotalsCurrent(geometry));
     }
 
     [Fact]

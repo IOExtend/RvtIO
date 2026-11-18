@@ -1,3 +1,4 @@
+using RvtIO.Geometry;
 using RvtIO.Ifc;
 using RvtIO.Model;
 using System.Text.Json;
@@ -35,7 +36,7 @@ public class PlanarSpaceShellContactTests
                     if (visited.Add(other)) queue.Enqueue(other);
         Assert.Equal(29, visited.Count);
         Assert.True(boundary.BrepSolids[0].IsClosed); // source declaration alone is insufficient
-        Assert.False(IfcExporter.IsExactFacetedShell(faces, indices));
+        Assert.False(FacetedShell.IsExactFacetedShell(faces, indices));
         Assert.False(IfcExporter.TryOrientExactFacetedShell(faces, indices, out var oriented));
         Assert.Empty(oriented);
         Assert.Equal(before, JsonSerializer.Serialize(boundary));

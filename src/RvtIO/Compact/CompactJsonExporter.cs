@@ -31,7 +31,7 @@ public static class CompactJsonExporter
         var info = reader.Read(rvtPath);
         var state = reader.LastParsingState ?? throw new InvalidOperationException("The reader kept no parsing state.");
         // The compact export reads Element.Name only where it is validated.
-        Parsing.ValidatedElementNames.Apply(info, state);
+        RvtIO.Export.ValidatedElementNames.Apply(info, state);
         var identity = new CompactIdentity(CompactUniverse.Select(info));
         // A wide layout does not decode geometry or curves: their quantities come from a second read in the Revit 2022 layout.
         var gate = CompactValueGate.ForLayout(info.GeometryUndecoded);

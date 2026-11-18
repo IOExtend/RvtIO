@@ -1,3 +1,4 @@
+using RvtIO.Geometry;
 using RvtIO.Geometry.Meshing;
 using RvtIO.Ifc;
 using RvtIO.Internal;

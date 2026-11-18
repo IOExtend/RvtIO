@@ -1,4 +1,5 @@
 using RvtIO.Model;
+using static RvtIO.Geometry.FacetedShell;
 
 namespace RvtIO.Ifc;
 

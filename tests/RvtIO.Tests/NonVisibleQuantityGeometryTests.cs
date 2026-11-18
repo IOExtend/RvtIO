@@ -1,3 +1,4 @@
+using RvtIO.Geometry;
 using RvtIO.Ifc;
 using RvtIO.Internal;
 using RvtIO.Model;
@@ -94,6 +95,6 @@ public class NonVisibleQuantityGeometryTests
             ],
         };
 
-        Assert.Equal(6, IfcExporter.SurfaceAreaCurrent(geometry), 12);
+        Assert.Equal(6, BrepMeasures.SurfaceAreaCurrent(geometry), 12);
     }
 }

@@ -1,4 +1,4 @@
-using RvtIO.Ifc;
+using RvtIO.Geometry;
 using RvtIO.Internal;
 using RvtIO.Model;
 using RvtIO.Parsing;
@@ -81,11 +81,11 @@ internal sealed class CompactSolidQuantities
     internal static Solids Measure(GeometryData geometry, int level)
     {
         int count = geometry.BrepSolids?.Count ?? 0;
-        var shells = IfcExporter.ShellsOfCurrent(geometry);
+        var shells = BrepMeasures.ShellsOfCurrent(geometry);
         bool plane = geometry.Faces.All(face => face.PlaneSurface);
         string shape = count == 0 ? "none" : shells.All(shell => shell.Closed) && plane ? count == 1 ? "one" : "many" : "other";
-        double largest = geometry.Faces.Select(face => IfcExporter.NetFaceArea(face) ?? 0).DefaultIfEmpty(0).Max();
-        double? depth = shells.Count == 1 && shells[0].Closed && IfcExporter.FindPrismCurrent(shells[0]) is { } prism ? prism.Depth : null;
+        double largest = geometry.Faces.Select(face => BrepMeasures.NetFaceArea(face) ?? 0).DefaultIfEmpty(0).Max();
+        double? depth = shells.Count == 1 && shells[0].Closed && BrepMeasures.FindPrismCurrent(shells[0]) is { } prism ? prism.Depth : null;
         return new Solids(shape, level, count, shells.Sum(shell => shell.Volume), shells.Sum(shell => shell.Area), largest, depth);
     }
 

@@ -1,4 +1,4 @@
-using RvtIO.Ifc;
+using RvtIO.Geometry;
 using RvtIO.Internal;
 using RvtIO.Model;
 
@@ -41,7 +41,7 @@ internal static partial class ElementBuilder
                     ExpandInstanceGeometry(coarse, own, element.TypeId, state);
                 }
                 ExpandTransformOnlyInstanceGeometry(coarse, id, element.TypeId, state);
-                element.CoarseSurfaceArea = IfcExporter.SurfaceAreaCurrent(coarse.Geometry);
+                element.CoarseSurfaceArea = BrepMeasures.SurfaceAreaCurrent(coarse.Geometry);
             }
             finally
             {
@@ -75,7 +75,7 @@ internal static partial class ElementBuilder
                 ExpandInstanceGeometry(alternative, block, element.TypeId, state);
             }
             ExpandTransformOnlyInstanceGeometry(alternative, id, element.TypeId, state);
-            element.MediumSolidTotals = IfcExporter.NodeSolidTotalsCurrent(alternative.Geometry);
+            element.MediumSolidTotals = BrepMeasures.NodeSolidTotalsCurrent(alternative.Geometry);
         }
         finally { state.DetailView = 0; }
     }

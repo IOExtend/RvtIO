@@ -1,3 +1,4 @@
+using RvtIO.Geometry;
 using RvtIO.Ifc;
 using RvtIO.Internal;
 using RvtIO.Parsing;
@@ -145,7 +146,7 @@ public class ArcProfileTests
         Assert.True(extrusion != null, reason + string.Join(" | ", solidFaces.Where(f => !f.CurvedSurface).Select(f => { double a = WallExtrusion.ExactFaceArea(f, out bool e); return $"n.z={f.Normal[2]:F1} exact={a:F6} ({e}) polygon={WallExtrusion.LoopArea(f.OuterVertices):F6} arcs={f.MeshArcs?.Count}"; })));
         Assert.Equal(5, extrusion!.Arcs!.Count);
         var ring = extrusion.Loops[0];
-        Assert.Equal(5, IfcExporter.FindArcRunsCurrent(ring, extrusion.Arcs).Count);
+        Assert.Equal(5, ArcRuns.FindArcRunsCurrent(ring, extrusion.Arcs).Count);
         double area = 0;
         for (int i = 0; i < ring.Count; i++)
             area += ring[i][0] * ring[(i + 1) % ring.Count][1] - ring[(i + 1) % ring.Count][0] * ring[i][1];

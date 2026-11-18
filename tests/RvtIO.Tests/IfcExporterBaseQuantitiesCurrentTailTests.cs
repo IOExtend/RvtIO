@@ -1,3 +1,4 @@
+using RvtIO.Geometry;
 using RvtIO.Ifc;
 using RvtIO.Internal;
 using RvtIO.Model;
@@ -74,7 +75,7 @@ public class IfcExporterBaseQuantitiesCurrentTailTests
             Face(5, [0, 0, 0], [0, 0, 2], [0, 1, 2], [0, 1, 0]),
             Face(6, [10, 0, 0], [10, 1, 0], [10, 1, 2], [10, 0, 2]));
 
-        double area = IfcExporter.LargestVerticalFaceAreaCurrent(IfcExporter.ShellsOfCurrent(wall));
+        double area = IfcExporter.LargestVerticalFaceAreaCurrent(BrepMeasures.ShellsOfCurrent(wall));
 
         Assert.Equal(20, area, 9);
     }
@@ -90,7 +91,7 @@ public class IfcExporterBaseQuantitiesCurrentTailTests
             Face(7, [0, 1, 0], [0, 1, 2], [4, 1, 2], [4, 1, 0]),
             Face(8, [4, 1, 0], [4, 1, 2], [10, 1, 2], [10, 1, 0]));
 
-        Assert.Equal(12, IfcExporter.LargestVerticalFaceAreaCurrent(IfcExporter.ShellsOfCurrent(wall)), 9);
+        Assert.Equal(12, IfcExporter.LargestVerticalFaceAreaCurrent(BrepMeasures.ShellsOfCurrent(wall)), 9);
     }
 
 

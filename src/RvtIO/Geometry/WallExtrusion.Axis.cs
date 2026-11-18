@@ -1,6 +1,6 @@
 using RvtIO.Model;
 
-namespace RvtIO.Ifc;
+namespace RvtIO.Geometry;
 
 /// <summary>The search for a vertical-style extrusion along one axis of any direction (Z for a wall, the custom axis
 /// across the host wall for an opening), keeping the face the extrusion starts
