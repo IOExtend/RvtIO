@@ -12,7 +12,6 @@ internal sealed record IfcNumericUnitPlan(
     IfcNumericUnitPlan.CachedUnit Length,
     IfcNumericUnitPlan.CachedUnit ThermalTransmittance)
 {
-    internal const string LengthSpecName = "autodesk.spec.aec:length";
     internal const string ThermalSpecName = "autodesk.spec.aec.energy:heatTransferCoefficient";
     private const string UnitPrefix = "autodesk.unit.unit:";
     private const string Feet = UnitPrefix + "feet-1.0.1";
@@ -53,7 +52,7 @@ internal sealed record IfcNumericUnitPlan(
         // The spec map compares ordinally (UTF-16) up to the
         // first dash. Reject ambiguity instead of choosing a version or a family root.
         var matches = options.Options.Where(x =>
-            UnitSchemaEvaluator.DisplayNameKey(x.Spec) == LengthSpecName).ToArray();
+            UnitSchemaEvaluator.DisplayNameKey(x.Spec) == ProjectLengthUnits.LengthSpecName).ToArray();
         if (matches.Length != 1) return Reject("Length option absent or name-ambiguous; library fallback not reproduced", out failure);
         var format = matches[0];
         if (format.Spec.Contains('\0')) return Reject("Invalid length option spec ID", out failure);

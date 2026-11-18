@@ -55,6 +55,8 @@ The library is in `src/RvtIO`, the CLI in `src/RvtIO.Cli`, and tests in
 Keep file and geometry operations shared by the reader, writer and exporters
 in the library's format or geometry code. For example, polygon and bounds
 validation belong in `Geometry`, and path identity belongs in `Internal`.
+Read the project's stored length unit in `Parsing`. Choosing the unit
+declared in an IFC file belongs to the IFC exporter.
 `RvtIO.Scene` builds on the public RvtIO API and references IOScene separately.
 
 Tests that need real Revit files are skipped with a message when private

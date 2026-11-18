@@ -808,7 +808,7 @@ public partial class RvtFileReader
             state.OwnDocumentUnitOptions, state.OwnDocumentUnitConversions, state.OwnDocumentSchemas);
         var lengthOptions = state.OwnDocumentLengthUnitOptions(out string? lengthUnitIssue);
         rvtInfo.SerializedLengthUnit = state.WideLengthUnit
-            ?? (lengthOptions == null ? null : Ifc.IfcLengthUnitChoice.StoredLengthUnit(lengthOptions.Value, out lengthUnitIssue));
+            ?? (lengthOptions == null ? null : ProjectLengthUnits.StoredLengthUnit(lengthOptions.Value, out lengthUnitIssue));
         if (rvtInfo.SerializedLengthUnit == null)
             rvtInfo.SerializedLengthUnitIssue = state.WideLengthUnitIssue ?? lengthUnitIssue;
         // BasicFileInfo "Worksharing: Not enabled | Local | Central"; any other text is not decided.
@@ -1180,7 +1180,7 @@ public partial class RvtFileReader
         }
         // kept apart from OwnUnitOptions, which the continuous walk revokes for these files (it counts the block a second time)
         string? issue = "the UnitsElem is not document accessible";
-        if (access == 1) state.WideLengthUnit = Ifc.IfcLengthUnitChoice.StoredLengthUnit(options, out issue);
+        if (access == 1) state.WideLengthUnit = ProjectLengthUnits.StoredLengthUnit(options, out issue);
         if (state.WideLengthUnit == null) state.WideLengthUnitIssue = issue;
         state.OwnUnitOptions[document.UnitsElemId] = (1, new TfBlockDeserializer.UnitsElemOptions(document.UnitsElemId, family, access, 0, 0, options));
         diag?.WriteLine($"Wide document units: UnitsElem {document.UnitsElemId}, {options.Options.Length} format options, unit schemas {document.Units.Entries.Length}");
