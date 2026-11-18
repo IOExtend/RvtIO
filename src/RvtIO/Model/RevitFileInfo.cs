@@ -1,7 +1,7 @@
 namespace RvtIO.Model
 {
     /// <summary>Everything the reader decodes from one Revit file.</summary>
-    public class RevitFileInfo
+    public partial class RevitFileInfo
     {
         /// <summary>A copy that shares all members with this instance; the caller replaces what it changes.</summary>
         internal RevitFileInfo ShallowCopy() => (RevitFileInfo)MemberwiseClone();
@@ -76,13 +76,6 @@ namespace RvtIO.Model
         [System.Text.Json.Serialization.JsonIgnore]
         internal Guid? SerializedDocumentGuid { get; set; }
 
-        /// <summary>The document's unit format options per spec with the decimal and digit grouping
-        /// symbols, the numeric unit conversions and the unit symbol labels: what the display-value
-        /// formatter (<c>Compact.CompactValueFormatter</c>) needs. Null when the document's own units element or
-        /// persisted unit schemas could not be read completely.</summary>
-        [System.Text.Json.Serialization.JsonIgnore]
-        internal Compact.CompactFormatSettings? SerializedFormatSettings { get; set; }
-
         /// <summary>The unit id of the document's stored Length format option (for example "autodesk.unit.unit:feetFractionalInches-1.0.1");
         /// null when the units element has no single, non-default Length option.</summary>
         [System.Text.Json.Serialization.JsonIgnore]
@@ -109,10 +102,6 @@ namespace RvtIO.Model
 
         /// <summary>True when <see cref="SharedTransform"/> is the exactly resolved active project location (not the older fallback).</summary>
         internal bool SharedTransformIsActiveLocation { get; set; }
-
-        /// <summary>The text of the empty lookup table entry ("&lt;None&gt;") in the locale the file was saved in; null when the
-        /// Revit resources of that locale are not available.</summary>
-        internal string? SerializedLookupNoneText { get; set; }
 
         /// <summary>Latitude and longitude (radians) of the GeoSite of the active project location;
         /// null when the file has no readable active location.</summary>

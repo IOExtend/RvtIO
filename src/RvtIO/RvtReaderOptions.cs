@@ -45,7 +45,7 @@ public class RvtReaderOptions
     /// For very large models. Off by default.</summary>
     public bool RaiseLimits { get; set; }
 
-    /// <summary>Collects the streams read, how much of each decoded, and the limits that cut a stream (see <see cref="ExportReport"/>). Null to collect nothing.</summary>
+    /// <summary>Collects the streams read, how much of each decoded, and the limits that cut a stream. Null to collect nothing.</summary>
     public RvtReadDiagnostics? Diagnostics { get; set; }
 
     /// <summary>Write diagnostic/progress messages to this TextWriter. Null for silent operation.</summary>

@@ -10,6 +10,9 @@ public partial class RvtFileReader
 {
     private readonly RvtReaderOptions _options;
 
+    static partial void ReadCompactLookupText(RevitFileInfo info);
+    static partial void ReadCompactFormatSettings(RevitFileInfo info, ParsingState state);
+
     /// <summary>Creates a reader with the given options; null uses the defaults.</summary>
     public RvtFileReader(RvtReaderOptions? options = null)
     {
@@ -767,9 +770,7 @@ public partial class RvtFileReader
         var familyNames = systemFamilyNames
             ?? Lookup.RevitSystemFamilyNames.LoadPreviousReleaseFamilies(rvtInfo.Metadata.RevitVersion, systemFamilyLocale, _options.SystemFamilyNameLocale);
         int systemFamilyTypes = ElementBuilder.ApplyValidatedSystemFamilyNames(rvtInfo.Elements, state, familyNames);
-        // the stored lookup entries are in the language the file was saved in, whatever locale the exported names use
-        rvtInfo.SerializedLookupNoneText = Lookup.RevitSystemFamilyNames.Load(
-            rvtInfo.Metadata.RevitVersion, rvtInfo.Metadata.SavedLocale)?.Get(Lookup.RevitUiText.LookupNone);
+        ReadCompactLookupText(rvtInfo);
         ElementBuilder.ApplyValidatedStairOccurrenceNames(rvtInfo.Elements, familyNames);
         ElementBuilder.ApplyHostLabels(rvtInfo, systemFamilyNames, state.ElemClassIdx);
         ElementBuilder.ApplyWorkPlaneLabels(rvtInfo, systemFamilyNames);
@@ -804,8 +805,7 @@ public partial class RvtFileReader
         int wallThicknessOccurrences = ElementBuilder.ApplyBasicWallTypeThickness(rvtInfo.Elements, state);
         diag?.WriteLine($"Own computed wall thickness: occurrences={wallThicknessOccurrences}/{state.BasicWallTypeThicknessFeet.Count}");
         rvtInfo.SerializedDocumentGuid = state.DocumentDetachGuid;
-        rvtInfo.SerializedFormatSettings = Compact.CompactFormatSettings.Create(
-            state.OwnDocumentUnitOptions, state.OwnDocumentUnitConversions, state.OwnDocumentSchemas);
+        ReadCompactFormatSettings(rvtInfo, state);
         var lengthOptions = state.OwnDocumentLengthUnitOptions(out string? lengthUnitIssue);
         rvtInfo.SerializedLengthUnit = state.WideLengthUnit
             ?? (lengthOptions == null ? null : ProjectLengthUnits.StoredLengthUnit(lengthOptions.Value, out lengthUnitIssue));

@@ -60,8 +60,9 @@ declared in an IFC file belongs to the IFC exporter.
 `RvtIO.Scene` builds on the public RvtIO API and references IOScene separately.
 
 CI also compiles the native library and its scene adapter without the Compact
-JSON, IFC and PDF output code. Use a separate artifact path for this check. It keeps
-the regular build available for testing and produces no NuGet package.
+JSON, IFC and PDF output code or export reporting. Reader diagnostics and exceptions
+belong in `Diagnostics`; the export report and CLI exit codes belong in `Export`.
+Use a separate artifact path for the compile check. The check produces no NuGet package.
 
 ```sh
 dotnet build src/RvtIO.Scene/RvtIO.Scene.csproj -c Release -p:BuildNativeCoreOnly=true --artifacts-path ./artifacts/native-core-check

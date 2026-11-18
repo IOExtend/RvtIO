@@ -187,7 +187,7 @@ internal sealed class UserParameterCatalog
         => definition.GroupTypeId == null ? GroupLabel(definition.GroupId) ?? InvalidGroup
         : definition.GroupTypeId.Length == 0 ? InvalidGroup
         : GroupOfForgeTypeId.TryGetValue(definition.GroupTypeId, out var group)
-            && (group.ToEnglishLabel(out string label) || Compact.CompactLabels.TryGetGroupLabel((int)group, out label)) ? label : null;
+            && (group.ToEnglishLabel(out string label) || Lookup.ParameterGroupLabels.TryGetGroupLabel((int)group, out label)) ? label : null;
 
     /// <summary>Classes (by name) whose element category the reader reads exactly, so that the project
     /// and shared parameters bound to that category can be listed. The reader's CategoryId is a scan of the record body
