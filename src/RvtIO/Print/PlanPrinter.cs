@@ -64,7 +64,8 @@ public static class PlanPrinter
         double MinX, double MinY, double MaxX, double MaxY,
         List<(List<(double X, double Y)> Polygon, IReadOnlyList<TfBlockDeserializer.PatternGrid> Grids)>? RoomPatterns = null,
         List<(double X1, double Y1, double X2, double Y2)>? StairLines = null,
-        List<(double X1, double Y1, double X2, double Y2)>? RailLines = null);
+        List<(double X1, double Y1, double X2, double Y2)>? RailLines = null,
+        List<(double X1, double Y1, double X2, double Y2)>? FurnitureLines = null);
 
     /// <summary>The levels a plan can be printed for: those that own at least one wall or column with a location line,
     /// by elevation and then name.</summary>
@@ -434,10 +435,12 @@ public static class PlanPrinter
                 grids.Add((gx1, gy1, gx2, gy2, element.Name ?? ""));
         }
 
-        // The furniture, casework and plumbing of the level, as the outlines of their horizontal faces seen from above;
-        // an elevation (the underside) duplicates the top, so equal outlines are kept once.
+        // The furniture, casework and plumbing of the level, as the silhouette of the model seen from above: the
+        // outline of the union of every face's projection, which keeps the non-convex plan shape (a chair back, the
+        // gap between legs) that a single horizontal face misses. Stairs and railings keep their horizontal faces.
         var furniture = new List<List<(double X, double Y)>>();
         var furnitureKeys = new HashSet<string>(StringComparer.Ordinal);
+        var furnitureLines = new List<(double X1, double Y1, double X2, double Y2)>();
         foreach (var element in document.Elements)
         {
             if (element.CategoryId is not ((int)BuiltInCategory.OST_Furniture or (int)BuiltInCategory.OST_Casework
@@ -445,6 +448,20 @@ public static class PlanPrinter
                 or (int)BuiltInCategory.OST_Stairs or (int)BuiltInCategory.OST_StairsRailing))
                 continue;
             if (LevelOf(element) != levelId || element.Geometry is not { Faces.Count: > 0 } geometry) continue;
+            if (element.CategoryId is (int)BuiltInCategory.OST_Furniture or (int)BuiltInCategory.OST_Casework
+                or (int)BuiltInCategory.OST_PlumbingFixtures or (int)BuiltInCategory.OST_SpecialityEquipment)
+            {
+                var outline = SilhouetteLines(element, 5.0);
+                if (outline.Count == 0) continue;
+                double sMinX = outline.Min(s => Math.Min(s.X1, s.X2));
+                double sMaxX = outline.Max(s => Math.Max(s.X1, s.X2));
+                double sMinY = outline.Min(s => Math.Min(s.Y1, s.Y2));
+                double sMaxY = outline.Max(s => Math.Max(s.Y1, s.Y2));
+                string silhouetteKey = $"{sMinX:0}:{sMinY:0}:{sMaxX:0}:{sMaxY:0}";
+                if (!furnitureKeys.Add(silhouetteKey)) continue;
+                furnitureLines.AddRange(outline);
+                continue;
+            }
             foreach (var face in geometry.Faces)
             {
                 if (Math.Abs(face.Normal[2]) < 0.9) continue;
@@ -478,7 +495,7 @@ public static class PlanPrinter
         CollectRailingLines(document, levelId, viewId, railLines);
 
         return new PlanContent(walls, columns, grids, gaps, windowGaps, doorGaps, floorLoops, openingLoops, rooms,
-            furniture, tags, minX, minY, maxX, maxY, roomPatterns, stairLines, railLines);
+            furniture, tags, minX, minY, maxX, maxY, roomPatterns, stairLines, railLines, furnitureLines);
     }
 
     /// <summary>True when the element belongs to the plan of the level. A stair runs from its base level to its top
@@ -751,6 +768,18 @@ public static class PlanPrinter
             }
             else
                 page.DrawLine(ToX(line.X1), ToY(line.Y1), ToX(line.X2), ToY(line.Y2), furnitureLine, 0.35);
+        }
+        foreach (var line in content.FurnitureLines ?? [])
+        {
+            if (clipRect is { } silhouetteClip)
+            {
+                if (!ElevationPrinter.ClipSegment(line.X1, line.Y1, line.X2, line.Y2,
+                    silhouetteClip.X0, silhouetteClip.Y0, silhouetteClip.X1, silhouetteClip.Y1,
+                    out double fx0, out double fy0, out double fx1, out double fy1)) continue;
+                page.DrawLine(ToX(fx0), ToY(fy0), ToX(fx1), ToY(fy1), furnitureLine);
+            }
+            else
+                page.DrawLine(ToX(line.X1), ToY(line.Y1), ToX(line.X2), ToY(line.Y2), furnitureLine);
         }
         foreach (var line in content.RailLines ?? [])
         {
@@ -1118,6 +1147,56 @@ public static class PlanPrinter
             sum += x1 * y2 - x2 * y1;
         }
         return sum / 2;
+    }
+
+    /// <summary>The plan silhouette of a piece of furniture: the boundary of the union of all its faces projected on
+    /// XY, traced on a grid of <paramref name="cell"/> millimetres. The non-convex plan shape (a chair back, the gap
+    /// between legs) survives, which the convex hull and the single top face both lose.</summary>
+    private static List<(double X1, double Y1, double X2, double Y2)> SilhouetteLines(
+        Element element, double cell)
+    {
+        if (element.Geometry is not { Faces.Count: > 0 } geometry) return [];
+        var faces = new List<(List<(double X, double Y)> Points, double MinX, double MaxX, double MinY, double MaxY)>();
+        foreach (var face in geometry.Faces)
+        {
+            if (face.OuterVertices is not { Count: >= 3 } vertices) continue;
+            var points = vertices.Select(vertex => (X: vertex[0] * FeetToMillimetres,
+                Y: vertex[1] * FeetToMillimetres)).ToList();
+            faces.Add((points, points.Min(point => point.X), points.Max(point => point.X),
+                points.Min(point => point.Y), points.Max(point => point.Y)));
+        }
+        if (faces.Count == 0) return [];
+        double x0 = faces.Min(face => face.MinX), x1 = faces.Max(face => face.MaxX);
+        double y0 = faces.Min(face => face.MinY), y1 = faces.Max(face => face.MaxY);
+        int nx = (int)Math.Ceiling((x1 - x0) / cell) + 1;
+        int ny = (int)Math.Ceiling((y1 - y0) / cell) + 1;
+        if (nx < 1 || ny < 1 || (long)nx * ny > 400_000) return [];
+        var inside = new bool[nx, ny];
+        for (int i = 0; i < nx; i++)
+            for (int j = 0; j < ny; j++)
+            {
+                double cx = x0 + (i + 0.5) * cell, cy = y0 + (j + 0.5) * cell;
+                foreach (var face in faces)
+                {
+                    if (cx < face.MinX || cx > face.MaxX || cy < face.MinY || cy > face.MaxY) continue;
+                    if (!PointInPolygon(cx, cy, face.Points)) continue;
+                    inside[i, j] = true;
+                    break;
+                }
+            }
+        var lines = new List<(double X1, double Y1, double X2, double Y2)>();
+        for (int i = 0; i < nx; i++)
+            for (int j = 0; j < ny; j++)
+            {
+                if (!inside[i, j]) continue;
+                double left = x0 + i * cell, right = left + cell;
+                double bottom = y0 + j * cell, top = bottom + cell;
+                if (i == 0 || !inside[i - 1, j]) lines.Add((left, bottom, left, top));
+                if (i == nx - 1 || !inside[i + 1, j]) lines.Add((right, bottom, right, top));
+                if (j == 0 || !inside[i, j - 1]) lines.Add((left, bottom, right, bottom));
+                if (j == ny - 1 || !inside[i, j + 1]) lines.Add((left, top, right, top));
+            }
+        return lines;
     }
 
     /// <summary>Even-odd point-in-polygon test on a closed outline.</summary>

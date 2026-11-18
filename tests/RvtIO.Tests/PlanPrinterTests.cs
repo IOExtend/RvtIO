@@ -80,7 +80,37 @@ public class PlanPrinterTests
         var content = PlanPrinter.CollectLevel(document, 500);
 
         Assert.NotNull(content);
-        Assert.Equal(2, content!.Furniture.Count);
+        // Furniture is a silhouette now (the union of its faces), the stair keeps its face outline.
+        Assert.Single(content!.Furniture);
+        Assert.NotNull(content.FurnitureLines);
+        Assert.NotEmpty(content.FurnitureLines!);
+        Assert.All(content.FurnitureLines!, line =>
+        {
+            Assert.InRange(Math.Min(line.X1, line.X2), 0, 310);
+            Assert.InRange(Math.Max(line.X1, line.X2), 0, 310);
+            Assert.InRange(Math.Min(line.Y1, line.Y2), 0, 310);
+            Assert.InRange(Math.Max(line.Y1, line.Y2), 0, 310);
+        });
+    }
+
+    [Fact]
+    public void SampleFile_Level1FurnitureIsASilhouette()
+    {
+        // The plan silhouettes each piece of furniture: the boundary of the union of its faces on a 5 mm grid, so a
+        // chair keeps its non-convex plan shape (the back, the gap between legs) that a single top face loses.
+        string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+
+        var content = PlanPrinter.CollectLevel(document, 311);
+
+        Assert.NotNull(content);
+        Assert.NotNull(content!.FurnitureLines);
+        Assert.True(content.FurnitureLines!.Count > 100,
+            $"Level 1 furniture silhouette drew {content.FurnitureLines.Count} segments");
+        // Every segment is one grid edge: no long straight spans (the old face outlines).
+        Assert.All(content.FurnitureLines!, line =>
+            Assert.True(Math.Abs(line.X2 - line.X1) + Math.Abs(line.Y2 - line.Y1) <= 5.01));
     }
 
     [Fact]

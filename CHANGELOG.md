@@ -252,6 +252,8 @@ The text of a sheet prints too: a text note's RTF string (class 0x0F83 block) is
 
   Documented dead end: dropping every edge whose midpoint falls inside a projected site polygon scores much higher on the sheet (A103 precision 89.3%, A105 91.2%) but empties the elevation — the site mesh's large triangles project over the whole facade and delete the building's linework. Depth-comparing the site polygons against the edge (a nearer site polygon hides it) leaves the same problem. Neither ships: they fit the metric by deleting visible architecture, not by printing it.
 
+- Plan furniture is drawn as its silhouette: the boundary of the union of every face projected on XY, traced on a 5 mm grid. The chairs on A102 store no 2D symbolic lines at all (`Bar Chair` type 988018: 43 objects, 17 Face/Plane, zero GLine/GArc), so Revit builds their plan from the 3D model; the old single horizontal face drew an octagon seat and lost the back. A convex hull was measured first and rejected (A102 F1 0.876 -> 0.874, it cuts the non-convex back). Grid tuning on the same sheet: 10 mm -> 84.1/91.6, 5 mm -> 84.1/92.2, 2.5 mm -> 83.1/93.4; 5 mm keeps the best F1. Measured against the Revit export: A102 recall 84.3% -> 84.1%, precision 91.2% -> 92.2% (1514 -> 1817 in, F1 0.8763 -> 0.8796); A001, A101, A103, A104 and A105 unchanged. New test: `SampleFile_Level1FurnitureIsASilhouette`. Full print suites 126/126 green on net8.0+net10.0.
+
 ## [0.4.0] - 2026-11-13
 
 ### Breaking changes
