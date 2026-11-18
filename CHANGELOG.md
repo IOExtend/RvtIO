@@ -242,6 +242,8 @@ The text of a sheet prints too: a text note's RTF string (class 0x0F83 block) is
 
 - Analysis viewports keep their title: a sun study's content is a raster image, so the composer draws no vector frame for its viewport and the title (the circled number, the view name and the extension line) was dropped with the frame. The reference prints it — the Solar Analysis title line alone is 9.3 in of A101's missing ink. Titles now render for analysis views even without a frame, using the viewport's stored label origin and length. Measured against the Revit export: A101 recall 89.6% -> 91.2%, precision 97.9% -> 97.8%, text 49.1% -> 50.9%; other sheets unchanged. New test: `SampleFile_SolarAnalysisViewportIsTitled`. Full print suites 122/122 green on net8.0+net10.0.
 
+- An elevation does not ink the boundary of a horizontal face: seen edge-on, a top face's outline is not a line the reference draws — the wall top reads as the ends of its vertical boards, with no line across them. The sample's roof mass puts a 19.5 m horizontal top edge at z = 9199 mm in both A103 views; matching it against the reference measured 5% coverage (95% unmatched), while the model's other horizontals match. Elevations now drop horizontal edges whose incident face is horizontal (|Nz| > 0.9) and keep every horizontal of a vertical face (sills, floor lines). Measured against the Revit export: A103 recall 92.0% -> 92.0%, precision 76.1% -> 76.5%; A104 74.6% / 75.3% -> 74.6% / 76.4%; A105 89.7% / 67.7% -> 89.7% / 69.9%; A001, A101 and A102 unchanged. New test: `SampleFile_SouthElevationDoesNotInkHorizontalFaceEdges`. Full print suites 123/123 green on net8.0+net10.0.
+
 ## [0.4.0] - 2026-11-13
 
 ### Breaking changes
