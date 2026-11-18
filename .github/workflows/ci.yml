@@ -26,6 +26,7 @@ jobs:
       - run: dotnet build RvtIO.slnx -c Release --no-restore
       - run: dotnet test RvtIO.slnx -c Release --no-build
       - run: dotnet pack RvtIO.slnx -c Release --no-build -o artifacts
+      - run: dotnet build src/RvtIO.Scene/RvtIO.Scene.csproj -c Release -p:BuildNativeCoreOnly=true --artifacts-path native-core-check
       - uses: actions/upload-artifact@v7
         with:
           name: packages-${{ matrix.os }}
