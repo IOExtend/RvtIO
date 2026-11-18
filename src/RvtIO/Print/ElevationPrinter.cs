@@ -406,6 +406,14 @@ public static class ElevationPrinter
             }
             distinctLevels.Add((level.Y, level.Label, x0, x1));
         }
+        // Below the model's lowest level the work is buried: the reference draws no foundation line in an
+        // elevation (measured on A103: the four 6 m foundation verticals of each view are 100% unmatched), while
+        // the facade above grade stays.
+        if (planeView != null && !isDetail && distinctLevels.Count > 0)
+        {
+            double lowest = distinctLevels.Min(level => level.Y);
+            edges = edges.Where(edge => edge.IsCut || (edge.Y1 + edge.Y2) / 2 >= lowest - 1).ToList();
+        }
         var grids = new List<(double X, string Name)>();
         foreach (var element in document.Elements)
         {

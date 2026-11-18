@@ -59,4 +59,27 @@ public class ElevationSheetLinesTests
         Assert.Contains(edges, edge => edge.IsCut && Math.Abs(edge.Y2 - edge.Y1) < 0.5);
         Assert.Contains(edges, edge => Math.Abs(edge.X2 - edge.X1) < 0.5 && Math.Abs(edge.Y2 - edge.Y1) > 1000);
     }
+
+    [Fact]
+    public void SampleFile_WorkBelowTheLowestLevelStaysUninked()
+    {
+        // Below the model's lowest level the work is buried: the reference draws no foundation line in an
+        // elevation (the sample's four 6 m foundation verticals of each view are 100% unmatched), while the facade
+        // above grade keeps its mullions and jambs.
+        string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+        var view = document.Elements.FirstOrDefault(e => e.CategoryId == (int)BuiltInCategory.OST_Views
+            && e.Name == "South");
+        Assert.NotNull(view);
+
+        var content = ElevationPrinter.Collect(document, "elevation", false, view);
+
+        Assert.NotNull(content);
+        Assert.NotEmpty(content!.Levels);
+        double lowest = content.Levels.Min(level => level.Y);
+        Assert.DoesNotContain(content.Edges, edge => !edge.IsCut
+            && (edge.Y1 + edge.Y2) / 2 < lowest - 1);
+        Assert.Contains(content.Edges, edge => (edge.Y1 + edge.Y2) / 2 >= lowest);
+    }
 }
