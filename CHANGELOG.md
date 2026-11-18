@@ -246,6 +246,8 @@ The text of a sheet prints too: a text note's RTF string (class 0x0F83 block) is
 
 - A section applies the same edge-on rule to its projected edges: a horizontal face's boundary is not inked there either, while the edges the section's own cut created stay (they are the cut profile of a horizontal slab). The Longitudinal Section's projected roof-top edge at z = 9199 mm (5% matched) and foundation top at z = -150 mm (6%) go; the roof slab's cut profile at z = 6898/7178 remains. Measured against the Revit export: A103 recall 92.0% -> 92.0%, precision 76.5% -> 77.0%; A104 74.6% / 76.4% -> 74.6% / 77.5%; A105 89.7% / 69.9% -> 89.6% / 77.2%; A001, A101 and A102 unchanged. New test: `SampleFile_LongitudinalSectionKeepsItsCutProfile`. Full print suites 124/124 green on net8.0+net10.0.
 
+- The edge-on face rule now checks both faces an edge joins: a horizontal edge was still inked when the horizontal face was the edge's second face (the foundation slab top at z=-150 and the wall bases), because only the first face's plane was recorded. `CollectedEdge` carries an `OnEdgeOnFace` flag computed from every face meeting the edge and carried through the collinear merge; the view drops such horizontals unless its cut created them. Measured against the Revit export: A103 recall 92.0% -> 92.0%, precision 77.0% -> 77.3%; A104 and A105 unchanged (74.6/77.5, 89.6/77.2); A001, A101 and A102 unchanged. Full print suites 124/124 green on net8.0+net10.0.
+
 ## [0.4.0] - 2026-11-13
 
 ### Breaking changes

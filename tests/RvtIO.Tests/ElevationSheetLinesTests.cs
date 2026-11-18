@@ -28,6 +28,8 @@ public class ElevationSheetLinesTests
         // No inked edge runs along a horizontal face's plane: every kept horizontal comes from a vertical face.
         Assert.DoesNotContain(edges, edge =>
             Math.Abs(edge.Y2 - edge.Y1) < 0.5 && Math.Abs(edge.Nz) > 0.9);
+        // The same holds when the horizontal face is the edge's second face (recorded as the flag).
+        Assert.DoesNotContain(edges, edge => Math.Abs(edge.Y2 - edge.Y1) < 0.5 && edge.OnEdgeOnFace);
         // The elevation still inks the horizontals of vertical faces (sills, floor lines): the filter is not total.
         Assert.Contains(edges, edge => Math.Abs(edge.Y2 - edge.Y1) < 0.5 && Math.Abs(edge.Nz) <= 0.9);
         // The roof mass's top edge (the longest horizontal the model has in this view) is gone.
@@ -62,6 +64,8 @@ public class ElevationSheetLinesTests
         // Projected horizontals of horizontal faces are gone; the cut's own horizontals remain.
         Assert.DoesNotContain(edges, edge => !edge.IsCut
             && Math.Abs(edge.Y2 - edge.Y1) < 0.5 && Math.Abs(edge.Nz) > 0.9);
+        Assert.DoesNotContain(edges, edge => !edge.IsCut
+            && Math.Abs(edge.Y2 - edge.Y1) < 0.5 && edge.OnEdgeOnFace);
         Assert.Contains(edges, edge => edge.IsCut && Math.Abs(edge.Y2 - edge.Y1) < 0.5);
         // The model's projected horizontals of vertical faces (floor lines, sills) still ink.
         Assert.Contains(edges, edge => !edge.IsCut

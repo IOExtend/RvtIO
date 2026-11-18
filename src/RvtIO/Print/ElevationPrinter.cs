@@ -297,16 +297,14 @@ public static class ElevationPrinter
             }
         }
         if (faces.Count == 0) return null;
-        var deduped = DedupeEdges(edgeFaces, D, cut ? planeOrigin : null);
+        var deduped = DedupeEdges(edgeFaces, D, cut ? planeOrigin : null, planeView != null && !isDetail);
         var occluded = OccludeEdges(faces, faceMinDepths, deduped);
         List<CollectedEdge> edges = MergeOverlaps(occluded);
-        // A horizontal face is seen edge-on in any vertical view, so its boundary is not inked: the reference
-        // draws the wall's top as the ends of its vertical board lines and no line across them (measured on A103,
-        // where the roof mass's top edges at z=9199 are 95% unmatched while the model's other horizontals match).
-        // A section keeps the edges its own cut created: those are the cut profile of a horizontal slab.
+        // A horizontal face is seen edge-on, so its boundary is not inked: the reference draws the wall's top as
+        // the ends of its vertical board lines and no line across them. A section keeps the edges its own cut
+        // created - those are the cut profile of a horizontal slab.
         if (planeView != null && !isDetail)
-            edges = edges.Where(edge => edge.IsCut
-                || !(Math.Abs(edge.Y2 - edge.Y1) < 0.5 && Math.Abs(edge.Nz) > 0.9)).ToList();
+            edges = edges.Where(edge => edge.IsCut || Math.Abs(edge.Y2 - edge.Y1) >= 0.5 || !edge.OnEdgeOnFace).ToList();
         // A detail's own annotation curves: Revit stores detail and insulation lines of a view as curve
         // elements that name the view as their owner (OST_Lines, OST_InsulationLines), with their points in
         // model feet — they lie on the view plane and belong to no solid, so no face ever reaches them.
@@ -440,7 +438,8 @@ public static class ElevationPrinter
     /// for coplanar merging, whether the section cut created it (inked with its own category's cut pen;
     /// other edges use the projection pen), and the category of the face it came from.</summary>
     internal sealed record CollectedEdge(double X1, double Y1, double X2, double Y2, double Depth, double MidDepth,
-        int FaceA, int FaceB, long Nx, long Ny, long Nz, long Off, bool IsCut = false, int CategoryId = 0);
+        int FaceA, int FaceB, long Nx, long Ny, long Nz, long Off, bool IsCut = false, int CategoryId = 0,
+        bool OnEdgeOnFace = false);
 
     /// <summary>Visible edges of the projected faces: an edge shared by exactly two coplanar faces is a
     /// triangulation diagonal inside a flat surface and is not inked; every other edge is drawn once, so a
@@ -449,7 +448,7 @@ public static class ElevationPrinter
     /// both of whose 3D ends lie on the cut plane (within a millimetre) is cut-created.</summary>
     internal static List<CollectedEdge> DedupeEdges(
         List<(List<(double X, double Y)> Points, List<double[]> Ring, double Depth, long Nx, long Ny, long Nz, long Off, int FaceIndex, int CategoryId)> edgeFaces,
-        double[] viewDir, double[]? cutOrigin = null)
+        double[] viewDir, double[]? cutOrigin = null, bool dropEdgeOnHorizontalFace = false)
     {
         var byEdge = new Dictionary<(long Ax, long Ay, long Bx, long By), List<int>>();
         for (int f = 0; f < edgeFaces.Count; f++)
@@ -510,7 +509,17 @@ public static class ElevationPrinter
                         isCut = Math.Abs(da) <= 1.0 && Math.Abs(db) <= 1.0;
                     }
                 }
-                edges.Add(new CollectedEdge(a.X, a.Y, b.X, b.Y, depth, midDepth, faceIndex, otherFace, nx, ny, nz, off, isCut, categoryId));
+                // A horizontal face projects to a horizontal line, so it is seen edge-on and the edge along it is not
+                // inked (the reference draws the wall top as the ends of its boards, without a line across them).
+                // A section keeps the edges its own cut created - those are the cut profile of a horizontal slab.
+                bool onEdgeOnFace = false;
+                if (dropEdgeOnHorizontalFace)
+                {
+                    onEdgeOnFace = nz != 0;
+                    for (int m = 0; m < members.Count && !onEdgeOnFace; m++)
+                        if (members[m] != f && edgeFaces[members[m]].Nz != 0) onEdgeOnFace = true;
+                }
+                edges.Add(new CollectedEdge(a.X, a.Y, b.X, b.Y, depth, midDepth, faceIndex, otherFace, nx, ny, nz, off, isCut, categoryId, onEdgeOnFace));
             }
         }
         edges.Sort((left, right) => right.Depth.CompareTo(left.Depth));
@@ -613,6 +622,7 @@ public static class ElevationPrinter
             }
             spans.Sort((a, b) => a.Lo.CompareTo(b.Lo));
             double curLo = spans[0].Lo, curHi = spans[0].Hi, curDepth = spans[0].Edge.Depth;
+            bool curOnFace = spans[0].Edge.OnEdgeOnFace;
             var cur = spans[0].Edge;
             for (int i = 1; i < spans.Count; i++)
             {
@@ -620,15 +630,17 @@ public static class ElevationPrinter
                 {
                     curHi = Math.Max(curHi, spans[i].Hi);
                     curDepth = Math.Max(curDepth, spans[i].Edge.Depth);
+                    curOnFace |= spans[i].Edge.OnEdgeOnFace;
                 }
                 else
                 {
-                    merged.Add(WithSpan(cur, curLo, curHi, horizontal) with { Depth = curDepth });
+                    merged.Add(WithSpan(cur, curLo, curHi, horizontal) with { Depth = curDepth, OnEdgeOnFace = curOnFace });
                     cur = spans[i].Edge;
                     curLo = spans[i].Lo; curHi = spans[i].Hi; curDepth = spans[i].Edge.Depth;
+                    curOnFace = spans[i].Edge.OnEdgeOnFace;
                 }
             }
-            merged.Add(WithSpan(cur, curLo, curHi, horizontal) with { Depth = curDepth });
+            merged.Add(WithSpan(cur, curLo, curHi, horizontal) with { Depth = curDepth, OnEdgeOnFace = curOnFace });
         }
         merged.Sort((left, right) => right.Depth.CompareTo(left.Depth));
         return merged;
