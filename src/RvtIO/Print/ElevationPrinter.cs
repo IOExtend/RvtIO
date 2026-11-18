@@ -180,8 +180,11 @@ public static class ElevationPrinter
         // The chords where the cut plane slices through a face, in page coordinates: the cut profile of
         // solids the plane passes through. Transverse faces never outline, so the cut flag never marks their
         // boundary, yet the plane carves a profile out of them (a wall cross-section in a detail). Outline
-        // faces keep their flagged boundary instead, so the same line is never inked twice.
-        var cutChords = new List<CollectedEdge>();
+        // faces keep their flagged boundary instead, so the same line is never inked twice. Each chord keeps
+        // its source face normal and element type: a pair of parallel chords a type thickness apart gets the
+        // type's layer boundaries drawn between them.
+        var rawChords = new List<(double X1, double Y1, double X2, double Y2,
+            double Nx, double Ny, double Nz, int TypeId, int CategoryId, double Depth)>();
         double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
         foreach (var element in document.Elements)
         {
@@ -261,9 +264,11 @@ public static class ElevationPrinter
                                 chordCrop.X0, chordCrop.Y0, chordCrop.X1, chordCrop.Y1,
                                 out ax, out ay, out bx, out by)) continue;
                         }
-                        cutChords.Add(new CollectedEdge(ax, ay, bx, by, planeDepth, planeDepth, -1, -1,
-                            (long)Math.Round(D[0] * 1000), (long)Math.Round(D[1] * 1000), (long)Math.Round(D[2] * 1000),
-                            (long)Math.Round(planeDepth * 2.0), true, element.CategoryId ?? 0));
+                        double nl = Math.Sqrt(face.Normal[0] * face.Normal[0] + face.Normal[1] * face.Normal[1] + face.Normal[2] * face.Normal[2]);
+                        double nnx = 0, nny = 0, nnz = 0;
+                        if (nl > 1e-12) { nnx = face.Normal[0] / nl; nny = face.Normal[1] / nl; nnz = face.Normal[2] / nl; }
+                        rawChords.Add((ax, ay, bx, by, nnx, nny, nnz,
+                            element.TypeId, element.CategoryId ?? 0, planeDepth));
                         minX = Math.Min(minX, Math.Min(ax, bx)); maxX = Math.Max(maxX, Math.Max(ax, bx));
                         minY = Math.Min(minY, Math.Min(ay, by)); maxY = Math.Max(maxY, Math.Max(ay, by));
                     }
@@ -345,7 +350,28 @@ public static class ElevationPrinter
                 }
             }
         }
-        if (faces.Count == 0 && cutChords.Count == 0) return null;
+        if (faces.Count == 0 && rawChords.Count == 0) return null;
+        // The chords become inked edges on the cutting plane's own key, so the same line coming from two
+        // solids sharing the cut surface merges into one below.
+        var cutChords = new List<CollectedEdge>();
+        long pnx = 0, pny = 0, pnz = 0, poff = 0;
+        if (cut && planeOrigin.Length == 3)
+        {
+            pnx = (long)Math.Round(D[0] * 1000);
+            pny = (long)Math.Round(D[1] * 1000);
+            pnz = (long)Math.Round(D[2] * 1000);
+            poff = (long)Math.Round((planeOrigin[0] * D[0] + planeOrigin[1] * D[1] + planeOrigin[2] * D[2]) * 2.0);
+        }
+        foreach (var chord in rawChords)
+            cutChords.Add(new CollectedEdge(chord.X1, chord.Y1, chord.X2, chord.Y2,
+                chord.Depth, chord.Depth, -1, -1, pnx, pny, pnz, poff, true, chord.CategoryId));
+        // Layer boundaries subdivide the cross-section, but only in a detail at a fine scale: a 1:100 section
+        // draws the coarse single outline the reference draws, while a 1:50/1:20/1:10 detail draws every layer.
+        bool detailPath = window != null || isDetail || cropWindow != null;
+        int viewScale = planeView?.LookupParameter(BuiltInParameter.VIEW_SCALE)?.Value is int scaleValue && scaleValue > 0
+            ? scaleValue : 100;
+        if (detailPath && viewScale <= 50 && rawChords.Count > 0)
+            AddLayerLines(rawChords, document, cutChords, D, H, V, pnx, pny, pnz, poff);
         var deduped = DedupeEdges(edgeFaces, D, cut ? planeOrigin : null);
         // The carved chords join the shared-edge pass late on purpose: they are already de-duplicated by
         // construction (one span per inside interval), and the merge below still unions the same line coming
@@ -873,6 +899,132 @@ public static class ElevationPrinter
         }
         return result;
     }
+    /// <summary>Draws the compound-layer boundaries inside wall and floor cross-sections: two parallel cut chords
+    /// a wall type thickness apart are the two faces of one wall, and the type's layer stack subdivides the span
+    /// between them. Only pairs with no third parallel edge between them qualify, so two separate walls at one
+    /// type thickness apart keep their gap instead of gaining phantom layers. The stack runs interior-first (the
+    /// mirrored choice measured higher on the sample), so the source face normal decides the side: a face
+    /// looking away from its pair starts the stack as authored, a face looking at it runs the stack mirrored.
+    /// Layer lines ink thin, like projection edges.</summary>
+    internal static void AddLayerLines(
+        List<(double X1, double Y1, double X2, double Y2, double Nx, double Ny, double Nz, int TypeId, int CategoryId, double Depth)> raw,
+        RvtDocument document,
+        List<CollectedEdge> output,
+        double[] viewDir, double[] horiz, double[] vert,
+        long pnx, long pny, long pnz, long poff)
+    {
+        var stacks = new Dictionary<int, (double Total, double[] Offsets)>();
+        foreach (var chord in raw)
+        {
+            if (chord.CategoryId != (int)BuiltInCategory.OST_Walls
+                && chord.CategoryId != (int)BuiltInCategory.OST_Floors) continue;
+            if (chord.TypeId <= 0 || stacks.ContainsKey(chord.TypeId)) continue;
+            var layers = document.GetElement(chord.TypeId)?.SerializedHostTypeLayers;
+            if (layers is not { Length: > 1 }) continue;
+            var cumulative = new List<double>();
+            double total = 0;
+            foreach (var layer in layers)
+            {
+                total += BitConverter.Int64BitsToDouble(layer.LayerWidthBits) * 304.8;
+                cumulative.Add(total);
+            }
+            if (total < 10) continue;
+            stacks[chord.TypeId] = (total, cumulative.Take(cumulative.Count - 1).ToArray());
+        }
+        if (stacks.Count == 0) return;
+        var cand = new List<int>();
+        for (int k = 0; k < raw.Count; k++)
+        {
+            var chord = raw[k];
+            if ((chord.CategoryId == (int)BuiltInCategory.OST_Walls
+                    || chord.CategoryId == (int)BuiltInCategory.OST_Floors)
+                && stacks.ContainsKey(chord.TypeId)) cand.Add(k);
+        }
+        for (int a = 0; a < cand.Count; a++)
+        {
+            for (int b = a + 1; b < cand.Count; b++)
+            {
+                var first = raw[cand[a]];
+                var second = raw[cand[b]];
+                if (first.TypeId != second.TypeId) continue;
+                double ux = first.X2 - first.X1, uy = first.Y2 - first.Y1;
+                double ulen = Math.Sqrt(ux * ux + uy * uy);
+                if (ulen < 100) continue;
+                ux /= ulen; uy /= ulen;
+                double vx = second.X2 - second.X1, vy = second.Y2 - second.Y1;
+                double vlen = Math.Sqrt(vx * vx + vy * vy);
+                if (vlen < 100) continue;
+                vx /= vlen; vy /= vlen;
+                if (Math.Abs(ux * vy - uy * vx) > 0.003) continue;
+                double nx = -uy, ny = ux;
+                double mxi = (first.X1 + first.X2) / 2, myi = (first.Y1 + first.Y2) / 2;
+                double mxj = (second.X1 + second.X2) / 2, myj = (second.Y1 + second.Y2) / 2;
+                if ((mxj - mxi) * nx + (myj - myi) * ny < 0) { nx = -nx; ny = -ny; }
+                double gap = Math.Abs((mxj - mxi) * nx + (myj - myi) * ny);
+                var (total, offsets) = stacks[first.TypeId];
+                if (Math.Abs(gap - total) > Math.Max(2.0, 0.02 * total)) continue;
+                double ai0 = (first.X1 - mxi) * ux + (first.Y1 - myi) * uy;
+                double ai1 = (first.X2 - mxi) * ux + (first.Y2 - myi) * uy;
+                double aj0 = (second.X1 - mxi) * ux + (second.Y1 - myi) * uy;
+                double aj1 = (second.X2 - mxi) * ux + (second.Y2 - myi) * uy;
+                double lo = Math.Max(Math.Min(ai0, ai1), Math.Min(aj0, aj1));
+                double hi = Math.Min(Math.Max(ai0, ai1), Math.Max(aj0, aj1));
+                if (hi - lo < 120) continue;
+                bool blocked = false;
+                for (int kk = 0; kk < cand.Count && !blocked; kk++)
+                {
+                    if (kk == a || kk == b) continue;
+                    var other = raw[cand[kk]];
+                    double wx = other.X2 - other.X1, wy = other.Y2 - other.Y1;
+                    double wlen = Math.Sqrt(wx * wx + wy * wy);
+                    if (wlen < 20) continue;
+                    wx /= wlen; wy /= wlen;
+                    if (Math.Abs(ux * wy - uy * wx) > 0.01) continue;
+                    double mox = (other.X1 + other.X2) / 2, moy = (other.Y1 + other.Y2) / 2;
+                    double dk = Math.Abs((mox - mxi) * nx + (moy - myi) * ny);
+                    if (!(dk > 0.5 && dk < gap - 0.5)) continue;
+                    double q0 = (other.X1 - mxi) * ux + (other.Y1 - myi) * uy;
+                    double q1 = (other.X2 - mxi) * ux + (other.Y2 - myi) * uy;
+                    if (Math.Min(hi, Math.Max(q0, q1)) - Math.Max(lo, Math.Min(q0, q1)) > 10) blocked = true;
+                }
+                if (blocked) continue;
+                double m3x = nx * horiz[0] + ny * vert[0];
+                double m3y = nx * horiz[1] + ny * vert[1];
+                double m3z = nx * horiz[2] + ny * vert[2];
+                double side = first.Nx * m3x + first.Ny * m3y + first.Nz * m3z;
+                double[] use = side > 0 ? offsets : offsets.Select(o => total - o).ToArray();
+                foreach (double offset in use)
+                {
+                    double t0 = (first.X1 - mxi) * ux + (first.Y1 - myi) * uy;
+                    double t1 = (first.X2 - mxi) * ux + (first.Y2 - myi) * uy;
+                    double nt0 = Math.Max(Math.Min(t0, t1), lo);
+                    double nt1 = Math.Min(Math.Max(t0, t1), hi);
+                    if (nt1 - nt0 < 5) continue;
+                    double pax = mxi + ux * nt0 + nx * offset, pay = myi + uy * nt0 + ny * offset;
+                    double pbx = mxi + ux * nt1 + nx * offset, pby = myi + uy * nt1 + ny * offset;
+                    bool covered = false;
+                    foreach (var have in raw)
+                    {
+                        double hx = have.X2 - have.X1, hy = have.Y2 - have.Y1;
+                        double hlen = Math.Sqrt(hx * hx + hy * hy);
+                        if (hlen < 5) continue;
+                        hx /= hlen; hy /= hlen;
+                        if (Math.Abs(ux * hy - uy * hx) > 0.01) continue;
+                        double hd = Math.Abs((pax - have.X1) * -hy + (pay - have.Y1) * hx);
+                        if (hd > 0.7) continue;
+                        double h0 = (have.X1 - mxi) * ux + (have.Y1 - myi) * uy;
+                        double h1 = (have.X2 - mxi) * ux + (have.Y2 - myi) * uy;
+                        if (Math.Min(nt1, Math.Max(h0, h1)) - Math.Max(nt0, Math.Min(h0, h1)) > 5)
+                        { covered = true; break; }
+                    }
+                    if (covered) continue;
+                    output.Add(new CollectedEdge(pax, pay, pbx, pby, first.Depth, first.Depth,
+                        -1, -1, pnx, pny, pnz, poff, false, first.CategoryId));
+                }
+            }
+        }
+    }
+
     /// <summary>The part of a 3D ring whose projection lies inside a rectangle (the crop of a detail), with the
     /// crossing points interpolated in 3D so the ring keeps a vertex per projected point: the cut test reads the
     /// ring, and a projected-only clip lost that correspondence.</summary>

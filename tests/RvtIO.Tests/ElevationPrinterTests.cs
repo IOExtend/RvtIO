@@ -280,6 +280,81 @@ public class ElevationPrinterTests
     }
 
     [Fact]
+    public void AddLayerLines_SubdividesAWallPairByItsTypeStack()
+    {
+        // An asymmetric stack (20/100/10 mm, total 130) between two parallel chords: the source-face normal
+        // decides the side — face A looks at face B, so the stack starts at the interior face and runs mirrored,
+        // drawing the boundaries at x = 10 and x = 110. Both lines ink thin, like projection edges.
+        static RvtIO.Internal.RawCompoundStructureLayer Layer(double millimetres) => new(
+            BitConverter.DoubleToInt64Bits(millimetres / 304.8), 1, -1, 700, -1, 0, 1);
+        var type = new Element
+        {
+            Id = 10,
+            CategoryId = (int)BuiltInCategory.OST_Walls,
+            SerializedHostTypeLayers = [Layer(20), Layer(100), Layer(10)],
+        };
+        var document = RvtDocument.FromInfo(new RevitFileInfo { Elements = { type } });
+        var raw = new List<(double X1, double Y1, double X2, double Y2,
+            double Nx, double Ny, double Nz, int TypeId, int CategoryId, double Depth)>
+        {
+            (0, 0, 0, 1000, -1, 0, 0, 10, (int)BuiltInCategory.OST_Walls, 0),
+            (130, 0, 130, 1000, 1, 0, 0, 10, (int)BuiltInCategory.OST_Walls, 0),
+        };
+        var output = new List<ElevationPrinter.CollectedEdge>();
+
+        ElevationPrinter.AddLayerLines(raw, document, output,
+            [0, 1, 0], [1, 0, 0], [0, 0, 1], 0, 0, 0, 0);
+
+        Assert.Equal(2, output.Count);
+        var xs = output.Select(edge => (edge.X1 + edge.X2) / 2).OrderBy(x => x).ToList();
+        Assert.Equal(10, xs[0], 1);
+        Assert.Equal(110, xs[1], 1);
+        Assert.All(output, edge => Assert.False(edge.IsCut));
+        Assert.All(output, edge => Assert.Equal(0, edge.Y1, 1));
+        Assert.All(output, edge => Assert.Equal(1000, edge.Y2, 1));
+    }
+
+    [Fact]
+    public void SampleFile_WallSectionDetailsHaveLayerLines()
+    {
+        // The 1:20 wall section draws every layer boundary of its walls, not just the two outer faces: a thin
+        // wall edge must stand strictly between two parallel cut wall edges less than 400 mm apart.
+        string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+        var view = document.Elements.FirstOrDefault(e => e.CategoryId == (int)BuiltInCategory.OST_Views
+            && e.Name == "Typ. Wall Section");
+        Assert.NotNull(view);
+
+        var content = ElevationPrinter.Collect(document, "section", false, view);
+
+        Assert.NotNull(content);
+        var cuts = content!.Edges.Where(edge => edge.IsCut
+            && edge.CategoryId == (int)BuiltInCategory.OST_Walls
+            && Math.Abs(edge.X2 - edge.X1) < 0.5
+            && Math.Abs(edge.Y2 - edge.Y1) > 50).ToList();
+        var thins = content.Edges.Where(edge => !edge.IsCut
+            && edge.CategoryId == (int)BuiltInCategory.OST_Walls
+            && Math.Abs(edge.X2 - edge.X1) < 0.5
+            && Math.Abs(edge.Y2 - edge.Y1) > 50).ToList();
+        static bool Between(
+            ElevationPrinter.CollectedEdge thin,
+            List<ElevationPrinter.CollectedEdge> cuts)
+        {
+            for (int i = 0; i < cuts.Count; i++)
+                for (int j = 0; j < cuts.Count; j++)
+                {
+                    if (i == j) continue;
+                    double lo = Math.Min(cuts[i].X1, cuts[j].X1), hi = Math.Max(cuts[i].X1, cuts[j].X1);
+                    if (hi - lo > 400 || hi - lo < 5) continue;
+                    if (thin.X1 > lo + 1 && thin.X1 < hi - 1) return true;
+                }
+            return false;
+        }
+        Assert.Contains(thins, thin => Between(thin, cuts));
+    }
+
+    [Fact]
     public void Collect_TagsCutEdgesWithTheirCategory()
     {
         // A railing slat straddling the section plane: the cut edge carries the railing category, so it
