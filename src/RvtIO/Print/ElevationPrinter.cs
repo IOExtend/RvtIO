@@ -300,11 +300,13 @@ public static class ElevationPrinter
         var deduped = DedupeEdges(edgeFaces, D, cut ? planeOrigin : null);
         var occluded = OccludeEdges(faces, faceMinDepths, deduped);
         List<CollectedEdge> edges = MergeOverlaps(occluded);
-        // In an elevation a horizontal face is seen edge-on, so its boundary is not inked: the reference draws
-        // the wall's top as the ends of its vertical board lines and no line across them (measured on A103, where
-        // the roof mass's top edges at z=9199 are 95% unmatched while the model's other horizontals match).
-        if (planeView != null && !cut && !isDetail)
-            edges = edges.Where(edge => !(Math.Abs(edge.Y2 - edge.Y1) < 0.5 && Math.Abs(edge.Nz) > 0.9)).ToList();
+        // A horizontal face is seen edge-on in any vertical view, so its boundary is not inked: the reference
+        // draws the wall's top as the ends of its vertical board lines and no line across them (measured on A103,
+        // where the roof mass's top edges at z=9199 are 95% unmatched while the model's other horizontals match).
+        // A section keeps the edges its own cut created: those are the cut profile of a horizontal slab.
+        if (planeView != null && !isDetail)
+            edges = edges.Where(edge => edge.IsCut
+                || !(Math.Abs(edge.Y2 - edge.Y1) < 0.5 && Math.Abs(edge.Nz) > 0.9)).ToList();
         // A detail's own annotation curves: Revit stores detail and insulation lines of a view as curve
         // elements that name the view as their owner (OST_Lines, OST_InsulationLines), with their points in
         // model feet — they lie on the view plane and belong to no solid, so no face ever reaches them.

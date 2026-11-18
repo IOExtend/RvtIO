@@ -40,4 +40,31 @@ public class ElevationSheetLinesTests
         Assert.DoesNotContain(edges, edge => Math.Abs(edge.Y2 - edge.Y1) < 0.5
             && Math.Abs((edge.Y1 + edge.Y2) / 2 - roofTop) < 5 && Math.Abs(edge.X2 - edge.X1) > 15000);
     }
+
+    [Fact]
+    public void SampleFile_LongitudinalSectionKeepsItsCutProfile()
+    {
+        // A section sees a horizontal face edge-on just like an elevation, so its projected boundary is not inked
+        // either — but the edges the section's own cut created are the cut profile of a horizontal slab and stay.
+        // Measured on the sample: the roof mass's projected top edge at z = 9199 mm was 95% unmatched in the
+        // Longitudinal Section, while the roof slab's cut edges at z = 6898 / 7178 mm are the section's profile.
+        string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+        var view = document.Elements.FirstOrDefault(e => e.CategoryId == (int)BuiltInCategory.OST_Views
+            && e.Name == "Longitudinal Section");
+        Assert.NotNull(view);
+
+        var content = ElevationPrinter.Collect(document, "section", false, view);
+
+        Assert.NotNull(content);
+        var edges = content!.Edges;
+        // Projected horizontals of horizontal faces are gone; the cut's own horizontals remain.
+        Assert.DoesNotContain(edges, edge => !edge.IsCut
+            && Math.Abs(edge.Y2 - edge.Y1) < 0.5 && Math.Abs(edge.Nz) > 0.9);
+        Assert.Contains(edges, edge => edge.IsCut && Math.Abs(edge.Y2 - edge.Y1) < 0.5);
+        // The model's projected horizontals of vertical faces (floor lines, sills) still ink.
+        Assert.Contains(edges, edge => !edge.IsCut
+            && Math.Abs(edge.Y2 - edge.Y1) < 0.5 && Math.Abs(edge.Nz) <= 0.9);
+    }
 }

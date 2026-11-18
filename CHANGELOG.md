@@ -244,6 +244,8 @@ The text of a sheet prints too: a text note's RTF string (class 0x0F83 block) is
 
 - An elevation does not ink the boundary of a horizontal face: seen edge-on, a top face's outline is not a line the reference draws — the wall top reads as the ends of its vertical boards, with no line across them. The sample's roof mass puts a 19.5 m horizontal top edge at z = 9199 mm in both A103 views; matching it against the reference measured 5% coverage (95% unmatched), while the model's other horizontals match. Elevations now drop horizontal edges whose incident face is horizontal (|Nz| > 0.9) and keep every horizontal of a vertical face (sills, floor lines). Measured against the Revit export: A103 recall 92.0% -> 92.0%, precision 76.1% -> 76.5%; A104 74.6% / 75.3% -> 74.6% / 76.4%; A105 89.7% / 67.7% -> 89.7% / 69.9%; A001, A101 and A102 unchanged. New test: `SampleFile_SouthElevationDoesNotInkHorizontalFaceEdges`. Full print suites 123/123 green on net8.0+net10.0.
 
+- A section applies the same edge-on rule to its projected edges: a horizontal face's boundary is not inked there either, while the edges the section's own cut created stay (they are the cut profile of a horizontal slab). The Longitudinal Section's projected roof-top edge at z = 9199 mm (5% matched) and foundation top at z = -150 mm (6%) go; the roof slab's cut profile at z = 6898/7178 remains. Measured against the Revit export: A103 recall 92.0% -> 92.0%, precision 76.5% -> 77.0%; A104 74.6% / 76.4% -> 74.6% / 77.5%; A105 89.7% / 69.9% -> 89.6% / 77.2%; A001, A101 and A102 unchanged. New test: `SampleFile_LongitudinalSectionKeepsItsCutProfile`. Full print suites 124/124 green on net8.0+net10.0.
+
 ## [0.4.0] - 2026-11-13
 
 ### Breaking changes
