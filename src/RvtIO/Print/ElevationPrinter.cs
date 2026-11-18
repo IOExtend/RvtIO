@@ -300,11 +300,10 @@ public static class ElevationPrinter
         var deduped = DedupeEdges(edgeFaces, D, cut ? planeOrigin : null);
         var occluded = OccludeEdges(faces, faceMinDepths, deduped);
         List<CollectedEdge> edges = MergeOverlaps(occluded);
-        // A vertical view inks no model horizontal: the reference draws the wall top as the ends of its vertical
-        // board lines, with no line across them, and its levels as their own dashed rows (drawn separately), while
-        // a section keeps the edges its own cut created - those are the cut profile of a horizontal slab.
-        if (planeView != null && !isDetail)
-            edges = edges.Where(edge => edge.IsCut || Math.Abs(edge.Y2 - edge.Y1) >= 0.5).ToList();
+        // Every visible edge inks, horizontals included: the reference prints the wall top, the slab and roof
+        // outlines and the ground line. (An earlier rule dropped model horizontals because the reference's vector
+        // layer lacks them — but on A101/A103/A104/A105 the reference carries the drawing as a raster image and only
+        // the annotation as vector, so that comparison measured an export artifact.)
         // A detail's own annotation curves: Revit stores detail and insulation lines of a view as curve
         // elements that name the view as their owner (OST_Lines, OST_InsulationLines), with their points in
         // model feet — they lie on the view plane and belong to no solid, so no face ever reaches them.
@@ -406,14 +405,6 @@ public static class ElevationPrinter
             }
             distinctLevels.Add((level.Y, level.Label, x0, x1));
         }
-        // Below the model's lowest level the work is buried: the reference draws no foundation line in an
-        // elevation (measured on A103: the four 6 m foundation verticals of each view are 100% unmatched), while
-        // the facade above grade stays.
-        if (planeView != null && !isDetail && distinctLevels.Count > 0)
-        {
-            double lowest = distinctLevels.Min(level => level.Y);
-            edges = edges.Where(edge => edge.IsCut || (edge.Y1 + edge.Y2) / 2 >= lowest - 1).ToList();
-        }
         var grids = new List<(double X, string Name)>();
         foreach (var element in document.Elements)
         {
@@ -438,13 +429,6 @@ public static class ElevationPrinter
         }
         // The grid bubbles print above the frame: without grids (a windowed detail) the frame ends at the model.
         if (grids.Count > 0) maxY += 4500;
-        // A stair railing's continuous rails, seen on end, project as long diagonals; the reference draws the
-        // balustrade as its balusters and no diagonal rail across the stair (measured on A105's Main Stair Detail:
-        // the two 3.8 m railing diagonals are unmatched while the vertical balusters are). Only the diagonal edges
-        // go; the balusters and posts stay.
-        if (planeView != null)
-            edges = edges.Where(edge => !(edge.CategoryId == (int)BuiltInCategory.OST_StairsRailing
-                && Math.Abs(edge.X2 - edge.X1) > 100 && Math.Abs(edge.Y2 - edge.Y1) > 100)).ToList();
         return new ElevationContent(faces, distinctLevels, grids, context, edges, minX, minY, maxX, maxY);
     }
 
