@@ -11,6 +11,14 @@
     <NoWarn>$(NoWarn);CS1573</NoWarn>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(BuildNativeCoreOnly)' == 'true'">
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(BuildNativeCoreOnly)' == 'true'">
+    <Compile Remove="Compact/**/*.cs;Export/**/*.cs;Ifc/**/*.cs;Pdf/**/*.cs;Print/**/*.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="RvtIO.Tests" />
     <InternalsVisibleTo Include="RvtIO.Cli" />

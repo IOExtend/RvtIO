@@ -59,6 +59,14 @@ Read the project's stored length unit in `Parsing`. Choosing the unit
 declared in an IFC file belongs to the IFC exporter.
 `RvtIO.Scene` builds on the public RvtIO API and references IOScene separately.
 
+CI also compiles the native library without the Compact JSON, IFC and PDF
+output code. Use a separate artifact path for this compile check. It keeps
+the regular build available for testing and produces no NuGet package.
+
+```sh
+dotnet build src/RvtIO/RvtIO.csproj -c Release -p:BuildNativeCoreOnly=true --artifacts-path ./artifacts/native-core-check
+```
+
 Tests that need real Revit files are skipped with a message when private
 fixtures are unavailable. Set `RVTIO_TEST_FILES` to the folder containing
 your private fixtures to run them. The repository ships no Revit models.
