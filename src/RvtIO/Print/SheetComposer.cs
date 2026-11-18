@@ -488,7 +488,11 @@ public static class SheetComposer
                     // The crop rectangle in content units, so only the crop is drawn: the scorer counts
                     // vectors, not the page clip, and the whole model would count without this.
                     var (cropX0, cropY0, cropX1, cropY1) = CropContentRect(crop);
-                    page2.BeginClip(frameX, frameY, Math.Max(0, frameWidth), Math.Max(0, frameHeight));
+                    // Level markers and their labels stand past the crop frame (the marker column sits ~10 mm
+                    // past the crop-mapped right edge), so the clip leaves a label strip on the right when the
+                    // view draws levels; the placed frame itself is unchanged.
+                    double clipExtra = elevation.Levels.Count > 0 ? 45 : 0;
+                    page2.BeginClip(frameX, frameY, Math.Max(0, frameWidth + clipExtra), Math.Max(0, frameHeight));
                     ElevationPrinter.DrawContent(page2, elevation, scale, cropOriginX, cropOriginY,
                         direction == "section" ? 0.82 : 1, document, (cropX0, cropY0, cropX1, cropY1));
                     page2.EndClip();

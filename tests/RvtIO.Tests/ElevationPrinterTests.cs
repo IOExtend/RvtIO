@@ -444,6 +444,73 @@ public class ElevationPrinterTests
     }
 
     [Fact]
+    public void DrawContent_PlacesLevelMarkersPastTheCropFrame()
+    {
+        // The datum ends at x = 1000 but the crop runs to x = 2000: the marker column stands 10 mm past the
+        // crop-mapped right edge, not at the datum end, and the row runs out to it. At scale 100 with origin
+        // (10, 10) that puts the marker at x = 40 mm and the label text at x = 44 mm.
+        var content = new ElevationPrinter.ElevationContent(
+            [],
+            [(0, "Level 1", 0, 1000)],
+            [],
+            [],
+            [],
+            0, -100, 1000, 100);
+        var pdf = new PdfDocument();
+        PdfPage page = pdf.AddPage(PdfPageSize.A1.Landscape);
+
+        ElevationPrinter.DrawContent(page, content, 100, 10, 10, 1, null, (0, -500, 2000, 500));
+        string text = PdfTestContent.Read(pdf);
+
+        var match = System.Text.RegularExpressions.Regex.Match(text, @"([\d.]+) ([\d.]+) Td \(Level 1\)");
+        Assert.True(match.Success, "Level 1 label not drawn.");
+        Assert.Equal(44 * 72.0 / 25.4, double.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture), 1);
+    }
+
+    [Fact]
+    public void DrawContent_InksLevelMarkersSolid()
+    {
+        // Only the row itself dashes: the marker circle follows a dash reset, so exactly two dash resets
+        // are written for one level row (one after the row, one trailing the block).
+        var content = new ElevationPrinter.ElevationContent(
+            [],
+            [(0, "Level 1", 0, 1000)],
+            [],
+            [],
+            [],
+            0, -100, 1000, 100);
+        var pdf = new PdfDocument();
+        PdfPage page = pdf.AddPage(PdfPageSize.A1.Landscape);
+
+        ElevationPrinter.DrawContent(page, content, 100, 10, 10, 1, null, (0, -500, 2000, 500));
+        string text = PdfTestContent.Read(pdf);
+
+        Assert.Equal(2, CountOccurrences(text, "[] 0 d"));
+    }
+
+    [Fact]
+    public void SampleFile_DetailKeepsItsLevelRows()
+    {
+        // A crop-drawn detail keeps the levels whose height falls in its crop: the reference details draw
+        // their own level rows with markers (Typ. Wall Section shows all six), clipped to the crop at draw
+        // time. Window-only details (no file crop) still drop them.
+        string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
+        if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
+        var document = RvtDocument.Open(path);
+        var view = document.Elements.FirstOrDefault(e => e.CategoryId == (int)BuiltInCategory.OST_Views
+            && e.Name == "Typical Wall Roof Connection");
+        Assert.NotNull(view);
+        if (view!.ViewCrop is not { Active: true } crop)
+            throw new SkipException("The sample's detail has no active crop.");
+
+        var content = ElevationPrinter.Collect(document, "section", false, view,
+            isDetail: true, cropWindow: SheetComposer.CropContentRect(crop));
+
+        Assert.NotNull(content);
+        Assert.Contains(content!.Levels, level => level.Label == "Roof Line" && level.Y == 6000);
+    }
+
+    [Fact]
     public void DrawContent_WritesTheProjectedPolygons()
     {
         var document = Document(WallWithFace(600));

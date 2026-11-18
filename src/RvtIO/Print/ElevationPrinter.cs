@@ -498,12 +498,13 @@ public static class ElevationPrinter
         }
         grids.Sort((left, right) => left.X.CompareTo(right.X));
         context.Sort((left, right) => right.Depth.CompareTo(left.Depth));
-        // A detail carries no level lines or grid bubbles: it is a detail of the construction, not a drawing of
-        // the levels. A stair detail keeps the levels whose height falls in its crop (Level 1, Ceiling and Level 2
-        // on the sample: exactly the three bands the reference draws) with no level suppression of its own.
+        // A detail carries no grid bubbles (none of the reference details shows one), and a windowed
+        // detail without a file crop carries no level lines either. But a crop-drawn detail keeps the levels
+        // whose height falls in its crop — the reference details draw their own level rows with markers
+        // (Typ. Wall Section shows all six), and DrawContent already clips rows to the crop height.
         if (window != null || isDetail)
         {
-            distinctLevels.Clear();
+            if (cropWindow == null) distinctLevels.Clear();
             grids.Clear();
         }
         // The grid bubbles print above the frame: without grids (a windowed detail) the frame ends at the model.
@@ -1371,9 +1372,10 @@ public static class ElevationPrinter
         }
         if (content.Levels.Count > 0)
         {
+            if (Environment.GetEnvironmentVariable("RVTIO_DEBUG_LEVELS") == "1")
+                Console.WriteLine($"[levels] levels={content.Levels.Count} clip=[{clipX0:F0},{clipX1:F0}]x[{clipY0:F0},{clipY1:F0}] hasClip={clipRect.HasValue}");
             // A level line is thin (0.283 pt on the reference) and dashed short: 3 mm on, 1.5 mm off.
             // It follows its datum while it stays near the crop; only its height is always clipped to the crop.
-            page.SetDash(3.0, 1.5);
             // The line stays near the crop: a datum far wider than a narrow crop (the stair at 1:50) would
             // otherwise run ten metres past the frame, while the reference ends its lines at the markers
             // just past the crop. The margin is the label strip the markers and labels take on the right.
@@ -1399,11 +1401,19 @@ public static class ElevationPrinter
                     left = ToX(Math.Min(x0, clipX0));
                 }
                 if (right <= left) continue;
-                page.DrawLine(left, pageY, right, pageY, 0.1, 0.55);
+                // The markers stand just past the crop frame (measured 10 mm on the sample), and each row
+                // runs out to its marker instead of stopping at the datum end. Without a crop the marker
+                // stays at the datum end as before.
+                const double MarkerPastCropMillimetres = 10.0;
+                double markerX = clipRect.HasValue
+                    ? ToX(clipX1) + MarkerPastCropMillimetres
+                    : right + 4;
+                // Only the row itself dashes; the marker inks solid like the reference.
+                page.SetDash(3.0, 1.5);
+                page.DrawLine(left, pageY, markerX - 2.5, pageY, 0.1, 0.55);
+                page.ResetDash();
                 // The level marker at the right end of the line: a circle with an arrow head, the level name above its
                 // height in millimetres, as an elevation notes them.
-                double markerX = right + 4;
-                page.DrawLine(right, pageY, markerX - 2.5, pageY, 0.12, 0.4);
                 var marker = new List<(double X, double Y)>(20);
                 for (int i = 0; i < 20; i++)
                 {
