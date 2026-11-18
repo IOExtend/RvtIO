@@ -6,7 +6,12 @@ API between minor releases.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-18
+
 ### Changed
+
+- The native Revit reader, writer and scene adapter build independently of IFC, Compact JSON and PDF output.
+  The regular packages retain the public output APIs and CLI commands.
 
 - The printing docs say what is still not drawn (the plane of a section, the detail views without linework, the graphic
   of the title block family, the schedules, the images other than the logo and the renderings, the crop region) and the
