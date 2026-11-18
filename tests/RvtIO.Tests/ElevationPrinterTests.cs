@@ -489,6 +489,26 @@ public class ElevationPrinterTests
     }
 
     [Fact]
+    public void OccludeEdges_KeepsWindowsSetIntoTheirWall()
+    {
+        // A window sits inside its host wall, whose face has no decoded opening: the wall face up to half a
+        // metre in front of a window or door edge must not hide it. A genuinely separate mass further in
+        // front still hides it.
+        var wall = (
+            Points: new List<(double X, double Y)> { (0, 0), (1000, 0), (1000, 1000), (0, 1000) },
+            Depth: 0.0,
+            Outline: true);
+        ElevationPrinter.CollectedEdge Edge(double x1, double y1, double x2, double y2, double midDepth) =>
+            new(x1, y1, x2, y2, midDepth, midDepth, -1, -1, 0, 0, 1, 0, false,
+                (int)BuiltInCategory.OST_Windows);
+        var kept = ElevationPrinter.OccludeEdges([wall], [0.0],
+            [Edge(400, 400, 600, 600, 100), Edge(400, 400, 600, 600, 600)]);
+
+        Assert.Single(kept);
+        Assert.Equal(100, kept[0].MidDepth, 6);
+    }
+
+    [Fact]
     public void SampleFile_DetailKeepsItsLevelRows()
     {
         // A crop-drawn detail keeps the levels whose height falls in its crop: the reference details draw

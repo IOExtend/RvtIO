@@ -648,7 +648,15 @@ public static class ElevationPrinter
                 foreach (int f in candidates)
                 {
                     if (f == edge.FaceA || f == edge.FaceB) continue;
-                    if (faceMinDepths[f] >= edge.MidDepth - 1.0) continue;
+                    // A window or door sits inside its host wall: the wall face in front of it (up to half a
+                    // metre, the deepest realistic inset) must not hide it, or no window would ever ink — the
+                    // hole is not decoded in the wall face. A genuinely separate mass further in front still
+                    // hides it.
+                    double clearance = 1.0;
+                    if (edge.CategoryId == (int)BuiltInCategory.OST_Windows
+                        || edge.CategoryId == (int)BuiltInCategory.OST_Doors)
+                        clearance = 500.0;
+                    if (faceMinDepths[f] >= edge.MidDepth - clearance) continue;
                     if (PointInPolygon(mx, my, faces[f].Points)
                         || DistToPolygon(mx, my, faces[f].Points) <= 0.5) { hidden = true; break; }
                 }
