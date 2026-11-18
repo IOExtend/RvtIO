@@ -82,11 +82,6 @@ internal class ParsingState
         return null;
     }
 
-    /// <summary>Numeric length/thermal export plan, not emitted IFC units. Computed
-    /// so later duplicate roots or rejected display projections revoke acceptance.</summary>
-    public Ifc.IfcNumericUnitPlan? OwnDocumentIfcNumericUnitPlan
-        => Ifc.IfcNumericUnitPlan.Create(OwnDocumentUnitOptions?.Value, OwnDocumentUnitConversions, out _);
-
     /// <summary>First block classId (low16) seen per element in the continuous walk. Used to
     /// assign category from the empirical high-purity classIdx->category table, applied late.</summary>
     public Dictionary<uint, ushort> ElemClassIdx { get; } = new();

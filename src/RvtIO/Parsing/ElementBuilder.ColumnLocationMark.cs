@@ -36,7 +36,7 @@ internal static partial class ElementBuilder
         IReadOnlyDictionary<uint, ushort>? classByElement)
     {
         var lengthOptions = units?.Options
-            .Where(option => UnitSchemaEvaluator.DisplayNameKey(option.Spec) == Ifc.IfcNumericUnitPlan.LengthSpecName).ToArray();
+            .Where(option => UnitSchemaEvaluator.DisplayNameKey(option.Spec) == ProjectLengthUnits.LengthSpecName).ToArray();
         if (units == null || lengthOptions is not { Length: 1 } || units.DecimalSymbol != 0) return;
         var length = lengthOptions[0];
         if (length.UseDefault != 0 || length.Accuracy <= 0) return;

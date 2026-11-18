@@ -222,13 +222,16 @@ public class IfcNumericUnitPlanTests
     {
         var owned=new TfBlockDeserializer.UnitsElemOptions(77,-1,1,10,50,Options(Option()));
         var state=new ParsingState { OwnDocumentUnitsElemId=77,OwnDocumentUnitConversions=Sdk };
-        state.OwnUnitOptions.Add(77,(1,owned));Assert.NotNull(state.OwnDocumentIfcNumericUnitPlan);
-        state.OwnUnitOptions[77]=(2,owned);Assert.Null(state.OwnDocumentIfcNumericUnitPlan);
-        state.OwnUnitOptions[77]=(1,null);Assert.Null(state.OwnDocumentIfcNumericUnitPlan);
-        state.OwnUnitOptions[77]=(1,owned with {FamilyId=321});Assert.Null(state.OwnDocumentIfcNumericUnitPlan);
-        state.OwnUnitOptions[77]=(1,owned with {DocumentAccess=2});Assert.Null(state.OwnDocumentIfcNumericUnitPlan);
-        state.OwnUnitOptions[77]=(1,owned);state.OwnDocumentUnitConversions=null;Assert.Null(state.OwnDocumentIfcNumericUnitPlan);
+        IfcNumericUnitPlan? PlanFromState() =>
+            IfcNumericUnitPlan.Create(state.OwnDocumentUnitOptions?.Value, state.OwnDocumentUnitConversions, out _);
+
+        state.OwnUnitOptions.Add(77,(1,owned));Assert.NotNull(PlanFromState());
+        state.OwnUnitOptions[77]=(2,owned);Assert.Null(PlanFromState());
+        state.OwnUnitOptions[77]=(1,null);Assert.Null(PlanFromState());
+        state.OwnUnitOptions[77]=(1,owned with {FamilyId=321});Assert.Null(PlanFromState());
+        state.OwnUnitOptions[77]=(1,owned with {DocumentAccess=2});Assert.Null(PlanFromState());
+        state.OwnUnitOptions[77]=(1,owned);state.OwnDocumentUnitConversions=null;Assert.Null(PlanFromState());
         state.OwnDocumentUnitConversions=Sdk;state.OwnDocumentUnitsElemId=88;
-        Assert.Null(state.OwnDocumentIfcNumericUnitPlan);
+        Assert.Null(PlanFromState());
     }
 }

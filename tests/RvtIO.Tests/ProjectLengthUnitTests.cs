@@ -22,7 +22,7 @@ public class ProjectLengthUnitTests
     public void StoredOption_GivesTheFamilyOfTheProject(string unit, IfcUnitFamily expected)
     {
         var options = Options(("autodesk.spec.aec:area-1.0.0", "autodesk.unit.unit:squareMeters-1.0.1", 0), (LengthSpec, unit, 0));
-        Assert.Equal(unit, IfcLengthUnitChoice.StoredLengthUnit(options, out string? issue));
+        Assert.Equal(unit, ProjectLengthUnits.StoredLengthUnit(options, out string? issue));
         Assert.Null(issue);
         Assert.Equal(expected, IfcLengthUnitChoice.Family(unit));
     }
@@ -30,13 +30,13 @@ public class ProjectLengthUnitTests
     [Fact]
     public void UnusableOptions_AreNullWithTheirReason()
     {
-        Assert.Null(IfcLengthUnitChoice.StoredLengthUnit(null, out string? issue));
+        Assert.Null(ProjectLengthUnits.StoredLengthUnit(null, out string? issue));
         Assert.Contains("not read", issue);
-        Assert.Null(IfcLengthUnitChoice.StoredLengthUnit(Options(("autodesk.spec.aec:area-1.0.0", "x", 0)), out issue));
+        Assert.Null(ProjectLengthUnits.StoredLengthUnit(Options(("autodesk.spec.aec:area-1.0.0", "x", 0)), out issue));
         Assert.Contains("no Length", issue);
-        Assert.Null(IfcLengthUnitChoice.StoredLengthUnit(Options((LengthSpec, "autodesk.unit.unit:meters-1.0.0", 1)), out issue));
+        Assert.Null(ProjectLengthUnits.StoredLengthUnit(Options((LengthSpec, "autodesk.unit.unit:meters-1.0.0", 1)), out issue));
         Assert.Contains("default", issue);
-        Assert.Null(IfcLengthUnitChoice.StoredLengthUnit(Options((LengthSpec, "", 0)), out issue));
+        Assert.Null(ProjectLengthUnits.StoredLengthUnit(Options((LengthSpec, "", 0)), out issue));
         Assert.Contains("no unit", issue);
     }
 
@@ -94,7 +94,7 @@ public class ProjectLengthUnitTests
         state.OwnUnitOptions[542] = (1, Elem(542, family, 1));
         var options = state.OwnDocumentLengthUnitOptions(out string? issue);
         Assert.Null(issue);
-        Assert.Equal(FeetInches, IfcLengthUnitChoice.StoredLengthUnit(options!.Value));
+        Assert.Equal(FeetInches, ProjectLengthUnits.StoredLengthUnit(options!.Value, out _));
     }
 
     [Theory]
