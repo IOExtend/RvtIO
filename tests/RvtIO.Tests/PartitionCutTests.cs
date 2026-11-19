@@ -53,6 +53,23 @@ public class PartitionCutTests
     }
 
     [Fact]
+    public void FamilyStorageCandidatesKeepTheirContentKeyAndStayOutOfProjectRecords()
+    {
+        byte[] raw = TwoBlocks();
+        RvtFileReader.CutPartition(raw, Framing, new ChunkDecompressor(), out _, out _, out var framed, Id("Plain"));
+        var candidate = Assert.Single(framed!.FamilyEntityCandidates);
+        Assert.Equal(Assert.Single(framed.FamilyKeys!), candidate.ContentKey);
+        Assert.Equal((102, 2ul), (candidate.Item.Channel, candidate.Item.Owner));
+        Assert.All(framed.Items, item => Assert.Equal(1ul, item.Owner));
+        var (bytes, start, _) = framed.Bytes(candidate.Item);
+        Assert.Equal(Id("Plain"), BitConverter.ToUInt16(bytes, start + 12));
+
+        raw[^10] ^= 0xFF;
+        RvtFileReader.CutPartition(raw, Framing, new ChunkDecompressor(), out _, out _, out var rejected, Id("Plain"));
+        Assert.Null(rejected);
+    }
+
+    [Fact]
     public void TheSegmentsOfAChain_AreTheOutputOfEachOfItsMembers()
     {
         // one block whose channel 101 is a chain of two segments (the first continues into the second), channels 102 and 103 one segment each

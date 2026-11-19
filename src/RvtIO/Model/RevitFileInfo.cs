@@ -29,6 +29,10 @@ namespace RvtIO.Model
         /// <summary>All elements of the file.</summary>
         public List<Element> Elements { get; set; } = new();
 
+        /// <summary>Public Extensible Storage on elements of loaded family documents, outside the main element collection.</summary>
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public IReadOnlyList<EmbeddedFamilyElementStorage>? EmbeddedFamilyExtensibleStorage { get; internal set; }
+
         internal Parsing.ElementIdMap? ElementIds { get; set; }
 
         /// <summary>Resolves any document-local element key to its original signed 64-bit ID.</summary>

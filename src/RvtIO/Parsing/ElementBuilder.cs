@@ -3214,6 +3214,7 @@ internal static partial class ElementBuilder
             e.NativeCellListTag = np.Fields.TryGetValue("37:m_cellList", out int cellListTag) ? cellListTag : null;
             e.NativeCellClasses = np.CellClasses?.ToArray();
             e.NativeTailWalkComplete = np.TailWalkComplete;
+            e.ExtensibleStorage = np.ExtensibleStorage;
             if (np.NamedParams.Count > 0)
                 e.NativeNamedParameters = np.NamedParams.Where(named => named.ParamId < 0).Select(named => (named.ParamId, named.Instance)).ToArray();
             // the two element-base keys are only kept for family instances (they exist in every

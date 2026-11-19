@@ -16,8 +16,8 @@ internal static class EntitySchemaReader
     /// <summary>Per schema GUID the fields of an entity as fields of the class schema, in the order an entity stores them; null for a
     /// schema with a field whose type is not read or whose entry indexes are not 0 to n-1. Empty when Global/Latest is missing, does not decode or is not walked without an
     /// error: no schema is known then, and a walk that is given the empty set stops at every entity that has values.</summary>
-    internal static Dictionary<Guid, SchemaField[]?> Read(RootStorage root, SchemaDocument schema) =>
-        PagedGzipStream.Read(root, "Global", "Latest") is { } latest && Read(latest, schema) is { } schemas ? schemas : [];
+    internal static Dictionary<Guid, SchemaField[]?> Read(RootStorage root, SchemaDocument schema, Dictionary<Guid, string>? publicNames = null) =>
+        PagedGzipStream.Read(root, "Global", "Latest") is { } latest && Read(latest, schema, publicNames) is { } schemas ? schemas : [];
 
     /// <summary>The entity schemas of each loaded family document, by the key of its content block (<see cref="PartitionFraming"/>, the
     /// same text): an entity in a family block names a schema of its own document, which Global/Latest need not hold. Global/ContentDocuments
@@ -26,29 +26,38 @@ internal static class EntitySchemaReader
     /// ADocument, and the length again; a ContentMarker with the handle 0, its count and a length of 0 ends it at its last byte. Each
     /// ADocument is read like Global/Latest; a document whose ADocument is not walked without an error has no schemas. Empty when the
     /// stream is missing, does not decode or does not end so.</summary>
-    internal static Dictionary<string, Dictionary<Guid, SchemaField[]?>> ReadContentDocuments(RootStorage root, SchemaDocument schema)
+    internal static Dictionary<string, Dictionary<Guid, SchemaField[]?>> ReadContentDocuments(RootStorage root, SchemaDocument schema,
+        IReadOnlySet<string>? wantedKeys = null, Dictionary<string, Dictionary<Guid, string>>? publicNames = null)
     {
         var documents = new Dictionary<string, Dictionary<Guid, SchemaField[]?>>(StringComparer.Ordinal);
         if (PagedGzipStream.Read(root, "Global", "ContentDocuments") is not { } data
             || schema.Classes.FirstOrDefault(c => c.Name == "ContentMarker") is not { } marker
             || schema.Classes.FirstOrDefault(c => c.Name == "ContentKey") is not { } key) return documents;
         var span = data.AsSpan();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         for (int at = 0; ;)
         {
             if (at + 6 > span.Length || BinaryPrimitives.ReadUInt16LittleEndian(span[at..]) != marker.Id) return [];
             uint handle = BinaryPrimitives.ReadUInt32LittleEndian(span[(at + 2)..]);
-            if (handle == 0) return at + 14 == span.Length && BinaryPrimitives.ReadUInt32LittleEndian(span[(at + 10)..]) == 0 ? documents : [];
+            if (handle == 0)
+                return at + 14 == span.Length && BinaryPrimitives.ReadUInt32LittleEndian(span[(at + 10)..]) == 0 ? documents : [];
             if (handle != uint.MaxValue || at + 32 > span.Length || BinaryPrimitives.ReadUInt16LittleEndian(span[(at + 6)..]) != key.Id) return [];
             string name = Convert.ToHexString(span.Slice(at + 12, 16));
             int length = BinaryPrimitives.ReadInt32LittleEndian(span[(at + 28)..]);
             if (length < 0 || length > span.Length - at - 36 || BinaryPrimitives.ReadInt32LittleEndian(span[(at + 32 + length)..]) != length) return [];
-            if (!documents.TryAdd(name, Read(span.Slice(at + 32, length).ToArray(), schema) ?? [])) return [];
+            if (!seen.Add(name)) return [];
+            if (wantedKeys == null || wantedKeys.Contains(name))
+            {
+                var names = publicNames == null ? null : new Dictionary<Guid, string>();
+                documents.Add(name, Read(span.Slice(at + 32, length).ToArray(), schema, names) ?? []);
+                if (names is { Count: > 0 }) publicNames!.Add(name, names);
+            }
             at += 36 + length;
         }
     }
 
     /// <summary>The same of a decoded Global/Latest; null when it is not an ADocument or its walk does not end without an error.</summary>
-    internal static Dictionary<Guid, SchemaField[]?>? Read(byte[] latest, SchemaDocument schema)
+    internal static Dictionary<Guid, SchemaField[]?>? Read(byte[] latest, SchemaDocument schema, Dictionary<Guid, string>? publicNames = null)
     {
         if (latest.Length < 2) return null;
         // the step budget of the record walks of the census: a walk that is out of step can meet a large count of items without bytes
@@ -73,8 +82,14 @@ internal static class EntitySchemaReader
             }
             // an entity stores its fields in the order of ESField.m_entryIndex, which is not the order the schema lists them in
             if (values.GetValueOrDefault("m_guid") is Guid guid)
-                schemas.TryAdd(guid, fields.Any(f => f.Field == null) || !Numbered(fields.Select(f => f.Index)) ? null
-                    : [.. fields.OrderBy(f => f.Index).Select(f => f.Field!)]);
+            {
+                SchemaField[]? layout = fields.Any(f => f.Field == null) || !Numbered(fields.Select(f => f.Index)) ? null
+                    : [.. fields.OrderBy(f => f.Index).Select(f => f.Field!)];
+                if (!schemas.TryAdd(guid, layout)) publicNames?.Remove(guid);
+                else if (layout != null && values.GetValueOrDefault("m_readAccessLevel") is 1L
+                    && values.GetValueOrDefault("m_schemaName") is string name)
+                    publicNames?.Add(guid, name);
+            }
             fields.Clear();
         }
         return schemas;

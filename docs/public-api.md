@@ -37,6 +37,17 @@ data cannot be recovered, the numeric property is omitted. This does not change 
 An unavailable format does not mean zero or an unset value: a stored zero is formatted normally when its format is
 known, while a known unset bound user parameter is written as an empty string. A missing family value record is omitted.
 
+`Element.ExtensibleStorage` gives the public Extensible Storage entities decoded from the element's own cell, including
+files with 32-bit element IDs. Full JSON includes the same data. Each entity has a schema GUID, a schema name and a field dictionary.
+Values can include nested entities, arrays, or maps represented as lists of key/value pairs. Integers outside the exact
+JavaScript integer range are decimal strings. An entity is omitted if any of its values cannot be recovered completely.
+The field dictionary is separate from Revit's normal parameter list.
+
+`RevitFileInfo.EmbeddedFamilyExtensibleStorage` lists the same data for elements in loaded family documents.
+Each entry identifies its owner by the saved content-key GUID and the exact decimal element ID in that block.
+Element ID fields inside an entity use the IDs saved in that document. Opening an RFA directly exposes its own data through
+`Element.ExtensibleStorage`.
+
 `Element.BoundingBox` is the axis-aligned outline stored in the element header, as the Revit API bounding box (null for elements with no stored outline, such as grids and levels). The tight box of the decoded geometry is `Element.Geometry.BoundingBox`; before 0.3.0 `Element.BoundingBox` held that decoded value, which also changes the result of `FilteredElementCollector.WhereBoundingBoxIsNotNull`.
 
 `Element.ViewportViewId` and `Element.ViewportOffset` are the view a viewport displays and the offset of that view

@@ -40,6 +40,7 @@ internal static partial class TfBlockDeserializer
         public HashSet<int>? RoofExtrusionFaceTags { get; set; }
         /// <summary>The deferred walk consumed every queued object of the record (so the NamedParams and cells are complete).</summary>
         public bool TailWalkComplete { get; set; }
+        public IReadOnlyList<ExtensibleStorageEntity>? ExtensibleStorage { get; set; }
         public List<(int ParamId, double Value)> Doubles { get; } = new();
         public List<(int ParamId, int Value)> Ints { get; } = new();
         public List<(int ParamId, string Value)> Strings { get; } = new();

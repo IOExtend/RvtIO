@@ -35,11 +35,16 @@ internal static class PartitionFraming
     /// for <see cref="Length"/> bytes in the stream's inflated output.</summary>
     internal readonly record struct ProjectItem(int Channel, ulong Owner, long Offset, int Length);
 
+    internal readonly record struct FamilyItem(string ContentKey, ProjectItem Item);
+
     /// <summary>A partition stream read by its framing: the output of every segment in file order, and the records of the project's own block
     /// (the null-key map) in file order, without the chain terminators. The records of the keyed blocks (loaded family documents) are not listed.
     /// <see cref="IdWidth"/> is the byte width of the owner the walk read; <see cref="Partition"/> is the partition stream number when known.</summary>
     internal sealed record Framed(IReadOnlyList<byte[]> Segments, List<ProjectItem> Items, int IdWidth, int? Partition = null)
     {
+        internal IReadOnlyList<FamilyItem> FamilyEntityCandidates { get; init; } = [];
+        internal IReadOnlySet<string>? FamilyKeys { get; init; }
+
         private long[]? starts;
 
         /// <summary>Where the bytes of the item are: in its segment when it lies in one, else in a copy (an item can run into the next segment
