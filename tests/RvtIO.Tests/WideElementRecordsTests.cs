@@ -53,7 +53,7 @@ public class WideElementRecordsTests
 
     private sealed record Ids(int Identifier, int ElementId, int ElemRec, int ElemTable, int Header, int Element, int Wall, int Other, int Level);
 
-    private static (byte[] Stream, Ids Ids) BuildSchema(string originalClassName = "OriginalElementId")
+    private static (byte[] Stream, Ids Ids) BuildSchema(string originalClassName = "OriginalElementId", bool model = false)
     {
         var w = new SchemaWriter();
         int identifier = w.Add("Identifier", 0, Scalar("m_id64", 11));
@@ -71,10 +71,17 @@ public class WideElementRecordsTests
         int pair = w.Add("std::pair< ElementRegenerationInfo, EpisodeId >", 0, Ref("first", info), Ref("second", episode));
         int regen = w.Add("ElementRegenHistory", 0, Array("m_historyMap", pair));
         int header = w.Add("ElementHeader", 0, Ref("m_regenHistory", regen), Ref("m_categroryId", elementId));
-        int element = w.Add("Element", 0);
+        int element = model ? w.Add("Element", 0, Ref("m_id", elementId)) : w.Add("Element", 0);
         int wall = w.Add("Wall", element);
         int other = w.Add("Other", 0);
         int level = w.Add("Level", wall);
+        if (model)
+        {
+            w.Add("FamilyInstance", element, Ref("m_masterSymbolId", elementId), Ref("m_hostId", elementId));
+            w.Add("FamilySymbol", element);
+            foreach (var marker in new[] { "ContentMarker", "ContentKey", "SegmentMarker", "SegmentCheckback", "SignatureMarker" })
+                w.Add(marker, 0);
+        }
         return (w.ToArray(), new Ids(identifier, elementId, rec, table, header, element, wall, other, level));
     }
 
@@ -135,11 +142,9 @@ public class WideElementRecordsTests
         var table = WideElementRecords.ParseElemTable(
             ElemTable(ids, (5, 7, 5, -1), (20, 3, 21, 5), (30, 0, 31, 0x1_0000_0000)), schema);
         Assert.NotNull(table);
-        Assert.Equal(new ElemRecHistory(5, 7), table.Histories[5]);
-        Assert.Equal(new ElemRecHistory(20, 3), table.Histories[21]);   // the key is m_id, UniqueId uses the original id
-        Assert.Equal(-1, table.OwningElementIds[5]);
-        Assert.Equal(5, table.OwningElementIds[21]);
-        Assert.False(table.OwningElementIds.ContainsKey(31));          // an owner beyond 32 bits is not represented
+        Assert.Equal(new ElemTableLayout.Row(5, 5, 7, 0, -1, 0), table[0]);
+        Assert.Equal(new ElemTableLayout.Row(21, 20, 3, 0, 5, 0), table[1]);
+        Assert.Equal(new ElemTableLayout.Row(31, 30, 0, 0, 0x1_0000_0000, 0), table[2]);
     }
 
     [Fact]
@@ -169,21 +174,22 @@ public class WideElementRecordsTests
         s.Write(new byte[24]);
         var wide = WideElementRecords.ParseElemTable(s.ToArray(), schema);
         Assert.NotNull(wide);
-        Assert.Equal(new ElemRecHistory(5, 7), wide.Histories[5]);
-        Assert.Equal(new ElemRecHistory(20, 3), wide.Histories[21]);
-        Assert.Equal(-1, wide.OwningElementIds[5]);
-        Assert.Equal(5, wide.OwningElementIds[21]);
+        Assert.Equal(new ElemTableLayout.Row(5, 5, 7, 9, -1, 0), wide[0]);
+        Assert.Equal(new ElemTableLayout.Row(21, 20, 3, 9, 5, 0), wide[1]);
     }
 
     [Fact]
-    public void ParseElemTable_KeepsIdZeroReportsTheFirstIdOutsideTheModelRangeAndRejectsBrokenTables()
+    public void ParseElemTable_PreservesWideIdsWithTheSameLowBitsAndRejectsBrokenTables()
     {
         var (stream, ids) = BuildSchema();
         var schema = FileSchema.Parse(stream)!;
+        const long first = 0x1_0000_0009L, second = 0x20_0001_0000_0009L;
         var wide = WideElementRecords.ParseElemTable(
-            ElemTable(ids, (0, 0, 0, -1), (5, 0, int.MaxValue, -1), (9, 0, 0x1_0000_0009UL, -1)), schema)!;
-        Assert.Equal([0u, int.MaxValue], wide.Histories.Keys.ToArray());   // id 0 is a real row (ProjectPhase / DimensionStyle)
-        Assert.Equal(4294967305L, wide.UnsupportedId);
+            ElemTable(ids, (0, 0, 0, -1), (second, 3, 9, first), (first, 4, first, second), (5, 6, second, 0)), schema)!;
+        Assert.Equal([0L, 9L, first, second], wide.Select(row => row.Id));
+        Assert.Equal(new ElemTableLayout.Row(9, second, 3, 0, first, 0), wide[1]);
+        Assert.Equal(new ElemTableLayout.Row(first, first, 4, 0, second, 0), wide[2]);
+        Assert.Equal(new ElemTableLayout.Row(second, 5, 6, 0, 0, 0), wide[3]);
         var good = ElemTable(ids, (5, 0, 5, -1), (6, 0, 6, -1));
         Assert.Null(WideElementRecords.ParseElemTable(ElemTable(ids, (6, 0, 6, -1), (5, 0, 5, -1)), schema));   // not increasing
         Assert.Null(WideElementRecords.ParseElemTable(good[..^30], schema));                                        // truncated
@@ -211,6 +217,112 @@ public class WideElementRecordsTests
             Assert.Contains("4294967305", exception.Message);
         }
         finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void ElementTableFallbackKeepsTheRowWhenOnlyTheOriginalIdIsWide()
+    {
+        var (stream, ids) = BuildSchema("StoredOriginalId");
+        byte[] table = ElemTable(ids, (0, 0, 0, -1), (0x20_0001_0000_0009UL, 4, 9, -1));
+        string path = TestFiles.Scratch($"wide-original-id-{Guid.NewGuid():N}.rvt");
+        try
+        {
+            CoverageCensusTests.WriteFile(path,
+                ("Formats/Latest", RvtIO.Writing.PageCodec.EncodePadded(RvtIO.Writing.GzipMember.Write(stream))),
+                ("Global/ElemTable", RvtIO.Writing.PageCodec.EncodePadded(RvtIO.Writing.GzipMember.Write(table))));
+            using var root = OpenMcdf.RootStorage.OpenRead(path);
+            var membership = ElemTableReader.Read(root, out _, out var dates, out bool exact);
+            Assert.True(exact);
+            Assert.Equal([0u, 9u], membership.Keys.Order());
+            Assert.Equal(4, dates[9]);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void WideProjectRetainsExactElementTypeAndHostIds(bool r22Layout)
+    {
+        const long instanceId = 2147483648L, hostId = 0x1_0000_0009L, typeId = 0x20_0000_0000_0009L;
+        var (schemaBytes, ids) = BuildSchema(model: true);
+        var schema = FileSchema.Parse(schemaBytes)!;
+        ushort Tag(string name) => (ushort)schema.ByName(name)!.Id;
+        var idsAndCategories = new (long Id, long Category)[] { (9, -2000011), (int.MaxValue, -2000011),
+            (instanceId, -2000151), (hostId, -2000011), (typeId, -2000151) };
+        var headers = idsAndCategories.Select(row => new ElementCensusTests.Rec((ulong)row.Id,
+            [.. BitConverter.GetBytes(Tag("ElementHeader")), .. BitConverter.GetBytes(0u), .. BitConverter.GetBytes(row.Category)])).ToArray();
+        var part = ElementCensusTests.Partition(Tag, 8, (false, [headers, [
+            Body(9, "Wall"), Body(int.MaxValue, "Wall"), Body(instanceId, "FamilyInstance", typeId, hostId),
+            Body(hostId, "Wall"), Body(typeId, "FamilySymbol")], []]));
+        string path = TestFiles.Scratch($"wide-references-{Guid.NewGuid():N}.rvt");
+        try
+        {
+            CoverageCensusTests.WriteFile(path,
+                ("BasicFileInfo", RvtWriterTests.BuildBasicFileInfoBytes(2027)),
+                ("Formats/Latest", Paged(schemaBytes)),
+                ("Global/ElemTable", Paged(ElemTable(ids, (9, 0, 9, -1), (int.MaxValue, 0, int.MaxValue, -1),
+                    (instanceId, 0, instanceId, hostId), (hostId, 0, hostId, -1), (typeId, 0, typeId, -1)))),
+                ("Partitions/0", part));
+            var doc = RvtDocument.Open(path, new RvtReaderOptions { R22Layout = r22Layout });
+            var instance = Assert.IsType<RvtIO.Model.Element>(doc.GetElement(instanceId));
+            Assert.Equal(instanceId, instance.ElementId);
+            Assert.Equal(typeId, instance.TypeElementId);
+            Assert.Equal(hostId, instance.HostElementId);
+            Assert.Equal(typeId, doc.GetTypeElement(instance)!.ElementId);
+            Assert.Equal(hostId, doc.GetElement(instance.HostElementId!.Value)!.ElementId);
+            Assert.Equal("Wall", doc.GetElement(9L)!.RootClassName);
+            Assert.Equal("FamilySymbol", doc.GetElement(typeId)!.RootClassName);
+            Assert.Equal(typeId, doc.GetElement(typeId)!.OriginalElementId);
+            Assert.Null(doc.GetElement(typeId)!.UniqueId);
+            Assert.Equal(int.MaxValue, doc.GetElement((long)int.MaxValue)!.Id);
+            var hostParameter = Assert.Single(instance.Parameters, parameter => parameter.Id == -1002108);
+            Assert.Equal(hostId, hostParameter.AsElementId64());
+            Assert.Equal(hostId.ToString(System.Globalization.CultureInfo.InvariantCulture), hostParameter.AsValueString());
+
+            using var full = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(doc.RawData,
+                new System.Text.Json.JsonSerializerOptions { Converters = { new RvtIO.Model.ParameterListConverter() } }));
+            Assert.Equal("9007199254741001", full.RootElement.GetProperty("SourceElementIds")
+                .GetProperty(instance.TypeId.ToString(System.Globalization.CultureInfo.InvariantCulture)).GetString());
+            var jsonInstance = Assert.Single(full.RootElement.GetProperty("Elements").EnumerateArray(),
+                row => row.TryGetProperty("SourceElementId", out var id) && id.GetString() == "2147483648");
+            Assert.Equal("9007199254741001", jsonInstance.GetProperty("SourceTypeId").GetString());
+            Assert.Equal("4294967305", jsonInstance.GetProperty("SourceHostId").GetString());
+            Assert.Equal("4294967305", jsonInstance.GetProperty("Parameters").GetProperty("-1002108").GetString());
+            using var compact = new MemoryStream();
+            RvtIO.Compact.CompactJsonExporter.Export(doc.RawData, compact);
+            using var compactJson = System.Text.Json.JsonDocument.Parse(compact.ToArray());
+            var compactRows = compactJson.RootElement.GetProperty("data").GetProperty("collection").EnumerateArray().ToList();
+            Assert.Contains(compactRows, row => row.TryGetProperty("object", out var id) && id.GetString() == "9007199254741001");
+            var compactInstance = Assert.Single(compactRows, row => row.TryGetProperty("object", out var id) && id.GetString() == "2147483648");
+            Assert.Contains("4294967305", compactInstance.GetRawText());
+            Assert.Contains("9007199254741001", compactInstance.GetRawText());
+
+            // These records carry links rather than a BRep. Supply a test body to exercise the geometry exporters.
+            instance.Geometry = IfcExporterSkipReasonTests.Box(0, 10, 0, 10, 0, 10);
+            instance.BoundingBox = instance.Geometry.BoundingBox;
+            instance.SerializedCreatedPhaseId = 9;
+            instance.Parameters.RemoveAll(parameter => parameter.Id == -1012100);
+            instance.Parameters.Add(new RvtIO.Model.Parameter { Id = -1012100, Value = 9, StorageType = RvtIO.Model.StorageType.ElementId });
+            var scene = RvtIO.Scene.RvtSceneReader.Read(doc, new RvtIO.Scene.RvtSceneOptions { ModelKey = "wide.rvt" }).Document;
+            scene = IOScene.SceneJson.Read(IOScene.SceneJson.Write(scene));
+            var sceneElement = Assert.Single(scene.Elements, element => element.Id == instance.Id);
+            Assert.Contains(scene.Instances, placement => placement.ElementId == sceneElement.Id);
+            Assert.Contains(scene.PropertySets.SelectMany(set => set.Properties), property =>
+                property.Name == "Revit Type ID" && property.Value.Text == "9007199254741001");
+
+            using var ifc = new StringWriter();
+            new RvtIO.Ifc.IfcExporter().Export(doc.RawData, ifc);
+            string fallbackGuid = RvtIO.Ifc.IfcGuid.FromElementId(instanceId);
+            Assert.Contains(ifc.ToString().Split('\n'), line => line.StartsWith('#')
+                && line.Contains($"IFCBUILDINGELEMENTPROXY('{fallbackGuid}'", StringComparison.Ordinal)
+                && line.Contains("'2147483648'", StringComparison.Ordinal));
+        }
+        finally { File.Delete(path); }
+
+        ElementCensusTests.Rec Body(long owner, string name, params long[] references) => new((ulong)owner,
+            [.. BitConverter.GetBytes(Tag(name)), .. BitConverter.GetBytes(owner), .. references.SelectMany(BitConverter.GetBytes)]);
+        static byte[] Paged(byte[] bytes) => RvtIO.Writing.PageCodec.EncodePadded(RvtIO.Writing.GzipMember.Write(bytes));
     }
 
     [Theory]
@@ -301,6 +413,33 @@ public class WideElementRecordsTests
         Assert.Equal(4, index.Records);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void BuildIndex_KeepsDistinctWideOwnersAndTheirRootBlocks(bool framed)
+    {
+        var (stream, ids) = BuildSchema();
+        var schema = FileSchema.Parse(stream)!;
+        const long wideId = 9007199254741001L;
+        byte[] narrowHeader = Record(ids, 9, [], -2000011);
+        byte[] narrowBlock = Block(9, ids.Wall);
+        byte[] wideHeader = Record(ids, wideId, [], -2000240);
+        byte[] wideBlock = Block(wideId, ids.Level);
+        byte[] data = Join(narrowHeader, narrowBlock, wideHeader, wideBlock);
+        int wideAt = narrowHeader.Length + narrowBlock.Length;
+        var frame = new PartitionFraming.Framed([data],
+            [new(101, 9, 0, narrowHeader.Length), new(102, 9, narrowHeader.Length, narrowBlock.Length),
+             new(101, wideId, wideAt, wideHeader.Length), new(102, wideId, wideAt + wideHeader.Length, wideBlock.Length)], 8);
+        var roots = new List<long>();
+        var index = WideElementRecords.BuildIndexWithPartitions([[data]], schema, id => id is 9 or wideId,
+            (id, _, _, _, _, _) => roots.Add(id), framed ? [frame] : null)!;
+        Assert.Equal([9L, wideId], roots);
+        Assert.Equal(ids.Wall, index.RootClasses[9]);
+        Assert.Equal(ids.Level, index.RootClasses[wideId]);
+        Assert.Equal(-2000011, index.HeaderCategories[9]);
+        Assert.Equal(-2000240, index.HeaderCategories[wideId]);
+    }
+
     [Fact]
     public void BuildIndex_ReadsTheRecordAndBlockOfIdZeroAndIgnoresAZeroRun()
     {
@@ -316,7 +455,7 @@ public class WideElementRecordsTests
         Assert.Equal(ids.Level, index.RootClasses[0]);
         Assert.Equal(-1, index.HeaderCategories[1]);
         Assert.Equal(2, index.Records);
-        Assert.DoesNotContain(2u, index.HeaderCategories.Keys);
+        Assert.DoesNotContain(2L, index.HeaderCategories.Keys);
         var without = WideElementRecords.BuildIndex([[data]], schema, new HashSet<uint> { 1 })!;
         Assert.False(without.HeaderCategories.ContainsKey(0));   // only wanted ids are collected
     }
@@ -403,7 +542,8 @@ public class WideElementRecordsTests
 
     /// <summary>A header record of the 64-bit layout whose outline is <paramref name="box"/> (none when null), tagged with the classes
     /// of the schema it is written for.</summary>
-    private static byte[] OutlineRecord(OutlineIds ids, ulong id, double[]? box, int regenEntries = 0, int? outlineTag = null)
+    private static byte[] OutlineRecord(OutlineIds ids, ulong id, double[]? box, int regenEntries = 0, int? outlineTag = null,
+        long designOption = -1)
     {
         var p = new MemoryStream();
         p.Write(BitConverter.GetBytes((ushort)ids.Header));
@@ -415,7 +555,11 @@ public class WideElementRecordsTests
             p.Write(new byte[22 - 8]);
         }
         p.Write(BitConverter.GetBytes(-2000011L));            // m_categroryId
-        for (int i = 0; i < 5; i++) p.Write(BitConverter.GetBytes(-1L));
+        p.Write(BitConverter.GetBytes(-1L));                 // m_familyId
+        p.Write(BitConverter.GetBytes(-1L));                 // m_ownerViewId
+        p.Write(BitConverter.GetBytes(designOption));
+        p.Write(BitConverter.GetBytes(-1L));                 // m_unplacedOwnerId
+        p.Write(BitConverter.GetBytes(-1L));                 // m_miscId
         p.Write(BitConverter.GetBytes(0xFFFF8000u));          // m_viewRules
         p.Write(BitConverter.GetBytes(0x000109B8u));          // m_abFlags4Bytes
         p.Write(BitConverter.GetBytes((ushort)0x0725));       // m_classDef
@@ -471,6 +615,18 @@ public class WideElementRecordsTests
         Assert.Equal(box, index.HeaderBoundingBoxes[10]!.Box);   // two copies that agree stay known
         Assert.Null(index.HeaderBoundingBoxes[11]);              // a box and none: unknown
         Assert.False(index.HeaderBoundingBoxes[12]!.Present);
+    }
+
+    [Fact]
+    public void BuildIndex_KeepsTheDesignOptionIdAtItsSerializedWidth()
+    {
+        var (stream, ids) = BuildOutlineSchema();
+        var schema = FileSchema.Parse(stream)!;
+        const long optionId = 0x20_0000_0000_0009L;
+        byte[] record = OutlineRecord(ids, 10, box: null, designOption: optionId);
+        var index = WideElementRecords.BuildIndex([[record]], schema, new HashSet<uint> { 10 })!;
+        Assert.Equal(optionId, index.HeaderDesignOptions[10]);
+        Assert.Equal(-2000011, index.HeaderCategories[10]);
     }
 
     [Fact]

@@ -29,6 +29,34 @@ namespace RvtIO.Model
         /// <summary>All elements of the file.</summary>
         public List<Element> Elements { get; set; } = new();
 
+        internal Parsing.ElementIdMap? ElementIds { get; set; }
+
+        /// <summary>Resolves any document-local element key to its original signed 64-bit ID.</summary>
+        public long GetSourceElementId(int key) => ElementIds?.SourceId(key) ?? key;
+
+        /// <summary>Exact decimal source IDs for keys remapped while reading the model.</summary>
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public IReadOnlyDictionary<int, string>? SourceElementIds => ElementIds?.SourceIdsAsText();
+
+        internal void AttachSourceElementIds()
+        {
+            if (ElementIds is not { } ids) return;
+            long? WhenRemapped(int key)
+            {
+                long sourceId = ids.SourceId(key);
+                return key == sourceId ? null : sourceId;
+            }
+            foreach (var element in Elements)
+            {
+                element.NativeId = WhenRemapped(element.Id);
+                element.NativeTypeId = WhenRemapped(element.TypeId);
+                element.NativeHostId = element.HostId is int host ? WhenRemapped(host) : null;
+                foreach (var parameter in element.Parameters)
+                    if (parameter.StorageType == StorageType.ElementId && parameter.Value is int key)
+                        parameter.NativeElementId = WhenRemapped(key);
+            }
+        }
+
         /// <summary>The whole ElemTable was decoded and verified, so a parsed record without a row is a
         /// record the exporter never iterates (a deleted or embedded element), not an element lost to a damaged stream.</summary>
         [System.Text.Json.Serialization.JsonIgnore]

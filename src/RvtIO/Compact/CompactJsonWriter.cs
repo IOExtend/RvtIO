@@ -67,7 +67,7 @@ internal sealed class CompactJsonWriter : IDisposable
         }
 
         _writer.WriteStartObject();
-        Span<char> id = stackalloc char[11];
+        Span<char> id = stackalloc char[20];
         node.ElementId.TryFormat(id, out int idLength, default, CultureInfo.InvariantCulture);
         _writer.WriteString(ObjectKey, id[..idLength]);
         _writer.WriteString(NameKey, node.ClassName.Length == 0 ? node.ClassName : _classNamePrefix + node.ClassName);
@@ -104,7 +104,7 @@ internal sealed class CompactJsonWriter : IDisposable
     }
 
     /// <summary>Puts the indexes of <paramref name="properties"/> into <c>_order</c> sorted by group, label and insertion index.</summary>
-    private int SortProperties(int elementId, IReadOnlyList<CompactProperty> properties)
+    private int SortProperties(long elementId, IReadOnlyList<CompactProperty> properties)
     {
         int count = properties.Count;
         if (count == 0) return 0;

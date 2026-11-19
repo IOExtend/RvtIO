@@ -427,6 +427,7 @@ public partial class IfcExporter
         if (LengthUnit is { } explicitUnit && !Enum.IsDefined(explicitUnit))
             throw new ArgumentOutOfRangeException(nameof(LengthUnit), explicitUnit, "Unsupported IFC length unit family.");
         var w = new StepWriter();
+        Dictionary<int, (int Key, long SourceId)>? sourceProductTags = null;
         // Without an explicit LengthUnit choice, the legacy profile writes millimetres whatever the
         // document says and the current profile follows the length unit of the project.
         _unitFamily = LengthUnit ?? (CurrentProfile ? IfcLengthUnitChoice.Family(info.SerializedLengthUnit) : IfcUnitFamily.Millimetre);
@@ -4661,7 +4662,7 @@ public partial class IfcExporter
             string productGlobalId = (ExportIdProductClasses.Contains(ifcType)
                     ? ResolveExactElementGlobalId(elem, _usedExportIds, handleBased: CurrentProfile)
                     : null)
-                ?? IfcGuid.FromElementId(elem.Id);
+                ?? IfcGuid.FromElementId(elem.ElementId);
             string elemArgs = ifcType switch
             {
                 "IFCWALLSTANDARDCASE" or "IFCWALL" =>
@@ -4705,6 +4706,8 @@ public partial class IfcExporter
             };
 
             int elemEntityId = w.Add(ifcType, elemArgs);
+            if (elem.NativeId is long sourceId && ExportsIfcTagAttribute(ifcType))
+                (sourceProductTags ??= [])[elemEntityId] = (elem.Id, sourceId);
             exportedIfcElements[elem.Id] = (elemEntityId, elemPlacementId, ifcType);
             exportedGlobalIds[elem.Id] = productGlobalId;
             if (rampPartBodies != null)
@@ -6765,6 +6768,18 @@ public partial class IfcExporter
         }
         if (CurrentProfile) ApplyCurrentOpeningOrder(w, openingOrderKeys);
         w.RewriteArguments(IfcLengthUnit.Converter(_unitFamily, CurrentProfile));
+        if (sourceProductTags != null)
+        {
+            for (int i = 0; i < w.EntityCount; i++)
+            {
+                var (id, type, args) = w.EntityAt(i);
+                if (!sourceProductTags.TryGetValue(id, out var tag) || !ExportsIfcTagAttribute(type)) continue;
+                var attributes = SplitStepArguments(args);
+                if (attributes.Length <= 7 || attributes[7] != S(tag.Key.ToString())) continue;
+                attributes[7] = S(tag.SourceId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                w.ReplaceArgs(i, string.Join(",", attributes));
+            }
+        }
         w.WriteTo(output, headerFileName, "IFC2X3", desc, appName, headerOrganization, Timestamp);
 
         ExportedProducts = exportedCount;

@@ -28,7 +28,10 @@ namespace RvtIO.Model
                 // rare duplicate id does not produce an invalid repeated JSON property.
                 if (!seen.Add(p.Id)) continue;
                 writer.WritePropertyName(p.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
-                JsonSerializer.Serialize(writer, p.Value, options);
+                if (p.SourceElementId is string sourceId)
+                    writer.WriteStringValue(sourceId);
+                else
+                    JsonSerializer.Serialize(writer, p.Value, options);
             }
             writer.WriteEndObject();
         }

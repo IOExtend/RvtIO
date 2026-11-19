@@ -25,22 +25,13 @@ namespace RvtIO.Parsing;
 /// </summary>
 internal static class WideElementRecords
 {
-    internal sealed record Result(
-        Dictionary<uint, ElemRecHistory> Histories,
-        Dictionary<uint, int> OwningElementIds,
-        long? UnsupportedId);
-
     /// <summary>Byte width of the element id of this schema (ElemRec.m_id): 4 up to Revit 2023, 8 from Revit 2024; null otherwise.</summary>
     internal static int? IdWidth(FileSchema schema)
         => schema.ByName("ElemRec") is { } rec && FileSchema.SerializedFields(rec).FirstOrDefault(f => f.Name == "m_id") is { } id
            && schema.FieldSize(id) is (4 or 8) and int width && (SchemaRelease.IdWidth(schema.Release) is not int expected || expected == width) ? width : null;
 
-    private static ulong ReadId(byte[] data, int at, int width)
-        => width == 8 ? BitConverter.ToUInt64(data, at) : BitConverter.ToUInt32(data, at);
-
-    /// <summary>Element id to ElemRec history and owner from a decoded Global/ElemTable stream, or null when the
-    /// schema does not declare the 64-bit ElemRec layout or the stream does not match it.</summary>
-    internal static Result? ParseElemTable(byte[] data, FileSchema schema)
+    /// <summary>Reads the schema-declared rows without applying the public model's ID range.</summary>
+    internal static List<ElemTableLayout.Row>? ParseElemTable(byte[] data, FileSchema schema)
     {
         var table = schema.ByName("ElemTable");
         var rec = schema.ByName("ElemRec");
@@ -58,39 +49,33 @@ internal static class WideElementRecords
             || schema.FixedSize(rec.Id) is not int length
             || IdWidth(schema) is not int width
             || schema.FieldSize(recFields.First(f => f.Name == "m_OwningElementId")) != width
-            || schema.FieldSize(historyFields[0]) != width || schema.FieldSize(historyFields[1]) != 4
+            || schema.FieldSize(recFields.First(f => f.Name == "m_partitionId")) != 4
+            || schema.FieldSize(historyFields[0]) != width || schema.FieldSize(historyFields[1]) != 4 || schema.FieldSize(historyFields[2]) != 4
             || schema.OffsetOf(rec.Id, "m_history") is not int historyAt
             || schema.OffsetOf(history.Id, "m_creationDate") is not int creationAt
+            || schema.OffsetOf(history.Id, "m_lastModificationDate") is not int modificationAt
             || schema.OffsetOf(rec.Id, "m_id") is not int idAt
             || schema.OffsetOf(rec.Id, "m_OwningElementId") is not int ownerAt
-            || data.Length < 6 || BitConverter.ToUInt16(data, 0) != table.Id)
+            || schema.OffsetOf(rec.Id, "m_partitionId") is not int partitionAt
+            || data.Length < ElemTableLayout.HeaderLength || BitConverter.ToUInt16(data, 0) != table.Id)
             return null;
         uint count = BitConverter.ToUInt32(data, 2);
-        if (6 + (long)count * length > data.Length) return null;
+        if (ElemTableLayout.HeaderLength + (long)count * length > data.Length) return null;
 
-        var histories = new Dictionary<uint, ElemRecHistory>((int)count);
-        var owners = new Dictionary<uint, int>((int)count);
+        var rows = new List<ElemTableLayout.Row>((int)count);
         long previous = -1;
-        long? unsupportedId = null;
         for (int i = 0; i < count; i++)
         {
-            int at = 6 + i * length;
+            int at = ElemTableLayout.HeaderLength + i * length;
             long id = width == 8 ? BitConverter.ToInt64(data, at + idAt) : BitConverter.ToUInt32(data, at + idAt);
             if (id <= previous) return null;
             previous = id;
-            if (id > int.MaxValue)
-            {
-                unsupportedId ??= id;
-                continue;
-            }
-            ulong original = ReadId(data, at + historyAt, width);
-            if (original > uint.MaxValue) continue;
-            histories[(uint)id] = new ElemRecHistory(
-                (uint)original, BitConverter.ToInt32(data, at + historyAt + creationAt));
+            long original = width == 8 ? BitConverter.ToInt64(data, at + historyAt) : BitConverter.ToUInt32(data, at + historyAt);
             long owner = width == 8 ? BitConverter.ToInt64(data, at + ownerAt) : BitConverter.ToInt32(data, at + ownerAt);
-            if (owner >= int.MinValue && owner <= int.MaxValue) owners[(uint)id] = (int)owner;
+            rows.Add(new ElemTableLayout.Row(id, original, BitConverter.ToInt32(data, at + historyAt + creationAt),
+                BitConverter.ToInt32(data, at + partitionAt), owner, BitConverter.ToInt32(data, at + historyAt + modificationAt)));
         }
-        return new Result(histories, owners, unsupportedId);
+        return rows;
     }
 
     /// <summary>Header category and root class of the elements of the partition streams.</summary>
@@ -98,19 +83,19 @@ internal static class WideElementRecords
     {
         /// <summary>ElementHeader.m_categroryId per element id; the value is null when the id's records disagree or the
         /// value does not fit 32 bits. Ids without a record are absent.</summary>
-        internal Dictionary<uint, int?> HeaderCategories { get; } = new();
+        internal Dictionary<long, int?> HeaderCategories { get; } = new();
 
         /// <summary>ElementHeader.m_designOptionId per element id, with the same agreement rule as <see cref="HeaderCategories"/>.</summary>
-        internal Dictionary<uint, int?> HeaderDesignOptions { get; } = new();
+        internal Dictionary<long, long?> HeaderDesignOptions { get; } = new();
 
         /// <summary>The outline the ElementHeader stores per element id (see <see cref="ElementHeaderCategory.ReadOutline"/>): a verdict when the
         /// records of the id agree it is there or agree there is none, null when they disagree or the structure was not read. Ids of a file whose
         /// schema does not have the header layout the reader relies on are absent.</summary>
-        internal Dictionary<uint, ElementHeaderBox?> HeaderBoundingBoxes { get; } = new();
+        internal Dictionary<long, ElementHeaderBox?> HeaderBoundingBoxes { get; } = new();
 
         /// <summary>Class id (of the file's own schema) of the Element-derived block of the id; absent when the id has no
         /// such block or its blocks disagree.</summary>
-        internal Dictionary<uint, int> RootClasses { get; } = new();
+        internal Dictionary<long, int> RootClasses { get; } = new();
 
         internal int Records { get; set; }
         internal int Blocks { get; set; }
@@ -123,14 +108,17 @@ internal static class WideElementRecords
     /// families are not read. Null when the schema does not declare the expected ElementHeader shape.</summary>
     internal static Index? BuildIndex(
         IReadOnlyList<IReadOnlyList<byte[]>> streams, FileSchema schema, IReadOnlySet<uint> wanted,
-        Action<uint, byte[], int, int, int>? onRootBlock = null, IReadOnlyList<PartitionFraming.Framed?>? framed = null)
-        => BuildIndexWithPartitions(streams, schema, wanted,
-            onRootBlock == null ? null : (id, buf, off, size, cls, _) => onRootBlock(id, buf, off, size, cls), framed);
+        Action<uint, byte[], int, int, int>? onRootBlock = null, IReadOnlyList<PartitionFraming.Framed?>? framed = null,
+        ElementIdMap? ids = null)
+        => BuildIndexWithPartitions(streams, schema,
+            id => ids == null ? id is >= 0 and <= uint.MaxValue && wanted.Contains((uint)id)
+                : ids.TryGetKey(id, out int key) && wanted.Contains((uint)key),
+            onRootBlock == null ? null : (id, buf, off, size, cls, _) => onRootBlock(ids == null ? (uint)id : (uint)ids.Key(id), buf, off, size, cls), framed);
 
-    /// <summary>Same as <see cref="BuildIndex"/>, passing the framed partition number (or null when unframed) to <paramref name="onRootBlock"/>.</summary>
+    /// <summary>Indexes serialized element IDs. The root callback also receives the framed partition number when available.</summary>
     internal static Index? BuildIndexWithPartitions(
-        IReadOnlyList<IReadOnlyList<byte[]>> streams, FileSchema schema, IReadOnlySet<uint> wanted,
-        Action<uint, byte[], int, int, int, int?>? onRootBlock, IReadOnlyList<PartitionFraming.Framed?>? framed = null)
+        IReadOnlyList<IReadOnlyList<byte[]>> streams, FileSchema schema, Func<long, bool> wanted,
+        Action<long, byte[], int, int, int, int?>? onRootBlock, IReadOnlyList<PartitionFraming.Framed?>? framed = null)
     {
         if (framed != null && framed.Count != streams.Count) throw new ArgumentException("one framing entry per stream", nameof(framed));
         var header = schema.ByName("ElementHeader");
@@ -153,9 +141,9 @@ internal static class WideElementRecords
         foreach (int id in schema.Classes.Keys) known[id] = true;
 
         var index = new Index();
-        var conflictCategory = new HashSet<uint>();
-        var conflictDesignOption = new HashSet<uint>();
-        var conflictClass = new HashSet<uint>();
+        var conflictCategory = new HashSet<long>();
+        var conflictDesignOption = new HashSet<long>();
+        var conflictClass = new HashSet<long>();
         for (int s = 0; s < streams.Count; s++)
         {
             var frame = framed?[s] is { } f && f.IdWidth == width ? f : null;
@@ -166,34 +154,35 @@ internal static class WideElementRecords
             var buf = new byte[total];
             int off = 0;
             foreach (var c in chunks) { Buffer.BlockCopy(c, 0, buf, off, c.Length); off += c.Length; }
-            var recordIds = new HashSet<uint>();
-            var blockClasses = new Dictionary<uint, int>();   // -1: the stream holds blocks of two classes for the id
-            var rootBlocks = onRootBlock == null ? null : new List<(uint Id, int Offset, int Size, int Class)>();
-            void Header(int p, int size, uint id)
+            var recordIds = new HashSet<long>();
+            var blockClasses = new Dictionary<long, int>();   // -1: the stream holds blocks of two classes for the id
+            var rootBlocks = onRootBlock == null ? null : new List<(long Id, int Offset, int Size, int Class)>();
+            void Header(int p, int size, long id)
             {
                 index.Records++;
-                if (!wanted.Contains(id)) return;
+                if (!wanted(id)) return;
                 recordIds.Add(id);
                 RecordCategory(buf, p + width - 8, size, categoryWidth, entry, id, index, conflictCategory, conflictDesignOption, outlineTags);
             }
-            void Block(int p, int size, uint id, int cls)
+            void Block(int p, int size, long id, int cls)
             {
                 index.Blocks++;
-                if (!isElement[cls] || !wanted.Contains(id)) return;
+                if (!isElement[cls] || !wanted(id)) return;
                 blockClasses[id] = blockClasses.TryGetValue(id, out int prior) && prior != cls ? -1 : cls;
                 rootBlocks?.Add((id, p + width + 8, size, cls));
             }
-            if (frame == null) Walk(buf, header.Id, width, known, Header, Block);
+            if (frame == null) Walk(buf, header.Id, width, known, wanted, Header, Block);
             else
                 foreach (var item in frame.Items)
                 {
-                    // an id the 32-bit element table cannot hold is skipped, as the scan skips it
-                    if (item.Owner > uint.MaxValue) continue;
+                    if (item.Owner > long.MaxValue) continue;
+                    long owner = (long)item.Owner;
+                    if (owner > uint.MaxValue && !wanted(owner)) continue;
                     int p = (int)item.Offset;
                     if (item.Channel == 101 && item.Length >= width + 16 && BitConverter.ToUInt16(buf, p + width + 4) == header.Id)
-                        Header(p, item.Length - width - 8, (uint)item.Owner);
+                        Header(p, item.Length - width - 8, owner);
                     else if (item.Channel == 102 && item.Length >= width + 20 && BitConverter.ToUInt16(buf, p + width + 8) is var cls && cls < known.Length && known[cls])
-                        Block(p, item.Length - width - 12, (uint)item.Owner, cls);
+                        Block(p, item.Length - width - 12, owner, cls);
                 }
             // payload (class id first) of every Element-derived block whose stream holds the header record of its id
             if (rootBlocks != null)
@@ -207,21 +196,22 @@ internal static class WideElementRecords
                 else index.RootClasses[id] = cls;
             }
         }
-        foreach (uint id in conflictCategory) index.HeaderCategories[id] = null;
-        foreach (uint id in conflictDesignOption) index.HeaderDesignOptions[id] = null;
-        foreach (uint id in conflictClass) index.RootClasses.Remove(id);
+        foreach (long id in conflictCategory) index.HeaderCategories[id] = null;
+        foreach (long id in conflictDesignOption) index.HeaderDesignOptions[id] = null;
+        foreach (long id in conflictClass) index.RootClasses.Remove(id);
         return index;
     }
 
     /// <summary>The position-by-position scan: every candidate whose length echo holds is a header record or a block (item start, size, id).</summary>
-    private static void Walk(byte[] b, int headerId, int w, bool[] known, Action<int, int, uint> header, Action<int, int, uint, int> block)
+    private static void Walk(byte[] b, int headerId, int w, bool[] known, Func<long, bool> wanted,
+        Action<int, int, long> header, Action<int, int, long, int> block)
     {
         int n = b.Length;
         int p = 0;
         while (p + w + 12 <= n)
         {
-            uint id = BitConverter.ToUInt32(b, p);
-            if (w == 8 && BitConverter.ToUInt32(b, p + 4) != 0) { p++; continue; }
+            long id = w == 8 ? BitConverter.ToInt64(b, p) : BitConverter.ToUInt32(b, p);
+            if (id < 0 || id > uint.MaxValue && !wanted(id)) { p++; continue; }
 
             uint size = BitConverter.ToUInt32(b, p + w);
             if (BitConverter.ToUInt16(b, p + w + 4) == headerId && size >= 8 && size < 4_000_000
@@ -266,8 +256,8 @@ internal static class WideElementRecords
         return schema.ByName("Outline") is { } outline && schema.ByName("ElementParents") is { } parents ? (outline.Id, parents.Id) : null;
     }
 
-    private static void RecordCategory(byte[] b, int p, int size, int categoryWidth, int entry, uint id, Index index, HashSet<uint> conflict,
-        HashSet<uint> conflictDesignOption, (int Outline, int Parents)? outlineTags)
+    private static void RecordCategory(byte[] b, int p, int size, int categoryWidth, int entry, long id, Index index, HashSet<long> conflict,
+        HashSet<long> conflictDesignOption, (int Outline, int Parents)? outlineTags)
     {
         // payload starts at p + 12 with the class id; m_regenHistory: u32 count + count * entry; then m_categroryId (8 bytes)
         uint count = BitConverter.ToUInt32(b, p + 14);
@@ -282,12 +272,9 @@ internal static class WideElementRecords
         else index.HeaderCategories[id] = value;
         // m_familyId, m_ownerViewId, m_designOptionId follow the category and have its width (ids)
         long optionAt = categoryAt + 3L * categoryWidth;
-        int? option = null;
+        long? option = null;
         if (optionAt + categoryWidth <= p + 12L + size)
-        {
-            long raw = categoryWidth == 8 ? BitConverter.ToInt64(b, (int)optionAt) : BitConverter.ToInt32(b, (int)optionAt);
-            if (raw >= int.MinValue && raw <= int.MaxValue) option = (int)raw;
-        }
+            option = categoryWidth == 8 ? BitConverter.ToInt64(b, (int)optionAt) : BitConverter.ToInt32(b, (int)optionAt);
         if (index.HeaderDesignOptions.TryGetValue(id, out var priorOption)) { if (priorOption != option) conflictDesignOption.Add(id); }
         else index.HeaderDesignOptions[id] = option;
         if (outlineTags is var (outlineTag, parentsTag))

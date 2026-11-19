@@ -13,7 +13,7 @@ internal sealed class GridAxisReader
     private readonly Dictionary<int, (string? Name, int? Owner, LocationCurve? Curve)> _segments = [];
     private readonly Dictionary<int, (string Name, int[] Members)> _chains = [];
 
-    internal GridAxisReader(SchemaDocument schema, IReadOnlyDictionary<Guid, SchemaField[]?> entities)
+    internal GridAxisReader(SchemaDocument schema, IReadOnlyDictionary<Guid, SchemaField[]?> entities, ElementIdMap? ids = null)
     {
         _walker = new(schema, static (type, field) => type.Name switch
         {
@@ -25,7 +25,7 @@ internal sealed class GridAxisReader
             "Envelope" when field.Name == "m_corners" => type.Name + "." + field.Name,
             "Plane" or "CylSurf" => type.Name + "." + field.Name,
             _ => null,
-        }, [Pair], captureRootPointers: true);
+        }, [Pair], captureRootPointers: true, ids: ids);
         _walker.UseEntitySchemas(entities, passUnknown: true);
     }
 

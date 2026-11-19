@@ -39,7 +39,7 @@ public sealed class ElementCensusTests : IDisposable
     private sealed record Block(bool Keyed, (uint Owner, string Class)[] Elements, bool Tagless = false);
 
     /// <summary>One record: its owner, its body and the value in front of the size on channels 102 and 103.</summary>
-    internal sealed record Rec(uint Owner, byte[] Body, uint Extra = 77);
+    internal sealed record Rec(ulong Owner, byte[] Body, uint Extra = 77);
 
     // the body of a record is the 2-byte class tag and one more byte, or, in a tagless block, one byte only on channel 102
     private static byte[] Partition(params Block[] blocks) => Partition(Id, [.. blocks.Select(block => (block.Keyed, Enumerable.Range(101, 3)
@@ -49,6 +49,9 @@ public sealed class ElementCensusTests : IDisposable
     /// <summary>The partition stream of the blocks, each given as the records of its channels 101, 102 and 103; <paramref name="id"/>
     /// gives the class id of a framing class.</summary>
     internal static byte[] Partition(Func<string, ushort> id, params (bool Keyed, Rec[][] Channels)[] blocks)
+        => Partition(id, 4, blocks);
+
+    internal static byte[] Partition(Func<string, ushort> id, int idWidth, params (bool Keyed, Rec[][] Channels)[] blocks)
     {
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream);
@@ -59,7 +62,8 @@ public sealed class ElementCensusTests : IDisposable
             writer.Write(id("ContentMarker"));
             writer.Write(keyed ? uint.MaxValue : 0u);
             if (keyed) writer.Write(id("ContentKey"));
-            writer.Write((uint)channels[0].Count(r => r.Owner != uint.MaxValue));
+            ulong separator = idWidth == 4 ? uint.MaxValue : ulong.MaxValue;
+            writer.Write((uint)channels[0].Count(r => r.Owner != separator));
             if (keyed) writer.Write([(byte)index, .. new byte[15]]);
             for (uint channel = 101; channel <= 103; channel++)
             {
@@ -68,7 +72,8 @@ public sealed class ElementCensusTests : IDisposable
                 using var item = new BinaryWriter(items);
                 foreach (var record in records)
                 {
-                    item.Write(record.Owner);
+                    if (idWidth == 8) item.Write(record.Owner);
+                    else item.Write(checked((uint)record.Owner));
                     if (channel != 101) item.Write(record.Extra);
                     item.Write((uint)record.Body.Length);
                     item.Write(record.Body);

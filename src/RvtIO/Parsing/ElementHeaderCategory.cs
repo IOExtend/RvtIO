@@ -135,7 +135,8 @@ internal static class ElementHeaderCategory
     /// Adds the outline verdict of one more record of an element: the first verdict stands, a verdict that
     /// differs from it (or an unknown one) turns the element unknown, and unknown stays unknown.
     /// </summary>
-    internal static void Merge(Dictionary<uint, ElementHeaderBox?> boxes, uint elementId, ElementHeaderBox? box)
+    internal static void Merge<TId>(Dictionary<TId, ElementHeaderBox?> boxes, TId elementId, ElementHeaderBox? box)
+        where TId : notnull
     {
         if (!boxes.TryGetValue(elementId, out ElementHeaderBox? previousBox)) boxes[elementId] = box;
         else if (!SameBox(previousBox, box)) boxes[elementId] = null;

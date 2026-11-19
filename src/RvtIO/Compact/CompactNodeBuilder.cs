@@ -61,7 +61,19 @@ internal sealed class CompactNodeBuilder
             string why = _identity.FamilyName(element).Unknown ?? _identity.CategoryLabel(element).Unknown ?? "undecided";
             _unknownPseudo[why] = _unknownPseudo.GetValueOrDefault(why) + 1;
         }
-        return new CompactNode(element.Id, className ?? "", element.UniqueId ?? "", pseudo.CategoryLabel, pseudo.FamilyName, properties);
+        if (element.NativeTypeId != null || element.NativeHostId != null
+            || element.Parameters.Any(parameter => parameter.NativeElementId != null))
+        {
+            var exactIds = new List<CompactProperty>(properties);
+            const string group = "Revit Element IDs";
+            if (element.SourceTypeId is string typeId) exactIds.Add(new(group, "Type", typeId));
+            if (element.SourceHostId is string hostId) exactIds.Add(new(group, "Host", hostId));
+            foreach (var parameter in element.Parameters.DistinctBy(parameter => parameter.Id))
+                if (parameter.SourceElementId is string reference)
+                    exactIds.Add(new(group, parameter.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), reference));
+            properties = exactIds;
+        }
+        return new CompactNode(element.ElementId, className ?? "", element.UniqueId ?? "", pseudo.CategoryLabel, pseudo.FamilyName, properties);
     }
 
     /// <summary>The class name for the property rules (<see cref="Element.RuleClassName"/>): the same as <see cref="ClassNameOf"/>.</summary>
