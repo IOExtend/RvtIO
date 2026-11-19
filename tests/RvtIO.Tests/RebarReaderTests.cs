@@ -17,7 +17,7 @@ public class RebarReaderTests
     private static SchemaField Field(string name, byte type, byte mods = 0, int? reference = null, int? fixedCount = null,
         List<SchemaField>? args = null) => new(name, type, mods, 0, fixedCount, reference, null, args);
 
-    private static SchemaDocument Schema() => new()
+    private static SchemaDocument Schema(bool freeForm = false) => new()
     {
         Classes =
         [
@@ -33,8 +33,9 @@ public class RebarReaderTests
                 [Field("m_noSelfIntersectingCenterlineCurves", 14, 81), Field("m_selfIntersectingCenterlineCurves", 14, 81)], []),
             new(InstBase, "RebarInstBase", 0, 1,
                 [Field("m_barPositionsRelativeToFirstBarArr", 14, 80, Trf), Field("m_oCacheData", 14, 1), Field("m_includedBars", 1, 80),
-                 Field("m_barTypeId", 14, 0, ElementId), Field("m_barLength", 7)], []),
-            new(Instance, "RebarInstance", InstBase, 1, [], []),
+                 Field("m_barTypeId", 14, 0, ElementId), Field("m_barLength", 7),
+                 .. (freeForm ? new[] { Field("m_numberOfBarPositions", 4) } : [])], []),
+            new(Instance, freeForm ? "RebarInstFreeForm" : "RebarInstance", InstBase, 1, [], []),
             new(Element, "Element", 0, 1, [Field("m_id", 14, 0, ElementId)], []),
             new(Rebar, "Rebar", Element, 1, [Field("m_oInstance", 14, 1)], []),
         ],
@@ -118,6 +119,7 @@ public class RebarReaderTests
         Assert.Equal(0, bars.Bars[0][0].Origin[0]);
         // The current profile applies the position transform twice: the second position (offset 1) lies 2 feet from the first
         Assert.Equal(2, bars.Bars[1][0].Origin[0]);
+        Assert.Equal(1, bars.ModelPaths![1][0].Origin[0]);
         Assert.Equal(4, bars.Bars[1][1].Origin[0]);
         Assert.True(bars.Bars[0][1].IsArc);
         Assert.Equal(0.5, bars.Bars[0][1].Radius);
@@ -133,6 +135,47 @@ public class RebarReaderTests
         Assert.Single(RebarReader.ReadRebar(walker, walk)!.Bars);
     }
 
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ReadFreeFormRebarKeepsTheCachedPathOfEachIncludedPosition(bool secondIncluded)
+    {
+        var schema = Schema(freeForm: true);
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.Unicode);
+        writer.Write((ushort)Rebar);
+        writer.Write(55L);
+        Pointer(writer, Instance);
+        writer.Write(2u);
+        Transform(writer, 0);
+        Transform(writer, 100);
+        Pointer(writer, Cache);
+        writer.Write(2u);
+        writer.Write((byte)1);
+        writer.Write((byte)(secondIncluded ? 1 : 0));
+        writer.Write(9L);
+        writer.Write(3.5);
+        writer.Write(2);
+        writer.Write(2u);
+        Pointer(writer, OneBar);
+        Pointer(writer, OneBar);
+        writer.Write(0u);
+        writer.Write(1u);
+        Pointer(writer, GLine);
+        writer.Write(1u);
+        Pointer(writer, GLine);
+        foreach (double value in new[] { 0.0, 2, 1, 0, 0, 1, 0, 0, 0, 2, 7, 0, 0, 1, 0, 0 })
+            writer.Write(value);
+        var data = stream.ToArray();
+        var walker = new WideBlockWalker(schema, RebarReader.Key, []);
+        var walk = walker.Run(data, 0, data.Length, Rebar);
+        Assert.True(walk.Exact, walk.Error);
+        var bars = RebarReader.ReadRebar(walker, walk);
+        Assert.NotNull(bars);
+        Assert.True(bars.IsFreeForm);
+        Assert.Equal(secondIncluded ? new[] { 1.0, 7.0 } : new[] { 1.0 }, bars.Bars.Select(path => path[0].Origin[0]));
+    }
 
     private static string Export(params Element[] elements)
     {

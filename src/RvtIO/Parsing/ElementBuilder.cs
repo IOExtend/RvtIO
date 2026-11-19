@@ -1190,7 +1190,7 @@ internal static partial class ElementBuilder
             // heuristics. The element is what the file's own tables and the schema-driven block
             // walk give: the header category is exact.
             if (elem.NativeRootClassName is "Rebar" or "RebarInSystem"
-                && elem.RebarBars is { BarTypeId: > 0 } bars
+                && elem.RebarBars is { BarTypeId: > 0, IsFreeForm: false } bars
                 && state.NativeRootClassNames.GetValueOrDefault((uint)bars.BarTypeId) == "RebarBarType")
                 elem.TypeId = bars.BarTypeId;
             if (wideHeaderCategory is int resolvedHeader)

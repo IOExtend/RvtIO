@@ -1,3 +1,4 @@
+using RvtIO.BuiltIns;
 using RvtIO.Geometry.Meshing;
 using RvtIO.Model;
 using RvtIO.Parsing;
@@ -43,7 +44,7 @@ public static class ElementMeshes
         ArgumentNullException.ThrowIfNull(document);
         options ??= new ElementMeshOptions();
         var info = document.RawData;
-        var drawable = DrawableElements(info);
+        var drawable = DrawableElements(info, options.IncludeModelLinesAndReinforcement);
         var drawableIds = drawable.Select(item => item.Element.Id).ToHashSet();
         var symbolCache = new Dictionary<int, SymbolMeshes?>();
         var placedSymbols = new Dictionary<int, IReadOnlyList<TriangleMesh>>();
@@ -109,7 +110,16 @@ public static class ElementMeshes
         {
             if (body == null)
             {
-                elements.Add(new ElementMesh { ElementId = element.Id, Coverage = MeshCoverage.Undecoded });
+                var line = options.IncludeModelLinesAndReinforcement ? ModelLine(element) : null;
+                var rebar = options.IncludeModelLinesAndReinforcement && element.RebarBars is { } bars ? ReinforcementMeshes.Build(bars) : null;
+                elements.Add(new ElementMesh
+                {
+                    ElementId = element.Id,
+                    Line = line,
+                    Meshes = rebar == null ? [] : [rebar],
+                    Coverage = line != null || rebar != null ? MeshCoverage.Complete
+                        : info.WideLayoutNotRewritten ? MeshCoverage.Undecoded : MeshCoverage.NoGeometry,
+                });
                 continue;
             }
             if (options.UseSymbolPlacements && ReferenceEquals(body, element.Geometry) && PlacementsOf(body) is var (placements, failedInSymbols, untriangulatedInSymbols, symbolGhosts))
@@ -159,7 +169,7 @@ public static class ElementMeshes
     /// <summary>The drawable elements (see <see cref="ElementMeshes"/>) in document order, each with the geometry that is its body:
     /// the geometry of its computed symbol for a void helper that has one, its own geometry otherwise (null in a document whose
     /// geometry was not decoded).</summary>
-    internal static List<(Element Element, GeometryData? Body)> DrawableElements(RevitFileInfo info)
+    internal static List<(Element Element, GeometryData? Body)> DrawableElements(RevitFileInfo info, bool includeModelLinesAndReinforcement = false)
     {
         var designOptions = DesignOptions.Of(info.Elements);
         var phaseFilter = ProductRules.BuildExportPhaseFilter(info, exportPhaseId: null, lastPhaseByDefault: true);
@@ -169,25 +179,42 @@ public static class ElementMeshes
         var drawable = new List<(Element, GeometryData?)>();
         foreach (var element in info.Elements)
         {
+            bool modelLine = includeModelLinesAndReinforcement && ModelLine(element) != null;
+            bool rebar = includeModelLinesAndReinforcement && element.RebarBars is { Bars.Count: > 0 } or { Items.Count: > 0 };
             if (element.IsBlockOnly || element.IsGroupTemplate
                 || designOptions.InNonPrimaryOption(element) == true || phaseFilter?.Excludes(element) == true
                 || element.CategoryId == RevealsCategoryId || ProductRules.IsWallRectangularOpening(element)
                 || ProductRules.IsValidatedStackedWallContainer(element, elementsById)
                 || info.ElemTableIsExact && element.IsDiscovered
                 || element.SerializedFamilyId is > 0
-                || ProductRules.IsNonPhysicalCategory(element.Category))
+                || (!modelLine && ProductRules.IsNonPhysicalCategory(element.Category)))
                 continue;
             bool namesPhase = ProductRules.HasProjectPhaseReference(element) || ProductRules.IsTransformOnlyFamily(element);
-            if (!namesPhase && (typeElementIds.Contains(element.Id) || element.CategoryId != WallsCategoryId)) continue;
+            if (!namesPhase && !modelLine && !rebar && (typeElementIds.Contains(element.Id) || element.CategoryId != WallsCategoryId)) continue;
             GeometryData? body = element.Geometry;
             if (element.SerializedComputedSymbolGeometry is { } computed) body = computed;
             else if (ProductRules.HasOnlyUnfilledFaces(element)) continue;
-            if (body != null || info.WideLayoutNotRewritten && element.BoundingBox != null) drawable.Add((element, body));
+            if (body != null || modelLine || rebar || info.WideLayoutNotRewritten && element.BoundingBox != null) drawable.Add((element, body));
         }
         // A stair places its runs and landings, a model group its members: those are drawn as elements of their own.
         var ids = drawable.Select(item => item.Item1.Id).ToHashSet();
         return drawable.Where(item => item.Item2?.ExactMappedInstances is not { Count: > 0 } mapped
             || !mapped.All(instance => ids.Contains(instance.SymbolId))).ToList();
+    }
+
+    private static (MeshVector Start, MeshVector End)? ModelLine(Element element)
+    {
+        if (element.CategoryId is not ((int)BuiltInCategory.OST_Lines or (int)BuiltInCategory.OST_RoomSeparationLines
+            or (int)BuiltInCategory.OST_MEPSpaceSeparationLines) || element.OwnerViewId != null
+            || !element.RootClassIs("CurveElem")
+            || !element.Parameters.Any(p => p.Id == (int)BuiltInParameter.CURVE_IS_DETAIL && p.Value is 0)
+            || element.Location is not { CurveType: "Line" } line
+            || line.StartPoint is not [var x0, var y0, var z0] || line.EndPoint is not [var x1, var y1, var z1])
+            return null;
+        var start = new Pt3(x0, y0, z0);
+        var end = new Pt3(x1, y1, z1);
+        return start.IsFinite && end.IsFinite && (end - start).Norm is > 0 and < double.PositiveInfinity
+            ? (new(x0, y0, z0), new(x1, y1, z1)) : null;
     }
 
     /// <summary>The triangles of <paramref name="faces"/>, one mesh per material in the order the materials first appear, and the

@@ -47,7 +47,7 @@ internal static class Program
 
             var source = new FileInfo(input);
             long length = source.Length;
-            var scene = RvtSceneReader.Read(input);
+            var scene = RvtSceneReader.Read(input, native ? new RvtSceneOptions { IncludeModelLinesAndReinforcement = true } : null);
             foreach (var diagnostic in scene.Diagnostics.Where(d => d.Severity != SceneSeverity.Info))
                 Console.Error.WriteLine($"RVT {diagnostic.Severity} [{diagnostic.Code}]: {diagnostic.Message}");
             if (scene.Diagnostics.Any(d => d.Severity == SceneSeverity.Error))
@@ -55,7 +55,9 @@ internal static class Program
 
             var cache = NwcExport.Build(scene.Document, source.Name, length, source.LastWriteTimeUtc, native);
             NwcExport.Save(cache, output, native);
-            Console.Out.WriteLine($"Exported {cache.Meshes.Count} triangle meshes to '{output}'.");
+            int lines = cache.Meshes.Count(mesh => mesh.LineIndices.Count != 0);
+            string lineCount = lines > 0 ? $" and {lines} line meshes" : "";
+            Console.Out.WriteLine($"Exported {cache.Meshes.Count - lines} triangle meshes{lineCount} to '{output}'.");
             return 0;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or

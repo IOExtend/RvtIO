@@ -1715,7 +1715,7 @@ public partial class IfcExporter
             if (CurrentProfile && elem.SerializedFamilyId is > 0) { Skip(elem, "owned-by-family-nonspatial"); continue; }
             // Reinforcement bars are written whole (placement, swept discs, Pset) and contained by
             // the storey of their lowest point
-            if (CurrentProfile && elem.RebarBars != null)
+            if (CurrentProfile && elem.RebarBars is { IsFreeForm: false })
             {
                 if (!WriteRebarProduct(w, elem, elemById, ownerHistId, axisId, bldgLocalPlacementId, bodySubCtxId, propertySingleValueIds,
                         int.TryParse(info.Metadata?.RevitVersion, out int revitRelease) && revitRelease >= 2026, storeyIds, storeyResolver, storeyContents))

@@ -18,7 +18,7 @@ internal static class NwcExport
         if (scene.Validate().FirstOrDefault(d => d.Severity == SceneSeverity.Error) is { } error)
             throw new InvalidDataException(error.Message);
         if (scene.Instances.Count == 0)
-            throw new InvalidDataException("The model has no triangle geometry to export.");
+            throw new InvalidDataException(native ? "The model has no triangle or line geometry to export." : "The model has no triangle geometry to export.");
 
         var root = new NwcNode { Id = 0, Name = sourceName, Class = "Model" };
         int nextNodeId = 1;
@@ -71,8 +71,9 @@ internal static class NwcExport
         foreach (var instance in scene.Instances)
         {
             var geometry = geometries[instance.GeometryId];
-            if (geometry.Topology != SceneTopology.Triangles || geometry.Vertices.Count < 3)
-                throw new InvalidDataException($"Geometry {geometry.Id} is not a triangle mesh.");
+            bool lines = native && geometry.Topology == SceneTopology.Lines;
+            if (lines ? geometry.Vertices.Count < 2 : geometry.Topology != SceneTopology.Triangles || geometry.Vertices.Count < 3)
+                throw new InvalidDataException($"Geometry {geometry.Id} does not have a supported topology.");
 
             var transform = instance.Transform ?? Transform3d.Identity;
             var linear = new Transform3d(transform.XAxis, transform.YAxis, transform.ZAxis, SceneVector.Zero);
@@ -80,7 +81,7 @@ internal static class NwcExport
             var indices = geometry.Indices.Count == 0
                 ? Enumerable.Range(0, vertices.Length).ToArray()
                 : geometry.Indices.ToArray();
-            if (SceneVector.Dot(transform.XAxis, SceneVector.Cross(transform.YAxis, transform.ZAxis)) < 0)
+            if (!lines && SceneVector.Dot(transform.XAxis, SceneVector.Cross(transform.YAxis, transform.ZAxis)) < 0)
             {
                 for (int i = 0; i < indices.Length; i += 3)
                     (indices[i + 1], indices[i + 2]) = (indices[i + 2], indices[i + 1]);
@@ -100,7 +101,8 @@ internal static class NwcExport
                 Id = meshId,
                 Name = string.Create(CultureInfo.InvariantCulture, $"{node.Name} [RVT {instance.ElementId}]"),
                 Vertices = vertices,
-                Indices = indices,
+                Indices = lines ? [] : indices,
+                LineIndices = lines ? indices : [],
                 Node = native ? node : null,
                 Material = instance.MaterialId is int materialId ? materials?.GetValueOrDefault(materialId) : null,
                 // The read-back tree also looks for transforms by node ID.
