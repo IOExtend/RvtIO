@@ -296,12 +296,15 @@ internal static partial class RebarReader
         if (pieces == null) return null;
         var first = pieces.Select(piece => piece.Moved(bar.Frame)).ToList();
         var bars = new List<IReadOnlyList<RebarSegment>>();
+        List<IReadOnlyList<RebarSegment>>? modelPaths = bar.Held ? null : [];
         for (int i = 0; i < bar.Positions.Count; i++)
         {
             if (bar.Included.Count != 0 && bar.Included[i] == 0) continue;
-            bars.Add(first.Select(s => bar.Held ? s.Moved(bar.Positions[i]) : s.Moved(bar.Positions[i]).Moved(bar.Positions[i])).ToList());
+            var placed = first.Select(s => s.Moved(bar.Positions[i])).ToList();
+            modelPaths?.Add(placed);
+            bars.Add(bar.Held ? placed : placed.Select(s => s.Moved(bar.Positions[i])).ToList());
         }
         return new RebarBars(bar.BarTypeId, 0, bar.BarLength, bars, ShapeName: bar.ShapeId.ToString(CultureInfo.InvariantCulture),
-            InAssembly: bar.InAssembly, ShapeId: bar.ShapeId);
+            InAssembly: bar.InAssembly, ShapeId: bar.ShapeId, ModelPaths: modelPaths);
     }
 }

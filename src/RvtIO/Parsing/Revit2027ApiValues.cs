@@ -108,7 +108,7 @@ internal static partial class Revit2027ApiValues
                         parameter.HasNoRevitValue = true;
                     }
                     break;
-                case "Rebar" or "RebarInSystem" when element.RebarBars is { Bars.Count: > 0 } bar:
+                case "Rebar" or "RebarInSystem" when element.RebarBars is { Bars.Count: > 0, IsFreeForm: false } bar:
                     if (RootIs(state, bar.BarTypeId, "RebarBarType"))
                         SetTypeParameters(element, bar.BarTypeId);
                     SetParameter(element, BuiltInParameter.REBAR_ELEM_QUANTITY_OF_BARS, StorageType.Integer, bar.Bars.Count);

@@ -6,6 +6,8 @@ API between minor releases.
 
 ## [Unreleased]
 
+- The native RVT-to-NWC exporter keeps straight model and separation lines as NWC line segments. It also meshes cached reinforcement paths with the model's bar placements, including per-bar caches of free-form reinforcement.
+
 ### Added
 
 - Preserve 64-bit Revit element IDs in project reads, source-ID lookups and exports. JSON and Scene carry wide source

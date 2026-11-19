@@ -46,10 +46,12 @@ internal sealed record RebarSegment(bool IsArc, double[] Origin, double[] Axis, 
 /// <see cref="InAssembly"/> is true for a bar that is a member of an assembly (AssemblyGroupMembership cell).
 /// A RebarContainer holds no bars of its own: <see cref="Items"/> are its items (one bar each, <see cref="ItemIndex"/> is the index of the item
 /// in the container) and <see cref="BarTypeName"/> is the name of the container type.
-/// <see cref="OnlyBarOfSystem"/> is true for a RebarInSystem that is the one RebarInSystem of its system.</summary>
+/// <see cref="OnlyBarOfSystem"/> is true for a RebarInSystem that is the one RebarInSystem of its system.
+/// <see cref="ModelPaths"/> gives the bar paths with Revit model placement when it differs from the IFC exporter convention.</summary>
 internal sealed record RebarBars(int BarTypeId, int SystemId, double? BarLength, IReadOnlyList<IReadOnlyList<RebarSegment>> Bars,
     double NominalDiameter = 0, double ModelDiameter = 0, string? BarTypeName = null, double LengthRoundingMillimetres = 0, string? ShapeName = null,
-    bool InAssembly = false, IReadOnlyList<RebarBars>? Items = null, int ItemIndex = -1, bool OnlyBarOfSystem = false, int ShapeId = 0);
+    bool InAssembly = false, IReadOnlyList<RebarBars>? Items = null, int ItemIndex = -1, bool OnlyBarOfSystem = false, int ShapeId = 0, bool IsFreeForm = false,
+    IReadOnlyList<IReadOnlyList<RebarSegment>>? ModelPaths = null);
 
 /// <summary>A beam system (JoistSystem): its type (JoistSystemAttr, <see cref="TypeName"/> from SymbolInfo.m_name) and the beams it holds
 /// (HeldBeam.m_existingBeamId, in stored order, deleted ones left out).</summary>
@@ -240,7 +242,8 @@ internal static partial class RebarReader
                     {
                         ItemIndex = index, InAssembly = inAssembly, ShapeName = null, NominalDiameter = itemDiameters.Nominal, ModelDiameter = itemDiameters.Model,
                         BarTypeName = itemDiameters.Name, LengthRoundingMillimetres = rounding,
-                        Bars = solvedItem.Bars.Select(bar => (IReadOnlyList<RebarSegment>)bar.Select(piece => piece.Moved(hostFrame)).ToList()).ToList(),
+                        Bars = MovePaths(solvedItem.Bars, hostFrame),
+                        ModelPaths = solvedItem.ModelPaths is { } modelPaths ? MovePaths(modelPaths, hostFrame) : null,
                     });
             if (solvedItems.Count > 0 && containerNames.TryGetValue(typeId, out var typeName))
                 result.TryAdd(id, new RebarBars(-1, 0, null, [], BarTypeName: typeName, Items: solvedItems, InAssembly: inAssembly));
@@ -278,6 +281,9 @@ internal static partial class RebarReader
             joists[id] = data with { TypeName = joistTypeNames.GetValueOrDefault(data.TypeId) };
         return empty;
     }
+
+    private static IReadOnlyList<IReadOnlyList<RebarSegment>> MovePaths(IReadOnlyList<IReadOnlyList<RebarSegment>> paths, double[] frame) =>
+        paths.Select(path => (IReadOnlyList<RebarSegment>)path.Select(piece => piece.Moved(frame)).ToList()).ToList();
 
     /// <summary>A RebarContainer: its type and the shape driven bar of each of its RebarContainerItem objects (the walk of the root queues them in
     /// the order of the items); null when an item cannot be read.</summary>
@@ -511,8 +517,9 @@ internal static partial class RebarReader
 
     private static RebarBars? ReadRebar(WideBlockWalker walker, WideBlockWalker.Walk walk, Dictionary<int, List<WideBlockWalker.Capture>> byQueue)
     {
-        int instance = walk.Queue.FindIndex(c => walker.Class(c)?.Name == "RebarInstance");
+        int instance = walk.Queue.FindIndex(c => walker.Class(c)?.Name is "RebarInstance" or "RebarInstFreeForm");
         if (instance < 0 || !byQueue.TryGetValue(instance, out var caps)) return null;
+        bool freeForm = walker.Class(walk.Queue[instance])?.Name == "RebarInstFreeForm";
         // the lists of the cache are two counts, then the OneBarCenterlineCurves objects of the first and of the second list
         int cache = Children(walk, instance).FirstOrDefault(q => walker.Class(walk.Queue[q])?.Name == "RebarInstCache", -1);
         if (cache < 0 || !byQueue.TryGetValue(cache, out var cacheCaps)) return null;
@@ -524,33 +531,53 @@ internal static partial class RebarReader
         // the list of bars without self intersection is the one exported
         var oneBar = firstCount > 0 ? lists[0] : secondCount > 0 ? lists[(int)firstCount] : -1;
         if (oneBar < 0) return null;
-        var first = new List<RebarSegment>();
-        foreach (int q in Children(walk, oneBar))
-        {
-            var segment = Curve(walker, walk, byQueue, q);
-            if (segment == null) return null;
-            first.Add(segment);
-        }
-        if (first.Count == 0) return null;
-
-        var trfs = Transforms(caps);
-        if (!trfs.TryGetValue(Positions, out var positions) || positions.Count == 0) return null;
-        int count = positions.Count;
         var flags = IncludedFlags(caps);
         var bars = new List<IReadOnlyList<RebarSegment>>();
-        for (int i = 0; i < count; i++)
+        List<IReadOnlyList<RebarSegment>>? modelPaths = null;
+        if (freeForm)
         {
-            if (flags.Count == count && flags[i] == 0) continue;
-            // The exported geometry moves the first bar by the position transform twice (a stored spacing of 400 mm is written as 800 mm);
-            // a pure translation is then 2 * the stored offset
-            bars.Add(first.Select(s => s.Moved(positions[i]).Moved(positions[i])).ToList());
+            // The free-form cache stores one already positioned path for each bar.
+            long count = Integer(caps, "RebarInstBase.m_numberOfBarPositions") ?? -1;
+            if ((firstCount > 0 ? firstCount : secondCount) != count || (flags.Count != 0 && flags.Count != count))
+                return null;
+            for (int i = 0; i < count; i++)
+            {
+                if (flags.Count != 0 && flags[i] == 0) continue;
+                if (ReadPath(lists[i]) is not { } path) return null;
+                bars.Add(path);
+            }
+        }
+        else
+        {
+            if (ReadPath(oneBar) is not { } first) return null;
+            if (!Transforms(caps).TryGetValue(Positions, out var positions) || positions.Count == 0) return null;
+            modelPaths = new();
+            for (int i = 0; i < positions.Count; i++)
+            {
+                if (flags.Count == positions.Count && flags[i] == 0) continue;
+                var placed = first.Select(s => s.Moved(positions[i])).ToList();
+                modelPaths.Add(placed);
+                // The IFC compatibility path applies the position transform twice.
+                bars.Add(placed.Select(s => s.Moved(positions[i])).ToList());
+            }
         }
         double? length = caps.FirstOrDefault(c => c.Key == "RebarInstBase.m_barLength" && c.Kind == WideBlockWalker.CaptureKind.Real) is { } l ? l.Real : null;
         // the shape id travels in ShapeName until the shapes are read
         long shape = Integer(caps, "RebarInstBase.m_shapeId") ?? 0;
         return new RebarBars((int)(Integer(caps, "RebarInstBase.m_barTypeId") ?? -1), 0, length, bars,
             ShapeName: shape.ToString(CultureInfo.InvariantCulture), InAssembly: InAssembly(walker, walk, byQueue),
-            ShapeId: shape is > 0 and <= int.MaxValue ? (int)shape : 0);
+            ShapeId: shape is > 0 and <= int.MaxValue ? (int)shape : 0, IsFreeForm: freeForm, ModelPaths: modelPaths);
+
+        IReadOnlyList<RebarSegment>? ReadPath(int bar)
+        {
+            var path = new List<RebarSegment>();
+            foreach (int q in Children(walk, bar))
+            {
+                if (Curve(walker, walk, byQueue, q) is not { } segment) return null;
+                path.Add(segment);
+            }
+            return path.Count > 0 ? path : null;
+        }
     }
 
     /// <summary>The queue indexes the queued object <paramref name="q"/> appended while it was read.</summary>

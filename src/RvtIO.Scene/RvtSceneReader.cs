@@ -58,7 +58,7 @@ public static class RvtSceneReader
             SeparateFacesWithDistinctOpenings = true,
             Diagnostics = readDiagnostics,
         });
-        return Map(document, ElementMeshes.Extract(document), key, ReadDiagnostics(readDiagnostics));
+        return Map(document, ElementMeshes.Extract(document, MeshOptions(options)), key, ReadDiagnostics(readDiagnostics));
     }
 
     /// <summary>The scene diagnostics of a read: <c>read-cut</c> for each stream a reader limit cut, then for each stream read, in
@@ -98,7 +98,7 @@ public static class RvtSceneReader
     public static RvtSceneResult Read(RvtDocument document, RvtSceneOptions? options)
     {
         ArgumentNullException.ThrowIfNull(document);
-        return Map(document, ElementMeshes.Extract(document), RequiredKey(options));
+        return Map(document, ElementMeshes.Extract(document, MeshOptions(options)), RequiredKey(options));
     }
 
     /// <summary>Turns an opened document into a scene with meshes the caller extracted from it, for example with
@@ -116,6 +116,9 @@ public static class RvtSceneReader
         ArgumentNullException.ThrowIfNull(meshes);
         return Map(document, meshes, RequiredKey(options));
     }
+
+    private static ElementMeshOptions? MeshOptions(RvtSceneOptions? options) =>
+        options?.IncludeModelLinesAndReinforcement == true ? new() { IncludeModelLinesAndReinforcement = true } : null;
 
     private static string RequiredKey(RvtSceneOptions? options) => options?.ModelKey is { Length: > 0 } key ? key
         : throw new ArgumentException("A document has no file name: give the model key in RvtSceneOptions.ModelKey.", nameof(options));
@@ -169,7 +172,7 @@ public static class RvtSceneReader
                 SourceId = element?.UniqueId,
                 IfcGuid = element != null ? IfcGuidOf(element) : null,
                 Kind = SceneNodeKind.Element,
-                Name = element?.Name ?? string.Empty,
+                Name = mesh.Line != null && string.IsNullOrWhiteSpace(element?.Name) ? "Model Lines" : element?.Name ?? string.Empty,
                 Category = CategoryName(element),
                 TypeName = element != null ? document.GetTypeElement(element)?.Name ?? string.Empty : string.Empty,
             };
@@ -188,6 +191,17 @@ public static class RvtSceneReader
             scene.Elements.Add(sceneElement);
 
             int instancesBefore = scene.Instances.Count;
+            if (mesh.Line is { } line)
+            {
+                var start = Vector(line.Start) * MetresPerFoot;
+                var end = Vector(line.End) * MetresPerFoot;
+                int geometryId = scene.Geometries.Count + 1;
+                scene.Geometries.Add(new SceneGeometry
+                {
+                    Id = geometryId, Topology = SceneTopology.Lines, Vertices = [Vector3d.Zero, end - start], Indices = [0, 1],
+                });
+                scene.Instances.Add(new SceneInstance { ElementId = mesh.ElementId, GeometryId = geometryId, Transform = Transform3d.Translate(start) });
+            }
             foreach (var placement in mesh.Placements)
             {
                 placements++;
