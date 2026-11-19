@@ -7,14 +7,9 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(NwcIOProject)' != ''">
-    <DefineConstants>$(DefineConstants);MANAGED_NWC</DefineConstants>
-  </PropertyGroup>
-
   <ItemGroup>
     <ProjectReference Include="..\..\src\RvtIO.Scene\RvtIO.Scene.csproj" />
-    <PackageReference Include="NwcIO" Condition="'$(NwcIOProject)' == ''" />
-    <ProjectReference Include="$(NwcIOProject)" Condition="'$(NwcIOProject)' != ''" />
+    <PackageReference Include="NwcIO" />
     <InternalsVisibleTo Include="RvtIO.Tests" />
   </ItemGroup>
 

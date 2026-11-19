@@ -133,17 +133,9 @@ internal static class NwcExport
             using (stream)
             {
                 if (native)
-                {
-#if MANAGED_NWC
                     NwcWriter.WriteNative(cache, stream);
-#else
-                    throw new InvalidOperationException("Native NWC export requires a build with the NwcIO project.");
-#endif
-                }
                 else
-                {
                     NwcWriter.Write(cache, stream);
-                }
             }
             File.Move(temporary, destination);
             moved = true;

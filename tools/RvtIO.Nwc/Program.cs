@@ -18,15 +18,8 @@ internal static class Program
         string? navisworks = null;
         bool native = args is [_, _, "--native"];
         if (native)
-        {
-#if !MANAGED_NWC
-            Console.Error.WriteLine("Rebuild with -p:NwcIOProject=<path to NwcIO.csproj> to use --native.");
-            return 2;
-#else
             args = args[..2];
-#endif
-        }
-        if (args is [_, _, "--navisworks", var executable])
+        else if (args is [_, _, "--navisworks", var executable])
         {
             navisworks = executable;
             args = args[..2];

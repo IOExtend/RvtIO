@@ -2,12 +2,10 @@
 
 ## Autonomous export
 
-Build the optional tool against the NwcIO checkout that includes `NwcWriter.WriteNative`.
-Pass the absolute path of its project file and use `--native`.
+Run the optional tool from the RvtIO repository. The build restores NwcIO from NuGet.
 
 ```sh
-dotnet run --project tools/RvtIO.Nwc -c Release -f net10.0 \
-  --property:NwcIOProject=/path/to/NwcIO/src/NwcIO/NwcIO.csproj -- model.rvt model.nwc --native
+dotnet run --project tools/RvtIO.Nwc -c Release -f net10.0 -- model.rvt model.nwc --native
 ```
 
 This mode writes placed triangle geometry, face normals, diffuse colours, the element tree, IFC GlobalIds
