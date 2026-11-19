@@ -109,7 +109,7 @@ New-Zip $cli10Stage (Join-Path $Output "RvtIO-Cli-$version-net10.0.zip")
 foreach ($framework in 'net8.0', 'net10.0') {
     Write-Host "Publishing RvtIO.Nwc ($framework)..."
     $nwcStage = Join-Path $stage "nwc-$framework"
-    Invoke-DotNet publish (Join-Path $root 'tools\RvtIO.Nwc\RvtIO.Nwc.csproj') -c Release -f $framework --self-contained false -p:UseAppHost=false -o $nwcStage
+    Invoke-DotNet publish (Join-Path $root 'tools\RvtIO.Nwc\RvtIO.Nwc.csproj') -c Release -f $framework --self-contained false '-p:UseAppHost=false' -o $nwcStage
     Invoke-DotNet (Join-Path $nwcStage 'RvtIO.Nwc.dll') --help
     Copy-Item (Join-Path $root 'docs\rvt-to-nwc.md') (Join-Path $nwcStage 'README.md')
     Copy-Item (Join-Path $root 'LICENSE'), (Join-Path $root 'THIRD-PARTY-NOTICES.md') $nwcStage
