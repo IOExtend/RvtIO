@@ -8,7 +8,7 @@ Without the new options the output (IFC, JSON, standard error text) and the exit
 | Option | Effect |
 | --- | --- |
 | `--report <report.json>` | Write the JSON report of the run to this path. Written on success and on failure. |
-| `--allow-partial` | Export what was read when a reader limit cut a stream. The exit code is then 0 and the report says `"status": "partial"`. Cannot be combined with `--strict`. |
+| `--allow-partial` | Export what was read when a recoverable reader limit cut a stream. The exit code is then 0 and the report says `"status": "partial"`. Cannot be combined with `--strict`. |
 | `--strict` | Fail with exit code 6 instead of 0 when the read is partial even without hitting a limit (a member failed to decode, was rebuilt by structural recovery, or decoded without a matching checksum, or the element table decoded no row). Nothing is exported; the report lists the streams and the reason. Cannot be combined with `--allow-partial`. |
 | `--raise-limits` | Raise the limits listed below for a very large model. |
 
@@ -19,7 +19,7 @@ Without the new options the output (IFC, JSON, standard error text) and the exit
 | 0 | success | The export was written. With `--allow-partial` or, without `--strict`, after members of a stream failed to decode or were recovered, the report can still say `"status": "partial"`: read it when you need to know, or pass `--strict` to make partial reads fail. |
 | 1 | usage | The command line is wrong (unchanged from earlier versions). |
 | 2 | input error | The input cannot be read: the file does not exist or cannot be opened, is empty, is not a compound file, or is cut or damaged so that a stream ends before its declared length. One line on standard error, no stack trace, nothing exported. |
-| 3 | limit exceeded | A stream exceeded a limit of the reader and the read was cut. Nothing is exported unless `--allow-partial` is given. A stream longer than the platform allows in one array cannot be read at all: that case exits with 3 even with `--allow-partial`. |
+| 3 | limit exceeded | A stream exceeded a reader limit. For a recoverable limit, `--allow-partial` permits export. Hard limits (`array-length`, `element-id-range`) stop export with exit code 3 regardless of options. |
 | 4 | decode error | The compound file is readable but a decoder failed on its content (damaged or unsupported data). One line on standard error; the report holds the exception with its stack trace. |
 | 5 | refused | `downgrade --check` refused the request (for example a source newer than release 2026, a profile not older than the source, a saving release that does not match the class table, or an ambiguous class name). One line on standard error. |
 | 6 | partial read | `--strict` was given and the read finished partial without exceeding a limit (members of a stream failed to decode, were rebuilt by structural recovery, or decoded without a matching checksum, or the element table decoded no row). One line on standard error naming the streams and the reason, nothing exported; the report holds the stream counts and `issues[]`. |
@@ -28,13 +28,14 @@ A crash that is none of these (a defect in the exporter after the read) still en
 
 ## Limits of the reader
 
-These are the limits the reader has. A stream that reaches one is cut, listed under `limits.hit` and counted as partial.
+The report lists reader limits under `limits.hit`. Reaching a recoverable limit makes the read partial. A hard limit ends the read with status `failed`.
 
 | Code | Default | Raised by `--raise-limits` | What is cut |
 | --- | --- | --- | --- |
 | `elem-table-recovery-bytes` | 268435456 (256 MiB) | the platform array length | The output of the recovery of a damaged `Global/ElemTable`. The table keeps what the ordinary decoders produced. |
 | `elem-table-recovery-iterations` | 4096 | unbounded (each iteration moves forward in the stream) | The number of relocks the recovery of a damaged `Global/ElemTable` makes. |
 | `array-length` | the platform array length | cannot be raised | A stream of the compound file longer than one array. Exit code 3 whatever the options. |
+| `element-id-range` | 2147483647 (`Int32.MaxValue`) | cannot be raised | An authoritative `Global/ElemTable` contains an element ID above the public range. The diagnostic includes that ID. Exit code 3 whatever the options. |
 
 ## Report format
 
@@ -68,7 +69,7 @@ The report is one JSON object, UTF-8, property names in camelCase. `schema` name
 
 | Property | Meaning |
 | --- | --- |
-| `status` | `complete`: no limit cut a stream and every member of every stream decoded and verified. `partial`: a limit cut a stream, a member did not decode, a member decoded without its checksum matching, a member was rebuilt by structural recovery, or the element table decoded no row. `failed`: the file could not be read at all (exit codes 2 and 4, and 3 for a stream over the platform array length). A read cut by a limit that is not accepted (exit code 3) or a partial read refused by `--strict` (exit code 6) is `partial` and has no `export` property, because nothing was exported. |
+| `status` | `complete`: no limit cut a stream and every member of every stream decoded and verified. `partial`: a recoverable limit cut a stream, a member did not decode, a member decoded without its checksum matching, a member was rebuilt by structural recovery, or the element table decoded no row. `failed`: the file could not be read at all (exit codes 2 and 4, and 3 for hard limits). A read cut by a recoverable limit that is not accepted (exit code 3) or a partial read refused by `--strict` (exit code 6) is `partial` and has no `export` property, because nothing was exported. |
 | `exitCode` | The exit code of the process. |
 | `input.file`, `input.bytes` | File name (no directory) and size of the input. |
 | `error` | Only when `status` is `failed`: `kind` (`cannot-open`, `empty-file`, `not-a-compound-file`, `truncated-or-damaged`, `limit-exceeded`, `decode-failure`), `message`, and for `decode-failure` the `detail` with the stack trace. |

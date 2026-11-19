@@ -116,7 +116,7 @@ internal static partial class Program
         {
             readDiagnostics.LimitHits.Add(ex.Hit);
             return EndRun(reportPath, ExportReport.Failed(inputName, inputBytes, "limit-exceeded", ex.Message, RvtExitCodes.LimitExceeded, readDiagnostics, raiseLimits, allowPartial, null, strict),
-                $"error: {ex.Message}. The limit cannot be raised. Nothing was exported (exit code {RvtExitCodes.LimitExceeded}).");
+                $"error ({ex.Hit.Limit}): {ex.Message}. The limit cannot be raised. Nothing was exported (exit code {RvtExitCodes.LimitExceeded}).");
         }
         // The container is readable, so this is a decoder failure on damaged or unsupported content: one line on the console, the stack trace in the report.
         catch (Exception ex) when (ex is not OutOfMemoryException)

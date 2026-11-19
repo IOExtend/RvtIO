@@ -33,7 +33,8 @@ public partial class RvtFileReader
 
     /// <summary>Read and parse a Revit file, returning structured element data.</summary>
     /// <exception cref="RvtInputException">The file cannot be read: missing, empty, not a compound file, cut or damaged.</exception>
-    /// <exception cref="RvtLimitException">A stream is longer than one array can hold.</exception>
+    /// <exception cref="RvtLimitException">A stream is longer than one array can hold, or the element table
+    /// contains an ID above <see cref="int.MaxValue"/>.</exception>
     public RevitFileInfo Read(string rvtPath)
     {
         RvtContainerCheck.Verify(rvtPath);

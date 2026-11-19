@@ -152,13 +152,31 @@ public class SchemaReleaseTests
         finally { File.Delete(path); }
     }
 
-    internal static void WriteSyntheticFile(string path, bool wide, int marker, int? saved)
+    [Fact]
+    public void WideElementTableRetainsZeroAndTheMaximumPublicId()
+    {
+        string path = TestFiles.Scratch($"schema-id-range-{Guid.NewGuid():N}.rvt");
+        try
+        {
+            WriteSyntheticFile(path, wide: true, marker: 891, saved: 2024, FormatsSchemaTests.Rows(true,
+                (0, 0, 0, 0, -1), (int.MaxValue, int.MaxValue, 64, 7, 0)));
+            using var root = RootStorage.OpenRead(path);
+            var elements = ElemTableReader.Read(root, out var worksets, out var dates, out bool exact);
+            Assert.True(exact);
+            Assert.Equal(new uint[] { 0, int.MaxValue }, elements.Keys.Order().ToArray());
+            Assert.Equal(7u, worksets[int.MaxValue]);
+            Assert.Equal(64, dates[int.MaxValue]);
+        }
+        finally { File.Delete(path); }
+    }
+
+    internal static void WriteSyntheticFile(string path, bool wide, int marker, int? saved, byte[]? elemTable = null)
     {
         using var root = RootStorage.Create(path, OpenMcdf.Version.V3);
         using var formats = root.CreateStorage("Formats").CreateStream("Latest");
         formats.Write(PageCodec.EncodePadded(GzipMember.Write(FormatsSchemaTests.ElemTableSchema(wide, marker))));
         using var table = root.CreateStorage("Global").CreateStream("ElemTable");
-        table.Write(PageCodec.EncodePadded(GzipMember.Write(FormatsSchemaTests.Rows(wide,
+        table.Write(PageCodec.EncodePadded(GzipMember.Write(elemTable ?? FormatsSchemaTests.Rows(wide,
             (0, 0, 0, 0, -1), (700, 500, 64, 7, 1)))));
         using var info = root.CreateStream("BasicFileInfo");
         info.Write(RvtWriterTests.BuildBasicFileInfoBytes(saved));
