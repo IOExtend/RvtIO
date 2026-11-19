@@ -65,7 +65,7 @@ public partial class RvtFileReader
 
         Dictionary<string, TfClassRegistry.TfClassDef>? tfSchemas = null;
         LogPhase("Decompressing partitions...");
-        var chunks = DecompressPartitions(root, diag, out var ownPartitionWallParts, out var partitionStreams, out var framedStreams, out bool staleCopiesRemoved, out var incrementRoutedPartitions);
+        var chunks = DecompressPartitions(root, diag, out var ownPartitionWallParts, out var partitionStreams, out var framedStreams, out bool staleCopiesRemoved, out var incrementRoutedPartitions, collectFamilyStorage: true);
         var fmtChunks = DecompressStorage(root, "Formats", diag);
         if (fmtChunks.Count > 0)
         {
@@ -113,6 +113,7 @@ public partial class RvtFileReader
             r22View, partitionStreams, framedStreams, wideSchema, elemTable, elemWorksets, fileMetadata,
             projectInfo, transmissionData, episodeTable, elemRecHistories, elemRecOwners, tfSchemas, ownPartitionWallParts,
             staleCopiesRemoved, incrementRoutedPartitions, elemTableIsExact, previewBase64, previewMime, diag, LogPhase, ids);
+        ExtensibleStorageReader.Apply(root, rvtInfo, framedStreams);
         LastParsingState = state;
         return rvtInfo;
     }
@@ -1077,8 +1078,9 @@ public partial class RvtFileReader
             {
                 fields = new WideNativeParams(schemaDocument = TfSchemaReader.Parse(schemaBytes), ids);
                 // the values of an extensible storage entity are read by its schema, so the objects behind them are read in place
-                var entitySchemas = EntitySchemaReader.Read(root, schemaDocument);
-                fields.Walker.UseEntitySchemas(entitySchemas, passUnknown: true);
+                var publicEntityNames = new Dictionary<Guid, string>();
+                var entitySchemas = EntitySchemaReader.Read(root, schemaDocument, publicEntityNames);
+                fields.Walker.UseEntitySchemas(entitySchemas, passUnknown: true, publicEntityNames: publicEntityNames);
                 gridReader = new GridAxisReader(schemaDocument, entitySchemas, ids);
             }
             catch (FormatException) { diag?.WriteLine("Wide element records: Formats/Latest does not parse for the field walk"); }
@@ -1142,6 +1144,8 @@ public partial class RvtFileReader
                 if (drivers.TryGetValue(id, out var exactDrivers) && exactDrivers.Count > 0) state.ExactCurveDrivers[id] = exactDrivers;
                 var np = fields.Build(list[0].Walk, rootClass);
                 if (np == null) continue;
+                if (np.Fields.TryGetValue("m_id", out int entityOwner) && entityOwner == (int)id)
+                    np.ExtensibleStorage = list[0].Walk.OwnPublicEntities();
                 if (fields.LevelElevation(list[0].Walk, rootClass) is double levelElevation)
                 {
                     np.Fields["__isLevel"] = 1;
@@ -1293,7 +1297,7 @@ public partial class RvtFileReader
     private List<byte[]> DecompressPartitions(RootStorage root, TextWriter? diag,
         out Dictionary<uint, OwnPartitionParts.WallParts>? ownPartitionWallParts,
         out List<IReadOnlyList<byte[]>> partitionStreams, out List<PartitionFraming.Framed?> framedStreams,
-        out bool staleCopiesRemoved, out IReadOnlyDictionary<ulong, int>? incrementRoutedPartitions)
+        out bool staleCopiesRemoved, out IReadOnlyDictionary<ulong, int>? incrementRoutedPartitions, bool collectFamilyStorage = false)
     {
         staleCopiesRemoved = false;
         var partStor = root.OpenStorage("Partitions");
@@ -1313,9 +1317,13 @@ public partial class RvtFileReader
             : null;
         incrementRoutedPartitions = routing?.Current;
         // the exact framing of the partition streams (PartitionFraming), when the class table names its marker classes and the id width is known
-        var framing = FormatsSchema.TryRead(root) is { } formats && PartitionFraming.TagsOf(formats) is { } framingTags
+        var formats = FormatsSchema.TryRead(root);
+        var framing = formats != null && PartitionFraming.TagsOf(formats) is { } framingTags
             && SchemaRelease.IdWidth(SchemaRelease.Effective(SchemaRelease.Saved(BasicFileInfoReader.Read(root).GetValueOrDefault("RevitVersion")),
                 SchemaRelease.FromSchema(formats))) is int framingIdWidth ? (Tags: framingTags, IdWidth: framingIdWidth) : ((PartitionFraming.Tags Tags, int IdWidth)?)null;
+
+        ushort? entityCellTag = collectFamilyStorage && framing != null && formats?.IdOf("ESEntityCell") is > 0 and <= ushort.MaxValue and int cell
+            ? (ushort)cell : null;
 
         foreach (var partEntry in partEntries)
         {
@@ -1336,7 +1344,7 @@ public partial class RvtFileReader
                 diag?.WriteLine($"  Own partition wall parts: {ownPartitionWallParts?.Count.ToString() ?? "unavailable"} ({failure ?? "exact"})");
             }
 
-            var chunks = CutPartition(raw, framing, decompressor, out var stats, out string? framingFailure, out var framed);
+            var chunks = CutPartition(raw, framing, decompressor, out var stats, out string? framingFailure, out var framed, entityCellTag);
             int? partitionNumber = int.TryParse(partEntry.Name, out int parsedPartition) ? parsedPartition : null;
             if (framed != null && partitionNumber is int partNum)
                 framed = framed with { Partition = partNum };
@@ -1372,20 +1380,30 @@ public partial class RvtFileReader
     /// gzip member checked by its CRC and length, and <paramref name="framingFailure"/> null; otherwise the members a search for gzip headers
     /// finds, with the recovery of damaged ones (<see cref="ChunkDecompressor"/>), and the reason the framing does not hold.</summary>
     internal static List<byte[]> CutPartition(byte[] raw, (PartitionFraming.Tags Tags, int IdWidth)? framing, ChunkDecompressor decompressor,
-        out (int Members, int Decoded, int Failed, int Recovered, int Unverified) stats, out string? framingFailure, out PartitionFraming.Framed? framed)
+        out (int Members, int Decoded, int Failed, int Recovered, int Unverified) stats, out string? framingFailure, out PartitionFraming.Framed? framed,
+        ushort? familyEntityCellTag = null)
     {
         var segments = new List<byte[]>();
         var items = new List<PartitionFraming.ProjectItem>();
+        var familyItems = new List<PartitionFraming.FamilyItem>();
+        var familyKeys = familyEntityCellTag.HasValue ? new HashSet<string>(StringComparer.Ordinal) : null;
+        byte[]? cellTagBytes = familyEntityCellTag is ushort tag ? BitConverter.GetBytes(tag) : null;
         framed = null;
         framingFailure = "the class table names no framing classes or the id width is not known";
         if (framing is var (tags, idWidth) && PartitionFraming.Walk(raw, tags, idWidth, r =>
             {
                 if (r.Block == 0 && r.Owner != (idWidth == 8 ? ulong.MaxValue : uint.MaxValue))
                     items.Add(new(r.Channel, r.Owner, r.Offset, r.Item.Length));
+                else if (familyKeys != null && r.Key.Length != 0 && r.Channel == 102)
+                {
+                    familyKeys.Add(r.Key);
+                    if (r.Body.Span.IndexOf(cellTagBytes!) >= 0)
+                        familyItems.Add(new(r.Key, new(r.Channel, r.Owner, r.Offset, r.Item.Length)));
+                }
             }, out framingFailure, out _, null, segments))
         {
             stats = (segments.Count, segments.Count, 0, 0, 0);
-            framed = new PartitionFraming.Framed(segments, items, idWidth);
+            framed = new PartitionFraming.Framed(segments, items, idWidth) { FamilyEntityCandidates = familyItems, FamilyKeys = familyKeys };
             return segments;
         }
         var chunks = decompressor.DecompressAll(raw);

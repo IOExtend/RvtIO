@@ -1,4 +1,5 @@
 using System.Text;
+using RvtIO.Model;
 using RvtIO.Parsing;
 using Xunit;
 
@@ -170,6 +171,102 @@ public class WideBlockWalkerEntityTests
         Assert.Equal(["ESEntityCell", "Model", "ESBlob", "SymbolInfo", "ESBlob"], walk.Queue.Select(id => reader.Walker.Class(id)!.Name));
         Assert.Equal("FieldName", reader.OwnName(walk, HostId));
         Assert.False(reader.Walker.Run(block[..^1], 0, block.Length - 1, HostId).Exact);
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public void OwnPublicEntitiesKeepNestedArraysMapsAndWideValues(bool wideIds, bool publicChild)
+    {
+        const int cellList = 20, textEntityPair = 21;
+        var schema = Schema(wideIds);
+        schema.Classes[schema.Classes.FindIndex(c => c.Id == HostId)] = new(HostId, "Element", 0, 1,
+            [Field("m_cellList", 14, 1)], []);
+        schema.Classes.Add(new(cellList, "CellList", 0, 1, [Field("m_cells", 14, 0x51)], []));
+        schema.Classes.Add(new(textEntityPair, "std::pair< AString, ESEntity >", 0, 1,
+            [Field("first", 8, 0x60), Field("second", 14, 0, EntityId)], []));
+        (string Name, string Type, int Container, int Index)[] parent =
+            [("Child", "ESEntity", 0, 0), ("Children", "ESEntity", 1, 1), ("ByName", "std::pair< AString, ESEntity >", 2, 2)];
+        (string Name, string Type, int Container, int Index)[] child =
+            [("Label", "TCHAR", 0, 0), ("Sequence", "int64_t", 0, 1), ("Flag", "bool", 0, 2), ("Reference", "ElementId", 0, 3)];
+        var layouts = EntitySchemaReader.Read(Latest(false, (SchemaA, parent), (SchemaB, child)), schema)!;
+        var publicNames = new Dictionary<Guid, string> { [SchemaA] = "Parent" };
+        if (publicChild) publicNames.Add(SchemaB, "Child");
+        var walker = new WideBlockWalker(schema, (_, _) => null, []);
+        walker.UseEntitySchemas(layouts, publicEntityNames: publicNames);
+        var block = Block(HostId, w =>
+        {
+            void Entity(Guid id) { w.Write(uint.MaxValue); w.Write(id.ToByteArray()); }
+            w.Write(uint.MaxValue); w.Write((ushort)cellList);
+            w.Write(1u); w.Write(uint.MaxValue); w.Write((ushort)CellId);
+            w.Write(1u); w.Write(SchemaA.ToByteArray()); Entity(SchemaA);
+            Entity(SchemaB);
+            w.Write(1u); Entity(SchemaB);
+            w.Write(1u); Text(w, "key"); Entity(SchemaB);
+            foreach (var label in new[] { "direct", "array", "map" })
+            {
+                Text(w, label); w.Write(9_007_199_254_740_993L); w.Write(true);
+                if (wideIds) w.Write(4_294_967_297L);
+                else w.Write(47);
+            }
+        });
+
+        var walk = walker.Run(block, 0, block.Length, HostId);
+        Assert.True(walk.Exact, walk.Error);
+        Assert.Null(walker.Run(block, 0, block.Length - 1, HostId).OwnPublicEntities());
+        if (!publicChild) { Assert.Null(walk.OwnPublicEntities()); return; }
+
+        var entity = Assert.Single(walk.OwnPublicEntities()!);
+        Assert.Equal(SchemaA, entity.SchemaId);
+        Assert.Equal("Parent", entity.SchemaName);
+        var direct = Assert.IsType<ExtensibleStorageEntity>(entity.Fields["Child"]);
+        Assert.Equal("direct", direct.Fields["Label"]);
+        Assert.Equal("9007199254740993", direct.Fields["Sequence"]);
+        Assert.Equal(true, direct.Fields["Flag"]);
+        Assert.Equal(wideIds ? 4_294_967_297L : 47L, direct.Fields["Reference"]);
+        var arrayChild = Assert.IsType<ExtensibleStorageEntity>(Assert.Single(Assert.IsType<List<object?>>(entity.Fields["Children"])));
+        Assert.Equal("array", arrayChild.Fields["Label"]);
+        var entry = Assert.IsType<KeyValuePair<object?, object?>>(Assert.Single(Assert.IsType<List<object?>>(entity.Fields["ByName"])));
+        Assert.Equal("key", entry.Key);
+        Assert.Equal("map", Assert.IsType<ExtensibleStorageEntity>(entry.Value).Fields["Label"]);
+    }
+
+    [Fact]
+    public void FamilySchemaDoesNotBorrowPublicAccessFromTheProjectOrAnotherFamily()
+    {
+        var schema = Schema(wideIds: false);
+        const int cellList = 20;
+        schema.Classes[schema.Classes.FindIndex(c => c.Id == HostId)] = new(HostId, "Element", 0, 1,
+            [Field("m_cellList", 14, 1)], []);
+        schema.Classes.Add(new(cellList, "CellList", 0, 1, [Field("m_cells", 14, 0x51)], []));
+        var project = EntitySchemaReader.Read(Latest(false, (SchemaA, [("ProjectValue", "int", 0, 0)])), schema)!;
+        var local = EntitySchemaReader.Read(Latest(false, (SchemaA, [("FamilyValue", "int", 0, 0)])), schema)!;
+        var projectNames = new Dictionary<Guid, string> { [SchemaA] = "Project" };
+        var block = Block(HostId, w =>
+        {
+            w.Write(uint.MaxValue); w.Write((ushort)cellList);
+            w.Write(1u); w.Write(uint.MaxValue); w.Write((ushort)CellId);
+            w.Write(1u); w.Write(SchemaA.ToByteArray()); w.Write(uint.MaxValue); w.Write(SchemaA.ToByteArray());
+            w.Write(71);
+        });
+        var walker = new WideBlockWalker(schema, (_, _) => null, []);
+
+        ExtensibleStorageReader.ConfigureFamily(walker, project, projectNames, local, null);
+        var restricted = walker.Run(block, 0, block.Length, HostId);
+        Assert.True(restricted.Exact);
+        Assert.Null(restricted.OwnPublicEntities());
+
+        ExtensibleStorageReader.ConfigureFamily(walker, project, projectNames, local, new() { [SchemaA] = "Family" });
+        var family = Assert.Single(walker.Run(block, 0, block.Length, HostId).OwnPublicEntities()!);
+        Assert.Equal("Family", family.SchemaName);
+        Assert.Equal(71L, family.Fields["FamilyValue"]);
+
+        ExtensibleStorageReader.ConfigureFamily(walker, project, projectNames, null, null);
+        var host = Assert.Single(walker.Run(block, 0, block.Length, HostId).OwnPublicEntities()!);
+        Assert.Equal("Project", host.SchemaName);
+        Assert.Equal(71L, host.Fields["ProjectValue"]);
     }
 
     [Fact]

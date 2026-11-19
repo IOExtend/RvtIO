@@ -980,6 +980,10 @@ namespace RvtIO.Model
         /// </summary>
         public string? UniqueId { get; set; }
 
+        /// <summary>Fully decoded public Extensible Storage entities owned by this element, when available.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public IReadOnlyList<ExtensibleStorageEntity>? ExtensibleStorage { get; internal set; }
+
         /// <summary>Family/type name resolved from FamId or ELEM_TYPE_PARAM reference.</summary>
         public string? FamilyName { get; set; }
 
