@@ -16,6 +16,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Used only by the optional RVT-to-NWC tool. -->
+    <PackageVersion Include="NwcIO" Version="[0.14.0]" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Build-time only. -->
     <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="11.0.100" />
   </ItemGroup>

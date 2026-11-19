@@ -6,6 +6,9 @@ API between minor releases.
 
 ## [Unreleased]
 
+The optional [RvtIO.Nwc tool](docs/rvt-to-nwc.md) exports Revit project geometry and element properties to NWC
+using the NwcIO writer layout.
+
 ### Added
 
 - `RvtIO.Scene` exports decoded straight Revit grid axes and their labels in scene coordinates.
