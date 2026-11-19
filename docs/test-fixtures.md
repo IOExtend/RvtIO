@@ -48,6 +48,23 @@ needs no code of its own to skip. Tests that write diagnostic dumps write them t
 system temporary folder (`TestFiles.Scratch`), one folder per test process, so concurrent runs (both target frameworks of one
 `dotnet test`, or runs from other checkouts) never share a file; no test uses a fixed absolute path.
 
+## Format corpus regression check
+
+Set `RVTIO_FORMAT_CORPUS` to a local JSON manifest and run the format corpus test.
+
+```sh
+dotnet test tests/RvtIO.Tests/RvtIO.Tests.csproj -c Release -f net10.0 --filter FullyQualifiedName~FormatCorpusTests
+```
+
+The manifest contains one object per file with `path` (absolute or relative to the manifest), `sha256`,
+`partitionStreams`, `pagedStreams`, `records`, `payloadBytes`, and `elemTableRows`. Take the stream and record
+counts from a verified `rvtio coverage --report` run and the row count from the stored `Global/ElemTable`.
+Keep the manifest with the local files and reuse it on later runs. Without the environment variable the test skips.
+A configured manifest must be readable and contain at least one file.
+
+The test verifies the source hash, every partition boundary, paged stream inflation, exact walks,
+record checksums, and the number of rows used by the production element table reader.
+
 ## What runs without the private files
 
 With no private file at all, 10529 of the 10976 test cases run and pass on net8.0 and 447 are skipped (net10.0: 10533 of

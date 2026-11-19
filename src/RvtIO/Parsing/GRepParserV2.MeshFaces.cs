@@ -59,19 +59,22 @@ internal static partial class GRepParserV2
             // point that is not finite
             (List<double[]> Uv, List<double[]> Points)? EdgePointsOf(EdgeRec e, bool sideA, List<EdgeUV> uvs)
             {
-                var uv = uvs.Select(p => sideA ? new[] { p.UA, p.VA } : new[] { p.UB, p.VB }).ToList();
-                if (uv.Any(p => !double.IsFinite(p[0]) || !double.IsFinite(p[1]))) return null;
-                var points = uv.Select(p => freeform ? freeEval!(p[0], p[1]) : revolved ? MeshRevolvedPoint(surface, profile, p[0], p[1])
-                    : cone ? MeshConePoint(surface, p[0], p[1])
-                    : cylinder ? MeshCylinderPoint(surface, p[0], p[1])
-                    : Enumerable.Range(0, 3).Select(k => surface.O[k] + p[0] * surface.X[k] + p[1] * surface.Y[k]).ToArray()).ToList();
-                // Revit evaluates the points of an Edge on its first active Face (a point
-                // shared by the faces of a vertex is one point)
-                if (activeFaces != null && !cylinder && !revolved && !freeform && MeshEdgeEvaluationFace(e, face, activeFaces, surfaces) is { } evalFace && evalFace != face
+                var uv = new List<double[]>(uvs.Count);
+                foreach (var p in uvs)
+                {
+                    double u = sideA ? p.UA : p.UB, v = sideA ? p.VA : p.VB;
+                    if (!double.IsFinite(u) || !double.IsFinite(v)) return null;
+                    uv.Add([u, v]);
+                }
+
+                // Both paths prefer the edge's first active face. The current face is the fallback.
+                List<double[]>? points = null;
+                if (activeFaces != null && (vertices != null || surface.Kind == SurfKind.Plane)
+                    && MeshEdgeEvaluationFace(e, face, activeFaces, surfaces) is { } evalFace && evalFace != face
                     && surfaces.TryGetValue(evalFace, out var evalSurface))
                 {
                     bool evalA = e.FaceA == evalFace;
-                    var evalPoints = new List<double[]>();
+                    var evalPoints = new List<double[]>(uvs.Count);
                     for (int i = 0; i < uvs.Count; i++)
                     {
                         double eu = evalA ? uvs[i].UA : uvs[i].UB, ev = evalA ? uvs[i].VA : uvs[i].VB;
@@ -81,23 +84,17 @@ internal static partial class GRepParserV2
                     }
                     if (evalPoints != null) points = evalPoints;
                 }
+                if (points == null)
+                {
+                    points = new List<double[]>(uv.Count);
+                    foreach (var p in uv)
+                        points.Add(freeform ? freeEval!(p[0], p[1]) : revolved ? MeshRevolvedPoint(surface, profile, p[0], p[1])
+                            : cone ? MeshConePoint(surface, p[0], p[1])
+                            : cylinder ? MeshCylinderPoint(surface, p[0], p[1])
+                            : MeshPlanePoint(surface, p[0], p[1]));
+                }
                 if (vertices != null && activeFaces != null)
                 {
-                    // the interior points come from the Edge's first active Face, the end points
-                    // are the shared vertices
-                    if (MeshEdgeEvaluationFace(e, face, activeFaces, surfaces) is { } vertexEvalFace && surfaces.TryGetValue(vertexEvalFace, out var vertexEvalSurface))
-                    {
-                        bool vertexEvalA = e.FaceA == vertexEvalFace;
-                        var viaFace = new List<double[]>();
-                        for (int i = 0; i < uvs.Count; i++)
-                        {
-                            double eu = vertexEvalA ? uvs[i].UA : uvs[i].UB, ev = vertexEvalA ? uvs[i].VA : uvs[i].VB;
-                            var evaluated = MeshEvaluate(c, vertexEvalFace, vertexEvalSurface, eu, ev);
-                            if (evaluated == null) { viaFace = null!; break; }
-                            viaFace.Add(evaluated);
-                        }
-                        if (viaFace != null) points = viaFace;
-                    }
                     if (vertices.TryGet(e.Handle, 0, out var vertexFirst)) points[0] = vertexFirst;
                     if (vertices.TryGet(e.Handle, 1, out var vertexLast)) points[^1] = vertexLast;
                 }
@@ -440,7 +437,7 @@ internal static partial class GRepParserV2
         switch (s.Kind)
         {
             case SurfKind.Plane:
-                return Enumerable.Range(0, 3).Select(k => s.O[k] + u * s.X[k] + v * s.Y[k]).ToArray();
+                return MeshPlanePoint(s, u, v);
             case SurfKind.Cylinder:
                 return MeshCylinderPoint(s, u, v);
             case SurfKind.Rev:
@@ -449,6 +446,11 @@ internal static partial class GRepParserV2
                 return null;
         }
     }
+
+    internal static double[] MeshPlanePoint(SurfaceRec s, double u, double v) =>
+        [s.O[0] + u * s.X[0] + v * s.Y[0],
+         s.O[1] + u * s.X[1] + v * s.Y[1],
+         s.O[2] + u * s.X[2] + v * s.Y[2]];
 
     /// <summary>
     /// RVTIO_X_EVAL=0 returns the point formulas of the surfaces to the plain sums.

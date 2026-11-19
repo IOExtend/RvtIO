@@ -85,7 +85,8 @@ internal static class BrepMeasures
     }
 
     /// <summary>The shells of an element geometry (all faces as one shell when none are listed).</summary>
-    internal static List<ShellInfo> ShellsOfCurrent(GeometryData? geometry)
+    internal static List<ShellInfo> ShellsOfCurrent(GeometryData? geometry,
+        HashSet<(long X, long Y, long Z)>? splitVertices = null)
     {
         var result = new List<ShellInfo>();
         if (geometry?.Faces is not { Count: > 0 } faces) return result;
@@ -98,7 +99,8 @@ internal static class BrepMeasures
             // The signed volume needs every face wound the same way (outward); a closed shell that orients exactly is summed oriented.
             IReadOnlyList<GeoFace> computationFaces = shellFaces;
             if (closed && shellFaces.Count >= 4
-                && FacetedShell.TryOrientExactFacetedShell(shellFaces, Enumerable.Range(0, shellFaces.Count).ToList(), out var orientedShell, triangulateNonPlanarFaces: false))
+                && FacetedShell.TryOrientExactFacetedShell(shellFaces, Enumerable.Range(0, shellFaces.Count).ToList(),
+                    out var orientedShell, triangulateNonPlanarFaces: false, splitVertices))
                 computationFaces = orientedShell;
             foreach (var face in computationFaces)
             {

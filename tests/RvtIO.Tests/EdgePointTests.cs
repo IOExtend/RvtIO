@@ -80,6 +80,20 @@ public class EdgePointTests
         Assert.Equal(forward, GRepParserV2.MeshCoedgeForward(new GRepParserV2.EdgeRec { Flags = flags }, sideA));
     }
 
+    [Fact]
+    public void Plane_point_preserves_rounding_order_with_only_the_result_allocation()
+    {
+        var surface = Frame([6e15, 8e15, 2], [0.6, 0.8, 0], [-0.8, 0.6, 0], [0, 0, 1], 0);
+        Assert.Equal([-0.8, 0.6, 2], GRepParserV2.MeshPlanePoint(surface, -1e16, 1));
+
+        var points = new double[256][];
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int i = 0; i < points.Length; i++) points[i] = GRepParserV2.MeshPlanePoint(surface, -1e16, i);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        GC.KeepAlive(points);
+        Assert.InRange(allocated, 0, 64L * points.Length);
+    }
+
     [Theory]
     [InlineData(4.712388980384685, 0.04152515010747385, 0.21247801399732427, -0.06250799034779941, 0.2056640577410033)]
     [InlineData(2.8955361930263255, 0.08314499133618838, 0.17085817276860957, 0.015225765113994889, 0.14503877478090532)]

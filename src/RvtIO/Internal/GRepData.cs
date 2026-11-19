@@ -42,6 +42,12 @@ internal record GRepData
     /// solid-only cleanup must not remove coplanar triangulation facets.</summary>
     public bool IsOpenSurface { get; set; }
 
+    internal (double Volume, double Area, int Count)? LightingBodyMeasures { get; set; }
+    internal (double Volume, double Area, int Count)? SourceBodyMeasures { get; set; }
+    internal (double Top, double Bottom)? SourceCapAreas { get; set; }
+    internal (double Area, double Volume)? TrimmedBodyMeasures { get; set; }
+    internal double? FilledArea { get; set; }
+
     /// <summary>Faces left out because the triangulation of their trim loops ran out of its work budget (see
     /// GRepParserV2.TrimWorkBudget); they have no polygon here rather than one without their trim.</summary>
     public int UntriangulatedFaces { get; set; }
@@ -186,6 +192,9 @@ internal record GRepFace
 
     /// <summary>GInfo flags of the serialized Face (null when not read).</summary>
     public uint? GInfoFlags { get; init; }
+
+    /// <summary>Face tag used by the owning element's geometry history.</summary>
+    public int? GInfoTag { get; init; }
 }
 
 /// <summary>A circular Edge as the file stores it: the circle (centre, unit X and Y, radius, in feet) and the parameters of its two

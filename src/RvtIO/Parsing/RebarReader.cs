@@ -49,7 +49,7 @@ internal sealed record RebarSegment(bool IsArc, double[] Origin, double[] Axis, 
 /// <see cref="OnlyBarOfSystem"/> is true for a RebarInSystem that is the one RebarInSystem of its system.</summary>
 internal sealed record RebarBars(int BarTypeId, int SystemId, double? BarLength, IReadOnlyList<IReadOnlyList<RebarSegment>> Bars,
     double NominalDiameter = 0, double ModelDiameter = 0, string? BarTypeName = null, double LengthRoundingMillimetres = 0, string? ShapeName = null,
-    bool InAssembly = false, IReadOnlyList<RebarBars>? Items = null, int ItemIndex = -1, bool OnlyBarOfSystem = false);
+    bool InAssembly = false, IReadOnlyList<RebarBars>? Items = null, int ItemIndex = -1, bool OnlyBarOfSystem = false, int ShapeId = 0);
 
 /// <summary>A beam system (JoistSystem): its type (JoistSystemAttr, <see cref="TypeName"/> from SymbolInfo.m_name) and the beams it holds
 /// (HeldBeam.m_existingBeamId, in stored order, deleted ones left out).</summary>
@@ -547,8 +547,10 @@ internal static partial class RebarReader
         }
         double? length = caps.FirstOrDefault(c => c.Key == "RebarInstBase.m_barLength" && c.Kind == WideBlockWalker.CaptureKind.Real) is { } l ? l.Real : null;
         // the shape id travels in ShapeName until the shapes are read
+        long shape = Integer(caps, "RebarInstBase.m_shapeId") ?? 0;
         return new RebarBars((int)(Integer(caps, "RebarInstBase.m_barTypeId") ?? -1), 0, length, bars,
-            ShapeName: (Integer(caps, "RebarInstBase.m_shapeId") ?? 0).ToString(CultureInfo.InvariantCulture), InAssembly: InAssembly(walker, walk, byQueue));
+            ShapeName: shape.ToString(CultureInfo.InvariantCulture), InAssembly: InAssembly(walker, walk, byQueue),
+            ShapeId: shape is > 0 and <= int.MaxValue ? (int)shape : 0);
     }
 
     /// <summary>The queue indexes the queued object <paramref name="q"/> appended while it was read.</summary>

@@ -1,4 +1,5 @@
 using System.Globalization;
+using RvtIO.Internal;
 
 namespace RvtIO.Parsing;
 
@@ -11,7 +12,7 @@ namespace RvtIO.Parsing;
 /// number by NAME, and only when the 2022 class declares a field of that name; a field or class tag without a 2022
 /// counterpart is left out (the rules then see "not decoded"), never guessed.
 /// </summary>
-internal sealed class WideNativeParams
+internal sealed partial class WideNativeParams
 {
     private static readonly string[] StoreNames = ["ParamValueSetDouble", "ParamValueSetInt", "ParamValueSetAString", "ParamValueSetElementId"];
 
@@ -39,6 +40,12 @@ internal sealed class WideNativeParams
     private const string ParamDefPointerKey = "2870:m_pParamDef.class";
 
     internal const string ViewerViewKey = "viewer:m_dbViewId";
+
+    private static readonly string HostLayerPointer = TfClassNames.Key("HostObjAttr", "m_pCompoundStructure");
+    private static readonly string HostLayerArray = TfClassNames.Key("CompoundStructure", "m_layers");
+    private const string TilePatternPointer = "tile:m_oTilePattern";
+    private const string TilePatternId = "tile:m_revitPatternId";
+    internal const string TilePatternName = "tile:m_name";
 
     private const string RailTopHeightKey = "490:m_topRailHeight";
 
@@ -79,12 +86,13 @@ internal sealed class WideNativeParams
         _bases.Add(GroupTypeKey);
         _bases.Add(ParamDefPointerKey);
         _bases.Add(ViewerViewKey);
+        _bases.UnionWith(Revit2027ApiValues.RootFields);
         foreach (var c in schema.Classes) _toR22[c.Id] = _r22ByName.GetValueOrDefault(c.Name);
         _storeIds = schema.Classes.Where(c => StoreNames.Contains(c.Name)).Select(c => c.Id).ToHashSet();
         _namedParam = schema.Classes.FirstOrDefault(c => c.Name == "NamedParam")?.Id ?? -1;
         _walker = new WideBlockWalker(schema, KeyOf,
             ["ParamValueDouble", "ParamValueInt", "ParamValueAString", "ParamValueElementId", "NamedParam", "ForgeTypeId", "FormatOptions", "AUnits",
-                "Connector", "ConnectorId", "SegmentConnectorCalculation", "MEPFamilyConnectorCalculationHvac",
+                "CompoundStructureLayer", "Connector", "ConnectorId", "SegmentConnectorCalculation", "MEPFamilyConnectorCalculationHvac",
                 "MEPFamilyConnectorCalculationPiping", "MEPFamilyConnectorCalculationElectrical"]);
     }
 
@@ -96,6 +104,12 @@ internal sealed class WideNativeParams
     private string? KeyOf(SchemaClass declaring, SchemaField field)
     {
         if (field.Type is 9 or 13) return null;
+        if (declaring.Name == "HostObjAttr" && field.Name == "m_pCompoundStructure") return HostLayerPointer;
+        if (declaring.Name == "CompoundStructure" && field.Name == "m_layers") return HostLayerArray;
+        if ((declaring.Name, field.Name) == ("TilePatternType", "m_oTilePattern")) return TilePatternPointer;
+        if ((declaring.Name, field.Name) == ("TilePattern", "m_revitPatternId")) return TilePatternId;
+        if ((declaring.Name, field.Name) == ("TilePattern", "m_name")) return TilePatternName;
+        if ((declaring.Name, field.Name) == ("Sketch", "m_absorbedCurves")) return SketchAbsorbedCurves;
         // The Revit 2022 rule that reads the Material parameter of a wall sweep type from its render style does not hold for every
         // type of a Revit 2025 file (Revit prints "None" for some with the same field set), so the field is not validated
         if (declaring.Name == "Symbol" && field.Name == "m_renderStyleId") return null;
@@ -111,14 +125,15 @@ internal sealed class WideNativeParams
         // ElementBuilder.ApplySerializedRailingData reads bare as the shipped 2022 walk stores it
         if (declaring.Name == "BaseRailingAttr" && field.Name == "m_topRailHeight") return RailTopHeightKey;
         int r22 = _toR22.GetValueOrDefault(declaring.Id);
-        bool keyed = r22 != 0 && _r22[r22].Fields.Any(f => f.Name == field.Name)
-            && _bases.Contains(r22.ToString(CultureInfo.InvariantCulture) + ":" + field.Name);
+        string key = r22.ToString(CultureInfo.InvariantCulture) + ":" + field.Name;
+        if (Revit2027ApiValues.RootFields.Contains(key)) return key;
+        bool keyed = r22 != 0 && _r22[r22].Fields.Any(f => f.Name == field.Name) && _bases.Contains(key);
         bool rootName = TfBlockDeserializer.CapturedFieldNames.Contains(field.Name);
         bool name = field.Type == 8 && _nameFields.Contains(declaring.Name + "." + field.Name);
-        if (keyed || rootName || name) return r22.ToString(CultureInfo.InvariantCulture) + ":" + field.Name;
+        if (keyed || rootName || name) return key;
         // the origin of the plane a datum plane (a Level) stands on, read by LevelElevation
         if (declaring.Name == "Plane" && field.Name == "m_origin") return PlaneOriginKey;
-        // the straight drive curve of an MEP curve (AddMepCurveLine)
+        // the straight drive curve (AddDriveLine)
         if ((declaring.Name, field.Name) is ("GLine", "m_origin" or "m_dirVec") or ("GCurve", "m_endParams"))
             return LineKeyPrefix + field.Name;
         // the nodes of the Hermite spline that drives a flexible duct or pipe (AddFlexCurveNodes)
@@ -128,6 +143,34 @@ internal sealed class WideNativeParams
         if (declaring.Name == "AllProjectPhases" && field.Name == "m_phaseIds") return WideBlockWalker.AllItemsKeyPrefix + "phases";
         if (declaring.Name == "RoomElem" && field.Name == "m_phaseId") return RoomPhaseKey;
         return SystemDiscriminatorFields.Contains(field.Name) ? DiscriminatorKey : null;
+    }
+
+    /// <summary>Ordered layers from the unique CompoundStructure owned by the exact host type root.</summary>
+    internal List<CompoundLayer>? HostTypeLayers(WideBlockWalker.Walk walk, int rootClassId)
+    {
+        if (!walk.Exact || !_walker.IsA(rootClassId, "HostObjAttr")
+            || walk.Captures.Where(c => c.AtRoot && c.Key == HostLayerPointer && c.Kind == WideBlockWalker.CaptureKind.PointerClass)
+                .Take(2).ToArray() is not [{ Integer: > 0 and <= ushort.MaxValue } pointer])
+            return null;
+
+        int rootQueueSize = walk.QueueCountAtStart.FirstOrDefault();
+        if (Enumerable.Range(0, rootQueueSize).Where(i => walk.Queue[i] == pointer.Integer).Take(2).ToArray() is not [int index]
+            || _walker.Class(walk.Queue[index])?.Name != "CompoundStructure"
+            || walk.Captures.Where(c => c.QueueIndex == index && c.Key == HostLayerArray + "#").Take(2).ToArray() is not [{ Integer: > 0 } count])
+            return null;
+
+        var layers = new List<CompoundLayer>();
+        foreach (var record in walk.Records)
+        {
+            if (record.QueueIndex != index || _walker.Class(record.ClassId)?.Name != "CompoundStructureLayer") continue;
+            var values = record.Values;
+            if (values.GetValueOrDefault("m_layerWidth") is not double width || !double.IsFinite(width) || width < 0
+                || values.GetValueOrDefault("m_layerFunction") is not long function || function is < int.MinValue or > int.MaxValue
+                || values.GetValueOrDefault("m_materialId") is not long material || material is < int.MinValue or > int.MaxValue)
+                return null;
+            layers.Add(new() { ThicknessFt = width, Function = (int)function, MaterialId = (int)material, LayerIndex = layers.Count });
+        }
+        return layers.Count == count.Integer ? layers : null;
     }
 
     /// <summary>The own name of the element: the first non-empty text at the first <see cref="NameFields"/> field the walk reached.</summary>
@@ -205,7 +248,8 @@ internal sealed class WideNativeParams
             int colon = c.Key.IndexOf(':');
             string name = c.Key[(colon + 1)..];
             string key = c.Key;
-            bool keyed = !c.Key.StartsWith("0:", StringComparison.Ordinal) && _bases.Contains(c.Key.Split('@', '#')[0]);
+            bool keyed = !c.Key.StartsWith("0:", StringComparison.Ordinal) && _bases.Contains(c.Key.Split('@', '#')[0])
+                && (c.AtRoot || !Revit2027ApiValues.RootFields.Contains(c.Key));
             bool bare = (c.AtRoot || c.Key == "0:m_docAccess") && TfBlockDeserializer.CapturedFieldNames.Contains(name.Split('@', '#')[0]);
             if (c.Kind == WideBlockWalker.CaptureKind.PointerClass)
             {
@@ -281,8 +325,20 @@ internal sealed class WideNativeParams
         }
 
         AddConnectorRecords(np, walk);
-        AddMepCurveLine(np, walk, rootClassId);
+        AddDriveLine(np, walk, rootClassId);
         AddFlexCurveNodes(np, walk, rootClassId);
+        if (rootClassId >= 0 && _walker.Class(rootClassId)?.Name == "TilePatternType") ReadTilePatternName(np, walk);
+        if (rootClassId >= 0 && _walker.Class(rootClassId)?.Name == "VarSketch" && ReadSketchLineArea(walk) is double area)
+            np.DoubleFields[SketchLineArea] = area;
+        if (walk.Exact && rootClassId >= 0 && _walker.Class(rootClassId)?.Name == "Roof")
+        {
+            var extrusions = Enumerable.Range(0, walk.Queue.Count)
+                .Where(slot => _walker.Class(walk.Queue[slot])?.Name == "ExtrusionGStep").Take(2).ToArray();
+            if (extrusions is [var step])
+                np.RoofExtrusionFaceTags = walk.Captures.Where(c => c.QueueIndex == step && c.DeclaringClass == "FaceHistEntry"
+                    && c.Field == "m_id" && c.Kind == WideBlockWalker.CaptureKind.Integer && c.Integer is >= 0 and <= int.MaxValue)
+                    .Select(c => (int)c.Integer).ToHashSet();
+        }
 
         // cell classes: what the CellList object queued
         for (int qi = 0; qi < walk.QueueEnd.Count; qi++)
@@ -296,17 +352,38 @@ internal sealed class WideNativeParams
         return np;
     }
 
-    /// <summary>The straight drive curve of a duct, pipe, conduit or cable tray (the GLine its CurveDriver queued) under the keys the
+    private void ReadTilePatternName(TfBlockDeserializer.NativeParams np, WideBlockWalker.Walk walk)
+    {
+        if (!walk.Exact || walk.Captures.Where(c => c.AtRoot && c.Key == TilePatternPointer
+            && c.Kind == WideBlockWalker.CaptureKind.PointerClass).Take(2).ToArray() is not [{ Integer: > 0 } pointer]) return;
+        int rootQueueSize = walk.QueueCountAtStart.FirstOrDefault();
+        if (Enumerable.Range(0, rootQueueSize).Where(i => walk.Queue[i] == pointer.Integer).Take(2).ToArray() is not [int index]
+            || !_walker.IsA(walk.Queue[index], "TilePattern")) return;
+        if (walk.Captures.Where(c => c.QueueIndex == index && c.Key == TilePatternName && c.Kind == WideBlockWalker.CaptureKind.Text)
+            .Take(2).ToArray() is not [{ Text: { Length: > 0 } name }]) return;
+        if (walk.Captures.Where(c => c.QueueIndex == index && c.Key == TilePatternId && c.Kind == WideBlockWalker.CaptureKind.Integer)
+            .Take(2).ToArray() is not [{ Integer: var pattern }]) return;
+        np.StringFields[TilePatternName] = (pattern, name) switch
+        {
+            (0, "<No Pattern>") => "_No Pattern",
+            (2, "Triangle") or (7, "Triangle Checkerboard") or (10, "Triangle Step") => name + " (bent)",
+            _ => name,
+        };
+    }
+
+    /// <summary>The straight drive curve of a wall, duct, pipe, conduit or cable tray (the GLine its CurveDriver queued) under the keys the
     /// Revit 2022 walk gives it ("87:m_pCrv.origin@i", ".dirVec@i", ".endParams@i"), which ElementBuilder.ApplyMepCurveGeometry reads for
     /// the length of the element. Nothing is written when the driver queued no GLine, more than one, or one with a value missing
     /// (an arc or a spline driver).</summary>
-    private void AddMepCurveLine(TfBlockDeserializer.NativeParams np, WideBlockWalker.Walk walk, int rootClassId)
+    private void AddDriveLine(TfBlockDeserializer.NativeParams np, WideBlockWalker.Walk walk, int rootClassId)
     {
-        if (rootClassId < 0 || R22Id(rootClassId) is not (3148 or 3210 or 3134 or 598)) return;
+        if (rootClassId < 0 || R22Id(rootClassId) is not (3148 or 3210 or 3134 or 598 or 3524)) return;
+        bool wall = R22Id(rootClassId) == 3524;
         int line = -1;
         for (int owner = 0; owner < walk.QueueEnd.Count; owner++)
         {
             if (!_walker.IsA(walk.Queue[owner], "CurveDriver")) continue;
+            if (wall && (owner >= walk.QueueCountAtStart[0] || _walker.Class(walk.Queue[owner])?.Name != "VWallDriver")) continue;
             for (int child = walk.QueueCountAtStart[owner]; child < walk.QueueEnd[owner]; child++)
             {
                 if (_walker.Class(walk.Queue[child])?.Name != "GLine") continue;

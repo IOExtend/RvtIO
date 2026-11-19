@@ -17,6 +17,10 @@ public class NativeTypePointersTests
     [InlineData(3681, "3681:m_typeId")]            // stairs
     [InlineData(485, "485:m_stairsRailingAttrId")] // railing
     [InlineData(3475, "3475:m_symbolId")]          // room tag
+    [InlineData(527, "527:m_symbolId")]            // independent tag
+    [InlineData(804, "804:m_typeId")]              // continuous footing
+    [InlineData(3111, "3111:m_stairsAttrId")]      // stairs in the wide schema
+    [InlineData(3989, "823:m_typeId")]             // continuous rail type
     public void TypeIdIsTheFieldOfTheRootClass(ushort rootClass, string key)
         => Assert.Equal(1234, NativeTypePointers.Of(rootClass, With(key, 1234)));
 

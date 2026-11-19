@@ -27,7 +27,8 @@ internal static partial class GRepParserV2
     private static List<GeometryNode>? BuildNodes(Cur c, Dictionary<uint, SurfaceRec> surfaces, HashSet<uint> bodyFaces,
         IEnumerable<uint> inactiveBodyFaces, Dictionary<uint, List<int>> loopsByFace,
         Dictionary<uint, (int Node, int Style)> nodeByFace, Dictionary<int, long> nodeOrders,
-        List<(int Node, int Style, int RenderStyleId)>? displayOnlyNodes = null, List<MeshNodeMeasure>? nodeMeasures = null)
+        List<(int Node, int Style, int RenderStyleId)>? displayOnlyNodes = null, List<MeshNodeMeasure>? nodeMeasures = null,
+        bool measureSourceNodes = false)
     {
         var edges = EdgesByHandle(c);
         MeshMarkFreeformEdges(edges, surfaces);
@@ -45,10 +46,15 @@ internal static partial class GRepParserV2
             bool curved = false, usable = true;
             // The surface integrals of the node. A closed node whose faces point into it (negative signed volume, a cutting body) is not a
             // solid the exporter takes: its measure keeps the negative volume, which the quantities read as "not taken"; its geometry is exported as ever.
-            var measured = MeasureAnalyticSolid(c, group, surfaces, loopsByFace, edges);
+            var measured = MeasureAnalyticSolid(c, group, surfaces, loopsByFace, edges, measureSourceNodes);
+            if (measured == null && measureSourceNodes && closedNodes.Contains(group.Key))
+                measured = MeasureEllipticalExtrusion(c, group, surfaces, loopsByFace, edges, volumeOnly: false);
             if (nodeMeasures != null && group.Key > 0 && measured is { } integrals
                 && (integrals.Volume > 0 || integrals.Volume < 0 && !c.IncludeNonVisible && closedNodes.Contains(group.Key)))
-                nodeMeasures.Add(new MeshNodeMeasure(group.Key, integrals.Area, integrals.Volume));
+                nodeMeasures.Add(new MeshNodeMeasure(group.Key, integrals.Area, integrals.Volume)
+                {
+                    SourceFaces = measureSourceNodes ? group.ToHashSet() : null,
+                });
             if (MeshNodeLog)
                 DiagnosticSink.WriteLine($"[meshnode] eid={c.ElementId} node={group.Key} active {string.Join(",", group.GroupBy(h => surfaces.TryGetValue(h, out var sx) ? sx.Kind.ToString() : "none").Select(g => $"{g.Key}:{g.Count()}"))}"
                     + $" inactive {(inactiveByNode.TryGetValue(group.Key, out var inx) ? string.Join(",", inx.GroupBy(h => c.DirectSurfaceByFace.TryGetValue(h, out var sy) ? sy.Kind.ToString() : "none").Select(g => $"{g.Key}:{g.Count()}")) : "-")}");
@@ -182,7 +188,10 @@ internal static partial class GRepParserV2
 
 /// <summary>The surface integrals of a Geometry node (square feet, cubic feet): its area and its signed volume. A negative volume is that of a closed
 /// node whose faces point into it; the exporter takes no solid from it.</summary>
-internal sealed record MeshNodeMeasure(int Node, double Area, double Volume);
+internal sealed record MeshNodeMeasure(int Node, double Area, double Volume)
+{
+    internal IReadOnlySet<uint>? SourceFaces { get; init; }
+}
 
 /// <summary>
 /// One Geometry node written as a triangle set: its faces in the terms of the Revit face

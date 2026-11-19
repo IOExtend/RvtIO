@@ -152,7 +152,7 @@ public class SchemaReleaseTests
         finally { File.Delete(path); }
     }
 
-    private static void WriteSyntheticFile(string path, bool wide, int marker, int? saved)
+    internal static void WriteSyntheticFile(string path, bool wide, int marker, int? saved)
     {
         using var root = RootStorage.Create(path, OpenMcdf.Version.V3);
         using var formats = root.CreateStorage("Formats").CreateStream("Latest");

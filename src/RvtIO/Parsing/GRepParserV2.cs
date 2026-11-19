@@ -785,22 +785,32 @@ internal static partial class GRepParserV2
         }
     }
 
+    internal enum BodyMeasure { None, VisibleVolume, RawBodies, DirectionalRawSurface }
+
     /// <summary>
     /// Decodes a GRep block at the Fine detail level, and also at the Coarse level when the block
     /// holds detail-level alternatives that differ (<see cref="GRepData.Coarse"/>).
     /// </summary>
     /// <param name="nativeWallBody">Use native Low edge sampling only after confirming a unique own wall root and GRep.</param>
-    public static GRepData? Parse(byte[] d, int blockStart, uint dataSize, bool nativeWallBody = false)
+    public static GRepData? Parse(byte[] d, int blockStart, uint dataSize, bool nativeWallBody = false, bool requireCompleteWalk = false,
+        bool measureSourceNodes = false, bool measureLighting = false, bool measureFills = false, BodyMeasure bodyMeasure = BodyMeasure.None)
     {
-        var fine = ParseCore(d, blockStart, dataSize, nativeWallBody);
+        var fine = ParseCore(d, blockStart, dataSize, nativeWallBody, requireCompleteWalk: requireCompleteWalk, measureSourceNodes: measureSourceNodes,
+            measureLighting: measureLighting, measureFills: measureFills, bodyMeasure: bodyMeasure);
         if (fine is not { HasDetailLevelAlternatives: true }) return fine;
         try
         {
             t_detailLevel = CoarseDetailLevel;
-            var coarse = ParseCore(d, blockStart, dataSize, nativeWallBody) ?? new GRepData();
+            var coarse = ParseCore(d, blockStart, dataSize, nativeWallBody, requireCompleteWalk: requireCompleteWalk, measureSourceNodes: measureSourceNodes,
+                measureLighting: measureLighting, measureFills: measureFills, bodyMeasure: bodyMeasure);
+            if (coarse == null && requireCompleteWalk) return null;
+            coarse ??= new GRepData();
             if (!IsSameDetailLevelGeometry(fine, coarse)) fine.Coarse = coarse;
             t_detailLevel = 2;
-            var medium = ParseCore(d, blockStart, dataSize, nativeWallBody) ?? new GRepData();
+            var medium = ParseCore(d, blockStart, dataSize, nativeWallBody, requireCompleteWalk: requireCompleteWalk, measureSourceNodes: measureSourceNodes,
+                measureLighting: measureLighting, measureFills: measureFills, bodyMeasure: bodyMeasure);
+            if (medium == null && requireCompleteWalk) return null;
+            medium ??= new GRepData();
             if (!IsSameDetailLevelGeometry(fine, medium)) fine.Medium = medium;
         }
         finally { t_detailLevel = 0; }
@@ -822,13 +832,19 @@ internal static partial class GRepParserV2
     /// Coarse level need not be kept.
     /// </summary>
     internal static bool IsSameDetailLevelGeometry(GRepData fine, GRepData coarse) =>
-        fine.Faces.Count == coarse.Faces.Count
+        fine.LightingBodyMeasures == coarse.LightingBodyMeasures
+        && fine.SourceBodyMeasures == coarse.SourceBodyMeasures && fine.SourceCapAreas == coarse.SourceCapAreas
+        && fine.TrimmedBodyMeasures == coarse.TrimmedBodyMeasures
+        && fine.FilledArea == coarse.FilledArea
+        && fine.Faces.Count == coarse.Faces.Count
         && fine.Faces.Zip(coarse.Faces).All(pair => SameVertices(pair.First.Vertices, pair.Second.Vertices))
         && fine.Instances.Count == coarse.Instances.Count
         && fine.Instances.Zip(coarse.Instances).All(pair => pair.First.SymbolElemId == pair.Second.SymbolElemId
             && pair.First.Transform.SequenceEqual(pair.Second.Transform));
 
-    private static GRepData? ParseCore(byte[] d, int blockStart, uint dataSize, bool nativeWallBody, bool includeNonVisible = false)
+    private static GRepData? ParseCore(byte[] d, int blockStart, uint dataSize, bool nativeWallBody, bool includeNonVisible = false,
+        bool requireCompleteWalk = false, bool measureSourceNodes = false, bool measureLighting = false, bool measureFills = false,
+        BodyMeasure bodyMeasure = BodyMeasure.None)
     {
         int payloadStart = blockStart + 14;
         int payloadEnd = (int)Math.Min((long)blockStart + 16 + dataSize, d.Length);
@@ -871,6 +887,7 @@ internal static partial class GRepParserV2
                 try { WalkQueueItem(c, qi); }
                 catch (DecodeStop)
                 {
+                    if (requireCompleteWalk) return null;
                     if (dbg)
                     {
                         var failed = qi < c.Queue.Count ? c.Queue[qi] : default;
@@ -893,8 +910,10 @@ internal static partial class GRepParserV2
                 }
             }
         }
-        catch (DecodeStop) { if (dbg) DiagnosticSink.WriteLine($"  V2 stop at pos={c.Pos}/{c.End} faces={c.FaceCount} edges={c.Edges.Count} queue={c.Queue.Count}"); }
-        catch (Exception ex) { if (dbg) DiagnosticSink.WriteLine($"  V2 exc {ex.GetType().Name}: {ex.Message} at pos={c.Pos} faces={c.FaceCount} edges={c.Edges.Count}"); }
+        catch (DecodeStop) { if (requireCompleteWalk) return null; if (dbg) DiagnosticSink.WriteLine($"  V2 stop at pos={c.Pos}/{c.End} faces={c.FaceCount} edges={c.Edges.Count} queue={c.Queue.Count}"); }
+        catch (Exception ex) { if (requireCompleteWalk) return null; if (dbg) DiagnosticSink.WriteLine($"  V2 exc {ex.GetType().Name}: {ex.Message} at pos={c.Pos} faces={c.FaceCount} edges={c.Edges.Count}"); }
+
+        if (requireCompleteWalk && c.Pos != c.End) return null;
 
         // Grammar-first harvest of a large unwalked tail: post-gap objects belong to queue entries
         // whose parents were never walked (never enqueued) - the queue can't reach them, but the
@@ -1001,10 +1020,12 @@ internal static partial class GRepParserV2
                 }
             }
         }
-        var built = BuildGeometry(c);
+        var built = BuildGeometry(c, requireCompleteWalk, measureSourceNodes, measureLighting, measureFills, bodyMeasure);
         if (built != null)
         {
             built.QueueClassCounts = c.Queue.GroupBy(item => item.Cls).ToDictionary(group => group.Key, group => group.Count());
+            if (measureLighting && !built.QueueClassCounts.ContainsKey(GFaceClass)) built.LightingBodyMeasures = (0, 0, 0);
+            if (bodyMeasure != BodyMeasure.None && !built.QueueClassCounts.ContainsKey(GFaceClass)) built.SourceBodyMeasures = (0, 0, 0);
             built.HasDetailLevelAlternatives = c.SawDetailCondition;
             built.RootBoundingBox = ValidBox(c.RootBoundingBox) ? c.RootBoundingBox : null;
         }
@@ -2362,14 +2383,15 @@ internal static partial class GRepParserV2
         && box[0] <= box[3] && box[1] <= box[4] && box[2] <= box[5];
 
 
-    private static GRepData? BuildGeometry(Cur c)
+    private static GRepData? BuildGeometry(Cur c, bool requireCompleteWalk = false, bool measureSourceNodes = false, bool measureLighting = false,
+        bool measureFills = false, BodyMeasure bodyMeasure = BodyMeasure.None)
     {
         t_coarseTessellation = false;
         int enclosingUntriangulated = t_untriangulatedFaces;
         t_untriangulatedFaces = 0;
         try
         {
-            var geometry = BuildGeometryCore(c);
+            var geometry = BuildGeometryCore(c, requireCompleteWalk, measureSourceNodes, measureLighting, measureFills, bodyMeasure);
             if (geometry != null) geometry.UntriangulatedFaces = t_untriangulatedFaces;
             return geometry;
         }
@@ -2380,7 +2402,8 @@ internal static partial class GRepParserV2
         }
     }
 
-    private static GRepData? BuildGeometryCore(Cur c)
+    private static GRepData? BuildGeometryCore(Cur c, bool requireCompleteWalk, bool measureSourceNodes, bool measureLighting, bool measureFills,
+        BodyMeasure bodyMeasure)
     {
         if (c.Edges.Count == 0 || (c.FaceOrder.Count == 0 && c.HarvestSurf.Count == 0))
             return PolyMeshGeometry(c) ?? (c.Instances.Count > 0 ? InstanceGeometry(c) : null);
@@ -2684,6 +2707,7 @@ internal static partial class GRepParserV2
         // faces that only the display-surface bit keeps out of the body (see
         // GRepData.DisplayOnlyNodes)
         var displayFaceHandles = new HashSet<uint>();
+        var lightingFaceHandles = measureLighting || bodyMeasure == BodyMeasure.DirectionalRawSurface ? new HashSet<uint>() : null;
         var regionFaces = new HashSet<uint>();
         var walkedFaceHandles = c.FaceOrder.ToHashSet();
         var complexCutGeometryIndices = c.RootClass == 1829
@@ -2727,11 +2751,29 @@ internal static partial class GRepParserV2
             if (body) bodyFaceHandles.Add((uint)item.V);
             else if (IsPhysicalModelBranch(c, faceQueueIndex, allowDisplaySurface: true))
                 displayFaceHandles.Add((uint)item.V);
+            if (lightingFaceHandles != null && (body || IsPhysicalModelBranch(c, faceQueueIndex, forLightingQuantity: true)))
+                lightingFaceHandles.Add((uint)item.V);
         }
         var inactiveBodyFaceHandles = bodyFaceHandles.Where(deadFaces.Contains).ToArray();
         bodyFaceHandles.ExceptWith(deadFaces);
         displayFaceHandles.ExceptWith(deadFaces);
         var loopsByFace = c.ExactPlanarSpaceBoundary && !c.CurvedSpaceBoundary ? new Dictionary<uint, List<int>>() : CompleteFaceLoops(c);
+        if (bodyMeasure != BodyMeasure.None)
+        {
+            var selected = lightingFaceHandles ?? bodyFaceHandles;
+            if (lightingFaceHandles == null)
+            {
+                var nodes = ResolveGeometryNodes(c.Queue, c.QueueLinks, c.ObjectGInfo);
+                selected.RemoveWhere(face => nodes.TryGetValue(face, out var node) && node.Node < 0);
+            }
+            else selected.ExceptWith(deadFaces);
+            gd.SourceBodyMeasures = selected.Count == 0 ? (0, 0, 0)
+                : MeasureClosedSourceBodies(c, selected, handleToSurf, loopsByFace,
+                    volumeOnly: bodyMeasure == BodyMeasure.VisibleVolume, rawCoedges: bodyMeasure != BodyMeasure.VisibleVolume);
+            AttachInstances(gd, c, selected.Count != 0);
+            return gd;
+        }
+        if (measureFills) gd.FilledArea = MeasureFilledFaces(c, handleToSurf, loopsByFace);
         // The rings of an exact space boundary come from its segment graph; its serialized loops
         // only name the bounds of the IfcFace Revit writes for each Face (one bound per
         // loop, however many disjoint regions the Face owns).
@@ -2745,6 +2787,15 @@ internal static partial class GRepParserV2
         var chainEdges = new HashSet<uint>();
         if (c.Debug)
             DiagnosticSink.WriteLine($"  V2 eid={c.ElementId} body-selection={bodyFaceHandles.Count}/{c.FaceOrder.Count} faces dead={deadFaces.Count} loop-lists={loopsByFace.Count}");
+        if (lightingFaceHandles != null)
+        {
+            lightingFaceHandles.ExceptWith(deadFaces);
+            gd.LightingBodyMeasures = lightingFaceHandles.Count == 0 ? (0, 0, 0)
+                : MeasureClosedSourceBodies(c, lightingFaceHandles, handleToSurf, loopsByFace);
+            // A directional quantity with no nested instances needs only the source integral.
+            if (gd.LightingBodyMeasures.HasValue && c.Instances.Count == 0 && !c.ExactPlanarSpaceBoundary)
+                return gd;
+        }
 
         // Revit's solid is a Geometry node, whatever number of disjoint shells it holds,
         // and a node it does not take is marked with a negative id (the faces stay in the geometry
@@ -2786,7 +2837,8 @@ internal static partial class GRepParserV2
                 : displayFaceHandles.Where(handle => geometryNodeByFace.TryGetValue(handle, out var owner) && displayNodeSet.Contains(owner.Node)).ToHashSet();
             var nodeMeasures = new List<MeshNodeMeasure>();
             gd.MeshNodes = BuildNodes(c, handleToSurf, displayFaces.Count > 0 ? bodyFaceHandles.Concat(displayFaces).ToHashSet() : bodyFaceHandles,
-                inactiveBodyFaceHandles, loopsByFace, geometryNodeByFace, nodeOrders, displayFaces.Count > 0 ? displayOnlyNodes : null, nodeMeasures);
+                inactiveBodyFaceHandles, loopsByFace, geometryNodeByFace, nodeOrders, displayFaces.Count > 0 ? displayOnlyNodes : null, nodeMeasures,
+                measureSourceNodes: measureSourceNodes);
             if (nodeMeasures.Count > 0) gd.NodeMeasures = nodeMeasures;
         }
         if (displayOnlyNodes.Count > 0) gd.DisplayOnlyNodes = displayOnlyNodes;
@@ -2827,12 +2879,14 @@ internal static partial class GRepParserV2
             }
             if (!ReferenceEquals(boundedFace, face)) rejectedFaceHandles.Add(handle);
             var (faceNode, faceStyle) = geometryNodeByFace.GetValueOrDefault(handle, (0, -1));
+            bool hasFaceGInfo = c.ObjectGInfo.TryGetValue((int)handle, out var faceGInfo);
             face = boundedFace with
             {
                 SourceFace = handle, GeometryNode = faceNode,
                 NodeOrder = faceNode != 0 ? nodeOrders.GetValueOrDefault(Math.Abs(faceNode) - 1) : 0,
                 GeometryStyle = faceStyle,
-                GInfoFlags = c.ObjectGInfo.TryGetValue((int)handle, out var faceGInfo) ? faceGInfo.Flags : null,
+                GInfoFlags = hasFaceGInfo ? faceGInfo.Flags : null,
+                GInfoTag = hasFaceGInfo ? faceGInfo.Tag : null,
                 MeshEdgeBounds = meshEdgeBounds.GetValueOrDefault(handle),
                 // (the circular Edges of the loops the face was built from; the others are
                 // leftovers of an earlier state of the join)
@@ -3135,7 +3189,16 @@ internal static partial class GRepParserV2
             }
         }
 
-        if (gd.Faces.Count == 0)
+        if (requireCompleteWalk && gd.LightingBodyMeasures == null && !bodyFaceHandles.SetEquals(faceIndicesByHandle.Keys))
+        {
+            // The display bounds can clip a complete body, including the ends of circular piles.
+            if (!measureSourceNodes || MeasureClosedSourceBodies(c, bodyFaceHandles, handleToSurf, loopsByFace) is not { } measures) return null;
+            gd.SourceBodyMeasures = measures;
+            gd.SourceCapAreas = MeasureHorizontalCaps(c, bodyFaceHandles, handleToSurf, loopsByFace);
+        }
+
+        if (gd.Faces.Count == 0 && gd.LightingBodyMeasures == null && gd.SourceBodyMeasures == null
+            && !(requireCompleteWalk && bodyFaceHandles.Count == 0))
             return PolyMeshGeometry(c) ?? (c.Instances.Count > 0 ? InstanceGeometry(c) : null);
 
         if (c.ExactPlanarSpaceBoundary)
@@ -3232,13 +3295,21 @@ internal static partial class GRepParserV2
                         && !regionFaces.Contains(edge.FaceA) && !regionFaces.Contains(edge.FaceB)
                         && !chainFaces.Contains(edge.FaceA) && !chainFaces.Contains(edge.FaceB))
                 .Select(edge => (edge.FaceA, edge.FaceB))));
+        if (measureSourceNodes && gd.Solids.Count > 1)
+        {
+            // The saved framing cut keeps the trimmed body's faces and the detached pieces in separate shells.
+            var keptFaces = bodyFaceHandles.Where(face => (c.ObjectGInfo.GetValueOrDefault((int)face).Flags & 0x00080000u) != 0).ToHashSet();
+            if (keptFaces.Count > 0 && keptFaces.Count < bodyFaceHandles.Count
+                && gd.Solids.Any(solid => solid.IsClosed && keptFaces.SetEquals(solid.FaceIndices.Select(index => gd.Faces[index].SourceFace))))
+                gd.TrimmedBodyMeasures = MeasureAnalyticSolid(c, c.FaceOrder.Where(keptFaces.Contains), handleToSurf, loopsByFace, EdgesByHandle(c), true);
+        }
 
         int polyMeshFaceCount = AppendPolyMeshes(gd, c);
         gd.BoundingBox = authoritativeBounds is { Length: 6 }
             ? (double[])authoritativeBounds.Clone()
             : GeometryBounds(gd.Faces) ?? new[] { minx, miny, minz, maxx, maxy, maxz };
         bool hasCompleteResolvedBody = bodyFaceHandles.Count > 0
-            && bodyFaceHandles.All(faceIndicesByHandle.ContainsKey)
+            && (gd.SourceBodyMeasures.HasValue || bodyFaceHandles.All(faceIndicesByHandle.ContainsKey))
             && polyMeshFaceCount == 0;
         AttachInstances(gd, c, hasCompleteResolvedBody);
         System.Threading.Interlocked.Increment(ref DbgWorldElems);
@@ -3508,7 +3579,7 @@ internal static partial class GRepParserV2
         => exactPlanarSpaceBoundary && nodeClass == 1589 || nodeClass == 2038 ? flags & ~0x40000000u : flags;
 
     /// <summary>Evaluate the serialized ownership path of a drawable GNode.</summary>
-    private static bool IsPhysicalModelBranch(Cur c, int nodeQueueIndex, bool allowDisplaySurface = false)
+    private static bool IsPhysicalModelBranch(Cur c, int nodeQueueIndex, bool allowDisplaySurface = false, bool forLightingQuantity = false)
     {
         // (a display surface is taken only below filters whose every condition is one this decoder
         // evaluates)
@@ -3519,7 +3590,7 @@ internal static partial class GRepParserV2
         var node = c.Queue[nodeQueueIndex];
         if (c.ObjectGInfo.TryGetValue(node.V, out var nodeInfo)
             && !IsPhysicalBodySurface(NodeSurfaceFlags(node.Cls, c.ExactPlanarSpaceBoundary, nodeInfo.Flags)
-                & (allowDisplaySurface ? ~DisplaySurfaceBit : ~0u)))
+                & (allowDisplaySurface ? ~DisplaySurfaceBit : ~0u) & (forLightingQuantity ? ~0x40000000u : ~0u)))
             return false;
 
         bool body = true;
@@ -3537,7 +3608,7 @@ internal static partial class GRepParserV2
                 if (c.ObjectGInfo.TryGetValue(ancestorItem.V, out var geometryInfo))
                 {
                     graphicalGeometryState = (geometryInfo.Flags & 0x000000E0u) != 0;
-                    body = IsPhysicalBodyGeometry(geometryInfo.Flags, c.IncludeNonVisible);
+                    body = forLightingQuantity || IsPhysicalBodyGeometry(geometryInfo.Flags, c.IncludeNonVisible);
                 }
             }
             if (ancestorItem.Cls != 2015) continue;
@@ -3570,8 +3641,8 @@ internal static partial class GRepParserV2
                 && (!c.ObjectGInfo.TryGetValue(
                         c.Queue[instance.OwnerQueueIndex].V, out var instanceInfo)
                     || IsPhysicalBodySurface(instanceInfo.Flags)));
-            body = IsPhysicalBodyGeometryState(
-                    graphicalGeometryState, hasRootMappedSource, conditions)
+            // Lighting quantities include solids from every direction at the selected detail level.
+            body = (forLightingQuantity || IsPhysicalBodyGeometryState(graphicalGeometryState, hasRootMappedSource, conditions))
                 && AllowsFineUncutModelBranch(conditions)
                 && (!allowDisplaySurface || conditions.All(IsEvaluatedModelCondition));
         }
@@ -4205,10 +4276,9 @@ internal static partial class GRepParserV2
                 s.O[2] + radial * (Math.Cos(u) * s.X[2] + Math.Sin(u) * s.Y[2]) + axial * s.Z[2],
             };
         }
-        double[] TrimPoint(double u, double v) => EvaluateTrimBoundaryChord(
-            u, v, samplingEdges, P, worldBoundary);
+        var trimPoint = TrimBoundaryEvaluator(samplingEdges, P, worldBoundary);
         var trimmed = TessellateTrimmedGrid(
-            edges, uSamples, vSamples, TrimPoint, refineV: false);
+            edges, uSamples, vSamples, trimPoint, refineV: false);
         if (trimmed != null)
         {
             foreach (var polygon in trimmed) yield return polygon;
@@ -4310,10 +4380,9 @@ internal static partial class GRepParserV2
                         Math.Max(Math.Abs(arc.R), Math.Abs(arc.RY)));
             }
         }
-        double[] TrimPoint(double u, double v) => EvaluateTrimBoundaryChord(
-            u, v, samplingEdges, Point);
+        var trimPoint = TrimBoundaryEvaluator(samplingEdges, Point);
         var trimmed = TessellateTrimmedGrid(
-            edges, uSamples, vSamples, TrimPoint, refineV: true);
+            edges, uSamples, vSamples, trimPoint, refineV: true);
         if (trimmed != null)
         {
             foreach (var polygon in trimmed) yield return polygon;
@@ -4586,26 +4655,42 @@ internal static partial class GRepParserV2
         return value;
     }
 
-    private static double[] EvaluateTrimBoundaryChord(double u, double v,
+    internal static Func<double, double, double[]> TrimBoundaryEvaluator(
         IReadOnlyList<(double U1, double V1, double U2, double V2)> authoredEdges,
         Func<double, double, double[]> evaluate,
         IReadOnlyList<(double[] First, double[] Second)>? worldBoundary = null)
     {
-        const double machineEpsilon = 2.2204460492503131e-16;
+        double edgeScale = 1.0;
+        foreach (var edge in authoredEdges)
+            edgeScale = Math.Max(edgeScale, MaxAbsIgnoringNaN(edge.U1, edge.V1, edge.U2, edge.V2, 0, 0));
+        return (u, v) => EvaluateTrimBoundaryChord(u, v, authoredEdges, evaluate, worldBoundary, edgeScale);
+    }
+
+    private static double[] EvaluateTrimBoundaryChord(double u, double v,
+        IReadOnlyList<(double U1, double V1, double U2, double V2)> authoredEdges,
+        Func<double, double, double[]> evaluate, IReadOnlyList<(double[] First, double[] Second)>? worldBoundary,
+        double edgeScale)
+    {
+        const double toleranceFactor = 128 * 2.2204460492503131e-16;
+        double scale = Math.Max(edgeScale, Math.Max(Math.Abs(u), Math.Abs(v)));
+        bool useBounds = IsFinite(scale);
+        double maxTolerance = toleranceFactor * scale;
+        double maxDistanceSquared = maxTolerance * maxTolerance;
         int bestEdge = -1;
-        double bestFraction = 0;
         double bestDistanceSquared = double.PositiveInfinity;
         for (int edgeIndex = 0; edgeIndex < authoredEdges.Count; edgeIndex++)
         {
             var edge = authoredEdges[edgeIndex];
             double du = edge.U2 - edge.U1, dv = edge.V2 - edge.V1;
+            if (useBounds && (Outside(u, edge.U1, du, maxDistanceSquared) || Outside(v, edge.V1, dv, maxDistanceSquared)))
+                continue;
             double lengthSquared = du * du + dv * dv;
             if (lengthSquared == 0 || !IsFinite(lengthSquared)) continue;
             double fraction = ((u - edge.U1) * du + (v - edge.V1) * dv)
                 / lengthSquared;
             double parameterScale = Math.Max(1,
                 MaxAbsIgnoringNaN(u, v, edge.U1, edge.V1, edge.U2, edge.V2));
-            double parameterTolerance = 128 * machineEpsilon * parameterScale;
+            double parameterTolerance = toleranceFactor * parameterScale;
             if (fraction < -parameterTolerance || fraction > 1 + parameterTolerance)
                 continue;
             fraction = Math.Clamp(fraction, 0, 1);
@@ -4617,7 +4702,6 @@ internal static partial class GRepParserV2
                 || distanceSquared >= bestDistanceSquared)
                 continue;
             bestEdge = edgeIndex;
-            bestFraction = fraction;
             bestDistanceSquared = distanceSquared;
         }
         if (bestEdge < 0) return evaluate(u, v);
@@ -4627,7 +4711,7 @@ internal static partial class GRepParserV2
         // Orthogonal projection mixes both rounded coordinates; two adjacent clipping cells can
         // then produce fractions separated by one floating-point bit for the same topological
         // point.
-        bestFraction = Math.Abs(boundaryDu) >= Math.Abs(boundaryDv)
+        double bestFraction = Math.Abs(boundaryDu) >= Math.Abs(boundaryDv)
             ? (u - boundary.U1) / boundaryDu
             : (v - boundary.V1) / boundaryDv;
         bestFraction = Math.Clamp(bestFraction, 0, 1);
@@ -4639,6 +4723,14 @@ internal static partial class GRepParserV2
             first[1] + (second[1] - first[1]) * bestFraction,
             first[2] + (second[2] - first[2]) * bestFraction,
         ];
+
+        static bool Outside(double point, double start, double direction, double limitSquared)
+        {
+            // Use the rounded projection endpoints to bound the same arithmetic as the exact test.
+            double end = start + direction;
+            double distance = Math.Max(Math.Min(start, end) - point, point - Math.Max(start, end));
+            return distance > 0 && distance * distance > limitSquared;
+        }
     }
 
 
@@ -5188,6 +5280,7 @@ internal static partial class GRepParserV2
                 {
                     int uTempCount = ClipFlat(buffers.Source, sourceCount, 0, uSamples[uIndex], true, ref buffers.UTemp);
                     int uCount = ClipFlat(buffers.UTemp, uTempCount, 0, uSamples[uIndex + 1], false, ref buffers.UClipped);
+                    if (uCount == 0) continue;
                     int vCellCount = allVCells ? vSamples.Count - 1 : 1;
                     for (int vIndex = 0; vIndex < vCellCount; vIndex++)
                     {
@@ -5499,12 +5592,11 @@ internal static partial class GRepParserV2
                 (1 - v) * p1[2] + v * p2[2],
             };
         }
-        double[] TrimPoint(double u, double v) => EvaluateTrimBoundaryChord(
-            u, v, samplingEdges, Point);
+        var trimPoint = TrimBoundaryEvaluator(samplingEdges, Point);
 
         // Clip the frozen interior grid by the refined trim loop.
         var trimmed = TessellateTrimmedGrid(edges, uSamples,
-            [vMin, vMax], TrimPoint, refineV: false);
+            [vMin, vMax], trimPoint, refineV: false);
         if (trimmed != null)
         {
             foreach (var polygon in trimmed) yield return polygon;
@@ -5516,8 +5608,8 @@ internal static partial class GRepParserV2
             double ua = uSamples[i], ub = uSamples[i + 1];
             var quad = new List<double[]>
             {
-                TrimPoint(ua, vMin), TrimPoint(ub, vMin),
-                TrimPoint(ub, vMax), TrimPoint(ua, vMax),
+                trimPoint(ua, vMin), trimPoint(ub, vMin),
+                trimPoint(ub, vMax), trimPoint(ua, vMax),
             };
             bool ok = true;
             foreach (var q in quad) if (!IsFinite(q[0]) || !IsFinite(q[1]) || !IsFinite(q[2])) { ok = false; break; }
@@ -5609,16 +5701,19 @@ internal static partial class GRepParserV2
         }
 
         var componentByNode = Enumerable.Repeat(-1, points.Count).ToArray();
-        int componentCount = 0;
+        var branchedComponents = new List<bool>();
         for (int seed = 0; seed < points.Count; seed++)
         {
             if (degree[seed] < 2 || componentByNode[seed] >= 0) continue;
+            int component = branchedComponents.Count;
+            bool branched = false;
             var queue = new Queue<int>();
-            componentByNode[seed] = componentCount;
+            componentByNode[seed] = component;
             queue.Enqueue(seed);
             while (queue.Count > 0)
             {
                 int node = queue.Dequeue();
+                branched |= degree[node] > 2;
                 for (int slot = adjacentStart[node]; slot < adjacentStart[node + 1]; slot++)
                 {
                     int edgeIndex = adjacentEdges[slot];
@@ -5626,27 +5721,54 @@ internal static partial class GRepParserV2
                     var edge = graphEdges[edgeIndex];
                     int other = edge.A == node ? edge.B : edge.A;
                     if (componentByNode[other] >= 0) continue;
-                    componentByNode[other] = componentCount;
+                    componentByNode[other] = component;
                     queue.Enqueue(other);
                 }
             }
-            componentCount++;
+            branchedComponents.Add(branched);
         }
+        int componentCount = branchedComponents.Count;
 
         // For every surviving edge, find the shortest alternate path between its ends. Together
-        // they form the smallest cycle containing that edge. Dedup by edge set; on ordinary
-        // degree-2 loops every edge discovers the exact same boundary.
-        var candidates = new List<(List<double[]> Ring, HashSet<int> Edges, double Area, int Component)>();
+        // they form the smallest cycle containing that edge. In a degree-2 component only the
+        // first edge needs a search, and it fixes the original order and direction of the loop.
+        var candidates = new List<(List<double[]> Ring, HashSet<int>? Edges, double Area, int Component)>();
         var seenCycles = new HashSet<string>();
-        var pathPrevNode = new int[points.Count];
-        var pathPrevEdge = new int[points.Count];
+        var visitedSimpleLoops = new bool[componentCount];
+        bool hasBranches = branchedComponents.Contains(true);
+        var pathPrevNode = hasBranches ? new int[points.Count] : [];
+        var pathPrevEdge = hasBranches ? new int[points.Count] : [];
         var pathQueue = new Queue<int>();
         for (int excluded = 0; excluded < graphEdges.Count; excluded++)
         {
             if (!active[excluded]) continue;
             var target = graphEdges[excluded];
+            int component = componentByNode[target.A];
+            if (!branchedComponents[component])
+            {
+                if (visitedSimpleLoops[component]) continue;
+                visitedSimpleLoops[component] = true;
+                var simpleRing = new List<double[]> { points[target.A] };
+                // Follow the unique alternate path, in the same direction as the general search.
+                int previousEdge = excluded, node = target.A;
+                while (node != target.B)
+                {
+                    for (int slot = adjacentStart[node]; slot < adjacentStart[node + 1]; slot++)
+                    {
+                        int nextEdge = adjacentEdges[slot];
+                        if (nextEdge == previousEdge || !active[nextEdge]) continue;
+                        var edge = graphEdges[nextEdge];
+                        node = edge.A == node ? edge.B : edge.A;
+                        simpleRing.Add(points[node]);
+                        previousEdge = nextEdge;
+                        break;
+                    }
+                }
+                double simpleArea = NewellNormalArea(simpleRing).Area;
+                if (simpleArea >= 1e-8) candidates.Add((simpleRing, null, simpleArea, component));
+                continue;
+            }
             Array.Fill(pathPrevNode, -1);
-            Array.Fill(pathPrevEdge, -1);
             pathQueue.Clear();
             pathPrevNode[target.A] = target.A;
             pathQueue.Enqueue(target.A);
@@ -5681,13 +5803,13 @@ internal static partial class GRepParserV2
             if (!seenCycles.Add(cycleKey)) continue;
             var ring = cycleNodes.Select(i => points[i]).ToList();
             double area = NewellNormalArea(ring).Area;
-            if (area >= 1e-8) candidates.Add((ring, cycleEdges, area, componentByNode[target.A]));
+            if (area >= 1e-8) candidates.Add((ring, cycleEdges, area, component));
         }
 
         // Shortest paths can prefer a collinear zero-area shortcut and never expose the real inner
         // cycle (roof reveals are a common example).
         int activeEdgeCount = active.Count(x => x);
-        if (points.Count <= 48 && activeEdgeCount <= 64)
+        if (hasBranches && points.Count <= 48 && activeEdgeCount <= 64)
         {
             int cycleBudget = 4096;
             var visited = new bool[points.Count];
@@ -5728,7 +5850,8 @@ internal static partial class GRepParserV2
 
             for (int start = 0; start < points.Count && cycleBudget > 0; start++)
             {
-                if (componentByNode[start] < 0) continue;
+                int component = componentByNode[start];
+                if (component < 0 || !branchedComponents[component]) continue;
                 visited[start] = true;
                 SearchCycles(start, start, new List<int> { start }, new List<int>());
                 visited[start] = false;
@@ -5767,12 +5890,17 @@ internal static partial class GRepParserV2
         }
         foreach (var component in candidates.GroupBy(c => c.Component).OrderBy(g => g.Key))
         {
+            if (!branchedComponents[component.Key])
+            {
+                result.Add(component.First().Ring);
+                continue;
+            }
             var cycles = component.OrderBy(c => c.Area)
                 .ThenBy(c => ExtentScore(c.Ring))
                 .ThenBy(c => c.Ring.Count).ToList();
             var primary = cycles[0];
             var outerMatch = cycles.Skip(1)
-                .Where(cycle => !cycle.Edges.Overlaps(primary.Edges))
+                .Where(cycle => !cycle.Edges!.Overlaps(primary.Edges!))
                 .Select(cycle =>
                 {
                     bool contains = RingContains(cycle.Ring, primary.Ring, out bool touchesBoundary);
@@ -5794,11 +5922,11 @@ internal static partial class GRepParserV2
             // describes a notch/opening cut and must not become an IfcFaceBound.
             if (!outerMatch.TouchesBoundary) result.Add(primary.Ring);
             var selectedEdges = new HashSet<int>();
-            selectedEdges.UnionWith(outer.Edges);
-            selectedEdges.UnionWith(primary.Edges);
+            selectedEdges.UnionWith(outer.Edges!);
+            selectedEdges.UnionWith(primary.Edges!);
             foreach (var cycle in cycles)
             {
-                if (cycle.Edges.Overlaps(selectedEdges)
+                if (cycle.Edges!.Overlaps(selectedEdges)
                     || !RingContains(outer.Ring, cycle.Ring, out bool touchesBoundary)
                     || touchesBoundary) continue;
                 result.Add(cycle.Ring);

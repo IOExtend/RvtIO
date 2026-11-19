@@ -1189,6 +1189,10 @@ internal static partial class ElementBuilder
             // a file with 64-bit ids: the rest of this method is the Revit 2022 record and stream
             // heuristics. The element is what the file's own tables and the schema-driven block
             // walk give: the header category is exact.
+            if (elem.NativeRootClassName is "Rebar" or "RebarInSystem"
+                && elem.RebarBars is { BarTypeId: > 0 } bars
+                && state.NativeRootClassNames.GetValueOrDefault((uint)bars.BarTypeId) == "RebarBarType")
+                elem.TypeId = bars.BarTypeId;
             if (wideHeaderCategory is int resolvedHeader)
             {
                 elem.CategoryId = resolvedHeader;
@@ -3082,15 +3086,23 @@ internal static partial class ElementBuilder
     private static void ApplyWorksets(RevitFileInfo info, ParsingState? state)
     {
         if (state == null || state.ElemWorksets.Count == 0) return;
+        bool nonWorkshared2027 = state.WideSchema?.Release == 2027 && info.SerializedIsWorkshared == false;
         foreach (var e in info.Elements)
         {
             var existing = e.Parameters.FirstOrDefault(p => p.Id == -1002053);
             if (state.ElemWorksets.TryGetValue((uint)e.Id, out uint ws))
             {
-                // ElemTable workset is authoritative - force-override any stale value.
-                if (existing != null) { existing.Value = (int)ws; existing.StorageType = StorageType.Integer; }
-                else e.Parameters.Add(BipHelpers.MakeBipParam(-1002053, "ELEM_PARTITION_PARAM", StorageType.Integer, (int)ws));
                 e.WorksetId = (int)ws;
+                // In a non-workshared Revit 2027 file, PropertySetElement has a WorksetId but no Workset parameter.
+                if (nonWorkshared2027 && e.NativeRootClassName == "PropertySetElement")
+                {
+                    if (existing != null) e.Parameters.Remove(existing);
+                    continue;
+                }
+                // Revit 2027 reports the default local workset as 0 through WorksetId and -1 through the parameter.
+                int value = nonWorkshared2027 && ws == 0 ? -1 : (int)ws;
+                if (existing != null) { existing.Value = value; existing.StorageType = StorageType.Integer; }
+                else e.Parameters.Add(BipHelpers.MakeBipParam(-1002053, "ELEM_PARTITION_PARAM", StorageType.Integer, value));
             }
             else if (existing is { Value: int pv } && pv < 0)
             {
@@ -6496,6 +6508,7 @@ internal static partial class ElementBuilder
         // Runs LAST: needs WALL_BASE_CONSTRAINT / WALL_HEIGHT_TYPE emitted by the passes above.
         ApplyComputedHeights(rvtInfo, state);
         ApplyBipKeyedStrings(rvtInfo, state);
+        if (state != null) Revit2027ApiValues.Apply(rvtInfo, state, elemByIdLookup);
         ApplyWorksets(rvtInfo, state);
         TraceElement(rvtInfo, "before-fixphase");
         FixUnresolvedPhaseCreated(rvtInfo);
@@ -6802,10 +6815,14 @@ internal static partial class ElementBuilder
             if (e.CategoryId is int c && c != -1 && e.Category != null && !nameByCat.ContainsKey(c))
                 nameByCat[c] = e.Category;
 
+        bool useHeader = state.WideSchema?.Release == 2027 && !state.R22View;
         foreach (var e in info.Elements)
         {
-            if (e.Id < 0 || !state.ElemClassIdx.TryGetValue((uint)e.Id, out var cls)) continue;
-            if (!TfClassRegistry.HighPurityClassCategory.TryGetValue(cls, out int cat)) continue;
+            if (e.Id < 0) continue;
+            int cat;
+            if (useHeader && e.NativeHeaderCategoryId is int header && header != -1) cat = header;
+            else if (!state.ElemClassIdx.TryGetValue((uint)e.Id, out var cls)
+                || !TfClassRegistry.HighPurityClassCategory.TryGetValue(cls, out cat)) continue;
             if (e.CategoryId == cat && (e.Id != 0 || e.Parameters.Any(p => p.Id == -1140362))) continue;
             e.CategoryId = cat;
             if (nameByCat.TryGetValue(cat, out var nm) || BuiltInCategoryNames.Lookup.TryGetValue(cat, out nm)) e.Category = nm;

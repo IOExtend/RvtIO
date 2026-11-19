@@ -192,6 +192,23 @@ public class WideElementRecordsTests
         Assert.Null(WideElementRecords.ParseElemTable(good, FileSchema.Parse(OnlyOther())!));   // schema without the table classes
     }
 
+    [Theory]
+    [InlineData("Rebar", "RebarBarType", 7)]
+    [InlineData("RebarInSystem", "RebarBarType", 7)]
+    [InlineData("Rebar", "Level", -1)]
+    public void WideElementUsesTheDecodedBarTypeWhenItsTargetIsARebarBarType(string root, string target, int expected)
+    {
+        var state = new ParsingState { WideSchema = new FileSchema(new SchemaDocument()) };
+        state.NativeRootClassNames[8] = root;
+        state.NativeRootClassNames[7] = target;
+        state.RebarBars[8] = new RebarBars(7, 0, null, []);
+        var info = new RevitFileInfo();
+
+        ElementBuilder.BuildElemTableElement(8, 0, state, info);
+
+        Assert.Equal(expected, Assert.Single(info.Elements).TypeId);
+    }
+
     private static byte[] OnlyOther()
     {
         var w = new SchemaWriter();
