@@ -127,6 +127,45 @@ public class CliExitCodeTests
         finally { Directory.Delete(directory, recursive: true); }
     }
 
+    [Theory]
+    [InlineData(2147483648L)]
+    [InlineData(4294967305L)]
+    public void AnElementIdOutsideInt32_StopsEveryExportEvenWithExplicitReaderOptions(long id)
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "rvtio-cli-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string rvt = Path.Combine(directory, "input.rvt");
+            string ifc = Path.Combine(directory, "output.ifc");
+            string scene = Path.Combine(directory, "scene.json");
+            string compact = Path.Combine(directory, "compact.json");
+            string full = Path.Combine(directory, "full.json");
+            string report = Path.Combine(directory, "report.json");
+            SchemaReleaseTests.WriteSyntheticFile(rvt, wide: true, marker: 891, saved: 2024, FormatsSchemaTests.Rows(true,
+                (0, 0, 0, 0, -1), (int.MaxValue, int.MaxValue, 1, 0, 0), (id, id, 2, 0, 0)));
+
+            var failure = Assert.Throws<RvtLimitException>(() => new RvtFileReader(new RvtReaderOptions { RaiseLimits = true }).Read(rvt));
+            Assert.Equal(("Global/ElemTable", "element-id-range", (long)int.MaxValue, false),
+                (failure.Hit.Stream, failure.Hit.Limit, failure.Hit.Value, failure.Hit.Raisable));
+            Assert.Contains(FormattableString.Invariant($"Element ID {id}"), failure.Message);
+            Assert.Equal(failure.Hit, Assert.Throws<RvtLimitException>(() => RvtIO.Scene.RvtSceneReader.Read(rvt)).Hit);
+
+            var (exit, error) = RunWithOutput(rvt, "--ifc", ifc, "--scene", scene, "--compact-json", compact, "--full-json", full,
+                "--allow-partial", "--raise-limits", "--report", report);
+            Assert.Equal(RvtExitCodes.LimitExceeded, exit);
+            Assert.Contains("element-id-range", error);
+            Assert.Contains(failure.Message, error);
+            Assert.All(new[] { ifc, scene, compact, full }, output => Assert.False(File.Exists(output)));
+            using var json = JsonDocument.Parse(File.ReadAllText(report));
+            Assert.Equal("failed", json.RootElement.GetProperty("status").GetString());
+            var hit = Assert.Single(json.RootElement.GetProperty("limits").GetProperty("hit").EnumerateArray());
+            Assert.Equal(failure.Hit.Limit, hit.GetProperty("limit").GetString());
+            Assert.Equal(failure.Message, hit.GetProperty("detail").GetString());
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
     [Fact]
     public void AFileWithADamagedMember_ExitsZeroWithoutStrictAndPartialReadCodeWithStrict()
     {

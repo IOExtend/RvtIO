@@ -6,6 +6,11 @@ API between minor releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- Reading an RVT whose element table contains an ID above `Int32.MaxValue` fails with `element-id-range`
+  and reports the offending ID before export.
+
 ## [0.5.1] - 2026-11-19
 
 The optional [RvtIO.Nwc tool](docs/rvt-to-nwc.md) exports Revit project geometry and element properties to NWC

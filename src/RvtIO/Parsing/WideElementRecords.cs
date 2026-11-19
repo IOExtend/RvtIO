@@ -28,7 +28,7 @@ internal static class WideElementRecords
     internal sealed record Result(
         Dictionary<uint, ElemRecHistory> Histories,
         Dictionary<uint, int> OwningElementIds,
-        int SkippedRows);
+        long? UnsupportedId);
 
     /// <summary>Byte width of the element id of this schema (ElemRec.m_id): 4 up to Revit 2023, 8 from Revit 2024; null otherwise.</summary>
     internal static int? IdWidth(FileSchema schema)
@@ -71,25 +71,26 @@ internal static class WideElementRecords
         var histories = new Dictionary<uint, ElemRecHistory>((int)count);
         var owners = new Dictionary<uint, int>((int)count);
         long previous = -1;
-        int skipped = 0;
+        long? unsupportedId = null;
         for (int i = 0; i < count; i++)
         {
             int at = 6 + i * length;
-            ulong id = ReadId(data, at + idAt, width);
-            if (previous >= 0 && (long)id <= previous) return null;
-            previous = (long)id;
-            ulong original = ReadId(data, at + historyAt, width);
-            if (!(ElementIdEncoding.IsSupported(unchecked((uint)id)) || id == 0) || id > uint.MaxValue || original > uint.MaxValue)
+            long id = width == 8 ? BitConverter.ToInt64(data, at + idAt) : BitConverter.ToUInt32(data, at + idAt);
+            if (id <= previous) return null;
+            previous = id;
+            if (id > int.MaxValue)
             {
-                skipped++; // an id beyond the 32-bit model id space is not representable
+                unsupportedId ??= id;
                 continue;
             }
+            ulong original = ReadId(data, at + historyAt, width);
+            if (original > uint.MaxValue) continue;
             histories[(uint)id] = new ElemRecHistory(
                 (uint)original, BitConverter.ToInt32(data, at + historyAt + creationAt));
             long owner = width == 8 ? BitConverter.ToInt64(data, at + ownerAt) : BitConverter.ToInt32(data, at + ownerAt);
             if (owner >= int.MinValue && owner <= int.MaxValue) owners[(uint)id] = (int)owner;
         }
-        return new Result(histories, owners, skipped);
+        return new Result(histories, owners, unsupportedId);
     }
 
     /// <summary>Header category and root class of the elements of the partition streams.</summary>

@@ -53,12 +53,12 @@ public class WideElementRecordsTests
 
     private sealed record Ids(int Identifier, int ElementId, int ElemRec, int ElemTable, int Header, int Element, int Wall, int Other, int Level);
 
-    private static (byte[] Stream, Ids Ids) BuildSchema()
+    private static (byte[] Stream, Ids Ids) BuildSchema(string originalClassName = "OriginalElementId")
     {
         var w = new SchemaWriter();
         int identifier = w.Add("Identifier", 0, Scalar("m_id64", 11));
         int elementId = w.Add("ElementId", 0, Ref("m_id", identifier));
-        int original = w.Add("OriginalElementId", 0, Scalar("m_id64", 11));
+        int original = w.Add(originalClassName, 0, Scalar("m_id64", 11));
         int episode = w.Add("EpisodeId", 0, Scalar("m_id", 4));
         int partition = w.Add("PartitionId", 0, Scalar("m_id", 4));
         int history = w.Add("ElementHistory", 0, Ref("m_originalElementId", original), Ref("m_creationDate", episode),
@@ -176,20 +176,41 @@ public class WideElementRecordsTests
     }
 
     [Fact]
-    public void ParseElemTable_KeepsIdZeroSkipsIdsOutsideTheModelIdSpaceAndRejectsBrokenTables()
+    public void ParseElemTable_KeepsIdZeroReportsTheFirstIdOutsideTheModelRangeAndRejectsBrokenTables()
     {
         var (stream, ids) = BuildSchema();
         var schema = FileSchema.Parse(stream)!;
         var wide = WideElementRecords.ParseElemTable(
-            ElemTable(ids, (0, 0, 0, -1), (5, 0, 5, -1), (9, 0, 0x1_0000_0009UL, -1)), schema)!;
-        Assert.Equal([0u, 5u], wide.Histories.Keys.ToArray());   // id 0 is a real row (ProjectPhase / DimensionStyle)
-        Assert.Equal(1, wide.SkippedRows);
+            ElemTable(ids, (0, 0, 0, -1), (5, 0, int.MaxValue, -1), (9, 0, 0x1_0000_0009UL, -1)), schema)!;
+        Assert.Equal([0u, int.MaxValue], wide.Histories.Keys.ToArray());   // id 0 is a real row (ProjectPhase / DimensionStyle)
+        Assert.Equal(4294967305L, wide.UnsupportedId);
         var good = ElemTable(ids, (5, 0, 5, -1), (6, 0, 6, -1));
         Assert.Null(WideElementRecords.ParseElemTable(ElemTable(ids, (6, 0, 6, -1), (5, 0, 5, -1)), schema));   // not increasing
         Assert.Null(WideElementRecords.ParseElemTable(good[..^30], schema));                                        // truncated
         var wrongClass = (byte[])good.Clone(); wrongClass[0] ^= 1;
         Assert.Null(WideElementRecords.ParseElemTable(wrongClass, schema));
         Assert.Null(WideElementRecords.ParseElemTable(good, FileSchema.Parse(OnlyOther())!));   // schema without the table classes
+    }
+
+    [Fact]
+    public void ElementTableFallbackRejectsAnIdOutsideInt32()
+    {
+        // Only the fallback accepts a schema without an OriginalElementId class by that name.
+        var (stream, ids) = BuildSchema("StoredOriginalId");
+        byte[] table = ElemTable(ids, (0, 0, 0, -1), (9, 0, 0x1_0000_0009UL, -1));
+        var formats = FormatsSchema.TryParse(stream)!;
+        Assert.Null(ElemTableLayout.TryParse(table, formats));
+        string path = TestFiles.Scratch($"wide-id-range-{Guid.NewGuid():N}.rvt");
+        try
+        {
+            CoverageCensusTests.WriteFile(path,
+                ("Formats/Latest", RvtIO.Writing.PageCodec.EncodePadded(RvtIO.Writing.GzipMember.Write(stream))),
+                ("Global/ElemTable", RvtIO.Writing.PageCodec.EncodePadded(RvtIO.Writing.GzipMember.Write(table))));
+            var exception = Assert.Throws<RvtLimitException>(() => new RvtFileReader().Read(path));
+            Assert.Equal("element-id-range", exception.Hit.Limit);
+            Assert.Contains("4294967305", exception.Message);
+        }
+        finally { File.Delete(path); }
     }
 
     [Theory]

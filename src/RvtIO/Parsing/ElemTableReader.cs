@@ -69,7 +69,7 @@ internal static class ElemTableReader
                     foreach (var row in rows)
                     {
                         // Id 0 is a real row (ProjectPhase / DimensionStyle) in ElemTable across wide and 32-bit schemas.
-                        if (row.Id > uint.MaxValue || !(ElementIdEncoding.IsSupported((uint)row.Id) || row.Id == 0)) continue;
+                        if (row.Id > int.MaxValue) ThrowUnsupportedId(row.Id);
                         result[(uint)row.Id] = 0;
                         creationDates[(uint)row.Id] = row.CreationDate;
                         if (row.PartitionId >= 0) worksets[(uint)row.Id] = (uint)row.PartitionId;
@@ -81,6 +81,7 @@ internal static class ElemTableReader
                     && FileSchema.Read(root) is { } wideSchema
                     && WideElementRecords.ParseElemTable(exactTable, wideSchema) is { } wide)
                 {
+                    if (wide.UnsupportedId is long idOutsideRange) ThrowUnsupportedId(idOutsideRange);
                     foreach (var (id, history) in wide.Histories)
                     {
                         result[id] = 0; // ElemRec holds history and ownership, not a class id.
@@ -188,13 +189,17 @@ internal static class ElemTableReader
             ParseRows(decompressed, result, out worksets, out creationDates);
 
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not RvtLimitException)
         {
             DiagnosticSink.WriteLine($"ElemTable: {ex.Message}");
             RecordStream(diagnostics, "Global/ElemTable", 0, 1, 0, 1, 0, 0);
         }
         return result;
     }
+
+    private static void ThrowUnsupportedId(long id) =>
+        throw new RvtLimitException(new ReaderLimitHit("Global/ElemTable", "element-id-range", int.MaxValue, Raisable: false,
+            FormattableString.Invariant($"Element ID {id} in Global/ElemTable exceeds the supported maximum of {int.MaxValue}")));
 
     private static void ParseDecompressedElemTable(byte[] decompressed, Dictionary<uint, uint> result)
     {
