@@ -17,7 +17,7 @@
 
   <ItemGroup>
     <!-- Used only by the optional RVT-to-NWC tool. -->
-    <PackageVersion Include="NwcIO" Version="[0.15.1]" />
+    <PackageVersion Include="NwcIO" Version="[0.16.0]" />
   </ItemGroup>
 
   <ItemGroup>
