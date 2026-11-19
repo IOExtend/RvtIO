@@ -5980,8 +5980,9 @@ internal static partial class ElementBuilder
                     && (paramTarget.CategoryId == e.CategoryId || !e.CategoryId.HasValue))
                 { resolved = v; break; }
             }
-            // Fallback: pick a same-category element from References
-            if (resolved == null && e.References != null && e.CategoryId.HasValue)
+            // Room separation lines reference other boundaries, but have no Revit type.
+            if (resolved == null && e.References != null && e.CategoryId.HasValue
+                && e.CategoryId != (int)BuiltIns.BuiltInCategory.OST_RoomSeparationLines)
             {
                 foreach (var refId in e.References)
                 {

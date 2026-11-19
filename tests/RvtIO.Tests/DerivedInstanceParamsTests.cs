@@ -7,6 +7,17 @@ namespace RvtIO.Tests;
 
 public class DerivedInstanceParamsTests
 {
+    [Fact]
+    public void RoomSeparationLineDoesNotUseItsNeighborAsAType()
+    {
+        var line = new Element { Id = 1, CategoryId = -2000066, TypeId = -1, References = [2] };
+        var neighbor = new Element { Id = 2, CategoryId = -2000066, TypeId = -1 };
+
+        ElementBuilder.PostProcess(new RevitFileInfo { Elements = [line, neighbor] });
+
+        Assert.Equal(-1L, line.TypeElementId);
+    }
+
     private static Parameter P(int id, StorageType storage, object value) => BipHelpers.MakeBipParam(id, id.ToString(), storage, value);
     private static object? Value(Element e, int id) => e.Parameters.FirstOrDefault(p => p.Id == id)?.Value;
 

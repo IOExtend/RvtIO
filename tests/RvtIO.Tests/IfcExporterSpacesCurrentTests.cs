@@ -45,6 +45,28 @@ public class IfcExporterSpacesCurrentTests
     }
 
     [Fact]
+    public void PlacedRoomWithAnExplicitlyEmptyNumber_UsesItsNameAndSourceId()
+    {
+        var placed = Room(100, "Vestibule", "");
+        placed.SerializedRoomIsLocationless = false;
+        placed.NativeId = (long)int.MaxValue + 1;
+        var missing = Room(200, "Missing", "");
+        missing.SerializedRoomIsLocationless = false;
+        missing.Parameters.RemoveAll(p => p.Id == -1006901);
+        var unverified = Room(300, "Unverified", "");
+        var unplaced = Room(400, "Unplaced", "");
+        unplaced.SerializedRoomIsLocationless = true;
+        var info = new RevitFileInfo { Elements = [Level(900), placed, missing, unverified, unplaced] };
+
+        string ifc = Export(info);
+
+        Assert.Equal("'Vestibule:2147483648'", Args(ifc, Ids(ifc, "IFCSPACE").Single(), "IFCSPACE")[2]);
+        Assert.Single(Ids(ifc, "IFCSPACETYPE"));
+        Assert.Equal("'Vestibule:100'", Args(ifc, Ids(ifc, "IFCSPACETYPE").Single(), "IFCSPACETYPE")[2]);
+        Assert.Empty(Ids(Export(info, new IfcExporter { Profile = IfcProfile.Legacy }), "IFCSPACE"));
+    }
+
+    [Fact]
     public void Spaces_ShareTheContainmentOfTheirStorey_InFrontOfItsProducts()
     {
         string ifc = Export(new RevitFileInfo { Elements = [Level(900), Room(100, "A", "1"), Room(200, "B", "2")] });

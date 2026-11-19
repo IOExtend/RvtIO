@@ -2347,7 +2347,8 @@ public partial class RvtFileReader
     /// element in its current copy, instead of every block the stream walk meets: the walk also meets the copies of an id in the documents
     /// of loaded families and byte runs inside other items, and each one counted as a second root of the element. The location line of a
     /// wall (<see cref="RecordWallLocationLine"/>) is read from its root record once every root is counted.</summary>
-    internal static void RecordFramedRoots(ParsingState state)
+    internal static void RecordFramedRoots(ParsingState state,
+        List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner)>? annotationRoots = null)
     {
         var roots = new List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner, int? Partition)>();
         foreach (var frame in state.FramedPartitions!)
@@ -2370,6 +2371,22 @@ public partial class RvtFileReader
         foreach (var (data, start, size, classId, owner, partition) in roots)
         {
             StairComponentSource.Record(state, data, start, size, classId, owner);
+            if (classId is 2335 or 3971) // LinearDimString and TextNote
+                annotationRoots?.Add((data, start, size, classId, owner));
+            if (classId == 3471)
+            {
+                RecordRoomNameSource(state, data, start, size, classId, owner);
+                if (state.StaleCopiesRemoved && partition is int partWithRoom
+                    && state.IncrementRoutedPartitions?.TryGetValue(owner, out int currentRoomPartition) == true
+                    && partWithRoom == currentRoomPartition
+                    && !state.NativeParamsFromRootClass.Contains(owner)
+                    && TfBlockDeserializer.ExtractParams(data, start, size, classId) is { Count: > 0 } roomParams
+                    && roomParams.Fields.TryGetValue("m_id", out int roomId) && (uint)roomId == owner)
+                {
+                    state.NativeParams[owner] = roomParams;
+                    state.NativeParamsFromRootClass.Add(owner);
+                }
+            }
             if (state.WideSchema == null && classId == 187
                 && (state.IncrementRoutedPartitions == null
                     || partition is not int part
@@ -2418,7 +2435,9 @@ public partial class RvtFileReader
         var walkGReps = new List<(byte[] Segment, int Start, uint Size, uint Eid)>();
         // the roots the class and stair sources count: the records of the project's block when every stream is read by its framing
         bool framedRoots = state.ReadsFramedRecords;
-        if (framedRoots) RecordFramedRoots(state);
+        List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner)>? annotationRoots =
+            framedRoots && state.StaleCopiesRemoved ? [] : null;
+        if (framedRoots) RecordFramedRoots(state, annotationRoots);
         TfStreamWalker.Walk(state.Chunks, state.AllKnownIds, (seg, bs, ds, cls, eid) =>
         {
             uint fullClassIdx = BitConverter.ToUInt32(seg, bs + 12);
@@ -2459,7 +2478,7 @@ public partial class RvtFileReader
                 RecordCurtainFamilyHost(state, seg, bs, ds, cls, eid);
             if (cls is 3681 or 3742)
                 RecordStairRootSource(state, seg, bs, (uint)ds, cls, eid);
-            if (cls == 3471)
+            if (!framedRoots && cls == 3471)
                 RecordRoomNameSource(state, seg, bs, ds, cls, eid);
             if (cls == 2306)
                 RecordRoomPlanSource(state, seg, bs, ds, cls, eid);
@@ -2579,6 +2598,20 @@ public partial class RvtFileReader
             // Deliberately NOT expanded here: CurveBlockOwners (uncategorized owners were mislabeled OST_Lines),
             // AnalyticalNodeOwners, registry category assignment.
         }, (seg, recordStart, eid) => ElementHeaderCategory.Record(state, seg, recordStart, eid));
+
+        // Pruning can leave a valid annotation root where the sequential scan cannot anchor.
+        if (annotationRoots != null)
+            foreach (var (data, start, size, classId, owner) in annotationRoots)
+            {
+                if (state.NativeParamsFromRootClass.Contains(owner)
+                    || !state.WalkedElementClassRoots.TryGetValue(owner, out var root)
+                    || root.BlockCount != 1 || root.ClassId != classId
+                    || TfBlockDeserializer.ExtractParams(data, start, size, classId) is not { } parameters
+                    || NativeTypePointers.Of(classId, parameters) is not int typeId || !state.AllKnownIds.Contains((uint)typeId))
+                    continue;
+                state.NativeParams[owner] = parameters;
+                state.NativeParamsFromRootClass.Add(owner);
+            }
 
         ApplyFirstDecodableGReps(state, walkGReps);
 

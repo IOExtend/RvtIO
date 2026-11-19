@@ -23,6 +23,11 @@ API between minor releases.
 
 ### Fixed
 
+- Read the selected project-room record by its stored boundaries when current-copy resolution leaves it outside the
+  sequential scan. The current IFC profile also exports placed rooms with an explicitly empty number.
+- Recover text note and linear dimension types from their unique project records when the sequential scan misses them.
+- Keep room separation lines from inheriting a type from another line referenced by the current copy.
+
 - Report `element-id-range` with the offending ID if an RVT has wide element IDs and no project partition storage
   to read the element records.
 

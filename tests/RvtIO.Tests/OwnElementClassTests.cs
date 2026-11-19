@@ -271,6 +271,42 @@ public class OwnElementClassTests
         Assert.Equal(new StairComponentSource.ElementClassRoot(1, 361), resolved.WalkedElementClassRoots[290112]);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TextNoteType_UsesAnUnambiguousFramedRootWhenTheScanCannotAnchor(bool duplicate)
+    {
+        const ushort textNote = 3971;
+        const int style = 456;
+        byte[] prefix = Frame(textNote)[..^4];
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+        writer.Write(prefix);
+        writer.Write(new byte[3 * sizeof(uint) + 13 * sizeof(double)]); // text fragments, optional pointers, and dimensions
+        writer.Write(style);
+        writer.Write(new byte[4 * sizeof(uint) + 3 + sizeof(uint)]); // flags, attachment, leaders, and extension points
+        var size = (uint)stream.Length - 12;
+        writer.Write(size);
+        byte[] block = stream.ToArray();
+        BitConverter.GetBytes(size).CopyTo(block, 8);
+
+        byte[] chunk = [.. block, .. new byte[16]];
+        var frame = new PartitionFraming.Framed([chunk], [new(102, 123, 0, block.Length)], 4, 2);
+        var state = new ParsingState
+        {
+            AllKnownIds = [123, style],
+            ElemRecOwningElementIds = new Dictionary<uint, int> { [123] = -1 },
+            Chunks = [chunk],
+            FramedPartitions = duplicate ? [frame, frame with { Partition = 3 }] : [frame],
+            StaleCopiesRemoved = true,
+        };
+
+        RvtFileReader.RunTfStreamWalk(state);
+
+        if (duplicate) Assert.False(state.NativeParams.ContainsKey(123));
+        else Assert.Equal(style, NativeTypePointers.Of(textNote, state.NativeParams[123]));
+    }
+
     private static uint Size(byte[] bytes) => BitConverter.ToUInt32(bytes, 8);
 
     private static void Reject(byte[] bytes, ushort cls)
