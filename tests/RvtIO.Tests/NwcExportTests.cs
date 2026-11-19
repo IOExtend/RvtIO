@@ -10,6 +10,24 @@ namespace RvtIO.Tests;
 public class NwcExportTests
 {
     [Fact]
+    public void NativeModelCarriesTheMeshOwnerAndSourceMaterial()
+    {
+        var scene = new SceneDocument();
+        scene.AddMesh("Wall", [new(0, 0, 0), new(1, 0, 0), new(0, 1, 0)], [0, 1, 2]);
+        var element = Assert.Single(scene.Elements);
+        element.IfcGuid = "0000000000000000000001";
+        scene.Materials.Add(new() { Id = 1, Name = "Red", Color = new(255, 0, 0) });
+        Assert.Single(scene.Instances).MaterialId = 1;
+
+        var document = NwcExport.Build(scene, "model.rvt", 0, DateTime.UnixEpoch, native: true);
+        var mesh = Assert.Single(document.Meshes);
+
+        Assert.Equal(element.IfcGuid, mesh.Node?.IfcGlobalId);
+        Assert.Equal(new NwcIO.Model.RgbaColor(1, 0, 0), mesh.Material?.Color);
+        Assert.DoesNotContain(mesh.Node!.Properties, record => record.Class == "IOExtend.NwcWriter.Link");
+    }
+
+    [Fact]
     public void NavisworksCommandOpensTheExactCacheItCreates()
     {
         string directory = Path.GetFullPath(Path.GetTempPath());

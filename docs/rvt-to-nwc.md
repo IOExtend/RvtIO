@@ -1,5 +1,19 @@
 # RVT to NWC
 
+## Autonomous export
+
+Build the optional tool against the NwcIO checkout that includes `NwcWriter.WriteNative`.
+Pass the absolute path of its project file and use `--native`.
+
+```sh
+dotnet run --project tools/RvtIO.Nwc -c Release -f net10.0 \
+  --property:NwcIOProject=/path/to/NwcIO/src/NwcIO/NwcIO.csproj -- model.rvt model.nwc --native
+```
+
+This mode writes placed triangle geometry, face normals, diffuse colours, the element tree, IFC GlobalIds
+and Revit property display text. The cache uses feet internally. It opens in NwcIO and was validated in
+Navisworks Manage 2027. Export uses managed .NET code on Windows and Linux.
+
 ## Autodesk Navisworks
 
 On Windows, pass the installed Navisworks Manage or Simulate executable to export a cache for Navisworks.
