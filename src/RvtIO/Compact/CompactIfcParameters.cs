@@ -212,15 +212,15 @@ internal sealed class CompactIfcParameters : ICompactPropertySource
         form == Form.Type && recordClass == "FamilySymbol"
         && category is (int)BuiltInCategory.OST_Doors or (int)BuiltInCategory.OST_Windows;
 
-    /// <summary>IfcGUID of a Revit UniqueId ("{episode GUID}-{original id:x8}"): the IFC base-64 of the episode GUID with its
-    /// last 32 bits XORed with the id. Null when the text is not a UniqueId.</summary>
+    /// <summary>IfcGUID of a Revit UniqueId: the IFC base-64 of the episode GUID with its
+    /// last 64 bits XORed with the original id. Null when the text is not a UniqueId.</summary>
     internal static string? IfcGuidOf(string? uniqueId)
     {
-        if (uniqueId is not { Length: 45 } || uniqueId[36] != '-'
+        if (uniqueId is not { Length: >= 45 and <= 53 } || uniqueId[36] != '-'
             || !Guid.TryParseExact(uniqueId.AsSpan(0, 36), "D", out Guid episode)
-            || !uint.TryParse(uniqueId.AsSpan(37), System.Globalization.NumberStyles.AllowHexSpecifier,
-                System.Globalization.CultureInfo.InvariantCulture, out uint id)) return null;
-        return IfcGuid.ToIfcGuid(ElementExportIds.ExportId(episode, id));
+            || !long.TryParse(uniqueId.AsSpan(37), System.Globalization.NumberStyles.AllowHexSpecifier,
+                System.Globalization.CultureInfo.InvariantCulture, out long id) || id < 0) return null;
+        return IfcGuid.ToIfcGuid(ElementExportIds.ExportId(episode, (ulong)id));
     }
 
     internal static IReadOnlyList<CompactProperty> Properties(

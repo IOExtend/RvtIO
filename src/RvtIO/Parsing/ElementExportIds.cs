@@ -1,3 +1,5 @@
+using System.Buffers.Binary;
+
 namespace RvtIO.Parsing;
 
 /// <summary>
@@ -86,32 +88,29 @@ internal static class ElementExportIds
     }
 
     /// <summary>Revit UniqueId: the episode GUID and the original element id.</summary>
-    internal static string UniqueId(Guid episode, uint originalElementId) =>
+    internal static string UniqueId(Guid episode, ulong originalElementId) =>
         $"{episode:D}-{originalElementId:x8}";
 
     /// <summary>
-    /// The export-id rule: the episode GUID with its last 32 bits XORed with the
-    /// original element id.
+    /// The export-id rule: the episode GUID with the original element id XORed into its last 64 bits.
     /// </summary>
-    internal static Guid ExportId(Guid episode, uint originalElementId) =>
-        XorBigEndian(episode, 12, originalElementId);
+    internal static Guid ExportId(Guid episode, ulong originalElementId) =>
+        XorTail(episode, originalElementId);
 
     /// <summary>
     /// <c>ExporterIFCUtils.CreateSubElementGUID</c>: the export id with the index XORed into bits
     /// 32-63.
     /// </summary>
     internal static Guid SubElementId(Guid exportId, int index) =>
-        XorBigEndian(exportId, 8, unchecked((uint)index));
+        XorTail(exportId, (ulong)unchecked((uint)index) << 32);
 
-    // Bytes 8-15 of Guid.ToByteArray are stored in text order (big-endian), so the last 32 bits of
-    // the GUID are bytes 12-15 and the 32 bits before them are bytes 8-11.
-    private static Guid XorBigEndian(Guid guid, int offset, uint value)
+    // The last eight GUID bytes are stored in text order.
+    private static Guid XorTail(Guid guid, ulong value)
     {
-        byte[] bytes = guid.ToByteArray();
-        bytes[offset] ^= (byte)(value >> 24);
-        bytes[offset + 1] ^= (byte)(value >> 16);
-        bytes[offset + 2] ^= (byte)(value >> 8);
-        bytes[offset + 3] ^= (byte)value;
+        Span<byte> bytes = stackalloc byte[16];
+        guid.TryWriteBytes(bytes);
+        var tail = bytes[8..];
+        BinaryPrimitives.WriteUInt64BigEndian(tail, BinaryPrimitives.ReadUInt64BigEndian(tail) ^ value);
         return new Guid(bytes);
     }
 }

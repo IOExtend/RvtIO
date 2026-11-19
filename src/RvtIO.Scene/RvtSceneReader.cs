@@ -344,19 +344,20 @@ public static class RvtSceneReader
     private const string IfcGuidAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_$";
 
     /// <summary>The IFC GlobalId Revit's IFC export gives the element: the value of its built-in IfcGUID parameter (IFC_GUID)
-    /// when it is a valid GlobalId, else the export id of its UniqueId (the episode GUID with its last 32 bits XORed with the
+    /// when it is a valid GlobalId, else the export id of its UniqueId (the episode GUID with its last 64 bits XORed with the
     /// element id the UniqueId ends with) in the IFC base-64 form; null without either.</summary>
     private static string? IfcGuidOf(Element element)
     {
         if (element.Parameters.Where(parameter => parameter.Id == (int)BuiltInParameter.IFC_GUID)
             .Select(parameter => parameter.Value as string).FirstOrDefault(IsIfcGuid) is { } stored) return stored;
 
-        // A UniqueId is the episode GUID, '-' and the original element id as eight hex digits.
-        if (element.UniqueId is not { Length: 45 } uniqueId || uniqueId[36] != '-'
+        // The original element id has a minimum width of eight hex digits.
+        if (element.UniqueId is not { Length: >= 45 and <= 53 } uniqueId || uniqueId[36] != '-'
             || !Guid.TryParseExact(uniqueId.AsSpan(0, 36), "D", out var episode)
-            || !uint.TryParse(uniqueId.AsSpan(37), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out uint originalId))
+            || !long.TryParse(uniqueId.AsSpan(37), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out long originalId)
+            || originalId < 0)
             return null;
-        UInt128 bits = BinaryPrimitives.ReadUInt128BigEndian(episode.ToByteArray(bigEndian: true)) ^ originalId;
+        UInt128 bits = BinaryPrimitives.ReadUInt128BigEndian(episode.ToByteArray(bigEndian: true)) ^ (ulong)originalId;
         var text = new char[22];
         for (int index = 21; index >= 0; index--, bits >>= 6) text[index] = IfcGuidAlphabet[(int)(bits & 63)];
         return new string(text);

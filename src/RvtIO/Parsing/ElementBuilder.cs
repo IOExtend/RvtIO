@@ -4974,13 +4974,13 @@ internal static partial class ElementBuilder
                 || !histories.TryGetValue((uint)element.Id, out var history))
                 continue;
             element.OriginalElementId = history.OriginalElementId;
-            if (history.OriginalElementId is < 0 or > uint.MaxValue
+            if (history.OriginalElementId < 0
                 || ElementExportIds.EpisodeGuid(history, state.HistoryEpisodeGuids, state.EpisodeTableX) is not Guid episode)
                 continue;
-            uint originalId = (uint)history.OriginalElementId;
+            ulong originalId = (ulong)history.OriginalElementId;
             element.SerializedExportId = ElementExportIds.ExportId(episode, originalId);
-            if (element.ElementId is >= 0 and <= uint.MaxValue)
-                element.SerializedHandleExportId = ElementExportIds.ExportId(episode, (uint)element.ElementId);
+            if (element.ElementId >= 0)
+                element.SerializedHandleExportId = ElementExportIds.ExportId(episode, (ulong)element.ElementId);
             string uniqueId = ElementExportIds.UniqueId(episode, originalId);
             if (element.UniqueId != null && element.UniqueId != uniqueId) replaced++;
             element.UniqueId = uniqueId;

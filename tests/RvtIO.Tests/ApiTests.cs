@@ -667,7 +667,7 @@ public class ReferenceApiTests : IClassFixture<MeshFileFixture>
                 Assert.Null(element.SerializedExportId);
                 return;
             }
-            Assert.Equal(Parsing.ElementExportIds.ExportId(Guid.Parse(uniqueId[..36]), Convert.ToUInt32(uniqueId[37..], 16)),
+            Assert.Equal(Parsing.ElementExportIds.ExportId(Guid.Parse(uniqueId[..36]), Convert.ToUInt64(uniqueId[37..], 16)),
                 element.SerializedExportId);
         });
     }

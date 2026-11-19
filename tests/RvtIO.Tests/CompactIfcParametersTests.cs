@@ -22,6 +22,7 @@ public class CompactIfcParametersTests
     [InlineData("1551350c-45e5-41b8-bdf1-bcfa6794dc6a-000b0dce", "0LKJKCHUL1kBtnlFfddz6a")]
     // sample project A wall 6900242 was renumbered: its UniqueId keeps the original id 6879768 (0x0068fa18).
     [InlineData("6a7c3860-b4f0-401b-a699-81014e2efddb-0068fa18", "1gV3XWjF106wQPWG5EHWV3")]
+    [InlineData("95db5b0a-a7bf-4747-af03-b1f5fe59fca1-1000f4241", "2LsriAfxz7Hwy3iVJ_LhxW")]
     public void IfcGuid_IsTheIfcBase64OfTheEpisodeGuidXoredWithTheId(string uniqueId, string expected) =>
         Assert.Equal(expected, CompactIfcParameters.IfcGuidOf(uniqueId));
 
