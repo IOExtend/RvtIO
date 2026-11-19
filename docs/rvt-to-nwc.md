@@ -12,6 +12,7 @@ RvtIO reads the RVT and exports a temporary IFC using its current IFC profile an
 Navisworks creates the NWC and opens it before the tool moves it to the requested path.
 The cache's geometry and selection tree follow Navisworks' IFC import. The command requires a working
 Navisworks installation. Tested with Navisworks Manage 2027.
+The tested 2027 cache uses an IFC property record layout that NwcIO's managed reader does not yet support.
 
 Autodesk documents the [command-line switches](https://help.autodesk.com/cloudhelp/2022/ENU/Navisworks/files/GUID-3891FB9F-7BF1-4510-A1EE-121E975C0ACE.htm) used to create and open the cache.
 
