@@ -10,7 +10,7 @@ namespace RvtIO.Scene;
 
 /// <summary>
 /// Turns a Revit document into a scene (<see cref="SceneDocument"/>): one model, one element per drawable element of the document
-/// with its triangle meshes (<see cref="ElementMeshes"/>), its names and its parameters, plus building storeys and decoded straight grid axes.
+/// with its triangle meshes (<see cref="ElementMeshes"/>), its names and its parameters, plus building storeys and decoded grid axes.
 /// </summary>
 /// <remarks>
 /// <para>Lengths are converted from feet to metres (x 0.3048) into the internal coordinates of the document, Z up. A symbol that
@@ -230,22 +230,34 @@ public static class RvtSceneReader
 
     private static void AddGrids(SceneDocument scene, RvtDocument document)
     {
+        const double GridChordErrorMetres = 0.001;
         var grid = new SceneGridSystem { ModelId = ModelId };
-        foreach (var element in document.Collector().OfCategory(BuiltInCategory.OST_Grids)
-                     .WhereElementIsNotElementType().OrderBy(element => element.Id))
+        foreach (var axis in document.GetGridAxes())
         {
-            if (element.Location is not { CurveType: "Line", StartPoint: [var x0, var y0, var z0], EndPoint: [var x1, var y1, var z1] }
-                || !double.IsFinite(x0) || !double.IsFinite(y0) || !double.IsFinite(z0)
-                || !double.IsFinite(x1) || !double.IsFinite(y1) || !double.IsFinite(z1))
+            if (axis.Segments is [{ CurveType: "Line" } line])
+            {
+                if (ReadPoint(line.StartPoint) is not { } start || ReadPoint(line.EndPoint) is not { } end || start == end)
+                    continue;
+                grid.Lines.Add(new SceneGridLine { Name = axis.Name, Start = start, End = end, Elevation = start.Z });
                 continue;
+            }
 
-            var start = new Vector3d(x0, y0, z0) * MetresPerFoot;
-            var end = new Vector3d(x1, y1, z1) * MetresPerFoot;
-            if (start == end) continue;
-            grid.Lines.Add(new SceneGridLine { Name = element.Name ?? string.Empty, Start = start, End = end, Elevation = start.Z });
+            if (axis.Tessellate(GridChordErrorMetres / MetresPerFoot) is not { } samples) continue;
+            var points = new List<Vector3d>(samples.Count);
+            foreach (var sample in samples)
+            {
+                if (ReadPoint(sample) is not { } point) break;
+                points.Add(point);
+            }
+            if (points.Count == samples.Count)
+                (grid.Paths ??= []).Add(new SceneGridPath { Name = axis.Name, Points = points });
         }
 
-        if (grid.Lines.Count > 0) scene.Grids.Add(grid);
+        if (grid.Lines.Count > 0 || grid.Paths is { Count: > 0 }) scene.Grids.Add(grid);
+
+        static Vector3d? ReadPoint(double[] point) =>
+            point is [var x, var y, var z] && double.IsFinite(x) && double.IsFinite(y) && double.IsFinite(z)
+                ? new Vector3d(x, y, z) * MetresPerFoot : null;
     }
 
     /// <summary>"RvtIO.Scene" and the version of this assembly without the source revision.</summary>

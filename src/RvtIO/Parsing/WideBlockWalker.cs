@@ -36,6 +36,7 @@ internal sealed class WideBlockWalker
         public int Position;
         public readonly List<int> Queue = [];
         public readonly List<Capture> Captures = [];
+        public Dictionary<string, int>? RootPointers;
         /// <summary>Per queued object (same index as <see cref="Queue"/>) the first position of its fields, -1 when not reached.</summary>
         public readonly List<int> QueueStart = [];
         /// <summary>The values of the objects of the requested record classes, in stored order (inline items of arrays and queued objects).</summary>
@@ -89,6 +90,7 @@ internal sealed class WideBlockWalker
     private readonly ConcurrentDictionary<(int, string), string?> _keys = new();
     private readonly bool[] _isIdentifier;
     private readonly int _idWidth;
+    private readonly bool _captureRootPointers;
     private readonly SchemaClass _entityBlob;
     private Dictionary<Guid, int>? _entityLayoutOf;
     private SchemaField[]?[] _entityLayouts = [];
@@ -100,10 +102,12 @@ internal sealed class WideBlockWalker
 
     /// <param name="keyOf">The capture key of a scalar field (null: not captured); a fixed array adds "@index".</param>
     /// <param name="recordClassNames">Classes whose objects are returned as <see cref="Walk.Records"/>.</param>
-    internal WideBlockWalker(SchemaDocument schema, Func<SchemaClass, SchemaField, string?> keyOf, IEnumerable<string> recordClassNames)
+    internal WideBlockWalker(SchemaDocument schema, Func<SchemaClass, SchemaField, string?> keyOf, IEnumerable<string> recordClassNames,
+        bool captureRootPointers = false)
     {
         _classes = schema.Classes.GroupBy(c => c.Id).ToDictionary(g => g.Key, g => g.First());
         _keyOf = keyOf;
+        _captureRootPointers = captureRootPointers;
         var names = recordClassNames.ToHashSet(StringComparer.Ordinal);
         _recordClasses = _classes.Values.Where(c => names.Contains(c.Name)).Select(c => c.Id).ToHashSet();
         int max = _classes.Keys.Max();
@@ -505,7 +509,9 @@ internal sealed class WideBlockWalker
                 {
                     if (!_classes.ContainsKey(tag)) throw new Fail("class tag " + tag);
                     if (walk.Queue.Count >= 1_000_000) throw new Fail("queue");
-                walk.Queue.Add(tag);
+                    if (_captureRootPointers && c.AtRoot && depth == 0 && key != null)
+                        (walk.RootPointers ??= new())[key] = walk.Queue.Count;
+                    walk.Queue.Add(tag);
                 }
             }
             if (key != null) walk.Captures.Add(new(key, CaptureKind.PointerClass, handle == 0 ? 0 : tag == 0 ? -1 : tag, 0, null, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name));

@@ -176,6 +176,8 @@ public partial class RvtFileReader
         // per-chunk walk. Extracts native parameter stores and re-runs the key block-driven signals at full coverage.
         RunTfStreamWalk(state);
         if (state.WideSchema == null) ReadOwnDocumentUnits(root, state, diag);
+        if (wideSchema == null && state.ElemClassIdx.Values.Any(id => id is 2108 or 2111))
+            ReadNarrowGridAxes(root, state, diag);
         LogPhase("Tf stream walked");
         diag?.WriteLine($"Grid datums: {state.GridDatums.Count}");
 
@@ -759,6 +761,11 @@ public partial class RvtFileReader
             _ => null,
         };
         ElementBuilder.PostProcess(rvtInfo, state, diag);
+        if (state.GridAxes is { } axes)
+        {
+            rvtInfo.CurvedGridAxes = axes.Paths;
+            rvtInfo.GridChainMemberIds = axes.Members;
+        }
         LogPhase("Post-processed");
         ElementBuilder.ApplyValidatedStairComponentTypeNames(rvtInfo.Elements, state);
         ElementBuilder.ApplyValidatedCorniceTypeNames(rvtInfo.Elements, state);
@@ -1023,6 +1030,7 @@ public partial class RvtFileReader
         state.WideSchema = schema;
         // the field walk of the root blocks (schema by class and field name); a file whose schema table does not parse a second time has none
         WideNativeParams? fields = null;
+        GridAxisReader? gridReader = null;
         SchemaDocument? schemaDocument = null;
         if (PagedGzipStream.Read(root, "Formats", "Latest") is { } schemaBytes)
         {
@@ -1030,11 +1038,14 @@ public partial class RvtFileReader
             {
                 fields = new WideNativeParams(schemaDocument = TfSchemaReader.Parse(schemaBytes));
                 // the values of an extensible storage entity are read by its schema, so the objects behind them are read in place
-                fields.Walker.UseEntitySchemas(EntitySchemaReader.Read(root, schemaDocument), passUnknown: true);
+                var entitySchemas = EntitySchemaReader.Read(root, schemaDocument);
+                fields.Walker.UseEntitySchemas(entitySchemas, passUnknown: true);
+                gridReader = new GridAxisReader(schemaDocument, entitySchemas);
             }
             catch (FormatException) { diag?.WriteLine("Wide element records: Formats/Latest does not parse for the field walk"); }
         }
         var walks = new Dictionary<uint, List<(WideBlockWalker.Walk Walk, int Class, int? Partition)>>();
+        var gridBlocks = new Dictionary<uint, (byte[] Data, int Offset, int Size)>();
         var drivers = new Dictionary<uint, List<CurveDriverData>>();
         var wallShim = new Dictionary<uint, ElementRecord>();
         var index = WideElementRecords.BuildIndexWithPartitions(partitionStreams, schema, state.AllKnownIds,
@@ -1042,6 +1053,8 @@ public partial class RvtFileReader
             {
                 if (!walks.TryGetValue(id, out var list)) walks[id] = list = [];
                 list.Add((fields.Walker.Run(data, offset, size, cls), cls, partition));
+                if (list.Count == 1 && gridReader?.IsGrid(cls) == true)
+                    gridBlocks.Add(id, (data, offset, size));
                 // the roots of a straight or an arc wall: the block of the drive curve (the classes the Revit 2022 reader names)
                 if (state.StaleCopiesRemoved && fields.R22Id(cls) is 3524 or 361)
                 {
@@ -1078,6 +1091,8 @@ public partial class RvtFileReader
                 }
                 // a copy of the element in two streams is decoded only when it is one record
                 if (list.Count != 1 || !index.RootClasses.TryGetValue(id, out int rootClass) || list[0].Class != rootClass) continue;
+                if (gridBlocks.TryGetValue(id, out var grid))
+                    gridReader!.Read(id, grid.Data, grid.Offset, grid.Size, rootClass);
                 if (drivers.TryGetValue(id, out var exactDrivers) && exactDrivers.Count > 0) state.ExactCurveDrivers[id] = exactDrivers;
                 var np = fields.Build(list[0].Walk, rootClass);
                 if (np == null) continue;
@@ -1131,8 +1146,48 @@ public partial class RvtFileReader
         foreach (var (reason, count) in walkFailures.OrderByDescending(f => f.Value).Take(15))
             diag?.WriteLine($"  walk stopped x{count}: {reason}");
         if (fields != null && schemaDocument != null) ReadWideDocumentUnits(root, state, schemaDocument, fields, walks, diag);
+        if (gridBlocks.Count > 0) state.GridAxes = gridReader!.Build();
         diag?.WriteLine($"Wide element records: {index.Records} headers, {index.Blocks} blocks, "
             + $"categories={index.HeaderCategories.Count}, root classes={index.RootClasses.Count} of {state.AllKnownIds.Count} elements");
+    }
+
+    private static void ReadNarrowGridAxes(RootStorage root, ParsingState state, TextWriter? diag)
+    {
+        if (PagedGzipStream.Read(root, "Formats", "Latest") is not { } schemaBytes) return;
+        GridAxisReader reader;
+        try
+        {
+            var schema = TfSchemaReader.Parse(schemaBytes);
+            reader = new GridAxisReader(schema, EntitySchemaReader.Read(root, schema));
+        }
+        catch (FormatException)
+        {
+            diag?.WriteLine("Grid paths: Formats/Latest does not parse for the datum field walk");
+            return;
+        }
+        var blocks = new Dictionary<uint, (byte[] Data, int Offset, int Size, ushort Class)?>();
+        void Collect(byte[] data, int start, uint size, ushort classId, uint owner)
+        {
+            if (size < 4 || !state.AllKnownIds.Contains(owner) || !reader.IsGrid(classId)) return;
+            if (!blocks.TryAdd(owner, (data, start + 12, (int)size, classId))) blocks[owner] = null;
+        }
+        if (state.ReadsFramedRecords)
+        {
+            foreach (var frame in state.FramedPartitions!)
+                foreach (var record in frame!.Items)
+                {
+                    if (record.Channel != 102 || record.Length < 20 || record.Owner > int.MaxValue) continue;
+                    var (data, start, _) = frame.Bytes(record);
+                    Collect(data, start, (uint)(record.Length - 16), BitConverter.ToUInt16(data, start + 12), (uint)record.Owner);
+                }
+        }
+        else
+            TfStreamWalker.Walk(state.Chunks, state.AllKnownIds, (data, start, size, cls, owner) =>
+                Collect(data, start, (uint)size, cls, owner));
+        foreach (var (id, block) in blocks)
+            if (block is { } b)
+                reader.Read(id, b.Data, b.Offset, b.Size, b.Class);
+        state.GridAxes = reader.Build();
     }
 
     /// <summary>The document units of a file read by the schema walk: the units element named by Global/Latest, its FormatOptions and the

@@ -438,6 +438,19 @@ public class RvtDocument
     /// <summary>Gets the project building storeys and resolves element assignments with the current IFC storey rules.</summary>
     public BuildingStoreyCatalog GetBuildingStoreyCatalog() => new(_elemById);
 
+    /// <summary>Gets project grid axes in Revit ID order. Multi-segment grids are one axis with ordered curves.</summary>
+    public IReadOnlyList<GridAxis> GetGridAxes()
+    {
+        var axes = new List<GridAxis>(_info.CurvedGridAxes);
+        foreach (var element in Collector().OfCategory(BuiltInCategory.OST_Grids).WhereElementIsNotElementType())
+        {
+            if (element.Location is { CurveType: "Line" } line && _info.GridChainMemberIds?.Contains(element.Id) != true)
+                axes.Add(new GridAxis(element.Id, element.Name ?? string.Empty, [line]));
+        }
+        axes.Sort((a, b) => a.Id.CompareTo(b.Id));
+        return axes;
+    }
+
     /// <summary>Get all distinct category IDs present in the document.</summary>
     public IReadOnlyList<int> GetCategories()
     {

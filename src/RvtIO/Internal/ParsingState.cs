@@ -389,6 +389,7 @@ internal class ParsingState
     /// the serialized datum text, free end, bubble end and cut vector. The element-level
     /// name remains authoritative for the grid mark because datum text may name its head type.</summary>
     public Dictionary<uint, GridDatumData> GridDatums { get; } = new();
+    public (List<Model.GridAxis> Paths, HashSet<int> Members)? GridAxes { get; set; }
 
     /// <summary>Line-style element id for 0x0346 curves whose GStyleElemId was a real id
     /// (not -1): these are detail/model lines, keyed by owner eid.</summary>

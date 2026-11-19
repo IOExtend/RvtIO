@@ -12,7 +12,7 @@
 
   <ItemGroup>
     <!-- The scene contract of RvtIO.Scene: any patch of the 0.1 line, no preview of the next (breaking) minor that IOScene publishes. -->
-    <PackageVersion Include="IOScene" Version="[0.1.1, 0.2.0-0.0)" />
+    <PackageVersion Include="IOScene" Version="[0.1.2, 0.2.0-0.0)" />
   </ItemGroup>
 
   <ItemGroup>

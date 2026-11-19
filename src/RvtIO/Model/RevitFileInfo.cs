@@ -6,6 +6,9 @@ namespace RvtIO.Model
         /// <summary>A copy that shares all members with this instance; the caller replaces what it changes.</summary>
         internal RevitFileInfo ShallowCopy() => (RevitFileInfo)MemberwiseClone();
 
+        internal IReadOnlyList<GridAxis> CurvedGridAxes { get; set; } = [];
+        internal IReadOnlySet<int>? GridChainMemberIds { get; set; }
+
         /// <summary>The basic file information.</summary>
         public FileMetadata Metadata { get; set; } = new();
         /// <summary>The project information.</summary>
