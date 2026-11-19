@@ -12,6 +12,7 @@ using the NwcIO writer layout.
 ### Added
 
 - `RvtIO.Scene` exports decoded straight Revit grid axes and their labels in scene coordinates.
+- `RvtIO.Scene` exports circular and multi-segment grid axes as connected paths with one datum label per axis.
 - `RvtDocument.GetBuildingStoreyCatalog()` exposes project building storeys and their assignments.
   `RvtIO.Scene` writes those levels and the storey of each drawable element using the current IFC rules.
 

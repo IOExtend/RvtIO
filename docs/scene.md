@@ -2,7 +2,7 @@
 
 `RvtIO.Scene` turns a Revit project read by RvtIO into a scene of the `IOScene` package: a `SceneDocument` with one
 model, the drawable elements, their triangle meshes in metres, their names and parameters, the building storeys, and
-the decoded straight grid axes. A viewer or another consumer of the scene reads it without knowing Revit. The scene itself is specified in the contract of the `IOScene`
+the decoded grid axes. A viewer or another consumer of the scene reads it without knowing Revit. The scene itself is specified in the contract of the `IOScene`
 repository (`docs/contract.md`), and the property keys it writes are registered there in `docs/keys.md`.
 
 The adapter is a preview. It is published as the package `RvtIO.Scene` on each RvtIO release tag, depends on exactly
@@ -53,7 +53,8 @@ rvtio project.rvt --ifc project.ifc --compact-json project.compact.json --scene 
 |---|---|
 | `SceneModel.Key` | `RvtSceneOptions.ModelKey`, else the file name without its directory (`project.rvt`). This derivation does not change. |
 | `SceneModel` | `SourceFormat` `rvt`, `SourceLengthUnit` `ft`, `Producer` `RvtIO.Scene <version>`. |
-| `SceneGridSystem`, `SceneGridLine` | One grid system named `Grids` when the model has valid straight grid axes. Each axis uses its element name and the endpoints of its decoded location curve, converted from feet to metres in the document's internal coordinates. Elevation is the start point's Z. |
+| `SceneGridSystem`, `SceneGridLine` | One grid system named `Grids` when the model has decoded axes. Standalone straight axes use the element name and endpoints of the location curve, converted from feet to metres in the document's internal coordinates. Elevation is the start point's Z. |
+| `SceneGridPath` | One path and datum label per standalone circular arc or complete multi-segment grid. Points follow the stored segment order at model Z=0, as in Revit's grid curves. Arcs are sampled with at most 1 mm of chord error. Viewers place the label only at the two outer endpoints. |
 | `SceneLevel` | Project levels marked as building storeys, ordered by elevation and Revit element ID. Names and resolved elevations, including elevations inferred by the reader, use the same level selection as IFC. Elevations are written in metres. |
 | `SceneElement.LevelId` | The building-storey assignment from `RvtDocument.GetBuildingStoreyCatalog()`, using the current IFC rules for stored level references and geometry fallback. Assignments to the building itself leave this field empty. The scene assigns a storey to each drawable element independently of IFC product aggregation. |
 | `SceneElement` | One per drawable element of `ElementMeshes.Extract` (the elements the IFC export would consider products, see the remarks of `ElementMeshes`). `Id` is the element id. |
@@ -100,7 +101,8 @@ The text a value is written with under a key is frozen with the key: changing it
   (numbers in SI units, booleans, element references) wait for public RvtIO API.
 - Shared, project and family parameters have no key yet. Their formats (for example `revit:shared:<guid>`) are
   registered in the IOScene key registry when the adapter first writes them; that is an addition.
-- Every element is a top-level element of its model. Linked models, views and curved grid axes are omitted.
+- Every element is a top-level element of its model. Linked models and views are omitted.
+- The grid path reader accepts vertical cylindrical grid surfaces and complete, connected chains of straight and circular segments. It omits unsupported surfaces, incomplete chains and paths requiring more than 65,536 vertices at the documented tolerance.
 - Materials have a name and a colour; no roughness, metalness or textures.
 - Element names are those of `RvtDocument`; the validated names the IFC export applies to files read by their own class
   schema are not public API.
