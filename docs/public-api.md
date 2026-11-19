@@ -45,6 +45,45 @@ position the file stores for it (feet) and the font size its RTF declares; they 
 
 `Element.ViewportScale` is the view scale (the denominator) decoded from a viewport record; `Element.ViewportViewId` and `Element.ViewportOffset` are what that record places on the sheet. `Element.OwnerViewId` is the stored `m_ownerDBViewId` of the element: the view or sheet whose annotations and view-specific graphics hold it (a text note on a sheet names the sheet), null when no view owns it. `SheetCatalog` uses it for the elements a sheet owns.
 
+In a non-workshared Revit 2027 file, the default workset is represented by 0 in `Element.WorksetId`
+and by -1 in the built-in `ELEM_PARTITION_PARAM` value. A property set element has a `WorksetId`
+and omits `ELEM_PARTITION_PARAM` in these files. The schema-driven reader uses the stored header
+category for Revit 2027 elements with a decoded category.
+
+For Revit 2027, the reader follows the stored links from stair runs and landings to their stair's
+type. Elevation views without a direct type use their linked elevation marker's type when the
+view and arrow point to each other.
+
+The Revit 2027 reader recovers the `Type Name` of tile patterns from the owned pattern and
+uses the built-in English labels for conceptual constructions, site data and internal stair symbols.
+It derives `Area` in square feet from the linked filled-region sketch when it contains one closed
+line loop and `Volume` in cubic feet from the stored dimensions and drive line of a straight
+rectangular duct.
+For supported Revit 2027 categories the reader also measures closed bodies from the project's
+saved geometry, including geometry reused at rigid placements. Mullion and lighting fixture area is
+half the summed solid surface area. Lighting fixture quantities include the closed bodies saved for
+different viewing directions at Coarse detail. Curtain panel area is the largest planar face.
+Straight basic wall area is the larger net area of its two finish sides. Straight curtain wall
+area comes from the stored closed wall profile.
+
+The reader integrates supported circular and straight profiles of revolution along the saved trim
+loops. Pipe fitting volume uses the detailed solids and excludes coarse proxies when their complete
+source faces are reused. Supported MEP center lines get quantities from their linked physical owner.
+
+The reader measures horizontal floors, ceilings, and foundations at their saved cap faces, with trim
+loops applied. Door area uses the coarse source bodies for ordinary wall-hosted doors and the opening
+spanned by the rectangular leaves for curtain wall doors. For 2D components the reader measures the
+filled faces of the instance's geometry symbol, including stretched variants. Filled regions use the
+area of their own loops.
+
+Duct fitting volume integrates ruled faces with a collapsed end and excludes complete reused coarse
+bodies. For the supported trimmed structural framing, volume uses the closed body retained by the cut.
+For supported single-body masses, area comes from matching horizontal caps or from the planar faces
+of a body with a horizontal base and no horizontal top.
+
+The schema-driven reader uses the owned compound structure of host types to populate `Element.Layers` in stored
+order. It also resolves `Element.TypeId` for decoded reinforcement when the stored target is a rebar bar type.
+
 ## Built-in identifiers
 
 `BuiltInCategory`, `BuiltInParameter`, `BuiltInParameterGroup`, `ParameterType`, `UnitType`, `DisplayUnitType`,

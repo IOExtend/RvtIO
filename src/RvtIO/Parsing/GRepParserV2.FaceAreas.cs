@@ -4,6 +4,23 @@ namespace RvtIO.Parsing;
 
 internal static partial class GRepParserV2
 {
+    private static double? MeasureFilledFaces(Cur c, Dictionary<uint, SurfaceRec> surfaces, Dictionary<uint, List<int>> loopsByFace)
+    {
+        var edges = EdgesByHandle(c);
+        double area = 0;
+        for (int i = 0; i < c.Queue.Count; i++)
+        {
+            if (c.Queue[i].Cls != 2014 || c.QueueLinks[i] is not (int parent and >= 0, "m_pGFilling")
+                || c.Queue[parent].Cls != GFaceClass) continue;
+            uint face = (uint)c.Queue[parent].V;
+            if (!surfaces.TryGetValue(face, out var surface) || surface.Kind != SurfKind.Plane
+                || !loopsByFace.TryGetValue(face, out var loops) || SurfaceCoedges(c, face, loops, edges) is not { } coedges
+                || FaceArea.Compute(coedges) is not double measure) return null;
+            area += measure;
+        }
+        return area > 0 && double.IsFinite(area) ? area : null;
+    }
+
     /// <summary>The area <c>computeAreaOfFace</c> gives each planar Face with curved Edges, and each cylindrical Face: the
     /// quadrature of <see cref="FaceArea"/> over the coedges of its loops in file order, with the Edge points as the file stores them.
     /// A planar Face of straight Edges has no entry: the quadrature of a line is its exact value, the polygon area. A Face with an open loop or
@@ -28,7 +45,7 @@ internal static partial class GRepParserV2
     }
 
     private static List<FaceArea.Coedge>? SurfaceCoedges(Cur c, uint face, List<int> indices,
-        Dictionary<uint, EdgeRec?> edges)
+        Dictionary<uint, EdgeRec?> edges, bool rawOnly = false, bool closeEndPole = false)
     {
         var coedges = new List<FaceArea.Coedge>();
         foreach (int index in indices)
@@ -36,6 +53,7 @@ internal static partial class GRepParserV2
             var loop = c.SpaceEdgeLoops[index];
             uint sentinel = (uint)c.Queue[index].V, current = loop.Next;
             int guard = 0;
+            int first = coedges.Count;
             if (loop.Open != 0) return null;
             while (current != sentinel)
             {
@@ -43,11 +61,33 @@ internal static partial class GRepParserV2
                     || edge.FaceA == edge.FaceB || edge.FaceA != face && edge.FaceB != face)
                     return null;
                 bool firstFace = edge.FaceA == face;
-                var points = edge.AuthoredPoints().Select(point => firstFace ? (point.UA, point.VA) : (point.UB, point.VB)).ToList();
-                coedges.Add(new FaceArea.Coedge(points, edge.Flags, !firstFace));
+                // The original coedges precede the mesh refinements shared with neighbouring faces.
+                if (rawOnly && edge.RawInterior == null) return null;
+                var samples = rawOnly ? edge.RawInterior!.Prepend(edge.RawStart).Append(edge.RawEndP) : edge.AuthoredPoints();
+                var points = samples.Select(point => firstFace ? (point.UA, point.VA) : (point.UB, point.VB)).ToList();
+                coedges.Add(new FaceArea.Coedge(points, edge.Flags, !firstFace, edge.Handle));
                 current = firstFace ? edge.NextA : edge.NextB;
             }
+            if (closeEndPole && !CloseRuledEndPole(coedges, first)) return null;
         }
         return coedges;
+    }
+
+    internal static bool CloseRuledEndPole(List<FaceArea.Coedge> coedges, int first)
+    {
+        const double tolerance = 1e-9;
+        int end = coedges.Count;
+        for (int i = first; i < end; i++)
+        {
+            var edge = coedges[i];
+            var next = coedges[i + 1 == end ? first : i + 1];
+            var a = edge.Reversed ? edge.Points[0] : edge.Points[^1];
+            var b = next.Reversed ? next.Points[^1] : next.Points[0];
+            if (Math.Abs(a.U - b.U) <= tolerance && Math.Abs(a.V - b.V) <= tolerance) continue;
+            if (Math.Abs(a.V - 1) > tolerance || Math.Abs(b.V - 1) > tolerance) return false;
+            // The two UV endpoints at the end profile are one 3D point and have no saved edge.
+            coedges.Add(new FaceArea.Coedge([a, b], 0, false));
+        }
+        return true;
     }
 }

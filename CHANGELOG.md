@@ -6,6 +6,20 @@ API between minor releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- The Revit 2027 reader computes Area and Volume for closed bodies with full ruled faces between
+  aligned circular arcs. It also recovers missing family volumes from visible closed bodies,
+  including straight extrusions with elliptical profile edges.
+- The Revit 2027 reader computes Area for straight extrusions with elliptical profile edges from
+  the distinct UV samples of both caps and the extruded length of each boundary.
+- Closed bodies with revolved elliptical and Hermite profiles contribute Area and Volume.
+- Supported closed bodies with rectangular Hermite faces now compute Area and Volume from the
+  refined facets.
+- The Revit 2027 reader measures trimmed ruled bodies from their original coedges before mesh
+  refinement. It also reads extrusion-roof Area from the tagged lower faces and measures planar
+  masses using the mean area of the upper and lower faces.
+
 ## [0.5.0] - 2026-11-18
 
 ### Changed

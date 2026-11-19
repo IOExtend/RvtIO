@@ -40,6 +40,18 @@ public class TessellationAllocationTests
     }
 
     [Fact]
+    public void TrimBoundaryBoundsPreserveTheEdgeToleranceAndFirstMatch()
+    {
+        (double, double, double, double)[] edges = [(0, 0, 1, 0), (1e6, 3, 1e6 + 1, 3), (1e6, 3, 1e6 + 1, 3)];
+        (double[], double[])[] world = [([0, 0, 0], [1, 0, 0]), ([0, 0, 10], [2, 0, 10]), ([0, 0, 20], [2, 0, 20])];
+        var point = GRepParserV2.TrimBoundaryEvaluator(edges, (u, v) => [u, v, -1], world);
+
+        Assert.Equal(new[] { 1.0, 0, 10 }, point(1e6 + 0.5, 3 + 1e-8));
+        // The large edge raises the pruning bound, while the small edge keeps its own tolerance.
+        Assert.Equal(new[] { 0.5, 1e-9, -1 }, point(0.5, 1e-9));
+    }
+
+    [Fact]
     public void MaxIgnoringNaN_and_MinPropagatingNaN_match_Max_and_Min_of_a_projection()
     {
         var random = new Random(2);
@@ -218,5 +230,37 @@ public class TessellationAllocationTests
         var rings = GRepParserV2.OrderRingsW(segments);
         Assert.Equal(2, rings.Count);
         Assert.Equal(Describe(TessellationReference.OrderRingsW(segments), segments), Describe(rings, segments));
+    }
+
+    [Fact]
+    public void OrderRingsW_preserves_simple_components_beside_branches()
+    {
+        double[] P(double x, double y) => [x, y, 0];
+        var a = P(0, 0); var b = P(1, 0); var c = P(1, 1); var d = P(0, 1);
+        var e = P(3, 0); var f = P(4, 0); var g = P(4, 1); var h = P(3, 1);
+        List<(double[] A, double[] B)> segments =
+        [
+            (b, P(2, -1)), (f, h), (c, b), (g, h), (d, c), (h, e), (a, d), (f, g), (b, a), (e, f), (c, d),
+        ];
+        foreach (bool containing in new[] { false, true })
+        {
+            var expected = TessellationReference.OrderRingsW(segments, containing);
+            var actual = GRepParserV2.OrderRingsW(segments, containing);
+            Assert.True(expected.Count >= 2);
+            Assert.Equal(Describe(expected, segments), Describe(actual, segments));
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void OrderRingsW_preserves_the_first_surviving_edge_direction(bool containing)
+    {
+        double[] a = [0, 0, 0], b = [1, 0, 0], c = [1, 1, 0], d = [0, 1, 0], spur = [2, 1, 0];
+        var ring = Assert.Single(GRepParserV2.OrderRingsW(
+            [(c, spur), (c, b), (b, c), (a, d), (a, b), (d, c)], containing));
+
+        Assert.Collection(ring, p => Assert.Same(c, p), p => Assert.Same(d, p),
+            p => Assert.Same(a, p), p => Assert.Same(b, p));
     }
 }

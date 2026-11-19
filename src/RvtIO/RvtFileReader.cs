@@ -751,6 +751,13 @@ public partial class RvtFileReader
         diag?.WriteLine($"Wall type functions: {state.WallTypeFunctions.Count} entries");
 
         LogPhase("Block-only elements built");
+        // BasicFileInfo "Worksharing: Not enabled | Local | Central"; any other text is not decided.
+        rvtInfo.SerializedIsWorkshared = fileMetadata.GetValueOrDefault("Worksharing") switch
+        {
+            "Not enabled" => false,
+            "Local" or "Central" => true,
+            _ => null,
+        };
         ElementBuilder.PostProcess(rvtInfo, state, diag);
         LogPhase("Post-processed");
         ElementBuilder.ApplyValidatedStairComponentTypeNames(rvtInfo.Elements, state);
@@ -811,13 +818,6 @@ public partial class RvtFileReader
             ?? (lengthOptions == null ? null : ProjectLengthUnits.StoredLengthUnit(lengthOptions.Value, out lengthUnitIssue));
         if (rvtInfo.SerializedLengthUnit == null)
             rvtInfo.SerializedLengthUnitIssue = state.WideLengthUnitIssue ?? lengthUnitIssue;
-        // BasicFileInfo "Worksharing: Not enabled | Local | Central"; any other text is not decided.
-        rvtInfo.SerializedIsWorkshared = fileMetadata.GetValueOrDefault("Worksharing") switch
-        {
-            "Not enabled" => false,
-            "Local" or "Central" => true,
-            _ => null,
-        };
         var (exportIds, replacedUniqueIds) = ElementBuilder.ApplyExportIds(rvtInfo.Elements, state);
         diag?.WriteLine($"Element export ids: episodes={state.HistoryEpisodeGuids.Count}/{state.EpisodeTableX?.ToString() ?? "?"}, "
             + $"records={state.ElemRecHistories?.Count.ToString() ?? "unavailable"}, elements={exportIds}, "
@@ -1087,6 +1087,9 @@ public partial class RvtFileReader
                     np.DoubleFields["__levelElevation"] = levelElevation;
                 }
                 if (fields.OwnName(list[0].Walk, rootClass) is { } ownName) state.WideNames[id] = ownName;
+                if (!state.R22View && np.Fields.TryGetValue("m_id", out int layerOwner) && layerOwner == (int)id
+                    && fields.HostTypeLayers(list[0].Walk, rootClass) is { } layers)
+                    state.CompoundLayers[id] = layers;
                 if (fields.ProjectPhaseOrder(list[0].Walk, rootClass) is { } phaseOrder)
                 {
                     var priorOrder = state.ProjectPhaseOrderSource;

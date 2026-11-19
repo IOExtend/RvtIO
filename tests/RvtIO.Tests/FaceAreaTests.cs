@@ -63,6 +63,47 @@ public class FaceAreaTests
         Assert.NotEqual(Math.PI / 2, area, 9);
     }
 
+    [Fact]
+    public void EllipticalCapQuadratureUsesEachAdjacentSampleOnce()
+    {
+        var arc = new FaceArea.Coedge([(2, 0), (1.4, 0.7), (0, 1), (-1.4, 0.7), (-2, 0)], 6, false);
+        var duplicate = arc with { Points = [(2, 0), (1.4, 0.7), (1.4 + 1e-12, 0.7), (0, 1), (-1.4, 0.7), (-2, 0)] };
+        var diameter = Line((-2, 0), (2, 0));
+
+        Assert.Equal(FaceArea.Compute([arc, diameter]), FaceArea.ComputeWithDistinctSamples([duplicate, diameter]));
+        Assert.Null(FaceArea.ComputeWithDistinctSamples([Line((0, 0), (0, 0)), diameter]));
+    }
+
+    [Fact]
+    public void EllipticalArcLengthIsIndependentOfTraversalDirection()
+    {
+        const double quarter = 2.422112055136919;
+        Assert.InRange(FaceArea.EllipticalArcLength(2, 1, 0, Math.PI / 2)!.Value, quarter - 3e-6, quarter + 3e-6);
+        Assert.Equal(FaceArea.EllipticalArcLength(2, 1, 0, Math.PI / 2)!.Value,
+            FaceArea.EllipticalArcLength(2, 1, Math.PI / 2, 0)!.Value, 12);
+    }
+
+    [Fact]
+    public void AdaptiveHermiteQuadratureReusesItsWorkingBuffers()
+    {
+        FaceArea.Coedge[] edges = [new([(0, 0), (0.5, 0), (1, 0)], 0, false)];
+        int samples = 0;
+        FaceArea.SurfaceIntegrand integrand = (u, _, du, _) =>
+        {
+            samples++;
+            return Math.Pow(u, 20) * du;
+        };
+        var integral = FaceArea.Integrate(edges, integrand);
+        Assert.InRange(integral!.Value, 1.0 / 21 - 1e-8, 1.0 / 21 + 1e-8);
+        Assert.True(samples > 17); // More than the initial five estimates.
+
+        const int runs = 128;
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int i = 0; i < runs; i++) FaceArea.Integrate(edges, integrand);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.InRange(allocated, 0, 128L * runs); // The coedge enumerable may still allocate an enumerator.
+    }
+
     [SkippableFact]
     public void TheCapsOfRoom8964053_HaveTheAreasReferenceComputes_AndAreNotPaired()
     {

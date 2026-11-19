@@ -24917,6 +24917,51 @@ public class IfcExporterWallGeometryTests
     }
 
     [Fact]
+    public void FacetedLatticeSegment_PreservesExactBoundsAndCollinearity()
+    {
+        var axis = new FacetedShell.LatticeSegment((long.MaxValue, 4, 5), (long.MinValue, 4, 5));
+        Assert.Equal(0, axis.DominantAxis);
+        Assert.True(axis.OnSegment((0, 4, 5)));
+        Assert.False(axis.OnSegment((0, 5, 5)));
+
+        var diagonal = new FacetedShell.LatticeSegment(
+            (long.MaxValue, long.MaxValue, long.MaxValue), (long.MinValue, long.MinValue, long.MinValue));
+        Assert.Equal(0, diagonal.DominantAxis);
+        Assert.True(diagonal.OnSegment((long.MinValue, long.MinValue, long.MinValue)));
+        Assert.True(diagonal.OnSegment((0, 0, 0)));
+        Assert.False(diagonal.OnSegment((0, 1, 0)));
+
+        var wide = new FacetedShell.LatticeSegment((0, 0, 0), (1L << 33, 1L << 33, 0));
+        Assert.False(wide.OnSegment((1L << 31, 1L << 32, 0)));
+
+        var bounded = new FacetedShell.LatticeSegment((-3, -6, 0), (3, 6, 0));
+        Assert.Equal(1, bounded.DominantAxis);
+        Assert.True(bounded.OnSegment((2, 4, 0)));
+        Assert.False(bounded.OnSegment((4, 8, 0)));
+    }
+
+    [Fact]
+    public void FacetedVertexAxisIndex_PreservesLexicographicTies()
+    {
+        (long X, long Y, long Z)[] vertices =
+        [
+            (1, 0, 1), (0, 1, 1), (1, 1, 0), (0, 0, 1), (1, 0, 0),
+            (long.MaxValue, 0, long.MinValue), (long.MinValue, long.MaxValue, 0),
+        ];
+        var original = vertices.ToArray();
+
+        var index = FacetedShell.BuildVertexAxisIndex(vertices);
+
+        for (int axis = 0; axis < 3; axis++)
+        {
+            var expected = original.OrderBy(point => axis == 0 ? point.X : axis == 1 ? point.Y : point.Z)
+                .ThenBy(point => point.X).ThenBy(point => point.Y).ThenBy(point => point.Z).ToArray();
+            Assert.Equal(expected, index[axis]);
+        }
+        Assert.Equal(original, vertices);
+    }
+
+    [Fact]
     public void ExactFacetedShell_AcceptsOppositelyDirectedSharedEdges()
     {
         double[] a = [0, 0, 0], b = [1, 0, 0], c = [0, 1, 0], d = [0, 0, 1];
@@ -24935,23 +24980,125 @@ public class IfcExporterWallGeometryTests
     }
 
     [Fact]
-    public void ExactFacetedShell_OrientsLongEdgeAcrossExactTjunctions()
+    public void FacetedAtomicEdgeUses_RetainsOpenBoundariesButRejectsCollapsedEdges()
+    {
+        var face = Face([[0, 0, 0], [1, 0, 0], [0, 1, 0]]);
+        var malformed = Face([[0, 0, 0], [1, 0, 0], [0, 0, 1]]);
+        malformed.InnerVertices = [[[0, 0, 0], [1e-8, 0, 0], [1, 0, 0]]];
+        var faces = new Dictionary<int, GeoFace> { [4] = face, [5] = malformed };
+
+        Assert.False(FacetedShell.TryGetFacetedAtomicEdgeUses(faces, [4], out var boundary));
+        Assert.Equal(3, boundary.Count);
+        Assert.All(boundary.Values, uses =>
+        {
+            Assert.Equal(1, uses.Count);
+            Assert.Equal(4, uses.First.FaceIndex);
+        });
+
+        Assert.False(FacetedShell.TryGetFacetedAtomicEdgeUses(faces, [4, 5], out var rejected));
+        Assert.Empty(rejected);
+    }
+
+    [Fact]
+    public void FacetedAtomicEdgeUses_RetainsAllUsesOfNonmanifoldEdgeInOrder()
+    {
+        double[] a = [0, 0, 0], b = [1, 0, 0];
+        var faces = new Dictionary<int, GeoFace>
+        {
+            [2] = Face([a, b, [0, 1, 0]]),
+            [7] = Face([b, a, [0, -1, 0]]),
+            [9] = Face([a, b, [0, 0, 1]]),
+            [0] = Face([b, a, [0, 0, -1]]),
+        };
+
+        Assert.False(FacetedShell.TryGetFacetedAtomicEdgeUses(faces, [7, 2, 9, 0], out var edges));
+        var key = (FacetedShell.IfcPrecisionKeyFeet(a), FacetedShell.IfcPrecisionKeyFeet(b));
+        var uses = edges[key];
+        Assert.Equal(new[] { (7, -1), (2, 1), (9, 1), (0, -1) },
+            Enumerable.Range(0, uses.Count).Select(i => uses[i]));
+    }
+
+    [Theory]
+    [InlineData(false, 0)]
+    [InlineData(false, 3)]
+    [InlineData(true, 0)]
+    [InlineData(true, 3)]
+    public void FacetedAtomicEdgeUses_RecordsDiagonalSplitsInTraversalOrder(bool reverse, int initialCapacity)
+    {
+        double[] a = [3, 0, 0], b = [0, 6, 0], p = [2, 2, 0], q = [1, 4, 0], c = [0, 0, 0];
+        var faces = new Dictionary<int, GeoFace>
+        {
+            [4] = Face(reverse ? [b, a, c] : [a, b, c]),
+            [5] = Face([p, q, [1, 2, 0]]),
+        };
+        var ka = FacetedShell.IfcPrecisionKeyFeet(a);
+        var kb = FacetedShell.IfcPrecisionKeyFeet(b);
+        var kp = FacetedShell.IfcPrecisionKeyFeet(p);
+        var kq = FacetedShell.IfcPrecisionKeyFeet(q);
+        var expected = new[] { (kp, ka), (kq, kp), (kb, kq) };
+        if (reverse) Array.Reverse(expected);
+
+        var splitVertices = new HashSet<(long X, long Y, long Z)>
+        {
+            FacetedShell.IfcPrecisionKeyFeet([1.5, 3, 0]),
+        };
+        Assert.False(FacetedShell.TryGetFacetedAtomicEdgeUses(
+            faces, [4, 5], out var boundary, initialCapacity, splitVertices));
+        Assert.Equal(expected, boundary.Keys.Take(expected.Length));
+        Assert.All(expected, edge =>
+        {
+            var uses = boundary[edge];
+            var use = Assert.Single(Enumerable.Range(0, uses.Count).Select(i => uses[i]),
+                use => use.FaceIndex == 4);
+            Assert.Equal(reverse ? 1 : -1, use.Direction);
+        });
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void ExactFacetedShell_OrientsLongEdgeAcrossExactTjunctions(bool inward, bool triangulate)
     {
         var faces = new List<GeoFace>
         {
-            Face([[0, 0, 0], [0, 1, 0], [2, 1, 0], [2, 0, 0]]),
-            Face([[0, 0, 1], [2, 0, 1], [2, 1, 1], [0, 1, 1]]),
+            Face([[0, 0, 0], [0, 1, 0], [3, 1, 0], [3, 0, 0]]),
+            Face([[0, 0, 1], [3, 0, 1], [3, 1, 1], [0, 1, 1]]),
             Face([[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]]),
             Face([[1, 0, 0], [2, 0, 0], [2, 0, 1], [1, 0, 1]]),
-            Face([[0, 1, 0], [0, 1, 1], [2, 1, 1], [2, 1, 0]]),
+            Face([[2, 0, 0], [3, 0, 0], [3, 0, 1], [2, 0, 1]]),
+            Face([[0, 1, 0], [0, 1, 1], [3, 1, 1], [3, 1, 0]]),
             Face([[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]]),
-            Face([[2, 0, 0], [2, 1, 0], [2, 1, 1], [2, 0, 1]]),
+            Face([[3, 0, 0], [3, 1, 0], [3, 1, 1], [3, 0, 1]]),
         };
+        if (inward)
+            foreach (var face in faces)
+                face.OuterVertices!.Reverse();
 
-        Assert.True(IfcExporter.TryOrientExactFacetedShell(
-            faces, Enumerable.Range(0, faces.Count).ToArray(), out var oriented));
+        Assert.True(FacetedShell.TryOrientExactFacetedShell(
+            faces, Enumerable.Range(0, faces.Count).ToArray(), out var oriented, triangulate));
         Assert.True(FacetedShell.IsExactFacetedShell(
             oriented, Enumerable.Range(0, oriented.Count).ToArray()));
+        AssertFrontEdge(oriented[0].OuterVertices!, [3, 2, 1, 0]);
+        AssertFrontEdge(oriented[1].OuterVertices!, [0, 1, 2, 3]);
+        var sourcePoints = faces.SelectMany(face => face.OuterVertices!).ToHashSet<double[]>(ReferenceEqualityComparer.Instance);
+        var orientedPoints = oriented.SelectMany(face => face.OuterVertices!).ToList();
+        Assert.DoesNotContain(orientedPoints, sourcePoints.Contains);
+        if (inward)
+            Assert.Equal(orientedPoints.Count, orientedPoints.Distinct<double[]>(ReferenceEqualityComparer.Instance).Count());
+
+        static void AssertFrontEdge(List<double[]> ring, double[] expected)
+        {
+            int start = ring.FindIndex(point => point[0] == expected[0] && point[1] == 0);
+            Assert.True(start >= 0);
+            for (int i = 0; i < expected.Length; i++)
+            {
+                var point = ring[(start + i) % ring.Count];
+                Assert.Equal(expected[i], point[0]);
+                Assert.Equal(0, point[1]);
+            }
+        }
     }
 
     [Fact]
@@ -25145,7 +25292,7 @@ public class IfcExporterWallGeometryTests
         double[] b = [1, 0, 0], c = [0, 1, 0], d = [0, 0, 1];
         var faces = new List<GeoFace>
         {
-            Face([a, nearA, c, b]),
+            Face([a, nearA, c, b, nearA]),
             Face([a, b, d]),
             Face([b, c, d]),
             Face([c, a, d]),
@@ -25156,6 +25303,8 @@ public class IfcExporterWallGeometryTests
             faces, [0, 1, 2, 3], out var oriented));
         Assert.True(FacetedShell.IsExactFacetedShell(oriented, [0, 1, 2, 3]));
         Assert.All(oriented, face => Assert.Equal(3, face.OuterVertices!.Count));
+        Assert.Equal(5, faces[0].OuterVertices!.Count);
+        Assert.Equal(a, oriented[0].OuterVertices![0]);
     }
 
     [Fact]
@@ -25246,10 +25395,15 @@ public class IfcExporterWallGeometryTests
             Face([b, c, d]),
             Face([c, a, d]),
         };
+        var reversedInput = faces[1].OuterVertices!.ToArray();
+        faces[1].Normal = [0, 2, 0];
 
         Assert.True(IfcExporter.TryOrientExactFacetedShell(
             faces, [0, 1, 2, 3], out var oriented));
         Assert.True(FacetedShell.IsExactFacetedShell(oriented, [0, 1, 2, 3]));
+        Assert.True(reversedInput.SequenceEqual(faces[1].OuterVertices!));
+        Assert.Equal(2, faces[1].Normal[1]);
+        Assert.Equal(-2, oriented[1].Normal[1]);
 
         double volume = 0;
         foreach (var face in oriented)

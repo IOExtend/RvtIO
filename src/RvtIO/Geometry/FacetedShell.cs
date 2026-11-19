@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using RvtIO.Model;
 
 namespace RvtIO.Geometry;
@@ -60,16 +61,17 @@ internal static class FacetedShell
     /// </summary>
     internal static bool TryOrientExactFacetedShell(IReadOnlyList<GeoFace> faces,
         IReadOnlyCollection<int> faceIndices, out List<GeoFace> orientedFaces,
-        bool triangulateNonPlanarFaces)
+        bool triangulateNonPlanarFaces, HashSet<(long X, long Y, long Z)>? splitVertices = null)
     {
         orientedFaces = [];
         var indices = faceIndices.Distinct().Order().ToList();
         if (indices.Count < 4 || indices.Any(index => (uint)index >= faces.Count))
             return false;
         var normalizedFaces = new Dictionary<int, GeoFace>();
+        long edgeUseCount = 0;
         foreach (int faceIndex in indices)
         {
-            var normalized = CloneFace(faces[faceIndex], false);
+            var normalized = CloneFace(faces[faceIndex]);
             if (normalized.OuterVertices is not { Count: >= 3 } outer
                 || outer.Any(point => point.Length < 3
                     || !double.IsFinite(point[0]) || !double.IsFinite(point[1])
@@ -90,18 +92,25 @@ internal static class FacetedShell
                 .ToList();
             if (!TryNormalizeInnerBounds(normalized))
                 return false;
+            edgeUseCount += normalized.OuterVertices.Count;
+            if (normalized.InnerVertices is { } holes)
+                foreach (var ring in holes)
+                    edgeUseCount += ring.Count;
             normalizedFaces[faceIndex] = normalized;
         }
-        if (!TryGetFacetedAtomicEdgeUses(normalizedFaces, indices, out var edgeUses))
+        // In a closed shell with matched loops, two incidences share each edge.
+        long closedEdgeCount = edgeUseCount / 2;
+        int initialCapacity = closedEdgeCount <= int.MaxValue ? (int)closedEdgeCount : 0;
+        if (!TryGetFacetedAtomicEdgeUses(normalizedFaces, indices, out var edgeUses, initialCapacity, splitVertices))
             return false;
 
         var constraints = indices.ToDictionary(index => index,
             _ => new List<(int Other, bool OppositeFlip)>());
         foreach (var uses in edgeUses.Values)
         {
-            bool oppositeFlip = uses[0].Direction == uses[1].Direction;
-            constraints[uses[0].FaceIndex].Add((uses[1].FaceIndex, oppositeFlip));
-            constraints[uses[1].FaceIndex].Add((uses[0].FaceIndex, oppositeFlip));
+            bool oppositeFlip = uses.First.Direction == uses.Second.Direction;
+            constraints[uses.First.FaceIndex].Add((uses.Second.FaceIndex, oppositeFlip));
+            constraints[uses.Second.FaceIndex].Add((uses.First.FaceIndex, oppositeFlip));
         }
 
         var flips = new Dictionary<int, bool>();
@@ -131,11 +140,16 @@ internal static class FacetedShell
             }
         }
 
-        orientedFaces = indices.Select(index =>
-            CloneFace(normalizedFaces[index], flips[index])).ToList();
+        orientedFaces = new List<GeoFace>(indices.Count);
+        foreach (int index in indices)
+        {
+            var face = normalizedFaces[index];
+            if (flips[index]) ReverseFace(face, detachVertices: false);
+            orientedFaces.Add(face);
+        }
         SplitFacetedLoopsAtSharedVertices(orientedFaces);
         var compactIndices = Enumerable.Range(0, orientedFaces.Count).ToList();
-        if (!IsExactFacetedShell(orientedFaces, compactIndices))
+        if (!IsExactFacetedShell(orientedFaces, compactIndices, edgeUses, splitVertices))
         {
             orientedFaces = [];
             return false;
@@ -159,13 +173,14 @@ internal static class FacetedShell
             return false;
         }
         if (signedVolume < 0)
-            orientedFaces = orientedFaces.Select(face => CloneFace(face, true)).ToList();
+            foreach (var face in orientedFaces)
+                ReverseFace(face, detachVertices: true);
         if (!triangulateNonPlanarFaces)
             return true;
         var triangulatedFaces = TriangulateNonPlanarFacetedFaces(orientedFaces);
         SplitFacetedLoopsAtSharedVertices(triangulatedFaces);
         if (IsExactFacetedShell(triangulatedFaces,
-                Enumerable.Range(0, triangulatedFaces.Count).ToList()))
+                Enumerable.Range(0, triangulatedFaces.Count).ToList(), edgeUses, splitVertices))
             orientedFaces = triangulatedFaces;
         return true;
 
@@ -294,34 +309,56 @@ internal static class FacetedShell
                 && (x != 0 || y != 0 || z != 0);
         }
 
-        static List<double[]> CleanPrecisionLoop(IEnumerable<double[]> source)
+        static List<double[]> CleanPrecisionLoop(List<double[]> ring)
         {
-            var clean = new List<double[]>();
-            foreach (var point in source)
-                if (clean.Count == 0
-                    || IfcPrecisionKeyFeet(clean[^1]) != IfcPrecisionKeyFeet(point))
-                    clean.Add((double[])point.Clone());
-            if (clean.Count > 1
-                && IfcPrecisionKeyFeet(clean[0]) == IfcPrecisionKeyFeet(clean[^1]))
-                clean.RemoveAt(clean.Count - 1);
-            return clean;
+            var first = IfcPrecisionKeyFeet(ring[0]);
+            var last = first;
+            int count = 1;
+            for (int index = 1; index < ring.Count; index++)
+            {
+                var point = ring[index];
+                var key = IfcPrecisionKeyFeet(point);
+                if (last == key) continue;
+                if (count != index) ring[count] = point;
+                count++;
+                last = key;
+            }
+            if (count > 1 && first == last) count--;
+            ring.RemoveRange(count, ring.Count - count);
+            return ring;
         }
 
-        static GeoFace CloneFace(GeoFace source, bool reverse)
+        static void ReverseFace(GeoFace face, bool detachVertices)
         {
-            List<double[]> CopyRing(IEnumerable<double[]> ring)
+            ReverseRing(face.OuterVertices!);
+            if (face.InnerVertices is { } holes)
+                foreach (var ring in holes)
+                    ReverseRing(ring);
+            var normal = face.Normal;
+            for (int i = 0; i < normal.Length; i++)
+                normal[i] = -normal[i];
+
+            void ReverseRing(List<double[]> ring)
             {
-                var copy = ring.Select(point => (double[])point.Clone()).ToList();
-                if (reverse) copy.Reverse();
-                return copy;
+                ring.Reverse();
+                // Splitting can insert a vertex array owned by a different face.
+                if (detachVertices)
+                    for (int i = 0; i < ring.Count; i++)
+                        ring[i] = (double[])ring[i].Clone();
             }
+        }
+
+        static GeoFace CloneFace(GeoFace source)
+        {
+            static List<double[]> CopyRing(List<double[]> ring) =>
+                ring.Select(point => (double[])point.Clone()).ToList();
+
             return new GeoFace
             {
                 Origin = (double[])source.Origin.Clone(),
                 XVector = (double[])source.XVector.Clone(),
                 YVector = (double[])source.YVector.Clone(),
-                Normal = reverse ? source.Normal.Select(value => -value).ToArray()
-                    : (double[])source.Normal.Clone(),
+                Normal = (double[])source.Normal.Clone(),
                 Envelope = source.Envelope is null ? null : (double[])source.Envelope.Clone(),
                 Area = source.Area,
                 InnerLoops = source.InnerLoops?.Select(loop => (double[])loop.Clone()).ToList(),
@@ -511,43 +548,88 @@ internal static class FacetedShell
         return result;
     }
 
+    internal static (long X, long Y, long Z)[][] BuildVertexAxisIndex(
+        ICollection<(long X, long Y, long Z)> vertices)
+    {
+        var byX = vertices.ToArray();
+        var byY = ((long X, long Y, long Z)[])byX.Clone();
+        var byZ = ((long X, long Y, long Z)[])byX.Clone();
+        Array.Sort(byX);
+        Array.Sort(byY, static (a, b) => (a.Y, a.X, a.Z).CompareTo((b.Y, b.X, b.Z)));
+        Array.Sort(byZ, static (a, b) => (a.Z, a.X, a.Y).CompareTo((b.Z, b.X, b.Y)));
+        return [byX, byY, byZ];
+    }
+
+    private static long Axis((long X, long Y, long Z) point, int axis) =>
+        axis == 0 ? point.X : axis == 1 ? point.Y : point.Z;
+
+    private static int AxisBound((long X, long Y, long Z)[] points, int axis, long value, bool afterEqual)
+    {
+        int low = 0, high = points.Length;
+        while (low < high)
+        {
+            int middle = low + (high - low) / 2;
+            long coordinate = Axis(points[middle], axis);
+            if (coordinate < value || (afterEqual && coordinate == value)) low = middle + 1;
+            else high = middle;
+        }
+        return low;
+    }
+
+    internal readonly struct LatticeSegment
+    {
+        private readonly (long X, long Y, long Z) _first;
+        private readonly (long X, long Y, long Z) _min;
+        private readonly (long X, long Y, long Z) _max;
+        private readonly Int128 _dx, _dy, _dz;
+        private readonly bool _axisAligned;
+        private readonly bool _fitsLongProducts;
+
+        internal int DominantAxis { get; }
+
+        internal LatticeSegment((long X, long Y, long Z) first, (long X, long Y, long Z) second)
+        {
+            _first = first;
+            _min = (Math.Min(first.X, second.X), Math.Min(first.Y, second.Y), Math.Min(first.Z, second.Z));
+            _max = (Math.Max(first.X, second.X), Math.Max(first.Y, second.Y), Math.Max(first.Z, second.Z));
+            _dx = (Int128)second.X - first.X;
+            _dy = (Int128)second.Y - first.Y;
+            _dz = (Int128)second.Z - first.Z;
+            Int128 absX = Int128.Abs(_dx), absY = Int128.Abs(_dy), absZ = Int128.Abs(_dz);
+            DominantAxis = absX >= absY && absX >= absZ ? 0 : absY >= absZ ? 1 : 2;
+            _axisAligned = first.X == second.X
+                ? first.Y == second.Y || first.Z == second.Z
+                : first.Y == second.Y && first.Z == second.Z;
+            _fitsLongProducts = absX <= int.MaxValue && absY <= int.MaxValue && absZ <= int.MaxValue;
+        }
+
+        internal bool OnSegment((long X, long Y, long Z) point)
+        {
+            if (point.X < _min.X || point.X > _max.X || point.Y < _min.Y || point.Y > _max.Y
+                || point.Z < _min.Z || point.Z > _max.Z)
+                return false;
+            if (_axisAligned) return true;
+            if (_fitsLongProducts)
+            {
+                // The bounds also limit each point offset to the signed 32-bit span.
+                long x = point.X - _first.X, y = point.Y - _first.Y, z = point.Z - _first.Z;
+                return (long)_dy * z == (long)_dz * y
+                    && (long)_dz * x == (long)_dx * z
+                    && (long)_dx * y == (long)_dy * x;
+            }
+            Int128 px = (Int128)point.X - _first.X;
+            Int128 py = (Int128)point.Y - _first.Y;
+            Int128 pz = (Int128)point.Z - _first.Z;
+            return _dy * pz == _dz * py && _dz * px == _dx * pz && _dx * py == _dy * px;
+        }
+    }
+
     /// <summary>
     /// Materializes the same atomic edge partition used by shell validation in the actual polygon
     /// loops written to IFC.
     /// </summary>
     private static void SplitFacetedLoopsAtSharedVertices(IReadOnlyList<GeoFace> faces)
     {
-        static long Axis((long X, long Y, long Z) point, int axis) =>
-            axis == 0 ? point.X : axis == 1 ? point.Y : point.Z;
-        static int LowerBound(List<(long X, long Y, long Z)> points, int axis, long value)
-        {
-            int low = 0, high = points.Count;
-            while (low < high)
-            {
-                int middle = low + (high - low) / 2;
-                if (Axis(points[middle], axis) < value) low = middle + 1;
-                else high = middle;
-            }
-            return low;
-        }
-        static bool OnSegment((long X, long Y, long Z) point,
-            (long X, long Y, long Z) first, (long X, long Y, long Z) second)
-        {
-            if (point.X < Math.Min(first.X, second.X) || point.X > Math.Max(first.X, second.X)
-                || point.Y < Math.Min(first.Y, second.Y) || point.Y > Math.Max(first.Y, second.Y)
-                || point.Z < Math.Min(first.Z, second.Z) || point.Z > Math.Max(first.Z, second.Z))
-                return false;
-            Int128 dx = (Int128)second.X - first.X;
-            Int128 dy = (Int128)second.Y - first.Y;
-            Int128 dz = (Int128)second.Z - first.Z;
-            Int128 px = (Int128)point.X - first.X;
-            Int128 py = (Int128)point.Y - first.Y;
-            Int128 pz = (Int128)point.Z - first.Z;
-            return dy * pz - dz * py == 0
-                && dz * px - dx * pz == 0
-                && dx * py - dy * px == 0;
-        }
-
         var representative = new Dictionary<(long X, long Y, long Z), double[]>();
         foreach (var face in faces)
             foreach (var ring in (face.OuterVertices is { Count: > 0 } outer
@@ -556,50 +638,48 @@ internal static class FacetedShell
                 .Concat(face.InnerVertices ?? []))
                 foreach (var point in ring)
                     representative.TryAdd(IfcPrecisionKeyFeet(point), point);
-        var vertices = representative.Keys.ToList();
-        var verticesByAxis = Enumerable.Range(0, 3)
-            .Select(axis => vertices.OrderBy(point => Axis(point, axis))
-                .ThenBy(point => point.X).ThenBy(point => point.Y).ThenBy(point => point.Z)
-                .ToList()).ToArray();
+        var verticesByAxis = BuildVertexAxisIndex(representative.Keys);
 
         List<double[]> Split(IReadOnlyList<double[]> ring)
         {
-            var result = new List<double[]>();
+            var result = new List<double[]>(ring.Count);
+            if (ring.Count == 0) return result;
+            var start = IfcPrecisionKeyFeet(ring[0]);
+            var second = start;
+            var last = start;
             for (int edgeIndex = 0; edgeIndex < ring.Count; edgeIndex++)
             {
-                var sourceFirst = ring[edgeIndex];
-                var sourceSecond = ring[(edgeIndex + 1) % ring.Count];
-                var first = IfcPrecisionKeyFeet(sourceFirst);
-                var second = IfcPrecisionKeyFeet(sourceSecond);
-                result.Add(sourceFirst);
+                var first = second;
+                int nextIndex = edgeIndex + 1;
+                second = nextIndex < ring.Count ? IfcPrecisionKeyFeet(ring[nextIndex]) : start;
+                Append(ring[edgeIndex], first);
                 if (first == second) continue;
-                Int128 dx = (Int128)second.X - first.X;
-                Int128 dy = (Int128)second.Y - first.Y;
-                Int128 dz = (Int128)second.Z - first.Z;
-                Int128 absX = Int128.Abs(dx), absY = Int128.Abs(dy), absZ = Int128.Abs(dz);
-                int axis = absX >= absY && absX >= absZ ? 0 : absY >= absZ ? 1 : 2;
-                long low = Math.Min(Axis(first, axis), Axis(second, axis));
-                long high = Math.Max(Axis(first, axis), Axis(second, axis));
-                var split = new List<(long X, long Y, long Z)>();
+                var segment = new LatticeSegment(first, second);
+                int axis = segment.DominantAxis;
+                long from = Axis(first, axis), to = Axis(second, axis);
+                bool forward = from < to;
                 var sorted = verticesByAxis[axis];
-                for (int index = LowerBound(sorted, axis, low);
-                     index < sorted.Count && Axis(sorted[index], axis) <= high; index++)
-                    if (sorted[index] != first && sorted[index] != second
-                        && OnSegment(sorted[index], first, second))
-                        split.Add(sorted[index]);
-                split.Sort((left, right) => Axis(left, axis).CompareTo(Axis(right, axis)));
-                if (Axis(first, axis) > Axis(second, axis)) split.Reverse();
-                result.AddRange(split.Select(point => representative[point]));
+                int index = AxisBound(sorted, axis, from, afterEqual: !forward) - (forward ? 0 : 1);
+                int step = forward ? 1 : -1;
+                // Along a segment the dominant coordinate uniquely orders its collinear vertices.
+                for (; (uint)index < (uint)sorted.Length; index += step)
+                {
+                    var point = sorted[index];
+                    long coordinate = Axis(point, axis);
+                    if (forward ? coordinate > to : coordinate < to) break;
+                    if (point != first && point != second && segment.OnSegment(point))
+                        Append(representative[point], point);
+                }
             }
-            var clean = new List<double[]>();
-            foreach (var point in result)
-                if (clean.Count == 0
-                    || IfcPrecisionKeyFeet(clean[^1]) != IfcPrecisionKeyFeet(point))
-                    clean.Add(point);
-            if (clean.Count > 1
-                && IfcPrecisionKeyFeet(clean[0]) == IfcPrecisionKeyFeet(clean[^1]))
-                clean.RemoveAt(clean.Count - 1);
-            return clean;
+            if (result.Count > 1 && start == last) result.RemoveAt(result.Count - 1);
+            return result;
+
+            void Append(double[] point, (long X, long Y, long Z) key)
+            {
+                if (result.Count != 0 && last == key) return;
+                result.Add(point);
+                last = key;
+            }
         }
 
         foreach (var face in faces)
@@ -611,122 +691,137 @@ internal static class FacetedShell
         }
     }
 
+    internal struct EdgeUses
+    {
+        private List<(int FaceIndex, int Direction)>? _overflow;
+        internal (int FaceIndex, int Direction) First { get; private set; }
+        internal (int FaceIndex, int Direction) Second { get; private set; }
+
+        // Valid directions are ±1, leaving zero for an unused slot.
+        internal readonly int Count => Second.Direction != 0
+            ? 2 + (_overflow?.Count ?? 0)
+            : First.Direction != 0 ? 1 : 0;
+
+        internal readonly (int FaceIndex, int Direction) this[int index] => index switch
+        {
+            0 when First.Direction != 0 => First,
+            1 when Second.Direction != 0 => Second,
+            >= 2 when _overflow != null => _overflow[index - 2],
+            _ => throw new ArgumentOutOfRangeException(nameof(index)),
+        };
+
+        internal void Add((int FaceIndex, int Direction) use)
+        {
+            if (First.Direction == 0) First = use;
+            else if (Second.Direction == 0) Second = use;
+            else (_overflow ??= []).Add(use);
+        }
+    }
+
     /// <summary>Builds exact shared-edge uses on the serialized IFC coordinate lattice.</summary>
     internal static bool TryGetFacetedAtomicEdgeUses(IReadOnlyDictionary<int, GeoFace> faces,
         IReadOnlyCollection<int> faceIndices,
-        out Dictionary<((long X, long Y, long Z) A, (long X, long Y, long Z) B),
-            List<(int FaceIndex, int Direction)>> edgeUses)
+        out Dictionary<((long X, long Y, long Z) A, (long X, long Y, long Z) B), EdgeUses> edgeUses,
+        int initialCapacity = 0, HashSet<(long X, long Y, long Z)>? splitVertices = null)
     {
-        static ((long X, long Y, long Z) A, (long X, long Y, long Z) B) EdgeKey(
-            (long X, long Y, long Z) first, (long X, long Y, long Z) second)
-            => first.CompareTo(second) <= 0 ? (first, second) : (second, first);
-        static long Axis((long X, long Y, long Z) point, int axis) =>
-            axis == 0 ? point.X : axis == 1 ? point.Y : point.Z;
-        static int LowerBound(List<(long X, long Y, long Z)> points, int axis, long value)
-        {
-            int low = 0, high = points.Count;
-            while (low < high)
-            {
-                int middle = low + (high - low) / 2;
-                if (Axis(points[middle], axis) < value) low = middle + 1;
-                else high = middle;
-            }
-            return low;
-        }
-        static bool OnSegment((long X, long Y, long Z) point,
-            (long X, long Y, long Z) first, (long X, long Y, long Z) second)
-        {
-            if (point.X < Math.Min(first.X, second.X) || point.X > Math.Max(first.X, second.X)
-                || point.Y < Math.Min(first.Y, second.Y) || point.Y > Math.Max(first.Y, second.Y)
-                || point.Z < Math.Min(first.Z, second.Z) || point.Z > Math.Max(first.Z, second.Z))
-                return false;
-            Int128 dx = (Int128)second.X - first.X;
-            Int128 dy = (Int128)second.Y - first.Y;
-            Int128 dz = (Int128)second.Z - first.Z;
-            Int128 px = (Int128)point.X - first.X;
-            Int128 py = (Int128)point.Y - first.Y;
-            Int128 pz = (Int128)point.Z - first.Z;
-            return dy * pz - dz * py == 0
-                && dz * px - dx * pz == 0
-                && dx * py - dy * px == 0;
-        }
+        edgeUses = new(initialCapacity);
+        return TryGetFacetedAtomicEdgeUses(faces, faceIndices, edgeUses, splitVertices);
+    }
 
-        var usesByEdge = new Dictionary<
-            ((long X, long Y, long Z) A, (long X, long Y, long Z) B),
-            List<(int FaceIndex, int Direction)>>();
-        edgeUses = usesByEdge;
-        var segments = new List<(int FaceIndex, (long X, long Y, long Z) First,
-            (long X, long Y, long Z) Second)>();
-        foreach (int faceIndex in faceIndices)
+    private static bool TryGetFacetedAtomicEdgeUses(IReadOnlyDictionary<int, GeoFace> faces,
+        IReadOnlyCollection<int> faceIndices,
+        Dictionary<((long X, long Y, long Z) A, (long X, long Y, long Z) B), EdgeUses> usesByEdge,
+        HashSet<(long X, long Y, long Z)>? splitVertices)
+    {
+        usesByEdge.Clear();
+        (long X, long Y, long Z)[][]? verticesByAxis = null;
+        if (!BuildEdgeUses())
         {
-            if (!faces.TryGetValue(faceIndex, out var face)
-                || face.OuterVertices is not { Count: >= 3 } outer)
-                return false;
-            IEnumerable<IReadOnlyList<double[]>> rings =
-                new[] { (IReadOnlyList<double[]>)outer }
-                    .Concat(face.InnerVertices ?? Enumerable.Empty<List<double[]>>());
-            foreach (var ring in rings)
-            {
-                if (ring.Count < 3 || ring.Any(point => point.Length < 3
-                        || !double.IsFinite(point[0]) || !double.IsFinite(point[1])
-                        || !double.IsFinite(point[2])))
-                    return false;
-                for (int index = 0; index < ring.Count; index++)
-                {
-                    var first = IfcPrecisionKeyFeet(ring[index]);
-                    var second = IfcPrecisionKeyFeet(ring[(index + 1) % ring.Count]);
-                    if (first == second) return false;
-                    segments.Add((faceIndex, first, second));
-                }
-            }
+            usesByEdge.Clear();
+            return false;
         }
-        if (segments.Count == 0) return false;
+        if (usesByEdge.Count == 0) return false;
+        if (HasClosedMultiplicity()) return true;
+
+        var vertices = splitVertices ?? new HashSet<(long X, long Y, long Z)>();
+        vertices.Clear();
+        foreach (var (first, second) in usesByEdge.Keys)
+        {
+            vertices.Add(first);
+            vertices.Add(second);
+        }
+        verticesByAxis = BuildVertexAxisIndex(vertices);
+        usesByEdge.Clear();
+        return BuildEdgeUses() && HasClosedMultiplicity();
 
         void AddUse(int faceIndex, (long X, long Y, long Z) first,
             (long X, long Y, long Z) second)
         {
-            var edge = EdgeKey(first, second);
-            if (!usesByEdge.TryGetValue(edge, out var uses)) usesByEdge[edge] = uses = [];
-            uses.Add((faceIndex, first.CompareTo(second) <= 0 ? 1 : -1));
+            bool forward = first.CompareTo(second) <= 0;
+            var edge = forward ? (first, second) : (second, first);
+            ref var uses = ref CollectionsMarshal.GetValueRefOrAddDefault(usesByEdge, edge, out _);
+            uses.Add((faceIndex, forward ? 1 : -1));
         }
         bool HasClosedMultiplicity() => usesByEdge.Count > 0
             && usesByEdge.Values.All(uses => uses.Count == 2
-                && uses[0].FaceIndex != uses[1].FaceIndex);
+                && uses.First.FaceIndex != uses.Second.FaceIndex);
 
-        foreach (var segment in segments)
-            AddUse(segment.FaceIndex, segment.First, segment.Second);
-        if (HasClosedMultiplicity()) return true;
-
-        usesByEdge.Clear();
-        var vertices = segments.SelectMany(segment => new[] { segment.First, segment.Second })
-            .Distinct().ToList();
-        var verticesByAxis = Enumerable.Range(0, 3)
-            .Select(axis => vertices.OrderBy(point => Axis(point, axis))
-                .ThenBy(point => point.X).ThenBy(point => point.Y).ThenBy(point => point.Z)
-                .ToList())
-            .ToArray();
-        foreach (var segment in segments)
+        bool BuildEdgeUses()
         {
-            Int128 dx = (Int128)segment.Second.X - segment.First.X;
-            Int128 dy = (Int128)segment.Second.Y - segment.First.Y;
-            Int128 dz = (Int128)segment.Second.Z - segment.First.Z;
-            Int128 absX = Int128.Abs(dx), absY = Int128.Abs(dy), absZ = Int128.Abs(dz);
-            int axis = absX >= absY && absX >= absZ ? 0 : absY >= absZ ? 1 : 2;
-            long low = Math.Min(Axis(segment.First, axis), Axis(segment.Second, axis));
-            long high = Math.Max(Axis(segment.First, axis), Axis(segment.Second, axis));
-            var sorted = verticesByAxis[axis];
-            var split = new List<(long X, long Y, long Z)>();
-            for (int index = LowerBound(sorted, axis, low);
-                 index < sorted.Count && Axis(sorted[index], axis) <= high; index++)
-                if (OnSegment(sorted[index], segment.First, segment.Second))
-                    split.Add(sorted[index]);
-            if (Axis(segment.First, axis) > Axis(segment.Second, axis)) split.Reverse();
-            if (split.Count < 2 || split[0] != segment.First || split[^1] != segment.Second)
-                return false;
-            for (int index = 0; index + 1 < split.Count; index++)
-                AddUse(segment.FaceIndex, split[index], split[index + 1]);
+            foreach (int faceIndex in faceIndices)
+            {
+                if (!faces.TryGetValue(faceIndex, out var face)
+                    || face.OuterVertices is not { } outer || !AddRingUses(outer, faceIndex))
+                    return false;
+                if (face.InnerVertices is { } holes)
+                    foreach (var ring in holes)
+                        if (!AddRingUses(ring, faceIndex)) return false;
+            }
+            return true;
         }
-        return HasClosedMultiplicity();
+
+        bool AddRingUses(List<double[]> ring, int faceIndex)
+        {
+            if (ring.Count < 3 || verticesByAxis is null && ring.Any(point => point.Length < 3
+                    || !double.IsFinite(point[0]) || !double.IsFinite(point[1])
+                    || !double.IsFinite(point[2])))
+                return false;
+            var start = IfcPrecisionKeyFeet(ring[0]);
+            var first = start;
+            for (int index = 1; index <= ring.Count; index++)
+            {
+                var second = index < ring.Count ? IfcPrecisionKeyFeet(ring[index]) : start;
+                if (first == second) return false;
+                if (verticesByAxis is null) AddUse(faceIndex, first, second);
+                else AddSplitUses(faceIndex, first, second, verticesByAxis);
+                first = second;
+            }
+            return true;
+        }
+
+        void AddSplitUses(int faceIndex, (long X, long Y, long Z) first,
+            (long X, long Y, long Z) second, (long X, long Y, long Z)[][] byAxis)
+        {
+            var segment = new LatticeSegment(first, second);
+            int axis = segment.DominantAxis;
+            long from = Axis(first, axis), to = Axis(second, axis);
+            bool forward = from < to;
+            var sorted = byAxis[axis];
+            int index = AxisBound(sorted, axis, from, afterEqual: forward) - (forward ? 0 : 1);
+            int step = forward ? 1 : -1;
+            var previous = first;
+            // Both endpoints are in the index from the validated first pass.
+            for (; (uint)index < (uint)sorted.Length; index += step)
+            {
+                var point = sorted[index];
+                long coordinate = Axis(point, axis);
+                if (forward ? coordinate >= to : coordinate <= to) break;
+                if (!segment.OnSegment(point)) continue;
+                AddUse(faceIndex, previous, point);
+                previous = point;
+            }
+            AddUse(faceIndex, previous, second);
+        }
     }
 
     /// <summary>
@@ -734,14 +829,20 @@ internal static class FacetedShell
     /// declared-precision identity as the IFC point cache.
     /// </summary>
     internal static bool IsExactFacetedShell(
-        IReadOnlyList<GeoFace> faces, IReadOnlyCollection<int> faceIndices)
+        IReadOnlyList<GeoFace> faces, IReadOnlyCollection<int> faceIndices) =>
+        IsExactFacetedShell(faces, faceIndices, new());
+
+    private static bool IsExactFacetedShell(
+        IReadOnlyList<GeoFace> faces, IReadOnlyCollection<int> faceIndices,
+        Dictionary<((long X, long Y, long Z) A, (long X, long Y, long Z) B), EdgeUses> edgeUses,
+        HashSet<(long X, long Y, long Z)>? splitVertices = null)
     {
         var faceMap = faceIndices.Distinct().ToDictionary(index => index,
             index => (uint)index < faces.Count ? faces[index] : null);
         if (faceMap.Values.Any(face => face == null)) return false;
         return TryGetFacetedAtomicEdgeUses(
                 faceMap.ToDictionary(pair => pair.Key, pair => pair.Value!),
-                faceIndices, out var edgeUses)
-            && edgeUses.Values.All(uses => uses[0].Direction + uses[1].Direction == 0);
+                faceIndices, edgeUses, splitVertices)
+            && edgeUses.Values.All(uses => uses.First.Direction + uses.Second.Direction == 0);
     }
 }

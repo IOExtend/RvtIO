@@ -1040,8 +1040,9 @@ namespace RvtIO.Model
         public int? SerializedHostId { get; set; }
 
         /// <summary>
-        /// The workset ID of the element (equal to ELEM_PARTITION_PARAM / Autodesk.Revit.DB.Element.WorksetId).
-        /// Non-null in workshared files where a partition is assigned; null in non-workshared files.
+        /// The workset ID of the element as returned by Autodesk.Revit.DB.Element.WorksetId.
+        /// Revit 2027 uses 0 for the default workset of a non-workshared file and -1 for its ELEM_PARTITION_PARAM.
+        /// Null when no workset can be resolved.
         /// </summary>
         public int? WorksetId { get; set; }
 

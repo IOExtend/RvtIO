@@ -152,6 +152,27 @@ public class WideBlockWalkerEntityTests
     }
 
     [Fact]
+    public void ProductionFieldReaderPreservesANameQueuedAfterANestedEntity()
+    {
+        var schema = Schema(usageMap: true);
+        schema.Classes[schema.Classes.FindIndex(c => c.Id == DataId)] = new(DataId, "SymbolInfo", 0, 1,
+            [Field("m_name", 8, 0x60), Field("m_value", 8, 0x60)], []);
+        (string Name, string Type, int Container, int Index)[] outer = [("Inner", "ESEntity", 0, 0)];
+        (string Name, string Type, int Container, int Index)[] inner = [("Value", "int", 0, 0)];
+        var reader = new WideNativeParams(schema);
+        reader.Walker.UseEntitySchemas(EntitySchemaReader.Read(Latest(true, (SchemaA, outer), (SchemaB, inner)), schema)!,
+            passUnknown: true);
+        var block = HostBlock(w => { w.Write(0xFFFFFFFFu); w.Write(SchemaB.ToByteArray()); }, behind: w => w.Write(123));
+
+        var walk = reader.Walker.Run(block, 0, block.Length, HostId);
+
+        Assert.True(walk.Exact, walk.Error);
+        Assert.Equal(["ESEntityCell", "Model", "ESBlob", "SymbolInfo", "ESBlob"], walk.Queue.Select(id => reader.Walker.Class(id)!.Name));
+        Assert.Equal("FieldName", reader.OwnName(walk, HostId));
+        Assert.False(reader.Walker.Run(block[..^1], 0, block.Length - 1, HostId).Exact);
+    }
+
+    [Fact]
     public void Walk_AnEntityWithTheHandle0_HasNoValues_AndQueuesNothing()
     {
         var block = HostBlock(null, handle: 0);

@@ -301,6 +301,7 @@ internal static partial class RebarReader
             if (bar.Included.Count != 0 && bar.Included[i] == 0) continue;
             bars.Add(first.Select(s => bar.Held ? s.Moved(bar.Positions[i]) : s.Moved(bar.Positions[i]).Moved(bar.Positions[i])).ToList());
         }
-        return new RebarBars(bar.BarTypeId, 0, bar.BarLength, bars, ShapeName: bar.ShapeId.ToString(CultureInfo.InvariantCulture), InAssembly: bar.InAssembly);
+        return new RebarBars(bar.BarTypeId, 0, bar.BarLength, bars, ShapeName: bar.ShapeId.ToString(CultureInfo.InvariantCulture),
+            InAssembly: bar.InAssembly, ShapeId: bar.ShapeId);
     }
 }

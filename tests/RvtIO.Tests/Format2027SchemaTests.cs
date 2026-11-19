@@ -51,6 +51,56 @@ public class Format2027SchemaTests
         Assert.Equal(1, walk.Captures.Single(c => c.Key == "Table.m_table#").Integer);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void HostTypeLayersFollowItsCompleteUnambiguousOwnedStructure(bool duplicate)
+    {
+        var pointer = new SchemaField("m_pCompoundStructure", 14, 1, 0, null, null, null, null);
+        var schema = new SchemaDocument
+        {
+            Classes =
+            [
+                new(1, "Identifier", 0, 1, [Field("m_id64", 11)], []),
+                new(2, "ElementId", 0, 1, [new("m_id", 14, 0, 0, null, 1, null, null)], []),
+                new(3, "HostObjAttr", 0, 1, duplicate ? [pointer, pointer with { Name = "m_other" }] : [pointer], []),
+                new(4, "CompoundStructure", 0, 1, [new("m_layers", 14, 0x50, 0, null, 5, null, null)], []),
+                new(5, "CompoundStructureLayer", 0, 1,
+                    [Field("m_layerWidth", 7), new("m_materialId", 14, 0, 0, null, 2, null, null), Field("m_layerFunction", 4)], []),
+            ],
+        };
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+        writer.Write((ushort)3);
+        writer.Write(uint.MaxValue);
+        writer.Write((ushort)4);
+        if (duplicate)
+        {
+            writer.Write(uint.MaxValue);
+            writer.Write((ushort)4);
+        }
+        writer.Write(2u);
+        writer.Write(0.25); writer.Write(420L); writer.Write(4);
+        writer.Write(0.0); writer.Write(-1L); writer.Write(100);
+        if (duplicate) writer.Write(0u);
+        var block = stream.ToArray();
+        var reader = new WideNativeParams(schema);
+        var walk = reader.Walker.Run(block, 0, block.Length, 3);
+
+        Assert.True(walk.Exact, walk.Error);
+        Assert.Equal(TfClassNames.IdOf("CompoundStructure"),
+            reader.Build(walk, 3)!.Fields[TfClassNames.Key("HostObjAttr", "m_pCompoundStructure")]);
+        var layers = reader.HostTypeLayers(walk, 3);
+        if (duplicate) Assert.Null(layers);
+        else
+        {
+            Assert.NotNull(layers);
+            Assert.Equal([(420, 4, 0.25, 0), (-1, 100, 0.0, 1)],
+                layers.Select(layer => (layer.MaterialId, layer.Function, layer.ThicknessFt, layer.LayerIndex)));
+        }
+        Assert.Null(reader.HostTypeLayers(reader.Walker.Run(block, 0, block.Length - 1, 3), 3));
+    }
+
     [Fact]
     public void CategoryNames_KnowTheMembersAddedAfter2022()
     {
