@@ -973,8 +973,8 @@ namespace RvtIO.Model
         internal double[]? DecodedBox => BoundingBoxIsHeaderOutline ? Geometry?.BoundingBox : BoundingBox;
 
         /// <summary>
-        /// Revit UniqueId: "{episode GUID}-{original element id:x8}", the GUID of the episode that created the element and
-        /// the id it was created with, both read from the element's history in the document's element table. Null when the
+        /// Revit UniqueId: the creation episode GUID followed by the original element ID in hexadecimal (at least eight
+        /// digits). Both are read from the element's history in the document's element table. Null when the
         /// file holds no history for the element (for example an element found only in a stream), since its UniqueId cannot
         /// be known then.
         /// </summary>

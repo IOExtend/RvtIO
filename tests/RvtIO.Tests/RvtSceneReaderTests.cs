@@ -437,12 +437,19 @@ public class RvtSceneReaderTests
         Assert.Empty(document.Validate());
     }
 
-    [Fact]
-    public void IfcGuidIsTheExportIdOfTheUniqueId()
+    [Theory]
+    [InlineData(263584, "d45b1816-cbcc-4dc6-b0bb-007467f3c600-000405a0", "3KMnWMoynDnh2x07HdzyEW")]
+    [InlineData(4295967297L, "95db5b0a-a7bf-4747-af03-b1f5fe59fca1-1000f4241", "2LsriAfxz7Hwy3iVJ_LhxW")]
+    public void IfcGuidIsTheExportIdOfTheUniqueId(long id, string uniqueId, string expectedGuid)
     {
-        // The UniqueId and GlobalId of an element of a fixture file, as Revit 2022 exported it to IFC.
-        var element = MapOne(new Element { Id = 263584, UniqueId = "d45b1816-cbcc-4dc6-b0bb-007467f3c600-000405a0" }).Elements[0];
-        Assert.Equal("3KMnWMoynDnh2x07HdzyEW", element.IfcGuid);
+        var element = MapOne(new Element { Id = 1, NativeId = id, UniqueId = uniqueId }).Elements[0];
+        Assert.Equal(uniqueId, element.SourceId);
+        Assert.Equal(expectedGuid, element.IfcGuid);
+    }
+
+    [Fact]
+    public void MissingOrMalformedUniqueIdHasNoIfcGuid()
+    {
         Assert.Null(MapOne(new Element { Id = 1, UniqueId = "d45b1816-cbcc-4dc6-b0bb-007467f3c600-0405a0" }).Elements[0].IfcGuid);
         Assert.Null(MapOne(new Element { Id = 1 }).Elements[0].IfcGuid);
     }
