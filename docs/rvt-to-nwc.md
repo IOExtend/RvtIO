@@ -10,8 +10,8 @@ Install the .NET runtime that matches the archive and run the command from the e
 dotnet RvtIO.Nwc.dll model.rvt model.nwc --native
 ```
 
-This mode writes placed triangle geometry, face normals, diffuse colours, the element tree, IFC GlobalIds
-and Revit property display text. The cache uses feet internally. It opens in NwcIO and was validated in
+This mode writes placed triangles, straight model and separation lines, face normals, diffuse colours, the element tree,
+IFC GlobalIds and Revit property display text. It also writes reinforcement meshes from decoded bar paths. The cache uses feet internally. It opens in NwcIO and was validated in
 Navisworks Manage 2027. Export uses managed .NET code on Windows and Linux.
 
 ## Autodesk Navisworks
