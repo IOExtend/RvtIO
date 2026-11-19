@@ -435,6 +435,9 @@ public class RvtDocument
     public IList<Element> GetElements(int categoryId)
         => Collector().OfCategory(categoryId).ToElements();
 
+    /// <summary>Gets the project building storeys and resolves element assignments with the current IFC storey rules.</summary>
+    public BuildingStoreyCatalog GetBuildingStoreyCatalog() => new(_elemById);
+
     /// <summary>Get all distinct category IDs present in the document.</summary>
     public IReadOnlyList<int> GetCategories()
     {

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
 using RvtIO.Geometry;
+using RvtIO.Internal;
 using RvtIO.Lookup;
 using RvtIO.Model;
 using RvtIO.Parsing;
@@ -741,6 +742,14 @@ public partial class IfcExporter
             elementIdOccurrenceCounts[e.Id] = occurrenceCount + 1;
             elementOrderById.TryAdd(e.Id, elementIndex);
         }
+        var storeyResolver = new BuildingStoreyResolver(storeyIds, elemById, defaultStoreyId, buildingId, CurrentProfile);
+        int ResolveStorey(Element element, double[]? outline = null)
+        {
+            int id = storeyResolver.Resolve(element, out bool hasOffStoreyLevel, outline);
+            if (hasOffStoreyLevel) _offStoreyLevelElementIds.Add(element.Id);
+            return id;
+        }
+
         _elementsByIdCurrent = elemById;
         _axisExtrusionBodyCurrent.Clear();
         // The elements that the writers outside the product loop may write: the product loop leaves out the ones whose export flags say No
@@ -1708,7 +1717,7 @@ public partial class IfcExporter
             if (CurrentProfile && elem.RebarBars != null)
             {
                 if (!WriteRebarProduct(w, elem, elemById, ownerHistId, axisId, bldgLocalPlacementId, bodySubCtxId, propertySingleValueIds,
-                        int.TryParse(info.Metadata?.RevitVersion, out int revitRelease) && revitRelease >= 2026, storeyIds, defaultStoreyId, storeyContents))
+                        int.TryParse(info.Metadata?.RevitVersion, out int revitRelease) && revitRelease >= 2026, storeyIds, storeyResolver, storeyContents))
                     Skip(elem, "rebar-product-not-written");
                 else
                 {
@@ -1895,7 +1904,7 @@ public partial class IfcExporter
                     isEmittedAggregateParent: _emittedAggregateParentElementIds.Contains(elem.Id)))
             { Skip(elem, "product-without-body"); continue; }
 
-            int elemStoreyId = ResolveStorey(elem, storeyIds, defaultStoreyId, elemById, buildingId);
+            int elemStoreyId = ResolveStorey(elem);
             if (Environment.GetEnvironmentVariable("RVTIO_STOREY_DIAG") is { Length: > 0 } storeyDiag)
                 File.AppendAllText(storeyDiag, string.Join(';', elem.Id, ifcType, elem.CategoryId, elem.SuperInstanceId, elem.NativeMasterSymbolId,
                     (elem.DecodedBox ?? elem.Geometry?.BoundingBox) is { Length: >= 6 } diagBox ? diagBox[2].ToString("R", CultureInfo.InvariantCulture) : "-",
@@ -5023,7 +5032,7 @@ public partial class IfcExporter
             // the main loop left the beam system out; its assembly is a product of the file
             foreach (int systemId in WriteJoistAssemblies(w, exportableElements, ownerHistId, bldgLocalPlacementId, axisId, exportedIfcElements, exportedStoreyIds,
                          storeyContents, propertySingleValueIds,
-                         system => ResolveStorey(system, storeyIds, defaultStoreyId, elemById, buildingId, system.BoundingBox)))
+                         system => ResolveStorey(system, system.BoundingBox)))
             {
                 // counted with or without a skip log; the log entry is only there to be taken out
                 string systemClass = elemById.TryGetValue(systemId, out var sysElem) ? RvtIO.SkipLog.ClassOf(sysElem) : "OST_StructuralFramingSystem";
@@ -68118,7 +68127,7 @@ public partial class IfcExporter
             // it is not written where no storey is that low.
             else if (CurrentProfile && levelElemId is int offStoreyLevelId && _elementsByIdCurrent is { } elementsById
                 && elementsById.TryGetValue(offStoreyLevelId, out var offStoreyLevel) && offStoreyLevel.CategoryId == -2000240
-                && HighestStoreyAtOrBelow(offStoreyLevel, storeyIds, elementsById, 0) is > 0 and int storeyBelowId)
+                && BuildingStoreyResolver.HighestStoreyAtOrBelow(offStoreyLevel, storeyIds, elementsById, 0) is > 0 and int storeyBelowId)
                 storeyId = storeyBelowId;
             else continue;
 
@@ -69223,225 +69232,12 @@ public partial class IfcExporter
     private static bool IsNonPhysicalCategory(string? category) => ProductRules.IsNonPhysicalCategory(category);
 
 
-    /// <summary>
-    /// The storey of an element, replaying the storey rule: the base-level
-    /// parameter of its kind (a nested family instance reads its top-level instance), then any
-    /// stored level reference. <paramref name="outline"/> is the box of an element that has no body of its own.
-    /// </summary>
-    private int ResolveStorey(Element elem, Dictionary<int, int> storeyIds, int defaultStoreyId,
-        IReadOnlyDictionary<int, Element> elemById, int buildingId, double[]? outline = null)
-    {
-        // The current profile reads STAIRS_BASE_LEVEL_PARAM, which is StairsElement.m_baseLevelId.
-        if (CurrentProfile && elem.CategoryId == -2000120 && elem.SerializedStairBaseLevelId is int stairBaseLevelId
-            && storeyIds.TryGetValue(stairBaseLevelId, out int stairBaseStoreyId))
-            return stairBaseStoreyId;
-        Element parameterSource = elem.SuperInstanceId is > 0 && elemById.TryGetValue(elem.SuperInstanceId.Value, out var top)
-            ? top : elem;
-        int[] baseLevelParameters = elem.CategoryId switch
-        {
-            -2000011 => [-1001107],                 // WALL_BASE_CONSTRAINT
-            -2000035 => [-1001651],                 // ROOF_CONSTRAINT_LEVEL_PARAM
-            -2000120 => [-1007200],                 // STAIRS_BASE_LEVEL_PARAM
-            _ when elem.NativeMasterSymbolId is > 0 => [-1001350, -1001365, -1001383],
-            _ => [],
-        };
-        // An element whose level is a Level that is not a project storey stands in the highest storey at or below
-        // that level, in the building where no storey is that low.
-        Element? offStoreyLevel = null;
-        foreach (int parameterId in baseLevelParameters)
-            if (parameterSource.Parameters.FirstOrDefault(parameter => parameter.Id == parameterId)?.Value is int levelId)
-            {
-                if (storeyIds.TryGetValue(levelId, out int storeyId)) return storeyId;
-                if (CurrentProfile && offStoreyLevel == null
-                    && elemById.TryGetValue(levelId, out var baseLevel) && baseLevel.CategoryId == -2000240)
-                    offStoreyLevel = baseLevel;
-            }
-        // A base level that is not a storey outranks the element's own level parameters below, as one that is a
-        // storey does. Among the base-level parameters one on a storey still outranks an earlier one that is not.
-        if (offStoreyLevel != null)
-        {
-            _offStoreyLevelElementIds.Add(elem.Id);
-            return HighestStoreyAtOrBelow(offStoreyLevel, storeyIds, elemById, buildingId);
-        }
+    internal static bool IsProjectLevel(Element level) => BuildingStoreyResolver.IsProjectLevel(level);
 
-        // A column whose base level is a Level that is not a project storey stands in the highest storey at or
-        // below that level, and in the building where no storey is that low.
-        if (CurrentProfile && elem.CategoryId is -2001330 or -2000100
-            && parameterSource.Parameters.FirstOrDefault(parameter => parameter.Id == -1001350)?.Value is int columnBaseLevelId
-            && elemById.TryGetValue(columnBaseLevelId, out var columnBaseLevel) && columnBaseLevel.CategoryId == -2000240)
-            return storeyIds.TryGetValue(columnBaseLevelId, out int baseStoreyId)
-                ? baseStoreyId
-                : HighestStoreyAtOrBelow(columnBaseLevel, storeyIds, elemById, buildingId);
+    internal static List<Element> GetBuildingStoreyLevels(IEnumerable<Element> elements) =>
+        BuildingStoreyResolver.GetBuildingStoreyLevels(elements);
 
-        if (CurrentProfile)
-        {
-            // LEVEL_PARAM, SCHEDULE_LEVEL_PARAM, RBS_START_LEVEL_PARAM, FAMILY_BASE_LEVEL_PARAM,
-            // INSTANCE_SCHEDULE_ONLY_LEVEL_PARAM, INSTANCE_REFERENCE_LEVEL_PARAM,
-            // SCHEDULE_BASE_LEVEL_PARAM.
-            foreach (int parameterId in elem.CategoryId is -2000035 or -2000120
-                         ? new[] { -1001952, -1002062, -1114000, -1001350, -1001365, -1001383, -1002063, -1001352 }
-                         : new[] { -1001952, -1002062, -1114000, -1001350, -1001365, -1001383, -1002063 })
-                if (elem.Parameters.FirstOrDefault(parameter => parameter.Id == parameterId)?.Value is int assocLevelId)
-                {
-                    if (storeyIds.TryGetValue(assocLevelId, out int assocStoreyId)) return assocStoreyId;
-                    if (offStoreyLevel == null
-                        && elemById.TryGetValue(assocLevelId, out var assocLevel) && assocLevel.CategoryId == -2000240)
-                        offStoreyLevel = assocLevel;
-                }
-            if (offStoreyLevel != null)
-            {
-                _offStoreyLevelElementIds.Add(elem.Id);
-                return HighestStoreyAtOrBelow(offStoreyLevel, storeyIds, elemById, buildingId);
-            }
-        }
-        // Try to find LEVEL_PARAM or BASE_LEVEL_PARAM in element's parameters
-        else foreach (var p in elem.Parameters)
-        {
-            if (p.StorageType == StorageType.ElementId && p.Value is int refId && refId > 0)
-            {
-                string? pName = p.Definition?.Name;
-                if (pName != null && (pName.Contains("LEVEL") || pName.Contains("CONSTRAINT") || pName.Contains("Level")))
-                {
-                    if (storeyIds.TryGetValue(refId, out int sid))
-                        return sid;
-                }
-            }
-        }
-
-        // No stored level: the highest storey at or below the bottom of the element.
-        if (CurrentProfile && storeyIds.Count > 0)
-        {
-            int byBottom = ResolveStoreyByBottomCurrent(
-                (outline ?? elem.DecodedBox ?? elem.Geometry?.BoundingBox) is { Length: >= 6 } box ? box[2] : null,
-                storeyIds, elemById);
-            return byBottom != 0 ? byBottom : defaultStoreyId;
-        }
-        if ((elem.DecodedBox ?? elem.Geometry?.BoundingBox) is { Length: >= 6 } bounds && storeyIds.Count > 0)
-        {
-            const double Tolerance = 1e-6;
-            int best = defaultStoreyId;
-            double bestElevation = double.NegativeInfinity;
-            foreach (var (levelId, storeyId) in storeyIds)
-                if (elemById.TryGetValue(levelId, out var level))
-                {
-                    double elevation = GetElevation(level);
-                    if (elevation <= bounds[2] + Tolerance && elevation > bestElevation)
-                    {
-                        best = storeyId;
-                        bestElevation = elevation;
-                    }
-                }
-            return best;
-        }
-
-        return defaultStoreyId;
-    }
-
-    /// <summary>The storey of the highest project level at or below this level (the later level on a tie), the building where no storey is that low.</summary>
-    private static int HighestStoreyAtOrBelow(Element level, Dictionary<int, int> storeyIds,
-        IReadOnlyDictionary<int, Element> elemById, int buildingId)
-    {
-        const double Tolerance = 1e-6;
-        double baseElevation = GetElevation(level);
-        int chosen = buildingId;
-        double chosenElevation = double.NegativeInfinity;
-        int chosenLevelId = 0;
-        foreach (var (levelId, storeyId) in storeyIds)
-            if (elemById.TryGetValue(levelId, out var storeyLevel))
-            {
-                double elevation = GetElevation(storeyLevel);
-                if (elevation <= baseElevation + Tolerance
-                    && (elevation > chosenElevation || elevation == chosenElevation && levelId > chosenLevelId))
-                {
-                    chosen = storeyId;
-                    chosenElevation = elevation;
-                    chosenLevelId = levelId;
-                }
-            }
-        return chosen;
-    }
-
-    /// <summary>10 cm in feet: the storey rule, how far below a level its storey starts.</summary>
-    private const double StoreyExtensionFeet = 10.0 / (12.0 * 2.54);
-
-    private Dictionary<int, int>? _storeyRangeSource;
-    private (int StoreyId, double Start, double Height)[] _storeyRanges = [];
-    private int _storeyRangeBottom;
-
-    /// <summary>The placement rule for an element without a stored level.</summary>
-    private int ResolveStoreyByBottomCurrent(double? bottom, Dictionary<int, int> storeyIds,
-        IReadOnlyDictionary<int, Element> elemById)
-    {
-        if (!ReferenceEquals(_storeyRangeSource, storeyIds))
-        {
-            var levels = storeyIds
-                .Where(pair => elemById.ContainsKey(pair.Key))
-                .Select(pair => (LevelId: pair.Key, StoreyId: pair.Value, Elevation: GetElevation(elemById[pair.Key])))
-                .OrderBy(level => level.Elevation).ThenBy(level => level.LevelId).ToList();
-            var ranges = new List<(int LevelId, int StoreyId, double Start, double Height)>();
-            for (int i = 0; i < levels.Count; i++)
-            {
-                double height = 0;
-                for (int j = i + 1; j < levels.Count; j++)
-                    if (Math.Abs(levels[j].Elevation - levels[i].Elevation) > 1e-7)
-                    {
-                        height = levels[j].Elevation - levels[i].Elevation;
-                        break;
-                    }
-                ranges.Add((levels[i].LevelId, levels[i].StoreyId, levels[i].Elevation - StoreyExtensionFeet, height));
-            }
-            ranges.Sort((a, b) => a.LevelId.CompareTo(b.LevelId));
-            _storeyRanges = ranges.Select(range => (range.StoreyId, range.Start, range.Height)).ToArray();
-            _storeyRangeBottom = 0;
-            double lowest = double.MaxValue;
-            foreach (var range in _storeyRanges)
-                if (range.Start < lowest + 1e-8)
-                {
-                    _storeyRangeBottom = range.StoreyId;
-                    lowest = range.Start;
-                }
-            _storeyRangeSource = storeyIds;
-        }
-        int chosen = 0;
-        if (bottom is double z)
-            foreach (var (storeyId, start, height) in _storeyRanges)
-                // Both bounds move by the same tolerance, so no bottom falls between two ranges.
-                if (z > start + 1e-9 && (Math.Abs(height) < 1e-10 || z <= start + height + 1e-9))
-                    chosen = storeyId;
-        return chosen != 0 ? chosen : _storeyRangeBottom;
-    }
-
-    // A project Level (building story or not) has no owning family, unplaced instance or DB view;
-    // loaded-family reference levels carry an exact owner in one of these serialized fields.
-    internal static bool IsProjectLevel(Element level) => level.IsNativeLevel
-        && level.SerializedFamilyId == -1
-        && level.SerializedUnplacedOwnerId == -1
-        && level.SerializedOwnerDbViewId == -1;
-
-    internal static List<Element> GetBuildingStoreyLevels(IEnumerable<Element> elements)
-    {
-        var candidates = elements
-            .Where(element => element.IsNativeLevel
-                // A project Level has no owning family, unplaced instance, or DB view.
-                && element.SerializedFamilyId == -1
-                && element.SerializedUnplacedOwnerId == -1
-                && element.SerializedOwnerDbViewId == -1
-                && !string.IsNullOrWhiteSpace(element.Name)
-                && element.Parameters.Any(parameter => parameter.Id == -1007102
-                    && parameter.StorageType == StorageType.Double
-                    && parameter.Value is double elevation
-                    && double.IsFinite(elevation))
-                && element.Parameters.Any(parameter => parameter.Id == -1007111
-                    && parameter.StorageType == StorageType.Integer
-                    && parameter.Value is int isBuildingStory
-                    && isBuildingStory == 1))
-            .ToList();
-
-        return candidates
-            .OrderBy(GetElevation)
-            .ThenBy(element => element.Id)
-            .ToList();
-    }
+    private static double GetElevation(Element level) => BuildingStoreyResolver.GetElevation(level);
 
     /// <summary>The height of the storey placement of a level, in metres.</summary>
     private static double StoreyElevationMetres(Element level)
@@ -69449,22 +69245,6 @@ public partial class IfcExporter
         double metres = Math.Round(GetElevation(level) * FeetToMetres, 4); // round to 0.1mm
         return Math.Abs(metres) < 1e-6 ? 0.0 : metres; // avoid -0.
     }
-
-    private static double GetElevation(Element level)
-    {
-        // Look for LEVEL_ELEV parameter
-        foreach (var p in level.Parameters)
-        {
-            string? pName = p.Definition?.Name;
-            if (pName != null && pName.Contains("LEVEL_ELEV") && p.StorageType == StorageType.Double && p.Value is double d)
-                return d;
-        }
-        // Fallback: bbox Z
-        if (level.DecodedBox != null && level.DecodedBox.Length >= 3)
-            return level.DecodedBox[2];
-        return 0;
-    }
-
 
     /// <summary>Get door/window height in mm from params, frame extent, or bbox.</summary>
     internal static double GetDoorWindowHeight(Element elem, Element? type)

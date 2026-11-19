@@ -9,6 +9,8 @@ API between minor releases.
 ### Added
 
 - `RvtIO.Scene` exports decoded straight Revit grid axes and their labels in scene coordinates.
+- `RvtDocument.GetBuildingStoreyCatalog()` exposes project building storeys and their assignments.
+  `RvtIO.Scene` writes those levels and the storey of each drawable element using the current IFC rules.
 
 ### Fixed
 

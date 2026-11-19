@@ -1,4 +1,5 @@
 using System.Globalization;
+using RvtIO.Internal;
 using RvtIO.Model;
 using RvtIO.Parsing;
 
@@ -31,11 +32,11 @@ public partial class IfcExporter
     /// <summary>Writes the product of a reinforcement element; false (nothing written) when its type has no usable name.</summary>
     private bool WriteRebarProduct(StepWriter w, Element elem, IReadOnlyDictionary<int, Element> elemById, int ownerHistId,
         int axisId, int parentPlacementId, int bodySubCtxId, Dictionary<(string PropertyName, string ValueExpr), int> propertySingleValueIds,
-        bool shapeInName, Dictionary<int, int> storeyIds, int defaultStoreyId, Dictionary<int, List<int>> storeyContents)
+        bool shapeInName, Dictionary<int, int> storeyIds, BuildingStoreyResolver storeyResolver, Dictionary<int, List<int>> storeyContents)
     {
         var data = elem.RebarBars!;
         if (data.Items != null)
-            return WriteRebarContainer(w, elem, data, elemById, ownerHistId, axisId, parentPlacementId, bodySubCtxId, propertySingleValueIds, storeyIds, defaultStoreyId, storeyContents);
+            return WriteRebarContainer(w, elem, data, elemById, ownerHistId, axisId, parentPlacementId, bodySubCtxId, propertySingleValueIds, storeyIds, storeyResolver, storeyContents);
         string? barTypeName = data.BarTypeName;
         if (data.Bars.Count == 0 || data.Bars.Any(bar => bar.Count == 0) || string.IsNullOrEmpty(barTypeName)) return false;
         // For shape driven bars of Revit 2026 files the shape follows the type
@@ -48,7 +49,7 @@ public partial class IfcExporter
         int entityId = WriteRebarBar(w, elem, data, ownerHistId, axisId, parentPlacementId, bodySubCtxId, elemName, objectType,
             system != null ? 0 : data.SystemId > 0 ? data.Bars.Count + 3 : 0, globalIdOf: system);
         ExportQuantityTakeOffPropertySet(w, elem, entityId, ownerHistId, barTypeName, propertySingleValueIds);
-        PlaceRebarInStorey(elem, data, elemById, entityId, storeyIds, defaultStoreyId, storeyContents);
+        PlaceRebarInStorey(elem, data, elemById, entityId, storeyIds, storeyResolver, storeyContents);
         // No group of their system is written for the bars of an assembly, nor for the one bar of a system, which carries its GlobalId
         if (data.SystemId > 0 && !data.InAssembly && system == null)
         {
@@ -69,7 +70,7 @@ public partial class IfcExporter
     /// group of the container is written with the groups of the reinforcement systems. False (nothing written) when no item can be written.</summary>
     private bool WriteRebarContainer(StepWriter w, Element elem, RebarBars data, IReadOnlyDictionary<int, Element> elemById, int ownerHistId, int axisId,
         int parentPlacementId, int bodySubCtxId, Dictionary<(string PropertyName, string ValueExpr), int> propertySingleValueIds,
-        Dictionary<int, int> storeyIds, int defaultStoreyId, Dictionary<int, List<int>> storeyContents)
+        Dictionary<int, int> storeyIds, BuildingStoreyResolver storeyResolver, Dictionary<int, List<int>> storeyContents)
     {
         string? typeName = data.BarTypeName;
         if (string.IsNullOrEmpty(typeName)) return false;
@@ -81,7 +82,7 @@ public partial class IfcExporter
             int entityId = WriteRebarBar(w, elem, item, ownerHistId, axisId, parentPlacementId, bodySubCtxId,
                 $"{label}:{elem.Id.ToString(CultureInfo.InvariantCulture)}: {item.ItemIndex.ToString(CultureInfo.InvariantCulture)}", label, item.ItemIndex + 4,
                 IfcGuid.FromName($"rebar-container-item:{elem.Id}:{item.ItemIndex}"));
-            PlaceRebarInStorey(elem, item, elemById, entityId, storeyIds, defaultStoreyId, storeyContents);
+            PlaceRebarInStorey(elem, item, elemById, entityId, storeyIds, storeyResolver, storeyContents);
             members.Add(entityId);
         }
         if (members.Count == 0) return false;
@@ -132,7 +133,7 @@ public partial class IfcExporter
     /// (parts assemblies) are not written, so nothing aggregates them. Aggregate them instead when those assemblies are written.
     /// The assembly goes to the highest storey at or below the bottom of the Part that hosts the bar, so its bars follow that rule.</summary>
     private void PlaceRebarInStorey(Element elem, RebarBars data, IReadOnlyDictionary<int, Element> elemById, int entityId,
-        Dictionary<int, int> storeyIds, int defaultStoreyId, Dictionary<int, List<int>> storeyContents)
+        Dictionary<int, int> storeyIds, BuildingStoreyResolver storeyResolver, Dictionary<int, List<int>> storeyContents)
     {
         int storeyId = 0;
         if (data.InAssembly && storeyIds.Count > 0 && HostPartBottom(elem, elemById) is double partBottomFt)
@@ -140,8 +141,7 @@ public partial class IfcExporter
         if (storeyId == 0)
         {
             double bottomFt = data.Bars.SelectMany(bar => bar).Min(piece => piece.MinZ()) - data.ModelDiameter / 2;
-            int byBottom = storeyIds.Count > 0 ? ResolveStoreyByBottomCurrent(bottomFt, storeyIds, elemById) : 0;
-            storeyId = byBottom != 0 ? byBottom : defaultStoreyId;
+            storeyId = storeyResolver.ResolveByBottom(bottomFt);
         }
         if (!storeyContents.TryGetValue(storeyId, out var contents)) storeyContents[storeyId] = contents = [];
         contents.Add(entityId);

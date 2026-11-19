@@ -1,6 +1,8 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using RvtIO.Ifc;
 using RvtIO.Model;
+using RvtIO.Scene;
 using Xunit;
 
 namespace RvtIO.Tests;
@@ -115,6 +117,31 @@ public class IfcExporterCurrentContainmentTests
         element.Parameters.Add(LevelParameter(-1001952, "LEVEL_PARAM", 10));
         string ifc = Export(IfcProfile.Current, Levels().Append(element).ToArray());
         Assert.Equal("Level A", StoreyOf(ifc, "IFCBUILDINGELEMENTPROXY", 100));
+    }
+
+    [Fact]
+    public void SceneLevelsAndElementAssignmentsMatchCurrentIfc()
+    {
+        var constrained = AtBottom(Product(100, GenericModel, "OST_GenericModel", 200), 9.8);
+        constrained.Parameters.Add(LevelParameter(-1001952, "LEVEL_PARAM", 10));
+        var byGeometry = AtBottom(Product(101, GenericModel, "OST_GenericModel", 200), 9.8);
+        var info = new RevitFileInfo { Elements = [.. Levels(), constrained, byGeometry] };
+        var scene = RvtSceneReader.Read(RvtDocument.FromInfo(info), new RvtSceneOptions { ModelKey = "levels.rvt" }).Document;
+
+        using var step = new StringWriter(CultureInfo.InvariantCulture);
+        new IfcExporter { Profile = IfcProfile.Current, LengthUnit = IfcUnitFamily.Metre }.Export(info, step);
+        string ifc = step.ToString();
+        var ifcLevels = Regex.Matches(ifc, @"=IFCBUILDINGSTOREY\('[^']*',#\d+,'([^']*)',[^\r\n]*,\.ELEMENT\.,([^)]*)\);")
+            .ToDictionary(match => match.Groups[1].Value, match => double.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture));
+
+        Assert.Equal(3, ifcLevels.Count);
+        Assert.Equal(ifcLevels.Count, scene.Levels.Count);
+        foreach (var level in scene.Levels)
+            Assert.Equal(ifcLevels[level.Name], level.Elevation!.Value, 9);
+        Assert.Equal(2, scene.Elements.Count);
+        foreach (var element in scene.Elements)
+            Assert.Equal(StoreyOf(ifc, "IFCBUILDINGELEMENTPROXY", element.Id),
+                Assert.Single(scene.Levels, level => level.Id == element.LevelId).Name);
     }
 
     [Theory]
@@ -311,7 +338,7 @@ public class IfcExporterCurrentContainmentTests
     }
 
     /// <summary>The name of the storey that IfcRelContainedInSpatialStructure gives the product with this tag.</summary>
-    private static string? StoreyOf(string ifc, string ifcType, int tag)
+    private static string? StoreyOf(string ifc, string ifcType, long tag)
     {
         var product = Regex.Match(ifc, $@"#(\d+)={ifcType}\([^\r\n]*,'{tag}'[,)]");
         if (!product.Success) return null;
