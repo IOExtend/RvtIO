@@ -1,0 +1,24 @@
+# RVT to NWC preview
+
+The optional `RvtIO.Nwc` tool uses `RvtIO.Scene` and the NwcIO writer. Run it from the repository with
+the SDK in `global.json` and either supported .NET runtime.
+
+```sh
+dotnet run --project tools/RvtIO.Nwc -c Release -f net10.0 -- model.rvt model.nwc
+nwcio model.nwc model.json
+```
+
+The tool writes placed triangle meshes in metres, with one mesh per scene instance. It applies rotation,
+scale and reflection to the local vertices, corrects reflected triangle winding, and keeps the translation
+separate from the float32 vertex buffer. The cache includes the element tree and available storeys, Revit
+element IDs and UniqueIds, IFC GlobalIds, and instance and type parameter display text. Mesh names include
+the Revit element ID so that meshes can be matched to the element tree.
+
+The cache marks its coordinates as metres and records mesh ownership in the writer metadata. A build of
+NwcIO with linked-cache support can open it and export the placed geometry and property tabs with
+`nwcio model.nwc --scene model.scene.json`. NwcIO 0.14 can inspect the raw meshes and element tree via
+its JSON export. Autodesk Navisworks import is unverified. The cache layout omits materials, normals and
+line geometry.
+
+Use a new output path. Reader errors, an empty model, or geometry that the writer rejects stop the export.
+Reader warnings are printed to standard error. The tool moves the completed cache into place after writing.
