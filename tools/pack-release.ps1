@@ -105,7 +105,18 @@ Copy-Item (Join-Path $root 'README.md') $cli10Stage
 Copy-Item (Join-Path $root 'LICENSE') $cli10Stage
 New-Zip $cli10Stage (Join-Path $Output "RvtIO-Cli-$version-net10.0.zip")
 
-# 4. NuGet packages
+# 4. Portable RVT-to-NWC tool (.NET 8 and .NET 10 runtimes)
+foreach ($framework in 'net8.0', 'net10.0') {
+    Write-Host "Publishing RvtIO.Nwc ($framework)..."
+    $nwcStage = Join-Path $stage "nwc-$framework"
+    Invoke-DotNet publish (Join-Path $root 'tools\RvtIO.Nwc\RvtIO.Nwc.csproj') -c Release -f $framework --self-contained false -p:UseAppHost=false -o $nwcStage
+    Invoke-DotNet (Join-Path $nwcStage 'RvtIO.Nwc.dll') --help
+    Copy-Item (Join-Path $root 'docs\rvt-to-nwc.md') (Join-Path $nwcStage 'README.md')
+    Copy-Item (Join-Path $root 'LICENSE'), (Join-Path $root 'THIRD-PARTY-NOTICES.md') $nwcStage
+    New-Zip $nwcStage (Join-Path $Output "RvtIO-Nwc-$version-$framework.zip")
+}
+
+# 5. NuGet packages
 Write-Host "Packing NuGet packages..."
 Invoke-DotNet pack (Join-Path $root 'RvtIO.slnx') -c Release --no-build -o $Output
 
@@ -121,7 +132,7 @@ try {
 }
 Assert-SceneDependencies $nuspec $version
 
-# 5. Source code archive
+# 6. Source code archive
 Write-Host "Creating source code archive..."
 $sourceZip = Join-Path $Output "RvtIO-$version-source.zip"
 if (Test-Path -LiteralPath $sourceZip) { Remove-Item -LiteralPath $sourceZip }
@@ -130,7 +141,7 @@ if ($LASTEXITCODE -ne 0) { throw "git archive failed with exit code $LASTEXITCOD
 
 Remove-Item -LiteralPath $stage -Recurse -Force
 
-# 6. Checksums
+# 7. Checksums
 Write-Host "Computing SHA256..."
 $files = @(Get-ChildItem -LiteralPath $Output -File | Where-Object { $_.Extension -in '.zip', '.nupkg', '.snupkg' } | Sort-Object Name)
 $sums = $files | ForEach-Object { '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name }

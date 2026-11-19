@@ -36,6 +36,7 @@ dotnet add package RvtIO
 viewers; see the [scene adapter](docs/scene.md) for usage and limits.
 
 The optional [RvtIO.Nwc tool](docs/rvt-to-nwc.md) exports Revit projects to NWC with a managed writer.
+Download the ready-to-run tool from [RvtIO releases](https://github.com/IOExtend/RvtIO/releases/latest).
 
 The library targets .NET 8 and .NET 10. It uses managed code without native dependencies or Windows-only APIs and is tested on Windows, Linux and macOS.
 
