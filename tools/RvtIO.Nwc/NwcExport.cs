@@ -13,7 +13,7 @@ internal static class NwcExport
     // The optional metadata is written by NwcIO 0.14 and interpreted by the linked-cache reader.
     private const string MetreCacheOption = "IOExtend.NwcWriter.Scene/1";
     private const string LinkClass = "IOExtend.NwcWriter.Link";
-    internal static NwcDocument Build(SceneDocument scene, string sourceName, long sourceLength, DateTime timestamp)
+    internal static NwcDocument Build(SceneDocument scene, string sourceName, long sourceLength, DateTime timestamp, bool native = false)
     {
         if (scene.Validate().FirstOrDefault(d => d.Severity == SceneSeverity.Error) is { } error)
             throw new InvalidDataException(error.Message);
@@ -40,6 +40,11 @@ internal static class NwcExport
             var node = AddNode(parent, nextNodeId++, element.Name, "RvtIO.Element");
             nodes.Add(element.Id, node);
 
+            if (native)
+            {
+                node.Class = "LcRevitElement";
+                node.IfcGlobalId = element.IfcGuid;
+            }
             AddText(node, "Revit", "Element ID", id);
             AddText(node, "Revit", "UniqueId", element.SourceId);
             AddText(node, "Revit", "IFC GlobalId", element.IfcGuid);
@@ -54,6 +59,14 @@ internal static class NwcExport
         }
 
         var geometries = scene.Geometries.ToDictionary(geometry => geometry.Id);
+        var materials = native
+            ? scene.Materials.ToDictionary(m => m.Id, m => new NwcMaterial
+            {
+                Id = m.Id,
+                Name = m.Name,
+                Color = new(m.Color.R / 255f, m.Color.G / 255f, m.Color.B / 255f, m.Color.A / 255f),
+            })
+            : null;
         var meshes = new List<NwcMesh>(scene.Instances.Count);
         foreach (var instance in scene.Instances)
         {
@@ -75,16 +88,21 @@ internal static class NwcExport
 
             int meshId = meshes.Count + 1;
             var node = nodes[instance.ElementId];
-            node.Properties.Add(new NwcPropertyRecord
+            if (!native)
             {
-                FirstInt = node.Id, Tag = 52, Name = "Mesh ID", Class = LinkClass, ValueType = 2, IntValue = meshId,
-            });
+                node.Properties.Add(new NwcPropertyRecord
+                {
+                    FirstInt = node.Id, Tag = 52, Name = "Mesh ID", Class = LinkClass, ValueType = 2, IntValue = meshId,
+                });
+            }
             meshes.Add(new NwcMesh
             {
                 Id = meshId,
                 Name = string.Create(CultureInfo.InvariantCulture, $"{node.Name} [RVT {instance.ElementId}]"),
                 Vertices = vertices,
                 Indices = indices,
+                Node = native ? node : null,
+                Material = instance.MaterialId is int materialId ? materials?.GetValueOrDefault(materialId) : null,
                 // The read-back tree also looks for transforms by node ID.
                 Transform = new NwcTransform { Id = nextNodeId++, Translation = ToNwc(transform.Translation) },
             });
@@ -104,7 +122,7 @@ internal static class NwcExport
             rootNode: root);
     }
 
-    internal static void Save(NwcDocument cache, string path)
+    internal static void Save(NwcDocument cache, string path, bool native = false)
     {
         string destination = Path.GetFullPath(path);
         string temporary = Path.Combine(Path.GetDirectoryName(destination)!, $"rvtio-nwc-{Guid.NewGuid():N}.tmp");
@@ -113,7 +131,20 @@ internal static class NwcExport
         try
         {
             using (stream)
-                NwcWriter.Write(cache, stream);
+            {
+                if (native)
+                {
+#if MANAGED_NWC
+                    NwcWriter.WriteNative(cache, stream);
+#else
+                    throw new InvalidOperationException("Native NWC export requires a build with the NwcIO project.");
+#endif
+                }
+                else
+                {
+                    NwcWriter.Write(cache, stream);
+                }
+            }
             File.Move(temporary, destination);
             moved = true;
         }

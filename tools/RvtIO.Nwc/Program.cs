@@ -5,7 +5,7 @@ namespace RvtIO.Nwc;
 
 internal static class Program
 {
-    private const string Usage = "Usage: RvtIO.Nwc <input.rvt> <output.nwc> [--navisworks <Roamer.exe>]";
+    private const string Usage = "Usage: RvtIO.Nwc <input.rvt> <output.nwc> [--native | --navisworks <Roamer.exe>]";
 
     public static int Main(string[] args)
     {
@@ -16,6 +16,16 @@ internal static class Program
         }
 
         string? navisworks = null;
+        bool native = args is [_, _, "--native"];
+        if (native)
+        {
+#if !MANAGED_NWC
+            Console.Error.WriteLine("Rebuild with -p:NwcIOProject=<path to NwcIO.csproj> to use --native.");
+            return 2;
+#else
+            args = args[..2];
+#endif
+        }
         if (args is [_, _, "--navisworks", var executable])
         {
             navisworks = executable;
@@ -50,8 +60,8 @@ internal static class Program
             if (scene.Diagnostics.Any(d => d.Severity == SceneSeverity.Error))
                 return 2;
 
-            var cache = NwcExport.Build(scene.Document, source.Name, length, source.LastWriteTimeUtc);
-            NwcExport.Save(cache, output);
+            var cache = NwcExport.Build(scene.Document, source.Name, length, source.LastWriteTimeUtc, native);
+            NwcExport.Save(cache, output, native);
             Console.Out.WriteLine($"Exported {cache.Meshes.Count} triangle meshes to '{output}'.");
             return 0;
         }

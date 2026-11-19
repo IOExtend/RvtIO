@@ -35,7 +35,7 @@ dotnet add package RvtIO
 `RvtIO.Scene` (a separate package released with RvtIO) turns a Revit project into an `IOScene` scene document for
 viewers; see the [scene adapter](docs/scene.md) for usage and limits.
 
-The optional [RvtIO.Nwc tool](docs/rvt-to-nwc.md) exports Revit projects to NWC using Autodesk Navisworks on Windows or writes a preview cache for NwcIO.
+The optional [RvtIO.Nwc tool](docs/rvt-to-nwc.md) exports Revit projects to NWC with a managed writer.
 
 The library targets .NET 8 and .NET 10. It uses managed code without native dependencies or Windows-only APIs and is tested on Windows, Linux and macOS.
 
