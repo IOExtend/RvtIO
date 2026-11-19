@@ -6,6 +6,14 @@ API between minor releases.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-19
+
+### Added
+
+- GitHub releases include ready-to-run `RvtIO.Nwc` archives for .NET 8 and .NET 10.
+  Use `--native` to export an NWC file that opens in Navisworks and NwcIO without Autodesk software on the export machine.
+- On Windows, the optional `--navisworks` mode can also generate a cache through an installed Navisworks Manage or Simulate.
+
 ### Fixed
 
 - Reading an RVT whose element table contains an ID above `Int32.MaxValue` fails with `element-id-range`
