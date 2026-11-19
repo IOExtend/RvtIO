@@ -10,7 +10,7 @@ namespace RvtIO.Tests;
 public class NwcExportTests
 {
     [Fact]
-    public void NativeModelCarriesTheMeshOwnerAndSourceMaterial()
+    public void NativeRoundTripKeepsTheMeshOwnerAndSourceMaterial()
     {
         var scene = new SceneDocument();
         scene.AddMesh("Wall", [new(0, 0, 0), new(1, 0, 0), new(0, 1, 0)], [0, 1, 2]);
@@ -25,6 +25,23 @@ public class NwcExportTests
         Assert.Equal(element.IfcGuid, mesh.Node?.IfcGlobalId);
         Assert.Equal(new NwcIO.Model.RgbaColor(1, 0, 0), mesh.Material?.Color);
         Assert.DoesNotContain(mesh.Node!.Properties, record => record.Class == "IOExtend.NwcWriter.Link");
+
+        var directory = Directory.CreateTempSubdirectory();
+        try
+        {
+            string path = Path.Combine(directory.FullName, "model.nwc");
+            NwcExport.Save(document, path, native: true);
+
+            var reopened = NwcDocument.Open(path, new() { Strict = true });
+            var loaded = Assert.Single(reopened.Meshes);
+            Assert.Equal(NwcLengthUnit.Feet, reopened.LengthUnit);
+            Assert.Equal(element.IfcGuid, loaded.Node?.IfcGlobalId);
+            Assert.Equal(mesh.Material!.Color, loaded.Material?.Color);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
     }
 
     [Fact]
