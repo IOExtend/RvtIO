@@ -65,6 +65,27 @@ public class RoomNameSerializationTests
     }
 
     [Fact]
+    public void CurrentRoom_UsesItsFramedRootWhenTheStreamScanCannotAnchor()
+    {
+        byte[] room = Block(circuit: 49);
+        byte[] chunk = [.. room, .. new byte[16]];
+        var state = new ParsingState
+        {
+            AllKnownIds = [100],
+            Chunks = [chunk],
+            FramedPartitions = [new PartitionFraming.Framed([chunk], [new(102, 100, 0, room.Length)], 4, 2)],
+            IncrementRoutedPartitions = new Dictionary<ulong, int> { [100] = 2 },
+            StaleCopiesRemoved = true,
+        };
+
+        RvtFileReader.RunTfStreamWalk(state);
+
+        Assert.Equal((1, "Room's own name, №2"), state.RoomNameSource[100]);
+        Assert.Equal(49, state.ExactRoomCircuitIds[100]);
+        Assert.Contains((-1006901, "1.20"), state.NativeParams[100].Strings);
+    }
+
+    [Fact]
     public void Metadata_ReadsTheCachedCircuitIdOfTheRoom()
     {
         byte[] block = Block(circuit: 49);

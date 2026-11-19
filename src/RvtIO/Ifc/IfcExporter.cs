@@ -68146,12 +68146,17 @@ public partial class IfcExporter
                 storeyId = storeyBelowId;
             else continue;
 
-            string? number = RoomStringParam(elem, RoomNumberParam);
+            string? number = elem.Parameters.FirstOrDefault(p => p.Id == RoomNumberParam)?.Value as string;
             // A 64-bit-id file keeps the name of a room only as its ROOM_NAME parameter (no scanned
             // fallback name).
             string? longName = elem.Name ?? (_geometryUndecoded ? RoomStringParam(elem, RoomNameParam) : null);
-            if (string.IsNullOrEmpty(number) || string.IsNullOrEmpty(longName))
+            if (number == null || string.IsNullOrEmpty(longName))
                 continue;
+            // Revit exports a placed room whose number was explicitly cleared using its name and element ID.
+            bool emptyNumber = number.Length == 0;
+            if (emptyNumber && (!CurrentProfile || elem.CategoryId != RoomCategoryId || elem.SerializedRoomIsLocationless != false))
+                continue;
+            string spaceName = emptyNumber ? $"{longName}:{elem.ElementId.ToString(CultureInfo.InvariantCulture)}" : number;
 
             int storeyPlacementId = storeyPlacements[storeyId];
             int originPointId = w.Add("IFCCARTESIANPOINT", StepWriter.List(D(0), D(0), D(0)));
@@ -68227,7 +68232,7 @@ public partial class IfcExporter
             // exporter's IfcElevationWithFlooring is not read).
             string description = CurrentProfile && RoomStringParam(elem, SpaceCommentsParamId) is { } comments ? S(comments) : "$";
             int spaceEntityId = w.Add("IFCSPACE",
-                $"{S(spaceGuid)},{R(ownerHistId)},{S(number)},{description},{(CurrentProfile ? "''" : "$")},{R(placementId)},"
+                $"{S(spaceGuid)},{R(ownerHistId)},{S(spaceName)},{description},{(CurrentProfile ? "''" : "$")},{R(placementId)},"
                 + $"{(shapeId > 0 ? R(shapeId) : "$")},{S(longName)},.ELEMENT.,.INTERNAL.,{(CurrentProfile ? "0." : "$")}");
             spaceEntityIdByRoomId[elem.Id] = spaceEntityId;
             if (writtenBoundary != null) _spaceBodyGeometry[spaceEntityId] = writtenBoundary;
@@ -68238,7 +68243,7 @@ public partial class IfcExporter
                 schemeSpaces.Add(spaceEntityId);
             }
 
-            string referenceText = $"{longName} {number}";
+            string referenceText = emptyNumber ? longName : $"{longName} {number}";
             int referenceValueId = GetOrAddPropertySingleValue(
                 w, propertySingleValueIds, "Reference", $"IFCIDENTIFIER({S(referenceText)})");
             var commonValueIds = new List<int> { referenceValueId };
@@ -68253,7 +68258,7 @@ public partial class IfcExporter
                 $"{S(IfcGuid.FromName($"space-common-rel:{elem.Id}"))},{R(ownerHistId)},$,$,"
                 + $"{StepWriter.List(R(spaceEntityId))},{R(psetId)}");
 
-            string typeName = $"{longName} {number}:{elem.Id}";
+            string typeName = $"{referenceText}:{elem.Id}";
             string? exactSpaceTypeGuid = ResolveExactElementGlobalId(
                 elem, _usedExportIds, InstanceAsTypeSubElementIndex, CurrentProfile);
             string spaceTypeGuid = exactSpaceTypeGuid ?? IfcGuid.FromName($"space-type:{elem.Id}");
