@@ -10,7 +10,7 @@ namespace RvtIO.Scene;
 
 /// <summary>
 /// Turns a Revit document into a scene (<see cref="SceneDocument"/>): one model, one element per drawable element of the document
-/// with its triangle meshes (<see cref="ElementMeshes"/>), its names and its parameters, plus decoded straight grid axes.
+/// with its triangle meshes (<see cref="ElementMeshes"/>), its names and its parameters, plus building storeys and decoded straight grid axes.
 /// </summary>
 /// <remarks>
 /// <para>Lengths are converted from feet to metres (x 0.3048) into the internal coordinates of the document, Z up. A symbol that
@@ -32,7 +32,7 @@ namespace RvtIO.Scene;
 /// factor converts Revit's internal unit, and is left out otherwise (no spec, as for every built-in double, whose unit the
 /// reader only guesses from the parameter name, or a unit the reader converts with a factor that is not Revit's); an integer of a shared, project or family
 /// parameter (a plain integer or a Yes/No, shown as 1 or 0) is the number in decimal; a built-in integer, which may be an
-/// enumeration, and an element id are left out. Levels and typed values are not written.</para>
+/// enumeration, and an element id are left out. Typed property values are not written.</para>
 /// </remarks>
 public static class RvtSceneReader
 {
@@ -129,6 +129,15 @@ public static class RvtSceneReader
             Id = ModelId, Key = modelKey, Name = modelKey, SourceFormat = "rvt", SourceLengthUnit = "ft", Producer = Producer,
         });
         AddGrids(scene, document);
+        var storeys = document.GetBuildingStoreyCatalog();
+        foreach (var storey in storeys.Storeys)
+            scene.Levels.Add(new SceneLevel
+            {
+                Id = storey.Id,
+                ModelId = ModelId,
+                Name = storey.Name,
+                Elevation = double.IsFinite(storey.ElevationFeet) ? storey.ElevationFeet * MetresPerFoot : null,
+            });
         var report = new List<SceneDiagnostic>(diagnostics ?? []);
         if (meshes.GeometryUndecoded)
             report.Add(new(SceneSeverity.Error, "geometry-undecoded",
@@ -156,6 +165,7 @@ public static class RvtSceneReader
             {
                 Id = mesh.ElementId,
                 ModelId = ModelId,
+                LevelId = storeys.GetStoreyId(mesh.ElementId),
                 SourceId = element?.UniqueId,
                 IfcGuid = element != null ? IfcGuidOf(element) : null,
                 Kind = SceneNodeKind.Element,

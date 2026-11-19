@@ -122,6 +122,8 @@ public class RvtSceneReaderTests
     {
         var result = Map();
         Assert.Empty(result.Document.Grids);
+        Assert.Empty(result.Document.Levels);
+        Assert.All(result.Document.Elements, element => Assert.Null(element.LevelId));
         Assert.Empty(result.Document.Validate());
         Assert.Empty(SceneJson.Read(SceneJson.Write(result.Document)).Validate());
     }
@@ -183,6 +185,63 @@ public class RvtSceneReaderTests
             AssertClose(start * Foot, line.Start);
             AssertClose(end * Foot, line.End);
             Assert.Equal(start.Z * Foot, line.Elevation, 9);
+        }
+    }
+
+    [Fact]
+    public void SceneExportsProjectStoreysAndAssignsElementsWithTheCurrentIfcRules()
+    {
+        var ground = Level(10, "Ground", 0);
+        var upper = Level(20, "Upper", 12);
+        var landing = Level(15, "Landing", 6, story: false);
+        var below = Level(5, "Below the building", -3, story: false);
+        var family = Level(30, "Family reference", 12);
+        family.SerializedFamilyId = 900;
+
+        var wall = Instance(Wall, (int)BuiltInCategory.OST_Walls, "OST_Walls",
+            Bip(BuiltInParameter.WALL_BASE_CONSTRAINT, upper.Id, StorageType.ElementId),
+            Bip(BuiltInParameter.LEVEL_PARAM, ground.Id, StorageType.ElementId));
+        var onLanding = Instance(Door, (int)BuiltInCategory.OST_Doors, "OST_Doors",
+            Bip(BuiltInParameter.LEVEL_PARAM, landing.Id, StorageType.ElementId));
+        var withoutLevel = Instance(Empty, (int)BuiltInCategory.OST_Doors, "OST_Doors");
+        withoutLevel.BoundingBox = [0, 0, 11.9, 2, 2, 18];
+        var onBelow = Instance(Broken, (int)BuiltInCategory.OST_Doors, "OST_Doors",
+            Bip(BuiltInParameter.LEVEL_PARAM, below.Id, StorageType.ElementId));
+
+        var document = RvtDocument.FromInfo(new RevitFileInfo
+        {
+            Elements = [wall, onLanding, withoutLevel, onBelow, upper, family, below, ground, landing],
+        });
+        var catalog = document.GetBuildingStoreyCatalog();
+        Assert.Equal(new[] { ground.Id, upper.Id }, catalog.Storeys.Select(level => level.Id));
+        Assert.Null(catalog.GetStoreyId(999));
+
+        var result = RvtSceneReader.Read(document, Meshes(), new RvtSceneOptions { ModelKey = "model.rvt" });
+        var scene = SceneJson.Read(SceneJson.Write(result.Document));
+        Assert.Empty(scene.Validate());
+        int modelId = Assert.Single(scene.Models).Id;
+        Assert.Collection(scene.Levels,
+            level => CheckLevel(level, ground.Id, "Ground", 0, modelId),
+            level => CheckLevel(level, upper.Id, "Upper", 12 * Foot, modelId));
+        var elements = scene.Elements.ToDictionary(element => element.Id);
+        Assert.Equal(upper.Id, elements[Wall].LevelId);
+        Assert.Equal(ground.Id, elements[Door].LevelId);
+        Assert.Equal(upper.Id, elements[Empty].LevelId);
+        Assert.Null(elements[Broken].LevelId);
+
+        static Element Level(int id, string name, double elevation, bool story = true) => new()
+        {
+            Id = id, Name = name, CategoryId = (int)BuiltInCategory.OST_Levels,
+            IsNativeLevel = true, SerializedFamilyId = -1, SerializedUnplacedOwnerId = -1, SerializedOwnerDbViewId = -1,
+            Parameters = [Bip(BuiltInParameter.LEVEL_ELEV, elevation), Bip(BuiltInParameter.LEVEL_IS_BUILDING_STORY, story ? 1 : 0)],
+        };
+
+        static void CheckLevel(SceneLevel level, int id, string name, double elevation, int modelId)
+        {
+            Assert.Equal(id, level.Id);
+            Assert.Equal(modelId, level.ModelId);
+            Assert.Equal(name, level.Name);
+            Assert.Equal(elevation, level.Elevation!.Value, 9);
         }
     }
 
