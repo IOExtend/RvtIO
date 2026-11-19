@@ -10,6 +10,43 @@ namespace RvtIO.Tests;
 public class NwcExportTests
 {
     [Fact]
+    public void NavisworksCommandOpensTheExactCacheItCreates()
+    {
+        string directory = Path.GetFullPath(Path.GetTempPath());
+        string executable = Path.Combine(directory, "Navisworks Manage", "Roamer.exe");
+        string ifc = Path.Combine(directory, "sample model.ifc");
+        string cache = Path.ChangeExtension(ifc, ".nwc");
+        string log = Path.Combine(directory, "native trace.log");
+
+        var command = NavisworksExport.CreateStartInfo(executable, ifc, cache, log);
+
+        Assert.False(command.UseShellExecute);
+        Assert.Equal(executable, command.FileName);
+        Assert.Equal(Path.GetDirectoryName(executable), command.WorkingDirectory);
+        Assert.Equal(new[] { "-NoGui", "-log", log, "-CreateCache", ifc, "-OpenFile", cache, "-Exit" },
+            command.ArgumentList);
+    }
+
+    [Fact]
+    public void NavisworksModeRejectsAnExistingDestinationBeforeStartingTheApplication()
+    {
+        var directory = Directory.CreateTempSubdirectory();
+        try
+        {
+            string path = Path.Combine(directory.FullName, "existing.nwc");
+            File.WriteAllText(path, "original");
+
+            Assert.Equal(2, global::RvtIO.Nwc.Program.Main(["missing.rvt", path, "--navisworks", "missing.exe"]));
+            Assert.Equal("original", File.ReadAllText(path));
+            Assert.Equal(path, Assert.Single(Directory.GetFiles(directory.FullName)));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
     public void RoundTripKeepsPlacedTrianglesAndRevitProperties()
     {
         var scene = new SceneDocument();
