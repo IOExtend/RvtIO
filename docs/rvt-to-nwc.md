@@ -2,10 +2,12 @@
 
 ## Autonomous export
 
-Run the optional tool from the RvtIO repository. The build restores NwcIO from NuGet.
+Download and extract `RvtIO-Nwc-<version>-net10.0.zip` or `RvtIO-Nwc-<version>-net8.0.zip` from the
+[RvtIO releases](https://github.com/IOExtend/RvtIO/releases/latest). The archive includes the tool and its dependencies.
+Install the .NET runtime that matches the archive and run the command from the extracted directory.
 
 ```sh
-dotnet run --project tools/RvtIO.Nwc -c Release -f net10.0 -- model.rvt model.nwc --native
+dotnet RvtIO.Nwc.dll model.rvt model.nwc --native
 ```
 
 This mode writes placed triangle geometry, face normals, diffuse colours, the element tree, IFC GlobalIds
@@ -17,7 +19,7 @@ Navisworks Manage 2027. Export uses managed .NET code on Windows and Linux.
 On Windows, pass the installed Navisworks Manage or Simulate executable to export a cache for Navisworks.
 
 ```powershell
-dotnet run --project tools/RvtIO.Nwc -c Release -f net10.0 -- model.rvt model.nwc --navisworks "C:\Program Files\Autodesk\Navisworks Manage 2027\Roamer.exe"
+dotnet RvtIO.Nwc.dll model.rvt model.nwc --navisworks "C:\Program Files\Autodesk\Navisworks Manage 2027\Roamer.exe"
 ```
 
 RvtIO reads the RVT and exports a temporary IFC using its current IFC profile and Revit property sets.
@@ -30,11 +32,10 @@ Autodesk documents the [command-line switches](https://help.autodesk.com/cloudhe
 
 ## NwcIO preview
 
-The optional `RvtIO.Nwc` tool uses `RvtIO.Scene` and the NwcIO writer. Run it from the repository with
-the SDK in `global.json` and either supported .NET runtime.
+Run the tool with two positional arguments to write the NwcIO preview layout.
 
 ```sh
-dotnet run --project tools/RvtIO.Nwc -c Release -f net10.0 -- model.rvt model.nwc
+dotnet RvtIO.Nwc.dll model.rvt model.nwc
 nwcio model.nwc model.json
 ```
 
@@ -53,3 +54,11 @@ line geometry.
 
 Use a new output path. Reader errors, an empty model, or geometry that the writer rejects stop the export.
 Reader warnings are printed to standard error. The tool moves the completed cache into place after writing.
+
+## Build from source
+
+Run the optional tool from the RvtIO repository with the SDK in `global.json`. The build restores NwcIO from NuGet.
+
+```sh
+dotnet run --project tools/RvtIO.Nwc -c Release -f net10.0 -- model.rvt model.nwc --native
+```

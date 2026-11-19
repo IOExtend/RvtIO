@@ -16,6 +16,19 @@ API between minor releases.
 - Report `element-id-range` with the offending ID if an RVT has wide element IDs and no project partition storage
   to read the element records.
 
+## [0.6.0] - 2026-11-19
+
+### Added
+
+- GitHub releases include ready-to-run `RvtIO.Nwc` archives for .NET 8 and .NET 10.
+  Use `--native` to export an NWC file that opens in Navisworks and NwcIO without Autodesk software on the export machine.
+- On Windows, the optional `--navisworks` mode can also generate a cache through an installed Navisworks Manage or Simulate.
+
+### Fixed
+
+- Reading an RVT whose element table contains an ID above `Int32.MaxValue` fails with `element-id-range`
+  and reports the offending ID before export.
+
 ## [0.5.1] - 2026-11-19
 
 The optional [RvtIO.Nwc tool](docs/rvt-to-nwc.md) exports Revit project geometry and element properties to NWC
