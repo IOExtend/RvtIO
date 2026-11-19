@@ -1,7 +1,7 @@
 # Scene adapter
 
 `RvtIO.Scene` turns a Revit project read by RvtIO into a scene of the `IOScene` package: a `SceneDocument` with one
-model, the drawable elements, their triangle meshes in metres, their names and their parameters. A viewer or another
+model, the drawable elements, their triangle meshes in metres, their names and parameters, and the decoded straight grid axes. A viewer or another
 consumer of the scene reads it without knowing Revit. The scene itself is specified in the contract of the `IOScene`
 repository (`docs/contract.md`), and the property keys it writes are registered there in `docs/keys.md`.
 
@@ -53,6 +53,7 @@ rvtio project.rvt --ifc project.ifc --compact-json project.compact.json --scene 
 |---|---|
 | `SceneModel.Key` | `RvtSceneOptions.ModelKey`, else the file name without its directory (`project.rvt`). This derivation does not change. |
 | `SceneModel` | `SourceFormat` `rvt`, `SourceLengthUnit` `ft`, `Producer` `RvtIO.Scene <version>`. |
+| `SceneGridSystem`, `SceneGridLine` | One grid system named `Grids` when the model has valid straight grid axes. Each axis uses its element name and the endpoints of its decoded location curve, converted from feet to metres in the document's internal coordinates. Elevation is the start point's Z. |
 | `SceneElement` | One per drawable element of `ElementMeshes.Extract` (the elements the IFC export would consider products, see the remarks of `ElementMeshes`). `Id` is the element id. |
 | `SourceId` | The Revit `UniqueId`. This derivation does not change; a golden test pins it on a fixture file. |
 | `IfcGuid` | The GlobalId Revit's IFC export gives the element: the value of its built-in IfcGUID parameter (`IFC_GUID`, matched by id as RvtIO's IFC export matches it) when it is a valid 22-character GlobalId; else the export id of the `UniqueId` (the episode GUID with its last 32 bits XORed with the element id the `UniqueId` ends with) in the IFC base-64 form. It depends on the element only, never on export order or options. This derivation does not change; the golden test pins it. |
@@ -98,7 +99,7 @@ The text a value is written with under a key is frozen with the key: changing it
 - Shared, project and family parameters have no key yet. Their formats (for example `revit:shared:<guid>`) are
   registered in the IOScene key registry when the adapter first writes them; that is an addition.
 - No levels (`LevelId` and the `Levels` table stay empty): RvtIO has no public level of an element.
-- No tree: every element is a top-level element of the model. No links, grids or views.
+- Every element is a top-level element of its model. Linked models, views and curved grid axes are omitted.
 - Materials have a name and a colour; no roughness, metalness or textures.
 - Element names are those of `RvtDocument`; the validated names the IFC export applies to files read by their own class
   schema are not public API.

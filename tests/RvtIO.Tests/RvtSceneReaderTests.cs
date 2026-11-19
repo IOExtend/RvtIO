@@ -121,6 +121,7 @@ public class RvtSceneReaderTests
     public void ScenePassesValidation()
     {
         var result = Map();
+        Assert.Empty(result.Document.Grids);
         Assert.Empty(result.Document.Validate());
         Assert.Empty(SceneJson.Read(SceneJson.Write(result.Document)).Validate());
     }
@@ -135,6 +136,54 @@ public class RvtSceneReaderTests
         Assert.NotNull(model.Producer);
         Assert.StartsWith("RvtIO.Scene ", model.Producer);
         Assert.DoesNotContain('+', model.Producer);
+    }
+
+    [Fact]
+    public void SceneExportsDecodedStraightGridAxesWithoutMeshes()
+    {
+        int category = (int)BuiltInCategory.OST_Grids;
+        var b = Axis(22, "Б", [4, -2, 3], [4, 8, 3]);
+        var a = Axis(11, "A", [-5, 1, 2], [5, 1, 2]);
+        var arc = Axis(30, "Arc", [1, 0, 0], [0, 1, 0]);
+        arc.Location!.CurveType = "Arc";
+        var wall = Axis(40, "Wall", [0, 0, 0], [5, 0, 0]);
+        wall.CategoryId = (int)BuiltInCategory.OST_Walls;
+        var info = new RevitFileInfo
+        {
+            Elements =
+            [
+                b, a, arc, wall,
+                new Element { Id = 50, CategoryId = category },
+                Axis(60, "Invalid", [0, 0, 0], [double.NaN, 1, 2]),
+                Axis(70, "Short point", [0, 0], [4, 0, 0]),
+                Axis(80, "Collapsed", [2, 2, 2], [2, 2, 2]),
+            ],
+        };
+        var result = RvtSceneReader.Read(RvtDocument.FromInfo(info), new MeshSet(), new RvtSceneOptions { ModelKey = "model.rvt" });
+        var scene = SceneJson.Read(SceneJson.Write(result.Document));
+
+        Assert.Empty(scene.Validate());
+        Assert.Empty(scene.Elements);
+        var grid = Assert.Single(scene.Grids);
+        Assert.Equal(Assert.Single(scene.Models).Id, grid.ModelId);
+        Assert.Equal("Grids", grid.Name);
+        Assert.Collection(grid.Lines,
+            line => CheckAxis(line, "A", new(-5, 1, 2), new(5, 1, 2)),
+            line => CheckAxis(line, "Б", new(4, -2, 3), new(4, 8, 3)));
+
+        Element Axis(int id, string name, double[] start, double[] end) => new()
+        {
+            Id = id, Name = name, CategoryId = category,
+            Location = new LocationCurve { StartPoint = start, EndPoint = end },
+        };
+
+        static void CheckAxis(SceneGridLine line, string name, Vector3d start, Vector3d end)
+        {
+            Assert.Equal(name, line.Name);
+            AssertClose(start * Foot, line.Start);
+            AssertClose(end * Foot, line.End);
+            Assert.Equal(start.Z * Foot, line.Elevation, 9);
+        }
     }
 
     [Fact]

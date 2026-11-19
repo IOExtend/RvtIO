@@ -10,7 +10,7 @@ namespace RvtIO.Scene;
 
 /// <summary>
 /// Turns a Revit document into a scene (<see cref="SceneDocument"/>): one model, one element per drawable element of the document
-/// with its triangle meshes (<see cref="ElementMeshes"/>), its names and its parameters.
+/// with its triangle meshes (<see cref="ElementMeshes"/>), its names and its parameters, plus decoded straight grid axes.
 /// </summary>
 /// <remarks>
 /// <para>Lengths are converted from feet to metres (x 0.3048) into the internal coordinates of the document, Z up. A symbol that
@@ -128,6 +128,7 @@ public static class RvtSceneReader
         {
             Id = ModelId, Key = modelKey, Name = modelKey, SourceFormat = "rvt", SourceLengthUnit = "ft", Producer = Producer,
         });
+        AddGrids(scene, document);
         var report = new List<SceneDiagnostic>(diagnostics ?? []);
         if (meshes.GeometryUndecoded)
             report.Add(new(SceneSeverity.Error, "geometry-undecoded",
@@ -215,6 +216,26 @@ public static class RvtSceneReader
             InstanceCount = scene.Instances.Count,
             PlacementCount = placements,
         };
+    }
+
+    private static void AddGrids(SceneDocument scene, RvtDocument document)
+    {
+        var grid = new SceneGridSystem { ModelId = ModelId };
+        foreach (var element in document.Collector().OfCategory(BuiltInCategory.OST_Grids)
+                     .WhereElementIsNotElementType().OrderBy(element => element.Id))
+        {
+            if (element.Location is not { CurveType: "Line", StartPoint: [var x0, var y0, var z0], EndPoint: [var x1, var y1, var z1] }
+                || !double.IsFinite(x0) || !double.IsFinite(y0) || !double.IsFinite(z0)
+                || !double.IsFinite(x1) || !double.IsFinite(y1) || !double.IsFinite(z1))
+                continue;
+
+            var start = new Vector3d(x0, y0, z0) * MetresPerFoot;
+            var end = new Vector3d(x1, y1, z1) * MetresPerFoot;
+            if (start == end) continue;
+            grid.Lines.Add(new SceneGridLine { Name = element.Name ?? string.Empty, Start = start, End = end, Elevation = start.Z });
+        }
+
+        if (grid.Lines.Count > 0) scene.Grids.Add(grid);
     }
 
     /// <summary>"RvtIO.Scene" and the version of this assembly without the source revision.</summary>

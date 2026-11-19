@@ -6,6 +6,10 @@ API between minor releases.
 
 ## [Unreleased]
 
+### Added
+
+- `RvtIO.Scene` exports decoded straight Revit grid axes and their labels in scene coordinates.
+
 ### Fixed
 
 - The Revit 2027 reader computes Area and Volume for closed bodies with full ruled faces between
