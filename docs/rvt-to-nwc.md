@@ -1,4 +1,21 @@
-# RVT to NWC preview
+# RVT to NWC
+
+## Autodesk Navisworks
+
+On Windows, pass the installed Navisworks Manage or Simulate executable to export a cache for Navisworks.
+
+```powershell
+dotnet run --project tools/RvtIO.Nwc -c Release -f net10.0 -- model.rvt model.nwc --navisworks "C:\Program Files\Autodesk\Navisworks Manage 2027\Roamer.exe"
+```
+
+RvtIO reads the RVT and exports a temporary IFC using its current IFC profile and Revit property sets.
+Navisworks creates the NWC and opens it before the tool moves it to the requested path.
+The cache's geometry and selection tree follow Navisworks' IFC import. The command requires a working
+Navisworks installation. Tested with Navisworks Manage 2027.
+
+Autodesk documents the [command-line switches](https://help.autodesk.com/cloudhelp/2022/ENU/Navisworks/files/GUID-3891FB9F-7BF1-4510-A1EE-121E975C0ACE.htm) used to create and open the cache.
+
+## NwcIO preview
 
 The optional `RvtIO.Nwc` tool uses `RvtIO.Scene` and the NwcIO writer. Run it from the repository with
 the SDK in `global.json` and either supported .NET runtime.
@@ -18,7 +35,7 @@ the Revit element ID so that meshes can be matched to the element tree.
 The cache marks its coordinates as metres and records mesh ownership in the writer metadata. A build of
 NwcIO with linked-cache support can open it and export the placed geometry and property tabs with
 `nwcio model.nwc --scene model.scene.json`. NwcIO 0.14 can inspect the mesh summaries and element tree via
-its JSON export. Autodesk Navisworks import is unverified. The cache layout omits materials, normals and
+its JSON export. This preview layout is for NwcIO. The cache layout omits materials, normals and
 line geometry.
 
 Use a new output path. Reader errors, an empty model, or geometry that the writer rejects stop the export.

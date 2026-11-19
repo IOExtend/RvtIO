@@ -5,7 +5,7 @@ namespace RvtIO.Nwc;
 
 internal static class Program
 {
-    private const string Usage = "Usage: RvtIO.Nwc <input.rvt> <output.nwc>";
+    private const string Usage = "Usage: RvtIO.Nwc <input.rvt> <output.nwc> [--navisworks <Roamer.exe>]";
 
     public static int Main(string[] args)
     {
@@ -13,6 +13,13 @@ internal static class Program
         {
             Console.Out.WriteLine(Usage);
             return 0;
+        }
+
+        string? navisworks = null;
+        if (args is [_, _, "--navisworks", var executable])
+        {
+            navisworks = executable;
+            args = args[..2];
         }
 
         if (args is not [var input, var output] ||
@@ -27,6 +34,13 @@ internal static class Program
         {
             if (File.Exists(output))
                 throw new IOException($"The output file already exists: '{output}'.");
+
+            if (navisworks is not null)
+            {
+                NavisworksExport.Save(input, output, navisworks);
+                Console.Out.WriteLine($"Exported '{output}' with Autodesk Navisworks.");
+                return 0;
+            }
 
             var source = new FileInfo(input);
             long length = source.Length;
