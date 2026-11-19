@@ -6,6 +6,8 @@ API between minor releases.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-19
+
 The optional [RvtIO.Nwc tool](docs/rvt-to-nwc.md) exports Revit project geometry and element properties to NWC
 using the NwcIO writer layout.
 
