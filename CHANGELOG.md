@@ -6,10 +6,15 @@ API between minor releases.
 
 ## [Unreleased]
 
+### Added
+
+- Preserve 64-bit Revit element IDs in project reads, source-ID lookups and exports. JSON and Scene carry wide source
+  IDs as decimal text.
+
 ### Fixed
 
-- Reading an RVT whose element table contains an ID above `Int32.MaxValue` fails with `element-id-range`
-  and reports the offending ID before export.
+- Report `element-id-range` with the offending ID if an RVT has wide element IDs and no project partition storage
+  to read the element records.
 
 ## [0.5.1] - 2026-11-19
 

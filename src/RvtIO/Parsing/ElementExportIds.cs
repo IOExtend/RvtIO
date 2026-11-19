@@ -4,7 +4,7 @@ namespace RvtIO.Parsing;
 /// History of one element as stored in its ElemRec record: the id the element was created with and
 /// the episode it was created in (a reverse index into the episode list).
 /// </summary>
-internal readonly record struct ElemRecHistory(uint OriginalElementId, int CreationDate);
+internal readonly record struct ElemRecHistory(long OriginalElementId, int CreationDate);
 
 /// <summary>Element UniqueId and export id from the document's own tables.</summary>
 internal static class ElementExportIds

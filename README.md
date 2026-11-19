@@ -215,6 +215,16 @@ The tested projects include basic and advanced architecture, structure and MEP s
 
 The stored class schema determines the decoding layout, including element row and ID widths. The saving year in `BasicFileInfo` is a fallback when the schema release cannot be recognized. Diagnostics report both years when they differ; an older saving year does not override a recognized newer schema.
 
+For projects with wide element IDs, use `Element.ElementId` and `RvtDocument.GetElement(long)` for exact source
+identity. `TypeElementId`, `HostElementId`, and `Parameter.AsElementId64()` return the exact IDs of those references.
+Existing `int` members use document-local keys. `RevitFileInfo.GetSourceElementId(int)` resolves any such key.
+Full JSON records the remapped keys in `SourceElementIds` and writes remapped parameter references as decimal strings.
+Compact JSON keeps the exact source ID in the existing `object` string. Scene keeps local numeric links and carries wide
+source IDs as text. IFC products with a Tag attribute carry the exact source ID in that attribute.
+
+Wide creation IDs are available as `Element.OriginalElementId`. The Revit UniqueId and IFC GUID derivation used for
+32-bit original IDs is not extended to 64-bit originals without a reference from Revit.
+
 ## Limitations
 
 - Version 0.4.0 is a preview. The API can change before 1.0.

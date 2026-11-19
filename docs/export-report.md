@@ -35,7 +35,7 @@ The report lists reader limits under `limits.hit`. Reaching a recoverable limit 
 | `elem-table-recovery-bytes` | 268435456 (256 MiB) | the platform array length | The output of the recovery of a damaged `Global/ElemTable`. The table keeps what the ordinary decoders produced. |
 | `elem-table-recovery-iterations` | 4096 | unbounded (each iteration moves forward in the stream) | The number of relocks the recovery of a damaged `Global/ElemTable` makes. |
 | `array-length` | the platform array length | cannot be raised | A stream of the compound file longer than one array. Exit code 3 whatever the options. |
-| `element-id-range` | 2147483647 (`Int32.MaxValue`) | cannot be raised | An authoritative `Global/ElemTable` contains an element ID above the public range. The diagnostic includes that ID. Exit code 3 whatever the options. |
+| `element-id-range` | 2147483647 (`Int32.MaxValue`) | cannot be raised | An authoritative `Global/ElemTable` contains an ID above the local key range and the read has no project partition storage to map the ID. The diagnostic includes that ID. |
 
 ## Report format
 

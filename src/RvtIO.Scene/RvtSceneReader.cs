@@ -176,7 +176,7 @@ public static class RvtSceneReader
             if (sceneElement.SourceId == null) withoutUniqueId++;
             if (element != null)
             {
-                if (AddPropertySet(scene, "Instance", "revit:instance", element.Parameters) is int instanceSet)
+                if (AddPropertySet(scene, "Instance", "revit:instance", element.Parameters, element) is int instanceSet)
                     sceneElement.PropertySetIds.Add(instanceSet);
                 if (document.GetTypeElement(element) is { } type)
                 {
@@ -283,9 +283,13 @@ public static class RvtSceneReader
         element?.CategoryId is int id && ((BuiltInCategory)id).TryGetCategoryName(out string? name) ? name : element?.Category ?? string.Empty;
 
     /// <summary>Adds the set of the parameters that have a value the file stores; null when none has.</summary>
-    private static int? AddPropertySet(SceneDocument scene, string name, string key, IReadOnlyList<Parameter> parameters)
+    private static int? AddPropertySet(SceneDocument scene, string name, string key, IReadOnlyList<Parameter> parameters,
+        Element? source = null)
     {
         var properties = new List<SceneProperty>();
+        AddSourceId("Revit Element ID", source?.SourceElementId);
+        AddSourceId("Revit Type ID", source?.SourceTypeId);
+        AddSourceId("Revit Host ID", source?.SourceHostId);
         foreach (var parameter in parameters)
         {
             // An approximate or unset parameter is a reader estimate or placeholder, not a value stored in Revit.
@@ -302,6 +306,12 @@ public static class RvtSceneReader
         int id = scene.PropertySets.Count + 1;
         scene.PropertySets.Add(new ScenePropertySet { Id = id, Name = name, Key = key, Properties = properties });
         return id;
+
+        void AddSourceId(string label, string? id)
+        {
+            if (id != null)
+                properties.Add(new SceneProperty { Name = label, Value = SceneValue.FromText(id) });
+        }
     }
 
     /// <summary>The display string of the value as <see cref="Parameter.AsValueString()"/> gives it, with the invariant culture;
@@ -318,6 +328,7 @@ public static class RvtSceneReader
         // A user parameter that stores an integer is an Integer or a Yes/No, both shown by AsValueString as the number. A
         // built-in one may be an enumeration, which the public API cannot tell from a number, so it is left out.
         StorageType.Integer when parameter.Id > 0 && parameter.Value is int value => value.ToString(CultureInfo.InvariantCulture),
+        StorageType.ElementId => parameter.SourceElementId,
         // An ElementId: the public API does not give the name Revit shows for the referenced element.
         _ => null,
     };

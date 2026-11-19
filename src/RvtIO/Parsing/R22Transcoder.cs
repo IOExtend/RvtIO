@@ -29,13 +29,14 @@ internal sealed class R22Transcoder
     private readonly Dictionary<int, int> _tagMap = new();
     private readonly int _sourceWidth;
     private readonly int _sourceIdentifier;
+    private readonly ElementIdMap? _ids;
     private readonly Dictionary<int, Plan> _plans = new();
 
     /// <summary>Source fields in serialization order, the target class of the same name and the target field positions by (declaring class, field).</summary>
     private sealed record Plan((SchemaClass Declaring, SchemaField Field)[] Source, (SchemaClass Declaring, SchemaField Field)[] Target,
         int[] TargetIndex, bool[] TargetPresent, bool Reordered, bool[] Narrow);
 
-    internal R22Transcoder(SchemaDocument source, SchemaDocument target, int sourceIdWidth)
+    internal R22Transcoder(SchemaDocument source, SchemaDocument target, int sourceIdWidth, ElementIdMap? ids = null)
     {
         _source = source.Classes.GroupBy(c => c.Id).ToDictionary(g => g.Key, g => g.First());
         _target = target.Classes.GroupBy(c => c.Id).ToDictionary(g => g.Key, g => g.First());
@@ -44,6 +45,7 @@ internal sealed class R22Transcoder
         foreach (var c in source.Classes)
             if (_targetByName.TryGetValue(c.Name, out int id)) _tagMap[c.Id] = id;
         _sourceWidth = sourceIdWidth;
+        _ids = ids;
         _sourceIdentifier = source.Classes.FirstOrDefault(c => c.Name == "ElementId")?.Id ?? -1;
     }
 
@@ -146,7 +148,8 @@ internal sealed class R22Transcoder
             var (data, start, _) = source.Bytes(item);
             long at = flushed + output.Length;
             WriteBlock(data, start, output, stats, root: item.Channel == 102);
-            items.Add(new(item.Channel, item.Owner, at, (int)(flushed + output.Length - at)));
+            ulong owner = _ids == null ? item.Owner : unchecked((uint)_ids.Key(unchecked((long)item.Owner)));
+            items.Add(new(item.Channel, owner, at, (int)(flushed + output.Length - at)));
             if (output.Length >= 1 << 20) { flushed += output.Length; segments.Add(output.ToArray()); output.SetLength(0); }
         }
         if (output.Length > 0) segments.Add(output.ToArray());
@@ -185,7 +188,9 @@ internal sealed class R22Transcoder
     private void WriteId(byte[] b, int p, MemoryStream output)
     {
         Span<byte> id = stackalloc byte[4];
-        BinaryPrimitives.WriteUInt32LittleEndian(id, BitConverter.ToUInt32(b, p));
+        uint key = _ids != null && _sourceWidth == 8
+            ? unchecked((uint)_ids.Key(BitConverter.ToInt64(b, p))) : BitConverter.ToUInt32(b, p);
+        BinaryPrimitives.WriteUInt32LittleEndian(id, key);
         output.Write(id);
     }
 
@@ -573,8 +578,8 @@ internal sealed class R22Transcoder
                 if (_sourceWidth == 8 && !c.Cutting)
                 {
                     long id = BitConverter.ToInt64(c.D, p);
-                    if (id < int.MinValue || id > int.MaxValue) throw new Fail("id beyond 32 bits");
-                    c.Edits.Add(new(p, p + 8, BitConverter.GetBytes((int)id)));
+                    if (_ids == null && (id < int.MinValue || id > int.MaxValue)) throw new Fail("id beyond 32 bits");
+                    c.Edits.Add(new(p, p + 8, BitConverter.GetBytes(_ids?.Key(id) ?? (int)id)));
                 }
                 return;
             }

@@ -17,8 +17,46 @@ namespace RvtIO.Model
         /// <summary>A copy that shares all members with this element; the caller replaces what it changes.</summary>
         internal Element ShallowCopy() => (Element)MemberwiseClone();
 
-        /// <summary>The element id.</summary>
+        /// <summary>The document-local element key used by the existing 32-bit APIs. Use <see cref="ElementId"/>
+        /// for the ID as stored in the RVT.</summary>
         public int Id { get; set; }
+
+        /// <summary>The exact Revit element ID.</summary>
+        [JsonIgnore]
+        public long ElementId => NativeId ?? Id;
+
+        /// <summary>The source ID as decimal text when it differs from the local key.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? SourceElementId => NativeId?.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        /// <summary>The exact type element ID, or the native unresolved sentinel.</summary>
+        [JsonIgnore]
+        public long TypeElementId => NativeTypeId ?? TypeId;
+
+        /// <summary>The source type ID as decimal text when it differs from the local key.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? SourceTypeId => NativeTypeId?.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        /// <summary>The exact host element ID when a host was resolved.</summary>
+        [JsonIgnore]
+        public long? HostElementId => NativeHostId ?? HostId;
+
+        /// <summary>The source host ID as decimal text when it differs from the local key.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? SourceHostId => NativeHostId?.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        internal long? NativeId { get; set; }
+        internal long? NativeTypeId { get; set; }
+        internal long? NativeHostId { get; set; }
+
+        /// <summary>The element ID recorded in the creation history, when available.</summary>
+        [JsonIgnore]
+        public long? OriginalElementId { get; internal set; }
+
+        /// <summary>The full creation ID as decimal text when it exceeds the supported UniqueId derivation range.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? SourceOriginalElementId => OriginalElementId is > uint.MaxValue
+            ? OriginalElementId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) : null;
 
         /// <summary>Resolved type element id; nonpositive when unresolved.</summary>
         public int TypeId { get; set; }

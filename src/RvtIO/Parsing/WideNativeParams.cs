@@ -75,7 +75,7 @@ internal sealed partial class WideNativeParams
     private readonly HashSet<int> _storeIds;
     private readonly int _namedParam;
 
-    internal WideNativeParams(SchemaDocument schema)
+    internal WideNativeParams(SchemaDocument schema, ElementIdMap? ids = null)
     {
         _schema = schema;
         _r22 = TfBlockDeserializer.Schemas;
@@ -93,7 +93,7 @@ internal sealed partial class WideNativeParams
         _walker = new WideBlockWalker(schema, KeyOf,
             ["ParamValueDouble", "ParamValueInt", "ParamValueAString", "ParamValueElementId", "NamedParam", "ForgeTypeId", "FormatOptions", "AUnits",
                 "CompoundStructureLayer", "Connector", "ConnectorId", "SegmentConnectorCalculation", "MEPFamilyConnectorCalculationHvac",
-                "MEPFamilyConnectorCalculationPiping", "MEPFamilyConnectorCalculationElectrical"]);
+                "MEPFamilyConnectorCalculationPiping", "MEPFamilyConnectorCalculationElectrical"], ids: ids);
     }
 
     /// <summary>The class number of the Revit 2022 table for a class of the file, 0 when that class has none.</summary>

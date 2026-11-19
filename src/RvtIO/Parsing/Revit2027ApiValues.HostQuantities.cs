@@ -35,7 +35,7 @@ internal static partial class Revit2027ApiValues
             bool volumeMissing = (volumeLevel.HasValue || rawVolume) && !HasValue(element, BuiltInParameter.HOST_VOLUME_COMPUTED);
             if ((!areaMissing && !volumeMissing) || ExactRoot(state, element.Id) is not { } root) continue;
 
-            geometry ??= new WideSolidQuantities(schema, frames);
+            geometry ??= new WideSolidQuantities(schema, frames, state.ElementIds);
             bool curtainDoor = false;
             if (wallArea && areaMissing)
             {

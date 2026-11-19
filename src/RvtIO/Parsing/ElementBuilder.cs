@@ -4971,13 +4971,17 @@ internal static partial class ElementBuilder
             // Id 0 is a valid ElemTable row (ProjectPhase / DimensionStyle) across wide and native R22 tables.
             if (element.Id < 0
                 || state.ElemRecHistories is not { } histories
-                || !histories.TryGetValue((uint)element.Id, out var history)
-                || ElementExportIds.EpisodeGuid(history, state.HistoryEpisodeGuids, state.EpisodeTableX)
-                    is not Guid episode)
+                || !histories.TryGetValue((uint)element.Id, out var history))
                 continue;
-            element.SerializedExportId = ElementExportIds.ExportId(episode, history.OriginalElementId);
-            element.SerializedHandleExportId = ElementExportIds.ExportId(episode, (uint)element.Id);
-            string uniqueId = ElementExportIds.UniqueId(episode, history.OriginalElementId);
+            element.OriginalElementId = history.OriginalElementId;
+            if (history.OriginalElementId is < 0 or > uint.MaxValue
+                || ElementExportIds.EpisodeGuid(history, state.HistoryEpisodeGuids, state.EpisodeTableX) is not Guid episode)
+                continue;
+            uint originalId = (uint)history.OriginalElementId;
+            element.SerializedExportId = ElementExportIds.ExportId(episode, originalId);
+            if (element.ElementId is >= 0 and <= uint.MaxValue)
+                element.SerializedHandleExportId = ElementExportIds.ExportId(episode, (uint)element.ElementId);
+            string uniqueId = ElementExportIds.UniqueId(episode, originalId);
             if (element.UniqueId != null && element.UniqueId != uniqueId) replaced++;
             element.UniqueId = uniqueId;
             applied++;

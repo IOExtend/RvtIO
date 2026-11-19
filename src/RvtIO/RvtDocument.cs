@@ -12,6 +12,7 @@ public class RvtDocument
     private readonly RevitFileInfo _info;
     private readonly string? _sourcePath;
     private readonly Dictionary<int, Element> _elemById;
+    private readonly Dictionary<long, Element>? _elementsBySourceId;
     private readonly Dictionary<string, Element>? _elemByUniqueId;
     private readonly HashSet<int> _typeElementIds;
 
@@ -86,7 +87,11 @@ public class RvtDocument
 
         _elemById = new Dictionary<int, Element>(info.Elements.Count);
         foreach (var e in info.Elements)
+        {
             _elemById.TryAdd(e.Id, e);
+            if (e.NativeId is long sourceId)
+                (_elementsBySourceId ??= []).TryAdd(sourceId, e);
+        }
 
         // Build type element ID set: elements referenced via ELEM_TYPE_PARAM by other elements
         _typeElementIds = new HashSet<int>();
@@ -104,6 +109,7 @@ public class RvtDocument
         }
 
         SynthesizeMissingParams();
+        info.AttachSourceElementIds();
         Parameter.ResolveZeroElementIds(_info);
 
         ResolveElementNames();
@@ -364,11 +370,20 @@ public class RvtDocument
     }
 
 
-    /// <summary>Get element by ID. Returns null if not found.</summary>
+    /// <summary>Finds an element by its document-local key. Use the long overload for a source ID.</summary>
     public Element? GetElement(int elementId)
     {
         _elemById.TryGetValue(elementId, out var elem);
         return elem;
+    }
+
+    /// <summary>Finds an element by the exact source ID stored in the RVT.</summary>
+    public Element? GetElement(long elementId)
+    {
+        if (_elementsBySourceId?.TryGetValue(elementId, out var element) == true) return element;
+        if (elementId is < int.MinValue or > int.MaxValue) return null;
+        element = GetElement((int)elementId);
+        return element?.ElementId == elementId ? element : null;
     }
 
     /// <summary>Get element by UniqueId string. Returns null if not found.</summary>

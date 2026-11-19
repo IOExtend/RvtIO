@@ -43,10 +43,17 @@ internal static class ElemTableReader
     public static Dictionary<uint, uint> Read(RootStorage root,
         out Dictionary<uint, uint> worksets, out Dictionary<uint, int> creationDates, out bool exact,
         (int MaxBytes, int MaxIterations)? limits = null, RvtReadDiagnostics? diagnostics = null)
+        => Read(root, out worksets, out creationDates, out exact, out _, allowWideIds: false, limits, diagnostics);
+
+    internal static Dictionary<uint, uint> Read(RootStorage root,
+        out Dictionary<uint, uint> worksets, out Dictionary<uint, int> creationDates, out bool exact,
+        out ElementIdMap? ids, bool allowWideIds,
+        (int MaxBytes, int MaxIterations)? limits = null, RvtReadDiagnostics? diagnostics = null)
     {
         worksets = new();
         creationDates = new();
         exact = false;
+        ids = null;
         var result = new Dictionary<uint, uint>();
         try
         {
@@ -63,32 +70,27 @@ internal static class ElemTableReader
                 var formats = FormatsSchema.TryRead(root);
                 bool shipped = exactTable.Length >= 2 && BitConverter.ToUInt16(exactTable, 0) == ElementExportIds.ElemTableClassId
                     && SchemaRelease.AllowsShipped(formats?.Release ?? SchemaRelease.Of(root, null), 2022);
-                if (exactTable.Length >= 2 && !shipped
-                    && formats is { } schema && ElemTableLayout.TryParse(exactTable, schema) is { } rows)
+                if (exactTable.Length >= 2 && !shipped)
                 {
-                    foreach (var row in rows)
+                    var rows = formats == null ? null : ElemTableLayout.TryParse(exactTable, formats);
+                    if (rows == null && FileSchema.Read(root) is { } fileSchema)
+                        rows = WideElementRecords.ParseElemTable(exactTable, fileSchema);
+                    if (rows != null)
                     {
-                        // Id 0 is a real row (ProjectPhase / DimensionStyle) in ElemTable across wide and 32-bit schemas.
-                        if (row.Id > int.MaxValue) ThrowUnsupportedId(row.Id);
-                        result[(uint)row.Id] = 0;
-                        creationDates[(uint)row.Id] = row.CreationDate;
-                        if (row.PartitionId >= 0) worksets[(uint)row.Id] = (uint)row.PartitionId;
+                        if (allowWideIds && rows.Any(row => row.Id > int.MaxValue || row.OwningId is < int.MinValue or > int.MaxValue))
+                            ids = new ElementIdMap(rows);
+                        foreach (var row in rows)
+                        {
+                            // Id 0 is a real row (ProjectPhase / DimensionStyle) in ElemTable across wide and 32-bit schemas.
+                            if (row.Id > int.MaxValue && ids == null) ThrowUnsupportedId(row.Id);
+                            uint key = ids == null ? (uint)row.Id : (uint)ids.Key(row.Id);
+                            result[key] = 0;
+                            creationDates[key] = row.CreationDate;
+                            if (row.PartitionId >= 0) worksets[key] = (uint)row.PartitionId;
+                        }
+                        exact = result.Count > 0;
+                        return result;
                     }
-                    exact = result.Count > 0;
-                    return result;
-                }
-                if (exactTable.Length >= 2 && !shipped
-                    && FileSchema.Read(root) is { } wideSchema
-                    && WideElementRecords.ParseElemTable(exactTable, wideSchema) is { } wide)
-                {
-                    if (wide.UnsupportedId is long idOutsideRange) ThrowUnsupportedId(idOutsideRange);
-                    foreach (var (id, history) in wide.Histories)
-                    {
-                        result[id] = 0; // ElemRec holds history and ownership, not a class id.
-                        creationDates[id] = history.CreationDate;
-                    }
-                    exact = result.Count > 0;
-                    return result;
                 }
                 // The release in force has a layout other than the one the bytes have: no row is guessed.
                 if (formats != null && ElemTableLayout.DisagreesWithRelease(formats)) return result;

@@ -11,7 +11,7 @@ public partial class RvtFileReader
     /// a framing or with another id width). Null when the file's schema table does not parse a second time or its id width is not 4 or 8 bytes.</summary>
     private static (List<byte[]> Chunks, int PartitionChunkCount, List<PartitionFraming.Framed?> Framed)? RewriteToR22Layout(RootStorage root,
         FileSchema schema, List<byte[]> chunks, IReadOnlyList<IReadOnlyList<byte[]>> partitionStreams,
-        IReadOnlyList<PartitionFraming.Framed?> framedStreams, TextWriter? diag)
+        IReadOnlyList<PartitionFraming.Framed?> framedStreams, TextWriter? diag, ElementIdMap? ids)
     {
         if (WideElementRecords.IdWidth(schema) is not int width
             || PagedGzipStream.Read(root, "Formats", "Latest") is not { } schemaBytes)
@@ -21,7 +21,7 @@ public partial class RvtFileReader
         catch (FormatException) { return null; }
         using var shipped = typeof(RvtFileReader).Assembly.GetManifestResourceStream("RvtIO.Resources.r22_schemas.json");
         if (shipped == null) return null;
-        var transcoder = new R22Transcoder(source, TfSchemaReader.ReadShipped2022(shipped), width);
+        var transcoder = new R22Transcoder(source, TfSchemaReader.ReadShipped2022(shipped), width, ids);
         var rewritten = new List<byte[]>(chunks.Count);
         foreach (var stream in partitionStreams)
         {

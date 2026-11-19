@@ -9,7 +9,7 @@ namespace RvtIO.Compact;
 /// <param name="FamilyName">Name of the second of the two preceding objects.</param>
 /// <param name="Properties">Insertion-ordered properties; the writer sorts them.</param>
 internal readonly record struct CompactNode(
-    int ElementId,
+    long ElementId,
     string ClassName,
     string UniqueId,
     string? CategoryLabel,

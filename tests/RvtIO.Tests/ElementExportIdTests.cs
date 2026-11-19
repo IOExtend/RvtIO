@@ -90,19 +90,21 @@ public class ElementExportIdTests
     public void ApplyExportIds_GivesTheUniqueIdOfTheElementHistoryAndNoneWithout()
     {
         var episodes = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
+        const long wideOriginal = 0x1_0000_0005L;
         var state = new ParsingState
         {
             HistoryEpisodeGuids = episodes.Select(g => g.ToString("D")).ToList(),
             EpisodeTableX = 3,
             // 5: created in the last episode; 6: renumbered from 4 in the first; 9: a creation date beyond the list.
-            ElemRecHistories = new() { [5] = new(5, 0), [6] = new(4, 2), [9] = new(9, 3) },
+            ElemRecHistories = new() { [5] = new(5, 0), [6] = new(4, 2), [9] = new(9, 3), [13] = new(wideOriginal, 0) },
         };
         var created = new Element { Id = 5 };
         var renumbered = new Element { Id = 6 };
         var outsideList = new Element { Id = 9 };
         var withoutRow = new Element { Id = 12 };
+        var wide = new Element { Id = 13 };
 
-        var (applied, replaced) = ElementBuilder.ApplyExportIds([created, renumbered, outsideList, withoutRow], state);
+        var (applied, replaced) = ElementBuilder.ApplyExportIds([created, renumbered, outsideList, withoutRow, wide], state);
 
         Assert.Equal((2, 0), (applied, replaced));
         Assert.Equal($"{episodes[2]:D}-00000005", created.UniqueId);
@@ -113,6 +115,9 @@ public class ElementExportIdTests
         Assert.Null(outsideList.SerializedExportId);
         Assert.Null(withoutRow.UniqueId);
         Assert.Null(withoutRow.SerializedExportId);
+        Assert.Equal(wideOriginal, wide.OriginalElementId);
+        Assert.Null(wide.UniqueId);
+        Assert.Null(wide.SerializedExportId);
     }
 
     [Fact]

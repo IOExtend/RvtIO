@@ -90,7 +90,7 @@ public class PartitionCutTests
         using var item = new BinaryWriter(items);
         foreach (var record in records)
         {
-            item.Write(record.Owner);
+            item.Write(checked((uint)record.Owner));
             if (channel != 101) item.Write(record.Extra);
             item.Write((uint)record.Body.Length);
             item.Write(record.Body);

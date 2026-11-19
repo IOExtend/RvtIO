@@ -33,8 +33,8 @@ public partial class RvtFileReader
 
     /// <summary>Read and parse a Revit file, returning structured element data.</summary>
     /// <exception cref="RvtInputException">The file cannot be read: missing, empty, not a compound file, cut or damaged.</exception>
-    /// <exception cref="RvtLimitException">A stream is longer than one array can hold, or the element table
-    /// contains an ID above <see cref="int.MaxValue"/>.</exception>
+    /// <exception cref="RvtLimitException">A stream is longer than one array can hold, or a file with no project
+    /// partitions contains a source element ID above the range of document-local keys.</exception>
     public RevitFileInfo Read(string rvtPath)
     {
         RvtContainerCheck.Verify(rvtPath);
@@ -45,7 +45,8 @@ public partial class RvtFileReader
 
         using var root = RootStorage.OpenRead(rvtPath);
 
-        var elemTable = ElemTableReader.Read(root, out var elemWorksets, out _, out bool elemTableIsExact,
+        var elemTable = ElemTableReader.Read(root, out var elemWorksets, out _, out bool elemTableIsExact, out var ids,
+            allowWideIds: root.TryOpenStorage("Partitions", out _),
             ElemTableRecover.Limits(_options.RaiseLimits), _options.Diagnostics);
         diag?.WriteLine($"ElemTable: {elemTable.Count} elements");
 
@@ -82,7 +83,7 @@ public partial class RvtFileReader
         if (globalChunks.Count > 0) chunks.AddRange(globalChunks);
 
         // Episode GUID table: nested stream Global/History (there is no top-level "History" storage).
-        var (elemRecHistories, elemRecOwners, wideSchema) = ReadElemRecs(root);
+        var (elemRecHistories, elemRecOwners, wideSchema) = ReadElemRecs(root, ids);
         LogRelease(root, fileMetadata, wideSchema, diag);
         var episodeTable = ReadEpisodeTable(root, diag, wideSchema);
         if (wideSchema != null && _options.R22Layout && _options.PreserveWideLayout)
@@ -90,7 +91,7 @@ public partial class RvtFileReader
             var (wideInfo, wideState) = ParseModel(root, chunks, framedStreams, partitionStreams.Sum(s => s.Count),
                 r22View: false, partitionStreams, framedStreams, wideSchema, elemTable, elemWorksets, fileMetadata,
                 projectInfo, transmissionData, episodeTable, elemRecHistories, elemRecOwners, tfSchemas, ownPartitionWallParts,
-                staleCopiesRemoved, incrementRoutedPartitions, elemTableIsExact, previewBase64, previewMime, diag, LogPhase);
+                staleCopiesRemoved, incrementRoutedPartitions, elemTableIsExact, previewBase64, previewMime, diag, LogPhase, ids);
             WideModel = wideInfo;
             WideState = wideState;
         }
@@ -99,7 +100,7 @@ public partial class RvtFileReader
         IReadOnlyList<PartitionFraming.Framed?> readFrames = framedStreams;
         int partitionChunkCount = partitionStreams.Sum(s => s.Count);
         if (wideSchema != null && _options.R22Layout
-            && RewriteToR22Layout(root, wideSchema, chunks, partitionStreams, framedStreams, diag) is { } r22)
+            && RewriteToR22Layout(root, wideSchema, chunks, partitionStreams, framedStreams, diag, ids) is { } r22)
         {
             (chunks, partitionChunkCount, var r22Frames) = r22;
             readFrames = r22Frames;
@@ -111,7 +112,7 @@ public partial class RvtFileReader
         var (rvtInfo, state) = ParseModel(root, chunks, readFrames, partitionChunkCount,
             r22View, partitionStreams, framedStreams, wideSchema, elemTable, elemWorksets, fileMetadata,
             projectInfo, transmissionData, episodeTable, elemRecHistories, elemRecOwners, tfSchemas, ownPartitionWallParts,
-            staleCopiesRemoved, incrementRoutedPartitions, elemTableIsExact, previewBase64, previewMime, diag, LogPhase);
+            staleCopiesRemoved, incrementRoutedPartitions, elemTableIsExact, previewBase64, previewMime, diag, LogPhase, ids);
         LastParsingState = state;
         return rvtInfo;
     }
@@ -141,12 +142,20 @@ public partial class RvtFileReader
         string? previewBase64,
         string? previewMime,
         TextWriter? diag,
-        Action<string> LogPhase)
+        Action<string> LogPhase,
+        ElementIdMap? ids)
     {
+        if (ids != null && !r22View)
+        {
+            // The native index reads these partitions. A legacy scan could attach a wide owner's low bits to another element.
+            chunks = chunks.Skip(partitionChunkCount).ToList();
+            partitionChunkCount = 0;
+        }
         var state = new ParsingState
         {
             SeparateFacesWithDistinctOpenings = _options.SeparateFacesWithDistinctOpenings,
             ElemTable = elemTable,
+            ElementIds = ids,
             ElemWorksets = elemWorksets,
             AllKnownIds = new HashSet<uint>(elemTable.Keys),
             Chunks = chunks,
@@ -162,7 +171,7 @@ public partial class RvtFileReader
             R22View = r22View,
             StaleCopiesRemoved = staleCopiesRemoved,
             FramedPartitions = readFrames,
-            IncrementRoutedPartitions = incrementRoutedPartitions,
+            IncrementRoutedPartitions = LocalPartitionRoutes(incrementRoutedPartitions, ids),
             PartitionChunkCount = partitionChunkCount,
         };
         ReadWideElementIndex(root, state, partitionStreams, framedStreams, wideSchema, diag);
@@ -826,6 +835,8 @@ public partial class RvtFileReader
             ?? (lengthOptions == null ? null : ProjectLengthUnits.StoredLengthUnit(lengthOptions.Value, out lengthUnitIssue));
         if (rvtInfo.SerializedLengthUnit == null)
             rvtInfo.SerializedLengthUnitIssue = state.WideLengthUnitIssue ?? lengthUnitIssue;
+        rvtInfo.ElementIds = ids;
+        rvtInfo.AttachSourceElementIds();
         var (exportIds, replacedUniqueIds) = ElementBuilder.ApplyExportIds(rvtInfo.Elements, state);
         diag?.WriteLine($"Element export ids: episodes={state.HistoryEpisodeGuids.Count}/{state.EpisodeTableX?.ToString() ?? "?"}, "
             + $"records={state.ElemRecHistories?.Count.ToString() ?? "unavailable"}, elements={exportIds}, "
@@ -901,7 +912,8 @@ public partial class RvtFileReader
 
         using var root = RootStorage.OpenRead(rvtPath);
 
-        var elemTable = ElemTableReader.Read(root, out var elemWorksets, out _, out bool elemTableIsExact,
+        var elemTable = ElemTableReader.Read(root, out var elemWorksets, out _, out bool elemTableIsExact, out var ids,
+            allowWideIds: root.TryOpenStorage("Partitions", out _),
             ElemTableRecover.Limits(_options.RaiseLimits), _options.Diagnostics);
         var fileMetadata = BasicFileInfoReader.Read(root);
         var projectInfo = ProjectInfoReader.Read(root);
@@ -912,23 +924,29 @@ public partial class RvtFileReader
         var chunks = DecompressPartitions(root, diag, out var ownPartitionWallParts, out var partitionStreams, out var framedStreams, out bool staleCopiesRemoved, out var incrementRoutedPartitions);
 
         // Episode GUID table: nested stream Global/History (see Read() above).
-        var (elemRecHistories, elemRecOwners, wideSchema) = ReadElemRecs(root);
+        var (elemRecHistories, elemRecOwners, wideSchema) = ReadElemRecs(root, ids);
         var episodeTable = ReadEpisodeTable(root, diag, wideSchema);
         bool r22View = false;
         IReadOnlyList<PartitionFraming.Framed?> readFrames = framedStreams;
         int partitionChunkCount = partitionStreams.Sum(s => s.Count);
         if (wideSchema != null && _options.R22Layout
-            && RewriteToR22Layout(root, wideSchema, chunks, partitionStreams, framedStreams, diag) is { } r22)
+            && RewriteToR22Layout(root, wideSchema, chunks, partitionStreams, framedStreams, diag, ids) is { } r22)
         {
             (chunks, partitionChunkCount, var r22Frames) = r22;
             readFrames = r22Frames;
             r22View = true;
+        }
+        if (ids != null && !r22View)
+        {
+            chunks = chunks.Skip(partitionChunkCount).ToList();
+            partitionChunkCount = 0;
         }
 
         var state = new ParsingState
         {
             SeparateFacesWithDistinctOpenings = _options.SeparateFacesWithDistinctOpenings,
             ElemTable = elemTable,
+            ElementIds = ids,
             ElemWorksets = elemWorksets,
             AllKnownIds = new HashSet<uint>(elemTable.Keys),
             Chunks = chunks,
@@ -942,7 +960,7 @@ public partial class RvtFileReader
             R22View = r22View,
             StaleCopiesRemoved = staleCopiesRemoved,
             FramedPartitions = readFrames,
-            IncrementRoutedPartitions = incrementRoutedPartitions,
+            IncrementRoutedPartitions = LocalPartitionRoutes(incrementRoutedPartitions, ids),
             PartitionChunkCount = partitionChunkCount,
         };
         ReadWideElementIndex(root, state, partitionStreams, framedStreams, wideSchema, diag);
@@ -1000,17 +1018,36 @@ public partial class RvtFileReader
     /// <summary>Element table records of the file: the Revit 2022 layout (shipped schema tables) or, when that does not
     /// apply, the 64-bit layout declared by the file's own schema, in which case the schema is returned too.</summary>
     private static (Dictionary<uint, ElemRecHistory>? Histories, Dictionary<uint, int>? Owners, FileSchema? WideSchema)
-        ReadElemRecs(RootStorage root)
+        ReadElemRecs(RootStorage root, ElementIdMap? ids)
     {
         if (PagedGzipStream.Read(root, "Global", "ElemTable") is not { } bytes) return (null, null, null);
         var schema = FileSchema.Read(root);
         // the layout shipped for Revit 2022 applies to a file whose release in force (SchemaRelease.Of) is 2022 or unknown
         if (SchemaRelease.AllowsShipped(schema?.Release ?? SchemaRelease.Of(root, null), 2022)
             && ElementExportIds.ParseElemTable(bytes, out var owners) is { } histories) return (histories, owners, null);
-        if (schema != null && WideElementRecords.ParseElemTable(bytes, schema) is { } wide)
-            return (wide.Histories, wide.OwningElementIds, schema);
+        if (schema != null && WideElementRecords.ParseElemTable(bytes, schema) is { } rows)
+        {
+            var wideHistories = new Dictionary<uint, ElemRecHistory>(rows.Count);
+            var wideOwners = new Dictionary<uint, int>(rows.Count);
+            foreach (var row in rows)
+            {
+                if (ids == null && row.Id > int.MaxValue) continue;
+                uint id = ids == null ? (uint)row.Id : (uint)ids.Key(row.Id);
+                wideHistories[id] = new ElemRecHistory(row.OriginalId, row.CreationDate);
+                if (ids != null)
+                    wideOwners[id] = ids.Key(row.OwningId);
+                else if (row.OwningId is >= int.MinValue and <= int.MaxValue)
+                    wideOwners[id] = (int)row.OwningId;
+            }
+            return (wideHistories, wideOwners, schema);
+        }
         return (null, null, null);
     }
+
+    private static IReadOnlyDictionary<ulong, int>? LocalPartitionRoutes(IReadOnlyDictionary<ulong, int>? routes, ElementIdMap? ids)
+        => routes == null || ids == null ? routes
+            : routes.Where(route => route.Key <= long.MaxValue)
+                .ToDictionary(route => (ulong)ids.Key((long)route.Key), route => route.Value);
 
     /// <summary>The bars of the reinforcement elements and the beam systems (<see cref="RebarReader"/>), by the file's own class schema in every layout.</summary>
     private static void ReadRebarBars(RootStorage root, ParsingState state,
@@ -1018,7 +1055,7 @@ public partial class RvtFileReader
     {
         if ((wideSchema ?? FileSchema.Read(root)) is not { } schema) return;
         var reinforcement = RebarReader.Read(partitionStreams, schema, state.AllKnownIds, EntitySchemaReader.Read(root, schema.Document), passUnknownEntities: true,
-            framed: framedStreams);
+            framed: framedStreams, ids: state.ElementIds);
         foreach (var (id, bars) in reinforcement.Bars) state.RebarBars[id] = bars;
         foreach (var (id, joist) in reinforcement.Joists) state.JoistSystems[id] = joist;
     }
@@ -1029,6 +1066,7 @@ public partial class RvtFileReader
     {
         if (schema == null) return;
         state.WideSchema = schema;
+        var ids = state.ElementIds;
         // the field walk of the root blocks (schema by class and field name); a file whose schema table does not parse a second time has none
         WideNativeParams? fields = null;
         GridAxisReader? gridReader = null;
@@ -1037,11 +1075,11 @@ public partial class RvtFileReader
         {
             try
             {
-                fields = new WideNativeParams(schemaDocument = TfSchemaReader.Parse(schemaBytes));
+                fields = new WideNativeParams(schemaDocument = TfSchemaReader.Parse(schemaBytes), ids);
                 // the values of an extensible storage entity are read by its schema, so the objects behind them are read in place
                 var entitySchemas = EntitySchemaReader.Read(root, schemaDocument);
                 fields.Walker.UseEntitySchemas(entitySchemas, passUnknown: true);
-                gridReader = new GridAxisReader(schemaDocument, entitySchemas);
+                gridReader = new GridAxisReader(schemaDocument, entitySchemas, ids);
             }
             catch (FormatException) { diag?.WriteLine("Wide element records: Formats/Latest does not parse for the field walk"); }
         }
@@ -1049,9 +1087,14 @@ public partial class RvtFileReader
         var gridBlocks = new Dictionary<uint, (byte[] Data, int Offset, int Size)>();
         var drivers = new Dictionary<uint, List<CurveDriverData>>();
         var wallShim = new Dictionary<uint, ElementRecord>();
-        var index = WideElementRecords.BuildIndexWithPartitions(partitionStreams, schema, state.AllKnownIds,
-            fields == null ? null : (id, data, offset, size, cls, partition) =>
+        uint Key(long sourceId) => ids == null ? (uint)sourceId : (uint)ids.Key(sourceId);
+        long SourceId(uint key) => ids == null ? key : ids.SourceId((int)key);
+        var index = WideElementRecords.BuildIndexWithPartitions(partitionStreams, schema,
+            id => ids == null ? id is >= 0 and <= uint.MaxValue && state.AllKnownIds.Contains((uint)id)
+                : ids.TryGetKey(id, out int key) && state.AllKnownIds.Contains((uint)key),
+            fields == null ? null : (sourceId, data, offset, size, cls, partition) =>
             {
+                uint id = Key(sourceId);
                 if (!walks.TryGetValue(id, out var list)) walks[id] = list = [];
                 list.Add((fields.Walker.Run(data, offset, size, cls), cls, partition));
                 if (list.Count == 1 && gridReader?.IsGrid(cls) == true)
@@ -1069,17 +1112,19 @@ public partial class RvtFileReader
             diag?.WriteLine("Wide element records: the file's schema does not declare the expected ElementHeader");
             return;
         }
-        foreach (var (id, category) in index.HeaderCategories) state.HeaderCategories[id] = category;
-        foreach (var (id, option) in index.HeaderDesignOptions) state.HeaderDesignOptions[id] = option;
-        foreach (var (id, box) in index.HeaderBoundingBoxes) state.HeaderBoundingBoxes[id] = box;
-        foreach (var (id, classId) in index.RootClasses) state.NativeRootClassNames[id] = schema.Get(classId)!.Name;
+        foreach (var (id, category) in index.HeaderCategories) state.HeaderCategories[Key(id)] = category;
+        foreach (var (id, option) in index.HeaderDesignOptions)
+            state.HeaderDesignOptions[Key(id)] = option is long value && ids != null ? ids.Key(value)
+                : option is >= int.MinValue and <= int.MaxValue ? (int)option : null;
+        foreach (var (id, box) in index.HeaderBoundingBoxes) state.HeaderBoundingBoxes[Key(id)] = box;
+        foreach (var (id, classId) in index.RootClasses) state.NativeRootClassNames[Key(id)] = schema.Get(classId)!.Name;
         int walked = 0, exact = 0;
         var walkFailures = new Dictionary<string, int>();
         if (fields != null)
             foreach (var (id, list) in walks)
             {
                 if (list.Count > 1
-                    && index.RootClasses.TryGetValue(id, out int multiRootClass)
+                    && index.RootClasses.TryGetValue(SourceId(id), out int multiRootClass)
                     && state.IncrementRoutedPartitions != null
                     && state.IncrementRoutedPartitions.TryGetValue(id, out int routedPartition)
                     && list.Where(w => w.Partition == routedPartition).ToList() is [{ } routed]
@@ -1091,7 +1136,7 @@ public partial class RvtFileReader
                     continue;
                 }
                 // a copy of the element in two streams is decoded only when it is one record
-                if (list.Count != 1 || !index.RootClasses.TryGetValue(id, out int rootClass) || list[0].Class != rootClass) continue;
+                if (list.Count != 1 || !index.RootClasses.TryGetValue(SourceId(id), out int rootClass) || list[0].Class != rootClass) continue;
                 if (gridBlocks.TryGetValue(id, out var grid))
                     gridReader!.Read(id, grid.Data, grid.Offset, grid.Size, rootClass);
                 if (drivers.TryGetValue(id, out var exactDrivers) && exactDrivers.Count > 0) state.ExactCurveDrivers[id] = exactDrivers;

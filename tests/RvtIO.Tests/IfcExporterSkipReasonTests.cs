@@ -9,7 +9,7 @@ namespace RvtIO.Tests;
 /// the elements of the file.</summary>
 public class IfcExporterSkipReasonTests
 {
-    private static GeometryData Box(double x0, double x1, double y0, double y1, double z0, double z1)
+    internal static GeometryData Box(double x0, double x1, double y0, double y1, double z0, double z1)
     {
         double[][] p =
         [

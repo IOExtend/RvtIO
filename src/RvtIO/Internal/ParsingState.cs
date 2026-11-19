@@ -20,6 +20,7 @@ internal class ParsingState
     public Dictionary<uint, IReadOnlyDictionary<uint, uint>> OwnCurrentWallFaceGroups { get; } = new();
     /// <summary>Element-table membership. Values are zero: ElemRec has no type/class column.</summary>
     public Dictionary<uint, uint> ElemTable { get; set; } = new();
+    internal ElementIdMap? ElementIds { get; set; }
 
     /// <summary>Per-element workset ids from ElemTable offset-20 (workshared files only).</summary>
     public Dictionary<uint, uint> ElemWorksets { get; set; } = new();

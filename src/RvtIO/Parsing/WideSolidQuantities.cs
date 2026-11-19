@@ -28,17 +28,23 @@ internal sealed class WideSolidQuantities
     private readonly Dictionary<int, (double? Top, double? Bottom, double? Planar)> _massAreas = [];
     private readonly HashSet<(long X, long Y, long Z)> _splitVertices = [];
 
-    internal WideSolidQuantities(FileSchema schema, IReadOnlyList<PartitionFraming.Framed?> frames)
+    internal WideSolidQuantities(FileSchema schema, IReadOnlyList<PartitionFraming.Framed?> frames, ElementIdMap? ids = null)
     {
-        _geometryLayout = new(schema.Document, GeometrySchema.Value, 8);
+        _geometryLayout = new(schema.Document, GeometrySchema.Value, 8, ids);
         var ambiguous = new HashSet<int>();
         foreach (var frame in frames)
         {
             if (frame?.IdWidth != 8) continue;
             foreach (var item in frame.Items)
             {
-                if (item.Channel != 103 || item.Owner is 0 or > int.MaxValue) continue;
-                int id = (int)item.Owner;
+                if (item.Channel != 103 || item.Owner is 0 or > long.MaxValue) continue;
+                int id;
+                if (ids == null)
+                {
+                    if (item.Owner > int.MaxValue) continue;
+                    id = (int)item.Owner;
+                }
+                else if (!ids.TryGetKey((long)item.Owner, out id)) continue;
                 if (!_records.TryAdd(id, (frame, item))) ambiguous.Add(id);
             }
         }

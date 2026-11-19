@@ -103,11 +103,12 @@ internal sealed class WideBlockWalker
     /// <param name="keyOf">The capture key of a scalar field (null: not captured); a fixed array adds "@index".</param>
     /// <param name="recordClassNames">Classes whose objects are returned as <see cref="Walk.Records"/>.</param>
     internal WideBlockWalker(SchemaDocument schema, Func<SchemaClass, SchemaField, string?> keyOf, IEnumerable<string> recordClassNames,
-        bool captureRootPointers = false)
+        bool captureRootPointers = false, ElementIdMap? ids = null)
     {
         _classes = schema.Classes.GroupBy(c => c.Id).ToDictionary(g => g.Key, g => g.First());
         _keyOf = keyOf;
         _captureRootPointers = captureRootPointers;
+        _ids = ids;
         var names = recordClassNames.ToHashSet(StringComparer.Ordinal);
         _recordClasses = _classes.Values.Where(c => names.Contains(c.Name)).Select(c => c.Id).ToHashSet();
         int max = _classes.Keys.Max();
@@ -133,6 +134,8 @@ internal sealed class WideBlockWalker
 
     /// <summary>The class of a queue entry; the values of an extensible storage entity (a negative entry) are an ESBlob.</summary>
     internal SchemaClass? Class(int id) => id < 0 ? _entityBlob : _classes.GetValueOrDefault(id);
+
+    private readonly ElementIdMap? _ids;
 
     private (SchemaClass Declaring, SchemaField Field)[] Chain(int classId) => _chains.GetOrAdd(classId, id =>
     {
@@ -525,6 +528,7 @@ internal sealed class WideBlockWalker
                 // ElementId: Identifier.m_id (4 bytes) or Identifier.m_id64 (8 bytes)
                 int p = Take(c, _idWidth);
                 long id = _idWidth == 8 ? BitConverter.ToInt64(c.D, p) : BitConverter.ToInt32(c.D, p);
+                if (_ids != null) id = _ids.Key(id);
                 if (key != null) walk.Captures.Add(new(key, CaptureKind.Integer, id, 0, null, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name));
                 if (record != null) record[f.Name] = id;
                 return;

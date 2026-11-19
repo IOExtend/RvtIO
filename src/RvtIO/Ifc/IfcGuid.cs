@@ -90,8 +90,12 @@ internal static class IfcGuid
     /// <summary>Generate a deterministic IFC GUID from element ID and a namespace string.</summary>
     // The default namespace seed is fixed: it keeps the generated GUIDs stable across releases.
     public static string FromElementId(int elemId, string ns = "RevitReader")
+        => FromElementId((long)elemId, ns);
+
+    /// <summary>Generate a deterministic fallback IFC GUID from the complete source element ID.</summary>
+    public static string FromElementId(long elemId, string ns = "RevitReader")
     {
-        var bytes = Encoding.UTF8.GetBytes($"{ns}:{elemId}");
+        var bytes = Encoding.UTF8.GetBytes(FormattableString.Invariant($"{ns}:{elemId}"));
         var hash = MD5.HashData(bytes);
         hash[6] = (byte)((hash[6] & 0x0F) | 0x30);
         hash[8] = (byte)((hash[8] & 0x3F) | 0x80);

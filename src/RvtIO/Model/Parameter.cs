@@ -286,12 +286,22 @@ namespace RvtIO.Model
             return Value?.ToString();
         }
 
-        /// <summary>Get the value as ElementId (int). Returns -1 (InvalidElementId) if not an ElementId parameter.</summary>
+        /// <summary>Returns the legacy document-local element key. Use <see cref="AsElementId64"/> for the source ID.</summary>
         public int AsElementId()
         {
             if (Value is int i) return i;
             return -1;
         }
+
+        /// <summary>The exact element reference, or -1 if the parameter holds no element ID.</summary>
+        public long AsElementId64() =>
+            StorageType == StorageType.ElementId && Value is int key ? NativeElementId ?? key : -1;
+
+        /// <summary>The source reference as decimal text when it differs from the local key.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? SourceElementId => NativeElementId?.ToString(CultureInfo.InvariantCulture);
+
+        internal long? NativeElementId { get; set; }
 
         /// <summary>
         /// Get a formatted display string for the value.
@@ -322,7 +332,7 @@ namespace RvtIO.Model
                 {
                     return catName;
                 }
-                return elemId.ToString(CultureInfo.InvariantCulture);
+                return AsElementId64().ToString(CultureInfo.InvariantCulture);
             }
             if (Value is double d)
             {
