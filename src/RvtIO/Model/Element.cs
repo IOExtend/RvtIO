@@ -1003,7 +1003,7 @@ namespace RvtIO.Model
         [JsonIgnore]
         internal List<(ushort ClassId, int ElementId, bool Cutout)>? CutOutSteps { get; set; }
 
-        /// <summary>Location curve for wall elements (line/arc with start/end/direction).</summary>
+        /// <summary>The element's location curve, such as a wall axis or a grid datum line.</summary>
         public LocationCurve? Location { get; set; }
 
         /// <summary>For a grid: its datum plane.</summary>

@@ -282,8 +282,7 @@ namespace RvtIO.Model
     }
 
     /// <summary>
-    /// Location curve for wall elements (equivalent to Revit LocationCurve).
-    /// Coordinates are in LOCAL space - apply GRep Transform to get world coordinates.
+    /// An element location curve in the document's world coordinates, in feet.
     /// </summary>
     public class LocationCurve
     {
