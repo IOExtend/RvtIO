@@ -6,6 +6,13 @@ API between minor releases.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-19
+
+### Changed
+
+- The ready-to-run `RvtIO.Nwc` archives bundle NwcIO 0.15.1, which reads the alternate Revit element ID flags
+  and shared fragment poses described in [NwcIO #261](https://github.com/IOExtend/NwcIO/issues/261).
+
 ## [0.6.0] - 2026-11-19
 
 ### Added
