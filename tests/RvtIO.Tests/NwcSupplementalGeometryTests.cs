@@ -120,6 +120,35 @@ public class NwcSupplementalGeometryTests
     }
 
     [Fact]
+    public void NativeAreaReinforcementKeepsTheTwelveEdgesOfItsStoredBounds()
+    {
+        var area = new Element
+        {
+            Id = 1,
+            CategoryId = (int)BuiltInCategory.OST_AreaRein,
+            Category = nameof(BuiltInCategory.OST_AreaRein),
+            NativeRootClassName = "RebarSystem",
+            NativeRootClassChain = ["RebarSystem"],
+            BoundingBox = [1, 2, 3, 4, 5, 6],
+        };
+        var document = RvtDocument.FromInfo(new RevitFileInfo { Elements = [area] });
+        Assert.Empty(RvtSceneReader.Read(document, new() { ModelKey = "model" }).Document.Elements);
+
+        var scene = RvtSceneReader.Read(document, new() { ModelKey = "model", IncludeModelLinesAndReinforcement = true }).Document;
+        Assert.Equal(area.Id, Assert.Single(scene.Elements).Id);
+        var instance = Assert.Single(scene.Instances);
+        var geometry = Assert.Single(scene.Geometries);
+        Assert.Equal(SceneTopology.Lines, geometry.Topology);
+        Assert.Equal(24, geometry.Indices.Count);
+        var points = geometry.Vertices.Select(point => instance.Transform!.Value.Apply(point)).ToArray();
+        Assert.Equal(8, points.Distinct().Count());
+        Assert.Equal(new Vector3d(1 * 0.3048, 2 * 0.3048, 3 * 0.3048), points[0]);
+        Assert.Equal(6 * 0.3048, points.Max(p => p.Z), 12);
+        foreach (var pair in points.Chunk(2))
+            Assert.Equal(2, new[] { pair[0].X == pair[1].X, pair[0].Y == pair[1].Y, pair[0].Z == pair[1].Z }.Count(same => same));
+    }
+
+    [Fact]
     public void SweepKeepsTheStoredRadiusAndExtentsOfAStraightBar()
     {
         var segment = new RebarSegment(false, [4, 5, 6], [0, 0, 1], [], 0, 0, 10);

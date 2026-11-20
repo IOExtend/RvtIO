@@ -125,14 +125,17 @@ public static class ElementMeshes
                 var line = ModelLine(curve);
                 var arc = curve is { CurveType: "Arc" } && GridAxis.Tessellate([curve], ArcChordErrorFeet) is { } samples
                     ? samples.Select(p => new MeshVector(p[0], p[1], p[2])).ToArray() : null;
+                var linePairs = options.IncludeModelLinesAndReinforcement && AreaReinforcementBounds(element) is { } bounds
+                    ? BoxEdges(bounds) : null;
                 var rebar = options.IncludeModelLinesAndReinforcement && element.RebarBars is { } bars ? ReinforcementMeshes.Build(bars) : null;
                 elements.Add(new ElementMesh
                 {
                     ElementId = element.Id,
                     Line = line,
                     Arc = arc,
+                    LinePairs = linePairs,
                     Meshes = rebar == null ? [] : [rebar],
-                    Coverage = line != null || arc != null || rebar != null ? MeshCoverage.Complete
+                    Coverage = line != null || arc != null || linePairs != null || rebar != null ? MeshCoverage.Complete
                         : info.WideLayoutNotRewritten ? MeshCoverage.Undecoded : MeshCoverage.NoGeometry,
                 });
                 continue;
@@ -196,6 +199,7 @@ public static class ElementMeshes
         {
             var curve = includeModelLinesAndReinforcement ? ModelCurve(element) : null;
             bool modelLine = curve?.CurveType == "Arc" || ModelLine(curve) != null;
+            bool areaReinforcement = includeModelLinesAndReinforcement && AreaReinforcementBounds(element) != null;
             bool rebar = includeModelLinesAndReinforcement && element.RebarBars is { Bars.Count: > 0 } or { Items.Count: > 0 };
             if (element.IsBlockOnly || element.IsGroupTemplate
                 || designOptions.InNonPrimaryOption(element) == true || phaseFilter?.Excludes(element) == true
@@ -203,14 +207,16 @@ public static class ElementMeshes
                 || ProductRules.IsValidatedStackedWallContainer(element, elementsById)
                 || info.ElemTableIsExact && element.IsDiscovered
                 || element.SerializedFamilyId is > 0
-                || (!modelLine && ProductRules.IsNonPhysicalCategory(element.Category)))
+                || (!modelLine && !areaReinforcement && ProductRules.IsNonPhysicalCategory(element.Category)))
                 continue;
             bool namesPhase = ProductRules.HasProjectPhaseReference(element) || ProductRules.IsTransformOnlyFamily(element);
-            if (!namesPhase && !modelLine && !rebar && (typeElementIds.Contains(element.Id) || element.CategoryId != WallsCategoryId)) continue;
+            if (!namesPhase && !modelLine && !rebar && !areaReinforcement
+                && (typeElementIds.Contains(element.Id) || element.CategoryId != WallsCategoryId)) continue;
             GeometryData? body = element.Geometry;
             if (element.SerializedComputedSymbolGeometry is { } computed) body = computed;
             else if (ProductRules.HasOnlyUnfilledFaces(element)) continue;
-            if (body != null || modelLine || rebar || info.WideLayoutNotRewritten && element.BoundingBox != null) drawable.Add((element, body));
+            if (body != null || modelLine || rebar || areaReinforcement || info.WideLayoutNotRewritten && element.BoundingBox != null)
+                drawable.Add((element, body));
         }
         // A stair places its runs and landings, a model group its members: those are drawn as elements of their own.
         var ids = drawable.Select(item => item.Item1.Id).ToHashSet();
@@ -232,6 +238,31 @@ public static class ElementMeshes
             || !element.Parameters.Any(p => p.Id == (int)BuiltInParameter.CURVE_IS_DETAIL && p.Value is 0))
             return null;
         return element.NativeModelArc ?? (element.Location is { CurveType: "Line" } line ? line : null);
+    }
+
+    private static double[]? AreaReinforcementBounds(Element element) =>
+        element.CategoryId == (int)BuiltInCategory.OST_AreaRein && element.RootClassIs("RebarSystem")
+        && element.BoundingBox is [var x0, var y0, var z0, var x1, var y1, var z1] bounds
+        && bounds.All(double.IsFinite) && x0 < x1 && y0 < y1 && z0 < z1
+        ? bounds : null;
+
+    private static MeshVector[] BoxEdges(double[] bounds)
+    {
+        // An area's exported selection graphics are the twelve edges of its stored model bounds.
+        var endpoints = new MeshVector[24];
+        int at = 0;
+        for (int corner = 0; corner < 8; corner++)
+            for (int axis = 0; axis < 3; axis++)
+            {
+                int bit = 1 << axis;
+                if ((corner & bit) != 0) continue;
+                endpoints[at++] = Vertex(corner);
+                endpoints[at++] = Vertex(corner | bit);
+            }
+        return endpoints;
+
+        MeshVector Vertex(int corner) => new(bounds[(corner & 1) == 0 ? 0 : 3],
+            bounds[(corner & 2) == 0 ? 1 : 4], bounds[(corner & 4) == 0 ? 2 : 5]);
     }
 
     private static (MeshVector Start, MeshVector End)? ModelLine(LocationCurve? curve)

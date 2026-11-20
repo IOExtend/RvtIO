@@ -39,6 +39,9 @@ public sealed class ElementMesh
     /// <summary>The points of a tessellated model arc in document coordinates (feet), if present.</summary>
     public IReadOnlyList<MeshVector>? Arc { get; init; }
 
+    /// <summary>Independent line segments listed as consecutive endpoint pairs, in document feet.</summary>
+    public IReadOnlyList<MeshVector>? LinePairs { get; init; }
+
     /// <summary>How completely <see cref="Meshes"/> and <see cref="Placements"/> represent the element.</summary>
     public MeshCoverage Coverage { get; init; }
 
