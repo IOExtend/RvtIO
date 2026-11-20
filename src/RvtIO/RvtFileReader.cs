@@ -1058,6 +1058,7 @@ public partial class RvtFileReader
         var reinforcement = RebarReader.Read(partitionStreams, schema, state.AllKnownIds, EntitySchemaReader.Read(root, schema.Document), passUnknownEntities: true,
             framed: framedStreams, ids: state.ElementIds);
         foreach (var (id, bars) in reinforcement.Bars) state.RebarBars[id] = bars;
+        foreach (var (id, plane) in reinforcement.AreaPlanes) state.AreaReinforcementPlanes[id] = plane;
         foreach (var (id, joist) in reinforcement.Joists) state.JoistSystems[id] = joist;
     }
 

@@ -447,6 +447,9 @@ namespace RvtIO.Model
         [JsonIgnore]
         internal Parsing.RebarBars? RebarBars { get; set; }
 
+        [JsonIgnore]
+        internal Parsing.AreaSketchPlane? AreaReinforcementPlane { get; set; }
+
         /// <summary>The type and the beams of a beam system (JoistSystem), null for every other element.</summary>
         [JsonIgnore]
         internal Parsing.JoistSystemData? JoistSystem { get; set; }
