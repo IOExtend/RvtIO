@@ -108,6 +108,16 @@ public static class ElementMeshes
         var elements = new List<ElementMesh>();
         foreach (var (element, body) in drawable)
         {
+            if (options.IncludeModelLinesAndReinforcement && IsStairContainer(element, body, drawableIds))
+            {
+                elements.Add(new ElementMesh
+                {
+                    ElementId = element.Id,
+                    ComponentIds = body!.ExactMappedInstances!.Select(instance => instance.SymbolId).Distinct().ToArray(),
+                    Coverage = MeshCoverage.Complete,
+                });
+                continue;
+            }
             if (body == null)
             {
                 var line = options.IncludeModelLinesAndReinforcement ? ModelLine(element) : null;
@@ -199,8 +209,14 @@ public static class ElementMeshes
         // A stair places its runs and landings, a model group its members: those are drawn as elements of their own.
         var ids = drawable.Select(item => item.Item1.Id).ToHashSet();
         return drawable.Where(item => item.Item2?.ExactMappedInstances is not { Count: > 0 } mapped
-            || !mapped.All(instance => ids.Contains(instance.SymbolId))).ToList();
+            || !mapped.All(instance => ids.Contains(instance.SymbolId))
+            || includeModelLinesAndReinforcement && IsStairContainer(item.Item1, item.Item2, ids)).ToList();
     }
+
+    private static bool IsStairContainer(Element element, GeometryData? body, HashSet<int> drawableIds) =>
+        element.CategoryId == (int)BuiltInCategory.OST_Stairs && element.RootClassIs("StairsElement")
+        && body?.ExactMappedInstances is { Count: > 0 } mapped
+        && mapped.All(instance => instance.SymbolId != element.Id && drawableIds.Contains(instance.SymbolId));
 
     private static (MeshVector Start, MeshVector End)? ModelLine(Element element)
     {
