@@ -3601,6 +3601,7 @@ internal static partial class ElementBuilder
             if (np.Fields.ContainsKey("__isLevel"))
             {
                 e.IsNativeLevel = true;
+                e.LevelPlane = state.LevelPlanes.GetValueOrDefault((uint)e.Id);
                 if (np.DoubleFields.TryGetValue("__levelElevation", out double levelElevation)
                     && double.IsFinite(levelElevation))
                     Apply(-1007102, StorageType.Double, levelElevation, force: true);

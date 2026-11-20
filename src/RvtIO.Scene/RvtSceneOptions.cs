@@ -10,4 +10,7 @@ public sealed class RvtSceneOptions
 
     /// <summary>Includes straight model lines and reinforcement described by its centre lines.</summary>
     public bool IncludeModelLinesAndReinforcement { get; set; }
+
+    /// <summary>Includes reference geometry for project grids and levels.</summary>
+    public bool IncludeDatumGeometry { get; set; }
 }

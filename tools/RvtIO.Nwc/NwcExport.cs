@@ -13,7 +13,8 @@ internal static class NwcExport
     // The optional metadata is written by NwcIO 0.14 and interpreted by the linked-cache reader.
     private const string MetreCacheOption = "IOExtend.NwcWriter.Scene/1";
     private const string LinkClass = "IOExtend.NwcWriter.Link";
-    internal static NwcDocument Build(SceneDocument scene, string sourceName, long sourceLength, DateTime timestamp, bool native = false)
+    internal static NwcDocument Build(SceneDocument scene, string sourceName, long sourceLength, DateTime timestamp,
+        bool native = false, IReadOnlySet<long>? hiddenDatumIds = null)
     {
         if (scene.Validate().FirstOrDefault(d => d.Severity == SceneSeverity.Error) is { } error)
             throw new InvalidDataException(error.Message);
@@ -44,6 +45,7 @@ internal static class NwcExport
             {
                 node.Class = "LcRevitElement";
                 node.IfcGlobalId = element.IfcGuid;
+                node.IsHidden = hiddenDatumIds?.Contains(element.Id) == true;
             }
             AddText(node, "Revit", "Element ID", id);
             AddText(node, "Revit", "UniqueId", element.SourceId);

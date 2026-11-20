@@ -9,4 +9,7 @@ public sealed class ElementMeshOptions
 
     /// <summary>Includes decoded straight model lines and meshes of reinforcement described by its centre lines.</summary>
     public bool IncludeModelLinesAndReinforcement { get; set; }
+
+    /// <summary>Includes the finite reference lines of grids and levels for native cache export.</summary>
+    public bool IncludeDatumGeometry { get; set; }
 }

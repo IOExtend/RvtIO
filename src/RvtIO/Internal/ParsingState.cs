@@ -390,6 +390,7 @@ internal class ParsingState
     /// the serialized datum text, free end, bubble end and cut vector. The element-level
     /// name remains authoritative for the grid mark because datum text may name its head type.</summary>
     public Dictionary<uint, GridDatumData> GridDatums { get; } = new();
+    public Dictionary<uint, Model.GridPlaneData> LevelPlanes { get; } = new();
     public Dictionary<uint, AreaSketchPlane> AreaReinforcementPlanes { get; } = new();
     public (List<Model.GridAxis> Paths, HashSet<int> Members)? GridAxes { get; set; }
 

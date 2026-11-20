@@ -4146,16 +4146,18 @@ internal static partial class TfBlockDeserializer
             origin.ToArray(), yVector.ToArray());
     }
 
-    /// <summary>Decode the exact Level elevation from its authored datum Plane origin.</summary>
-    public static double? ExtractLevelElevation(byte[] d, int blockStart, uint dataSize,
+    /// <summary>Decode a Level's authored finite datum plane.</summary>
+    public static Model.GridPlaneData? ExtractLevelPlane(byte[] d, int blockStart, uint dataSize,
         ushort classId)
     {
         if (classId != 2299) return null;
         var surface = ExtractDatumPlaneSurface(d, blockStart, dataSize, classId);
-        if (surface == null) return null;
-        double elevation = surface.Value.Origin[2];
-        return double.IsFinite(elevation) ? elevation : null;
+        return surface is { } plane ? new(plane.Envelope, plane.Origin, plane.XVector, plane.YVector) : null;
     }
+
+    public static double? ExtractLevelElevation(byte[] d, int blockStart, uint dataSize, ushort classId) =>
+        ExtractLevelPlane(d, blockStart, dataSize, classId) is { } plane && double.IsFinite(plane.Origin[2])
+            ? plane.Origin[2] : null;
 
     private static (double[] Envelope, double[] Origin, double[] XVector, double[] YVector)?
         ExtractDatumPlaneSurface(byte[] d, int blockStart, uint dataSize, ushort classId)

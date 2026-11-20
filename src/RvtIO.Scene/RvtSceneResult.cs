@@ -20,6 +20,9 @@ public sealed class RvtSceneResult
     /// <summary>The number of elements that have at least one instance.</summary>
     public int ElementsWithGeometry { get; init; }
 
+    /// <summary>Revit datum IDs whose reference geometry is hidden by default in native export.</summary>
+    public IReadOnlyList<long> HiddenDatumIds { get; init; } = [];
+
     /// <summary>The number of elements by the coverage of their meshes; a coverage that no element has is not listed.</summary>
     public IReadOnlyDictionary<MeshCoverage, int> Coverage { get; init; } = new Dictionary<MeshCoverage, int>();
 
