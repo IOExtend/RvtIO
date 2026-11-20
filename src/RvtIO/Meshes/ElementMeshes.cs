@@ -36,6 +36,7 @@ public static class ElementMeshes
     private const int RevealsCategoryId = -2000182;
     private const int WallsCategoryId = -2000011;
     private const double RigidTolerance = 1e-6;
+    private const double ArcChordErrorFeet = 0.001 / 0.3048;
 
     /// <summary>The meshes of the drawable elements of <paramref name="document"/>.</summary>
     /// <exception cref="ArgumentNullException"><paramref name="document"/> is null.</exception>
@@ -120,14 +121,18 @@ public static class ElementMeshes
             }
             if (body == null)
             {
-                var line = options.IncludeModelLinesAndReinforcement ? ModelLine(element) : null;
+                var curve = options.IncludeModelLinesAndReinforcement ? ModelCurve(element) : null;
+                var line = ModelLine(curve);
+                var arc = curve is { CurveType: "Arc" } && GridAxis.Tessellate([curve], ArcChordErrorFeet) is { } samples
+                    ? samples.Select(p => new MeshVector(p[0], p[1], p[2])).ToArray() : null;
                 var rebar = options.IncludeModelLinesAndReinforcement && element.RebarBars is { } bars ? ReinforcementMeshes.Build(bars) : null;
                 elements.Add(new ElementMesh
                 {
                     ElementId = element.Id,
                     Line = line,
+                    Arc = arc,
                     Meshes = rebar == null ? [] : [rebar],
-                    Coverage = line != null || rebar != null ? MeshCoverage.Complete
+                    Coverage = line != null || arc != null || rebar != null ? MeshCoverage.Complete
                         : info.WideLayoutNotRewritten ? MeshCoverage.Undecoded : MeshCoverage.NoGeometry,
                 });
                 continue;
@@ -189,7 +194,8 @@ public static class ElementMeshes
         var drawable = new List<(Element, GeometryData?)>();
         foreach (var element in info.Elements)
         {
-            bool modelLine = includeModelLinesAndReinforcement && ModelLine(element) != null;
+            var curve = includeModelLinesAndReinforcement ? ModelCurve(element) : null;
+            bool modelLine = curve?.CurveType == "Arc" || ModelLine(curve) != null;
             bool rebar = includeModelLinesAndReinforcement && element.RebarBars is { Bars.Count: > 0 } or { Items.Count: > 0 };
             if (element.IsBlockOnly || element.IsGroupTemplate
                 || designOptions.InNonPrimaryOption(element) == true || phaseFilter?.Excludes(element) == true
@@ -218,13 +224,19 @@ public static class ElementMeshes
         && body?.ExactMappedInstances is { Count: > 0 } mapped
         && mapped.All(instance => instance.SymbolId != element.Id && drawableIds.Contains(instance.SymbolId));
 
-    private static (MeshVector Start, MeshVector End)? ModelLine(Element element)
+    private static LocationCurve? ModelCurve(Element element)
     {
         if (element.CategoryId is not ((int)BuiltInCategory.OST_Lines or (int)BuiltInCategory.OST_RoomSeparationLines
             or (int)BuiltInCategory.OST_MEPSpaceSeparationLines) || element.OwnerViewId != null
             || !element.RootClassIs("CurveElem")
-            || !element.Parameters.Any(p => p.Id == (int)BuiltInParameter.CURVE_IS_DETAIL && p.Value is 0)
-            || element.Location is not { CurveType: "Line" } line
+            || !element.Parameters.Any(p => p.Id == (int)BuiltInParameter.CURVE_IS_DETAIL && p.Value is 0))
+            return null;
+        return element.NativeModelArc ?? (element.Location is { CurveType: "Line" } line ? line : null);
+    }
+
+    private static (MeshVector Start, MeshVector End)? ModelLine(LocationCurve? curve)
+    {
+        if (curve is not { CurveType: "Line" } line
             || line.StartPoint is not [var x0, var y0, var z0] || line.EndPoint is not [var x1, var y1, var z1])
             return null;
         var start = new Pt3(x0, y0, z0);

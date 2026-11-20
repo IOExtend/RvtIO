@@ -19,13 +19,15 @@ public sealed class GridAxis
 
     /// <summary>Samples the axis as an ordered polyline in feet, with the requested maximum arc-to-chord error.
     /// Returns null if the tolerance would require more than 65,536 vertices or the curve is incomplete.</summary>
-    public List<double[]>? Tessellate(double maxErrorFeet)
+    public List<double[]>? Tessellate(double maxErrorFeet) => Tessellate(Segments, maxErrorFeet);
+
+    internal static List<double[]>? Tessellate(IReadOnlyList<LocationCurve> segments, double maxErrorFeet)
     {
         if (!double.IsFinite(maxErrorFeet) || maxErrorFeet <= 0)
             throw new ArgumentOutOfRangeException(nameof(maxErrorFeet));
         const int MaxVertices = 65_536;
-        var points = new List<double[]> { Segments[0].StartPoint };
-        foreach (var curve in Segments)
+        var points = new List<double[]> { segments[0].StartPoint };
+        foreach (var curve in segments)
         {
             if (curve.CurveType == "Arc")
             {

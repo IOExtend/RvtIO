@@ -79,6 +79,47 @@ public class NwcSupplementalGeometryTests
     }
 
     [Fact]
+    public void NativeModelArcKeepsItsPlaneAndTessellatesTheCircularPath()
+    {
+        var arc = Line(1, BuiltInCategory.OST_Lines, detail: false);
+        arc.Location = null;
+        arc.NativeModelArc = new()
+        {
+            CurveType = "Arc",
+            ArcCenter = [3, 5, 7],
+            ArcRadius = 2,
+            ArcXDirection = [0, 1, 0],
+            ArcYDirection = [0, 0, 1],
+            ArcStartParameter = 0,
+            ArcEndParameter = Math.PI / 2,
+            StartPoint = [3, 7, 7],
+            EndPoint = [3, 5, 9],
+            Length = Math.PI,
+        };
+        var document = RvtDocument.FromInfo(new RevitFileInfo { Elements = [arc] });
+        Assert.Empty(RvtSceneReader.Read(document, new() { ModelKey = "model" }).Document.Elements);
+        var scene = RvtSceneReader.Read(document, new() { ModelKey = "model", IncludeModelLinesAndReinforcement = true }).Document;
+        var instance = Assert.Single(scene.Instances);
+        var geometry = Assert.Single(scene.Geometries);
+        Assert.Equal(SceneTopology.Lines, geometry.Topology);
+        Assert.True(geometry.Vertices.Count > 2);
+        var points = geometry.Vertices.Select(point => instance.Transform!.Value.Apply(point)).ToArray();
+        Assert.Equal(new Vector3d(3 * 0.3048, 7 * 0.3048, 7 * 0.3048), points[0]);
+        Assert.Equal(new Vector3d(3 * 0.3048, 5 * 0.3048, 9 * 0.3048), points[^1]);
+        Assert.All(points, point => Assert.Equal(3 * 0.3048, point.X, 12));
+        for (int i = 0; i < points.Length - 1; i++)
+        {
+            Assert.Equal(i, geometry.Indices[2 * i]);
+            Assert.Equal(i + 1, geometry.Indices[2 * i + 1]);
+            var midpoint = (points[i] + points[i + 1]) * 0.5;
+            double radius = Math.Sqrt(Math.Pow(midpoint.Y - 5 * 0.3048, 2) + Math.Pow(midpoint.Z - 7 * 0.3048, 2));
+            Assert.InRange(2 * 0.3048 - radius, 0, 0.001);
+        }
+        var native = Nwc.NwcExport.Build(scene, "model.rvt", 0, DateTime.UnixEpoch, native: true);
+        Assert.Equal(geometry.Indices, Assert.Single(native.Meshes).LineIndices);
+    }
+
+    [Fact]
     public void SweepKeepsTheStoredRadiusAndExtentsOfAStraightBar()
     {
         var segment = new RebarSegment(false, [4, 5, 6], [0, 0, 1], [], 0, 0, 10);

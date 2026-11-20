@@ -3867,7 +3867,7 @@ internal static partial class TfBlockDeserializer
     /// return the curve's line style (BUILDING_CURVE_GSTYLE) and length (CURVE_ELEM_LENGTH).
     /// Detail arcs store geometry as deferred GArc/GLine/GEllipse objects the pattern scan
     /// couldn't reach; the full schema walk with rules R1-R7 recovers them.</summary>
-    public static (int GStyle, double Length)? ExtractCurveGeometry(byte[] d, int blockStart, uint dataSize)
+    public static (int GStyle, double Length, Model.LocationCurve? Arc)? ExtractCurveGeometry(byte[] d, int blockStart, uint dataSize)
     {
         var fields = SerializationFields(0x346);
         if (fields == null) return null;
@@ -3878,9 +3878,17 @@ internal static partial class TfBlockDeserializer
 
         var cur = new Cursor { D = d, Pos = payloadStart, End = payloadEnd - 4, Curves = new() };
         var queue = new List<(ushort Cls, uint Id)>();
+        int driver = -1, driveArc = -1;
+        Model.LocationCurve? arc = null;
         try
         {
-            foreach (var f in fields) ReadField(cur, f, queue, 0, null);
+            foreach (var f in fields)
+            {
+                int before = queue.Count;
+                ReadField(cur, f, queue, 0, null);
+                if (f.Declaring == 838 && f.Name == "m_pCurveDriver" && queue.Count == before + 1 && queue[before].Cls == 929)
+                    driver = before;
+            }
             // Process the FULL deferred queue (not just param stores), capturing each
             // GArc/GLine/GEllipse object's geometry.
             for (int i = 0; i < queue.Count; i++)
@@ -3900,7 +3908,24 @@ internal static partial class TfBlockDeserializer
                 if (qf == null) throw Fail;
                 bool isCurve = cls is 0x7B6 or 0x7DA or 0x6C8;
                 if (isCurve) { cur.Ep0 = cur.Ep1 = cur.Radius = cur.XLen = cur.YLen = 0; }
-                foreach (var sf in qf) ReadField(cur, sf, queue, 1, null);
+                double[]? center = null, x = null, y = null;
+                foreach (var sf in qf)
+                {
+                    int before = queue.Count, pos = cur.Pos;
+                    ReadField(cur, sf, queue, 1, null);
+                    if (i == driver && sf.Declaring == 87 && sf.Name == "m_pCrv" && queue.Count == before + 1 && queue[before].Cls == 1974)
+                        driveArc = before;
+                    if (i != driveArc || sf.Declaring != 1974 || cur.Pos - pos != 24) continue;
+                    double[] Vector() => [BitConverter.ToDouble(d, pos), BitConverter.ToDouble(d, pos + 8), BitConverter.ToDouble(d, pos + 16)];
+                    switch (sf.Name)
+                    {
+                        case "m_center": center = Vector(); break;
+                        case "m_xVec": x = Vector(); break;
+                        case "m_yVec": y = Vector(); break;
+                    }
+                }
+                if (i == driveArc && center != null && x != null && y != null)
+                    arc = CreateCurveElementArc(center, x, y, cur.Radius, cur.Ep0, cur.Ep1);
                 if (isCurve)
                     cur.Curves!.Add((cls, cur.Ep0, cur.Ep1, cur.Radius, cur.XLen, cur.YLen));
             }
@@ -3944,7 +3969,37 @@ internal static partial class TfBlockDeserializer
 
         int gs = cur.GStyle == int.MinValue ? -1 : cur.GStyle;
         if (gs < 0 && length == null) return null;
-        return (gs, length ?? 0);
+        return (gs, length ?? 0, arc);
+    }
+
+    private static Model.LocationCurve? CreateCurveElementArc(double[] center, double[] x, double[] y, double radius, double start, double end)
+    {
+        if (!center.Concat(x).Concat(y).All(double.IsFinite) || !(radius > 0 && double.IsFinite(radius))
+            || !double.IsFinite(start) || !double.IsFinite(end)) return null;
+        const double tolerance = 1e-8;
+        static double Dot(double[] a, double[] b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        if (Math.Abs(Dot(x, x) - 1) > tolerance || Math.Abs(Dot(y, y) - 1) > tolerance || Math.Abs(Dot(x, y)) > tolerance)
+            return null;
+        if (Math.Abs(end - start) < 1e-12) end = start + 2 * Math.PI;
+        double sweep = Math.Abs(end - start);
+        double length = sweep * radius;
+        if (!(sweep > 0 && sweep <= 2 * Math.PI + tolerance && double.IsFinite(length))) return null;
+        var first = Model.GridAxis.PointOnArc(center, radius, x, y, start);
+        var last = Model.GridAxis.PointOnArc(center, radius, x, y, end);
+        if (!first.Concat(last).All(double.IsFinite)) return null;
+        return new Model.LocationCurve
+        {
+            CurveType = "Arc",
+            StartPoint = first,
+            EndPoint = last,
+            Length = length,
+            ArcCenter = center,
+            ArcRadius = radius,
+            ArcXDirection = x,
+            ArcYDirection = y,
+            ArcStartParameter = start,
+            ArcEndParameter = end,
+        };
     }
 
     /// <summary>Decode the two coordinate representations stored by a BasePoint block.
