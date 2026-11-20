@@ -210,8 +210,13 @@ public static class ElementMeshes
                 bottom = Math.Clamp((lowestLevel - plane.Origin[2]) / plane.YVector[2], v0, v1);
             return [Point(u0, bottom), Point(u1, bottom)];
         }
-        var corner = Point(u0, v1);
-        return [Point(u0, v0), corner, corner, Point(u1, v1)];
+        // Level outlines follow the west and north bounds in project coordinates.
+        MeshVector[] corners = [Point(u0, v0), Point(u0, v1), Point(u1, v0), Point(u1, v1)];
+        double west = corners.Min(point => point.X);
+        double north = corners.Max(point => point.Y);
+        double z = plane.Origin[2];
+        MeshVector corner = new(west, north, z);
+        return [new(west, corners.Min(point => point.Y), z), corner, corner, new(corners.Max(point => point.X), north, z)];
     }
 
     // A ghost node is a Geometry node Revit exports that has no polygon here (display surfaces, or a duplicate of another node).
