@@ -1317,6 +1317,7 @@ internal static partial class ElementBuilder
     {
         if (elem.Location == null && state.SketchCurves.TryGetValue(id, out var lc))
             elem.Location = lc;
+        elem.NativeModelArc ??= state.CurveGeometry.GetValueOrDefault(id).Arc;
     }
 
     /// <summary>

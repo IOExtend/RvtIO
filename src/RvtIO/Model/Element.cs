@@ -83,6 +83,9 @@ namespace RvtIO.Model
         [JsonIgnore]
         internal (double StartZ, double EndZ)? CurveDriverLineZ { get; set; }
 
+        /// <summary>The circular drive curve owned by this curve element, in internal coordinates.</summary>
+        internal LocationCurve? NativeModelArc { get; set; }
+
         /// <summary>Unit direction of the straight drive curve (CurveDriver.m_pCrv GLine dirVec); absent for an arc driver.</summary>
         [JsonIgnore]
         internal (double X, double Y, double Z)? CurveDriverLineDirection { get; set; }

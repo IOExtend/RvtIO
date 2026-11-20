@@ -172,7 +172,7 @@ public static class RvtSceneReader
                 SourceId = element?.UniqueId,
                 IfcGuid = element != null ? IfcGuidOf(element) : null,
                 Kind = SceneNodeKind.Element,
-                Name = mesh.Line != null && string.IsNullOrWhiteSpace(element?.Name) ? "Model Lines" : element?.Name ?? string.Empty,
+                Name = (mesh.Line != null || mesh.Arc != null) && string.IsNullOrWhiteSpace(element?.Name) ? "Model Lines" : element?.Name ?? string.Empty,
                 Category = CategoryName(element),
                 TypeName = element != null ? document.GetTypeElement(element)?.Name ?? string.Empty : string.Empty,
             };
@@ -199,6 +199,23 @@ public static class RvtSceneReader
                 scene.Geometries.Add(new SceneGeometry
                 {
                     Id = geometryId, Topology = SceneTopology.Lines, Vertices = [Vector3d.Zero, end - start], Indices = [0, 1],
+                });
+                scene.Instances.Add(new SceneInstance { ElementId = mesh.ElementId, GeometryId = geometryId, Transform = Transform3d.Translate(start) });
+            }
+            if (mesh.Arc is { } arc)
+            {
+                var start = Vector(arc[0]) * MetresPerFoot;
+                var vertices = arc.Select(point => Vector(point) * MetresPerFoot - start).ToArray();
+                int[] indices = new int[2 * (vertices.Length - 1)];
+                for (int i = 0; i < vertices.Length - 1; i++)
+                {
+                    indices[2 * i] = i;
+                    indices[2 * i + 1] = i + 1;
+                }
+                int geometryId = scene.Geometries.Count + 1;
+                scene.Geometries.Add(new SceneGeometry
+                {
+                    Id = geometryId, Topology = SceneTopology.Lines, Vertices = vertices, Indices = indices,
                 });
                 scene.Instances.Add(new SceneInstance { ElementId = mesh.ElementId, GeometryId = geometryId, Transform = Transform3d.Translate(start) });
             }

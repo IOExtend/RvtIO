@@ -405,7 +405,7 @@ internal class ParsingState
 
     /// <summary>Curve line style + length from the full CurveElem schema walk (handles
     /// detail arcs the GInfoBlob pattern scan can't reach).</summary>
-    public Dictionary<uint, (int GStyle, double Length)> CurveGeometry { get; set; } = new();
+    public Dictionary<uint, (int GStyle, double Length, Model.LocationCurve? Arc)> CurveGeometry { get; set; } = new();
 
     /// <summary>Native parameter stores per element, deserialized from the Element base
     /// class m_pParamValueSet* containers (schema-driven).</summary>
