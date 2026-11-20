@@ -20,6 +20,10 @@ internal static class DowngradePartitionRewriter
 {
     internal const int MaxSegmentBodyBytes = 131_072;
 
+    internal sealed record Addition(ulong Owner, byte[][] Payloads);
+    internal sealed record ProjectEdits(
+        IReadOnlyList<Addition> Additions, IReadOnlyDictionary<(ulong Owner, int Channel), byte[]> Replacements);
+
     internal static byte[] Rewrite(
         byte[] rawStored,
         PartitionFraming.Tags sourceTags, int sourceWidth,
@@ -27,7 +31,8 @@ internal static class DowngradePartitionRewriter
         R22Transcoder transcoder,
         IReadOnlySet<ulong>? knownDropped,
         Func<byte[], byte[], byte[]?>? tagFixer,
-        out IReadOnlySet<ulong> droppedOwners)
+        out IReadOnlySet<ulong> droppedOwners,
+        ProjectEdits? projectEdits = null)
     {
         if (sourceWidth is not (4 or 8) || targetWidth is not (4 or 8))
             throw new ArgumentOutOfRangeException(nameof(targetWidth), "Element identifier byte width must be 4 or 8.");
@@ -55,6 +60,8 @@ internal static class DowngradePartitionRewriter
         var allDropped = knownDropped is HashSet<ulong> known ? known : knownDropped is null ? [] : new HashSet<ulong>(knownDropped);
 
         int pos = 8;
+        var addedChannels = new HashSet<int>();
+        var replacedRecords = new HashSet<(ulong, int)>();
         for (; ; )
         {
             int blockStart = pos;
@@ -130,6 +137,8 @@ internal static class DowngradePartitionRewriter
                             if (owner != sourceTerminator && !dropOwners.Contains(owner)) kept.Add(owner);
                 writeOwners = (uint)kept.Count;
             }
+            if (key is null && projectEdits is not null)
+                writeOwners = checked(writeOwners + (uint)projectEdits.Additions.Count);
 
             // Write block header with target tags, the surviving owner count, pointer and key unchanged.
             {
@@ -153,7 +162,8 @@ internal static class DowngradePartitionRewriter
             }
 
             foreach (var chain in chains)
-                WriteConvertedChain(rebuilt, chain, targetTags, sourceWidth, targetWidth, transcoder, sourceTerminator, targetTerminator, dropOwners, tagFixer);
+                WriteConvertedChain(rebuilt, chain, targetTags, sourceWidth, targetWidth, transcoder, sourceTerminator, targetTerminator,
+                    dropOwners, tagFixer, key is null ? projectEdits : null, addedChannels, replacedRecords);
 
             // Empty segment closing the block.
             {
@@ -172,6 +182,8 @@ internal static class DowngradePartitionRewriter
             _ = blockStart;
         }
 
+        if (projectEdits is not null && (addedChannels.Count != 3 || replacedRecords.Count != projectEdits.Replacements.Count))
+            throw new InvalidDataException("The partition is missing a channel or record required by the project edits.");
         byte[] encoded = PageCodec.EncodePadded(rebuilt.ToArray());
 
         // Verify with target framing, widths and checksums.
@@ -428,7 +440,10 @@ internal static class DowngradePartitionRewriter
         ulong sourceTerminator,
         ulong targetTerminator,
         IReadOnlySet<ulong> dropOwners,
-        Func<byte[], byte[], byte[]?>? tagFixer)
+        Func<byte[], byte[], byte[]?>? tagFixer,
+        ProjectEdits? projectEdits,
+        HashSet<int> addedChannels,
+        HashSet<(ulong, int)> replacedRecords)
     {
         var adler = new Adler32();
         using var batch = new MemoryStream();
@@ -478,6 +493,16 @@ internal static class DowngradePartitionRewriter
             uint newExtra;
             if (isTerminator)
             {
+                if (projectEdits is not null && addedChannels.Add(chain.Channel))
+                {
+                    foreach (var addition in projectEdits.Additions)
+                    {
+                        byte[] payload = addition.Payloads[chain.Channel - 101];
+                        adler.Reset();
+                        adler.Update(payload);
+                        WriteRecord(addition.Owner, payload, hasExtra ? (uint)adler.Value : 0);
+                    }
+                }
                 newOwner = targetTerminator;
                 newBody = [];
                 newExtra = 0;
@@ -493,9 +518,18 @@ internal static class DowngradePartitionRewriter
                     throw new DowngradeRefusedException("id-beyond-32-bits",
                         $"Element id {owner} does not fit in 32 bits and cannot be downgraded to a 4-byte release.");
                 newOwner = owner;
-                byte[]? converted = bodySize >= 2 ? transcoder.Payload(body, 0, bodySize, out _) : null;
-                if (converted is not null && tagFixer is not null && tagFixer(body, converted) is { } fixedBody)
-                    converted = fixedBody;
+                byte[]? converted;
+                if (projectEdits?.Replacements.TryGetValue((owner, chain.Channel), out var edit) == true)
+                {
+                    converted = edit;
+                    replacedRecords.Add((owner, chain.Channel));
+                }
+                else
+                {
+                    converted = bodySize >= 2 ? transcoder.Payload(body, 0, bodySize, out _) : null;
+                    if (converted is not null && tagFixer is not null && tagFixer(body, converted) is { } fixedBody)
+                        converted = fixedBody;
+                }
                 if (converted == null)
                 {
                     // A body that cannot be rewritten on its own (an unknown nested structure) keeps its bytes
@@ -514,32 +548,38 @@ internal static class DowngradePartitionRewriter
                 }
             }
 
+            WriteRecord(newOwner, newBody, newExtra);
+        }
+        FlushBatch();
+
+        void WriteRecord(ulong owner, byte[] recordBody, uint checksum)
+        {
+            bool hasExtra = chain.Channel != 101;
             byte[] header = new byte[targetWidth + (hasExtra ? 4 : 0) + 4];
             int hp = 0;
-            if (targetWidth == 8) { BinaryPrimitives.WriteUInt64LittleEndian(header.AsSpan(hp, 8), newOwner); hp += 8; }
-            else { BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(hp, 4), (uint)newOwner); hp += 4; }
-            if (hasExtra) { BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(hp, 4), newExtra); hp += 4; }
-            BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(hp, 4), (uint)newBody.Length);
+            if (targetWidth == 8) { BinaryPrimitives.WriteUInt64LittleEndian(header.AsSpan(hp, 8), owner); hp += 8; }
+            else { BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(hp, 4), (uint)owner); hp += 4; }
+            if (hasExtra) { BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(hp, 4), checksum); hp += 4; }
+            BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(hp, 4), (uint)recordBody.Length);
             byte[] footer = new byte[4];
-            BinaryPrimitives.WriteUInt32LittleEndian(footer, (uint)newBody.Length);
+            BinaryPrimitives.WriteUInt32LittleEndian(footer, (uint)recordBody.Length);
 
-            int itemLength = header.Length + newBody.Length + 4;
-            if (newBody.Length > MaxSegmentBodyBytes)
+            int itemLength = header.Length + recordBody.Length + 4;
+            if (recordBody.Length > MaxSegmentBodyBytes)
             {
                 FlushBatch();
-                WriteSplitRecord(output, targetTags, chain, header, newBody);
+                WriteSplitRecord(output, targetTags, chain, header, recordBody);
             }
             else
             {
                 if (batchCount > 0 && batch.Length + itemLength > MaxSegmentBodyBytes) FlushBatch();
                 batch.Write(header);
-                batch.Write(newBody);
+                batch.Write(recordBody);
                 batch.Write(footer);
                 batchCount++;
-                batchBodyBytes += newBody.Length;
+                batchBodyBytes += recordBody.Length;
             }
         }
-        FlushBatch();
     }
 
     private static int DetectSourceWidth(ChainSpan chain, ulong sourceTerminator) => sourceTerminator == ulong.MaxValue ? 8 : 4;

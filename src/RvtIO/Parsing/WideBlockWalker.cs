@@ -24,7 +24,7 @@ namespace RvtIO.Parsing;
 internal sealed class WideBlockWalker
 {
     internal readonly record struct Capture(string Key, CaptureKind Kind, long Integer, double Real, string? Text, bool AtRoot, int QueueIndex,
-        string DeclaringClass, string Field);
+        string DeclaringClass, string Field, int? TargetQueueIndex = null, bool IsElementId = false, int Offset = -1);
 
     internal enum CaptureKind { Integer, Real, Text, PointerClass }
 
@@ -340,10 +340,12 @@ internal sealed class WideBlockWalker
         }
         if (hi == 5)
         {
+            int countAt = c.Pos;
             uint n = U32(c);
             if (n == 0xFFFFFFFF) n = 0;
             if (n > 5_000_000) throw new Fail("count " + n + " at " + declaring.Name + "." + f.Name);
-            if (key != null) c.Walk.Captures.Add(new(key + "#", CaptureKind.Integer, n, 0, null, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name));
+            if (key != null) c.Walk.Captures.Add(new(key + "#", CaptureKind.Integer, n, 0, null, c.AtRoot && depth == 0,
+                c.QueueIndex, declaring.Name, f.Name, Offset: countAt));
             // The host type of an empty array is zero (the Revit 2022 walk keeps that zero as the first entry)
             if (key != null && n == 0 && declaring.Name == "Family" && f.Name == "m_refTypeIds")
                 c.Walk.Captures.Add(new(key + "@0", CaptureKind.Integer, 0, 0, null, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name));
@@ -371,9 +373,9 @@ internal sealed class WideBlockWalker
     {
         var walk = c.Walk;
         if (++c.Steps > StepBudget) throw new Fail("step budget");
-        void Note(CaptureKind kind, long i, double d, string? s)
+        void Note(CaptureKind kind, long i, double d, string? s, int offset = -1)
         {
-            if (key != null) walk.Captures.Add(new(key, kind, i, d, s, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name));
+            if (key != null) walk.Captures.Add(new(key, kind, i, d, s, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name, Offset: offset));
         }
         switch (f.Type)
         {
@@ -396,7 +398,7 @@ internal sealed class WideBlockWalker
             {
                 int p = Take(c, 4);
                 int v = BitConverter.ToInt32(c.D, p);
-                Note(CaptureKind.Integer, v, 0, null);
+                Note(CaptureKind.Integer, v, 0, null, p);
                 if (record != null) record[f.Name] = (long)v;
                 return;
             }
@@ -420,7 +422,7 @@ internal sealed class WideBlockWalker
             {
                 int p = Take(c, 8);
                 double v = BitConverter.ToDouble(c.D, p);
-                Note(CaptureKind.Real, 0, v, null);
+                Note(CaptureKind.Real, 0, v, null, p);
                 if (record != null) record[f.Name] = v;
                 return;
             }
@@ -484,6 +486,7 @@ internal sealed class WideBlockWalker
         }
         if (lo is 1 or 2 or 4)
         {
+            int handleAt = c.Pos;
             uint handle = U32(c);
             int tag = 0;
             if (_entityLayoutOf != null && declaring.Name == "ESEntity" && f.Name == "m_blob" && QueueEntityPayload(c, handle)) return;
@@ -508,7 +511,9 @@ internal sealed class WideBlockWalker
                 walk.Queue.Add(tag);
                 }
             }
-            if (key != null) walk.Captures.Add(new(key, CaptureKind.PointerClass, handle == 0 ? 0 : tag == 0 ? -1 : tag, 0, null, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name));
+            if (key != null) walk.Captures.Add(new(key, CaptureKind.PointerClass, handle == 0 ? 0 : tag == 0 ? -1 : tag, 0, null,
+                c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name, tag != 0 ? walk.Queue.Count - 1 : null,
+                Offset: tag != 0 ? handleAt + sizeof(uint) : -1));
             if (record != null) record[f.Name] = (long)tag;
             return;
         }
@@ -519,7 +524,8 @@ internal sealed class WideBlockWalker
                 // ElementId: Identifier.m_id (4 bytes) or Identifier.m_id64 (8 bytes)
                 int p = Take(c, _idWidth);
                 long id = _idWidth == 8 ? BitConverter.ToInt64(c.D, p) : BitConverter.ToInt32(c.D, p);
-                if (key != null) walk.Captures.Add(new(key, CaptureKind.Integer, id, 0, null, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name));
+                if (key != null) walk.Captures.Add(new(key, CaptureKind.Integer, id, 0, null,
+                    c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name, IsElementId: true, Offset: p));
                 if (record != null) record[f.Name] = id;
                 return;
             }
@@ -544,6 +550,7 @@ internal sealed class WideBlockWalker
             return;
         }
         {
+            int handleAt = c.Pos;
             uint handle = U32(c);
             int tag = 0;
             if (handle == 0xFFFFFFFF)
@@ -553,7 +560,9 @@ internal sealed class WideBlockWalker
                 if (walk.Queue.Count >= 1_000_000) throw new Fail("queue");
                 walk.Queue.Add(tag);
             }
-            if (key != null) walk.Captures.Add(new(key, CaptureKind.PointerClass, handle == 0 ? 0 : tag == 0 ? -1 : tag, 0, null, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name));
+            if (key != null) walk.Captures.Add(new(key, CaptureKind.PointerClass, handle == 0 ? 0 : tag == 0 ? -1 : tag, 0, null,
+                c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name, tag != 0 ? walk.Queue.Count - 1 : null,
+                Offset: tag != 0 ? handleAt + sizeof(uint) : -1));
         }
     }
 }
