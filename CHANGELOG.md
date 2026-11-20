@@ -6,6 +6,24 @@ API between minor releases.
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-11-20
+
+### Fixed
+
+- Native NWC export preserves stair containers and their component IDs, circular model lines, and area
+  reinforcement outlines (#282, #283, #284).
+- Native NWC export includes authored grid lines and level outlines and keeps them hidden when the file
+  opens in Navisworks (#285).
+
+- Read the selected project-room record by its stored boundaries when current-copy resolution leaves it outside the
+  sequential scan. The current IFC profile also exports placed rooms with an explicitly empty number.
+- Recover text note and linear dimension types from their unique project records when the sequential scan misses them.
+- Keep room separation lines from inheriting a type from another line referenced by the current copy.
+
+### Changed
+
+- Both ready-to-run `RvtIO.Nwc` archives bundle NwcIO 0.17.0 for native visibility.
+
 ## [0.6.2] - 2026-11-20
 
 ### Added
@@ -22,11 +40,6 @@ API between minor releases.
 - The ready-to-run `RvtIO.Nwc` archives for .NET 8 and .NET 10 bundle NwcIO 0.16.0 for native line output.
 
 ### Fixed
-
-- Read the selected project-room record by its stored boundaries when current-copy resolution leaves it outside the
-  sequential scan. The current IFC profile also exports placed rooms with an explicitly empty number.
-- Recover text note and linear dimension types from their unique project records when the sequential scan misses them.
-- Keep room separation lines from inheriting a type from another line referenced by the current copy.
 
 - Report `element-id-range` with the offending ID if an RVT has wide element IDs and no project partition storage
   to read the element records.
