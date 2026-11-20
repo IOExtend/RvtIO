@@ -125,12 +125,31 @@ internal static class BrepMeasures
         return result;
     }
 
+    /// <summary>Measures a single planar extrusion whose closed faces and stored node volume agree.</summary>
+    internal static (ShellPrism Prism, double Volume)? MeasuredPlanarPrism(GeometryData? geometry, bool wallSides = false)
+    {
+        if (geometry is not { UntriangulatedFaces: 0, BrepSolids: [{ IsClosed: true } solid],
+                NodeMeasures: [{ Node: > 0, Volume: > 0 } measure] }
+            || !double.IsFinite(measure.Volume)
+            || solid.FaceIndices.Count != geometry.Faces.Count
+            || geometry.Faces.Any(face => face.CurvedSurface || face.GeometryNode != measure.Node)
+            || !FacetedShell.TryOrientExactFacetedShell(geometry.Faces, solid.FaceIndices, out var faces, triangulateNonPlanarFaces: false))
+            return null;
+        var shell = new ShellInfo(faces, Closed: true, measure.Volume, measure.Area);
+        if (FindPrismCurrent(shell, verticalOnly: !wallSides, wallSides: wallSides) is not { ProfileArea: > 0 } prism
+            || !(Math.Abs(prism.ProfileArea * prism.Depth - measure.Volume) <= measure.Volume * 1e-6))
+            return null;
+        return (prism, measure.Volume);
+    }
+
     /// <summary>The prism of a shell: two planar faces of equal net area (within 1e-4 ft2) facing each other on
     /// different planes, with every other face parallel to their common normal. Null for any other shape, a curved face
     /// included.
     /// With <paramref name="arcSides"/> the vertical cylinders that tessellate the arcs of the outline are allowed as sides and left
     /// out of the search (the perimeters stay those of the chords), and a shell with any other curved face is no prism.</summary>
-    internal static ShellPrism? FindPrismCurrent(ShellInfo shell, bool verticalOnly = false, bool arcSides = false)
+    /// <remarks>For a straight wall, the largest pair of vertical end faces bounds its thickness.</remarks>
+    internal static ShellPrism? FindPrismCurrent(ShellInfo shell, bool verticalOnly = false, bool arcSides = false,
+        bool wallSides = false)
     {
         var faces = shell.Faces;
         if (faces.Count < 4) return null;
@@ -160,7 +179,7 @@ internal static class BrepMeasures
                 var b = normals[j];
                 if (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] > -1 + 1e-9 || Math.Abs(areas[i] - areas[j]) > 1e-4) continue;
                 bool vertical = Math.Abs(a[2]) > 1 - 1e-9;
-                if (verticalOnly && !vertical) continue;
+                if (verticalOnly && !vertical || wallSides && Math.Abs(a[2]) > 1e-9) continue;
                 bool others = true;
                 for (int k = 0; k < count && others; k++)
                     if (k != i && k != j)
@@ -170,7 +189,7 @@ internal static class BrepMeasures
                 var pj = faces[j].OuterVertices![0];
                 double depth = Math.Abs((pj[0] - pi[0]) * a[0] + (pj[1] - pi[1]) * a[1] + (pj[2] - pi[2]) * a[2]);
                 // A box is a prism along each of its three axes; its long axis is the one a bar is extruded along.
-                if (depth < 1e-9 || best is { } known && known.Depth >= depth) continue;
+                if (depth < 1e-9 || best is { } known && (wallSides ? known.ProfileArea >= areas[i] : known.Depth >= depth)) continue;
                 var outer = faces[i].OuterVertices!;
                 var lower = vertical && MeanHeightCurrent(faces[j]) < MeanHeightCurrent(faces[i]) ? faces[j] : faces[i];
                 var measured = lower.FirstSourceLoop ?? lower.OuterVertices!;

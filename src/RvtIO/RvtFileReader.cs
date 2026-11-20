@@ -2348,7 +2348,7 @@ public partial class RvtFileReader
     /// of loaded families and byte runs inside other items, and each one counted as a second root of the element. The location line of a
     /// wall (<see cref="RecordWallLocationLine"/>) is read from its root record once every root is counted.</summary>
     internal static void RecordFramedRoots(ParsingState state,
-        List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner)>? annotationRoots = null)
+        List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner)>? unanchoredTypeRoots = null)
     {
         var roots = new List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner, int? Partition)>();
         foreach (var frame in state.FramedPartitions!)
@@ -2371,8 +2371,11 @@ public partial class RvtFileReader
         foreach (var (data, start, size, classId, owner, partition) in roots)
         {
             StairComponentSource.Record(state, data, start, size, classId, owner);
-            if (classId is 2335 or 3971) // LinearDimString and TextNote
-                annotationRoots?.Add((data, start, size, classId, owner));
+            if (classId is 2335 or 3971
+                || classId == 3524 && partition is int partWithWall
+                    && state.IncrementRoutedPartitions?.TryGetValue(owner, out int currentWallPartition) == true
+                    && partWithWall == currentWallPartition)
+                unanchoredTypeRoots?.Add((data, start, size, classId, owner));
             if (classId == 3471)
             {
                 RecordRoomNameSource(state, data, start, size, classId, owner);
@@ -2435,9 +2438,9 @@ public partial class RvtFileReader
         var walkGReps = new List<(byte[] Segment, int Start, uint Size, uint Eid)>();
         // the roots the class and stair sources count: the records of the project's block when every stream is read by its framing
         bool framedRoots = state.ReadsFramedRecords;
-        List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner)>? annotationRoots =
+        List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner)>? unanchoredTypeRoots =
             framedRoots && state.StaleCopiesRemoved ? [] : null;
-        if (framedRoots) RecordFramedRoots(state, annotationRoots);
+        if (framedRoots) RecordFramedRoots(state, unanchoredTypeRoots);
         TfStreamWalker.Walk(state.Chunks, state.AllKnownIds, (seg, bs, ds, cls, eid) =>
         {
             uint fullClassIdx = BitConverter.ToUInt32(seg, bs + 12);
@@ -2599,9 +2602,9 @@ public partial class RvtFileReader
             // AnalyticalNodeOwners, registry category assignment.
         }, (seg, recordStart, eid) => ElementHeaderCategory.Record(state, seg, recordStart, eid));
 
-        // Pruning can leave a valid annotation root where the sequential scan cannot anchor.
-        if (annotationRoots != null)
-            foreach (var (data, start, size, classId, owner) in annotationRoots)
+        // Pruning can leave an element's own record where the sequential scan cannot anchor.
+        if (unanchoredTypeRoots != null)
+            foreach (var (data, start, size, classId, owner) in unanchoredTypeRoots)
             {
                 if (state.NativeParamsFromRootClass.Contains(owner)
                     || !state.WalkedElementClassRoots.TryGetValue(owner, out var root)
@@ -2609,6 +2612,13 @@ public partial class RvtFileReader
                     || TfBlockDeserializer.ExtractParams(data, start, size, classId) is not { } parameters
                     || NativeTypePointers.Of(classId, parameters) is not int typeId || !state.AllKnownIds.Contains((uint)typeId))
                     continue;
+                if (classId == 3524)
+                {
+                    if (TfBlockDeserializer.ExtractSystemOccurrenceTypeId(data, start, size, classId) != typeId
+                        || state.SystemTypeRoots.GetValueOrDefault((uint)typeId) is not { BlockCount: 1, ClassId: 512 })
+                        continue;
+                    state.SystemOccurrenceTypeIds[owner] = (1, classId, typeId);
+                }
                 state.NativeParams[owner] = parameters;
                 state.NativeParamsFromRootClass.Add(owner);
             }
