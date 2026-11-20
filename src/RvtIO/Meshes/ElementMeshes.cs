@@ -1,5 +1,6 @@
 using RvtIO.BuiltIns;
 using RvtIO.Geometry.Meshing;
+using RvtIO.Internal;
 using RvtIO.Model;
 using RvtIO.Parsing;
 
@@ -166,7 +167,50 @@ public static class ElementMeshes
                 UntriangulatedFaces = failed,
             });
         }
+        if (options.IncludeDatumGeometry)
+        {
+            var existing = elements.Select(element => element.ElementId).ToHashSet();
+            double lowestLevel = info.Elements.Where(element => BuildingStoreyResolver.IsProjectLevel(element) && element.LevelPlane != null)
+                .Select(element => element.LevelPlane!.Origin[2]).Where(double.IsFinite).DefaultIfEmpty(double.NaN).Min();
+            foreach (var element in info.Elements)
+                if (!existing.Contains(element.Id) && DatumLinePairs(element, lowestLevel) is { } linePairs)
+                {
+                    elements.Add(new ElementMesh
+                    {
+                        ElementId = element.Id, LinePairs = linePairs, IsDatum = true, Coverage = MeshCoverage.Complete,
+                    });
+                }
+        }
         return new MeshSet { Elements = elements, Symbols = placedSymbols, GeometryUndecoded = info.WideLayoutNotRewritten };
+    }
+
+    private static MeshVector[]? DatumLinePairs(Element element, double lowestLevel)
+    {
+        var plane = element.CategoryId switch
+        {
+            (int)BuiltInCategory.OST_Levels when BuildingStoreyResolver.IsProjectLevel(element) => element.LevelPlane,
+            (int)BuiltInCategory.OST_Grids => element.GridPlane,
+            _ => null,
+        };
+        if (plane?.Envelope is not [var u0, var v0, var u1, var v1]
+            || plane.Origin.Length != 3 || plane.XVector.Length != 3 || plane.YVector.Length != 3
+            || !plane.Envelope.Concat(plane.Origin).Concat(plane.XVector).Concat(plane.YVector).All(double.IsFinite)
+            || !(u1 > u0 && v1 > v0)) return null;
+
+        MeshVector Point(double u, double v) => new(
+            plane.Origin[0] + u * plane.XVector[0] + v * plane.YVector[0],
+            plane.Origin[1] + u * plane.XVector[1] + v * plane.YVector[1],
+            plane.Origin[2] + u * plane.XVector[2] + v * plane.YVector[2]);
+
+        if (element.CategoryId == (int)BuiltInCategory.OST_Grids)
+        {
+            double bottom = plane.YVector[2] >= 0 ? v0 : v1;
+            if (double.IsFinite(lowestLevel) && plane.YVector[2] != 0)
+                bottom = Math.Clamp((lowestLevel - plane.Origin[2]) / plane.YVector[2], v0, v1);
+            return [Point(u0, bottom), Point(u1, bottom)];
+        }
+        var corner = Point(u0, v1);
+        return [Point(u0, v0), corner, corner, Point(u1, v1)];
     }
 
     // A ghost node is a Geometry node Revit exports that has no polygon here (display surfaces, or a duplicate of another node).

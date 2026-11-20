@@ -118,7 +118,11 @@ public static class RvtSceneReader
     }
 
     private static ElementMeshOptions? MeshOptions(RvtSceneOptions? options) =>
-        options?.IncludeModelLinesAndReinforcement == true ? new() { IncludeModelLinesAndReinforcement = true } : null;
+        options is null ? null : new()
+        {
+            IncludeModelLinesAndReinforcement = options.IncludeModelLinesAndReinforcement,
+            IncludeDatumGeometry = options.IncludeDatumGeometry,
+        };
 
     private static string RequiredKey(RvtSceneOptions? options) => options?.ModelKey is { Length: > 0 } key ? key
         : throw new ArgumentException("A document has no file name: give the model key in RvtSceneOptions.ModelKey.", nameof(options));
@@ -168,7 +172,7 @@ public static class RvtSceneReader
             {
                 Id = mesh.ElementId,
                 ModelId = ModelId,
-                LevelId = storeys.GetStoreyId(mesh.ElementId),
+                LevelId = mesh.IsDatum ? null : storeys.GetStoreyId(mesh.ElementId),
                 SourceId = element?.UniqueId,
                 IfcGuid = element != null ? IfcGuidOf(element) : null,
                 Kind = SceneNodeKind.Element,
@@ -273,6 +277,7 @@ public static class RvtSceneReader
             Diagnostics = report,
             ElementCount = scene.Elements.Count,
             ElementsWithGeometry = withGeometry,
+            HiddenDatumIds = meshes.Elements.Where(mesh => mesh.IsDatum).Select(mesh => (long)mesh.ElementId).ToArray(),
             Coverage = coverage,
             GeometryCount = scene.Geometries.Count,
             InstanceCount = scene.Instances.Count,

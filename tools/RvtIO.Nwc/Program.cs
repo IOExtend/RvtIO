@@ -47,13 +47,17 @@ internal static class Program
 
             var source = new FileInfo(input);
             long length = source.Length;
-            var scene = RvtSceneReader.Read(input, native ? new RvtSceneOptions { IncludeModelLinesAndReinforcement = true } : null);
+            var scene = RvtSceneReader.Read(input, native ? new RvtSceneOptions
+            {
+                IncludeModelLinesAndReinforcement = true,
+                IncludeDatumGeometry = true,
+            } : null);
             foreach (var diagnostic in scene.Diagnostics.Where(d => d.Severity != SceneSeverity.Info))
                 Console.Error.WriteLine($"RVT {diagnostic.Severity} [{diagnostic.Code}]: {diagnostic.Message}");
             if (scene.Diagnostics.Any(d => d.Severity == SceneSeverity.Error))
                 return 2;
 
-            var cache = NwcExport.Build(scene.Document, source.Name, length, source.LastWriteTimeUtc, native);
+            var cache = NwcExport.Build(scene.Document, source.Name, length, source.LastWriteTimeUtc, native, scene.HiddenDatumIds.ToHashSet());
             NwcExport.Save(cache, output, native);
             int lines = cache.Meshes.Count(mesh => mesh.LineIndices.Count != 0);
             string lineCount = lines > 0 ? $" and {lines} line meshes" : "";

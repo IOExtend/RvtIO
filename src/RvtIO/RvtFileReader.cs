@@ -2523,9 +2523,11 @@ public partial class RvtFileReader
                         seg, bs, (uint)ds, cls);
                     if (!string.IsNullOrWhiteSpace(levelName))
                         np.StringFields["m_text"] = levelName;
-                    if (TfBlockDeserializer.ExtractLevelElevation(
-                        seg, bs, (uint)ds, cls) is double levelElevation)
-                        np.DoubleFields["__levelElevation"] = levelElevation;
+                    if (TfBlockDeserializer.ExtractLevelPlane(seg, bs, (uint)ds, cls) is { } plane)
+                    {
+                        state.LevelPlanes[eid] = plane;
+                        if (double.IsFinite(plane.Origin[2])) np.DoubleFields["__levelElevation"] = plane.Origin[2];
+                    }
                 }
                 if (np is { Count: > 0 }) state.NativeParams[eid] = np;
                 if (cls == 0x083C

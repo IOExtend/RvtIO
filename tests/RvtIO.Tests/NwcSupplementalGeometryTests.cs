@@ -149,6 +149,32 @@ public class NwcSupplementalGeometryTests
     }
 
     [Fact]
+    public void NativeDatumsKeepTheirIdsAndHiddenReferenceGeometry()
+    {
+        var level = new Element
+        {
+            Id = 1, Name = "Level", CategoryId = (int)BuiltInCategory.OST_Levels,
+            IsNativeLevel = true, SerializedFamilyId = -1, SerializedUnplacedOwnerId = -1, SerializedOwnerDbViewId = -1,
+            LevelPlane = new([0, 1, 4, 5], [0, 0, 2], [1, 0, 0], [0, 1, 0]),
+        };
+        var grid = new Element
+        {
+            Id = 2, Name = "Grid", CategoryId = (int)BuiltInCategory.OST_Grids,
+            GridPlane = new([1, 0, 6, 10], [0, 0, 0], [1, 0, 0], [0, 0, 1]),
+        };
+        var document = RvtDocument.FromInfo(new RevitFileInfo { Elements = [level, grid] });
+        Assert.Empty(RvtSceneReader.Read(document, new() { ModelKey = "model" }).Document.Elements);
+        var scene = RvtSceneReader.Read(document, new() { ModelKey = "model", IncludeDatumGeometry = true });
+        Assert.Equal([1L, 2L], scene.HiddenDatumIds);
+        var native = Nwc.NwcExport.Build(scene.Document, "model.rvt", 0, DateTime.UnixEpoch, native: true, scene.HiddenDatumIds.ToHashSet());
+        Assert.All(native.Meshes, mesh => Assert.True(mesh.Node!.IsHidden));
+        Assert.Equal(4, native.Meshes.Single(mesh => mesh.Node!.Name == "Level").LineIndices.Count);
+        var gridMesh = native.Meshes.Single(mesh => mesh.Node!.Name == "Grid");
+        Assert.Equal(2, gridMesh.LineIndices.Count);
+        Assert.All(gridMesh.GetWorldVertices(), point => Assert.Equal(2 * 0.3048, point.Z, 12));
+    }
+
+    [Fact]
     public void SweepKeepsTheStoredRadiusAndExtentsOfAStraightBar()
     {
         var segment = new RebarSegment(false, [4, 5, 6], [0, 0, 1], [], 0, 0, 10);

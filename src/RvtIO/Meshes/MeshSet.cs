@@ -42,6 +42,9 @@ public sealed class ElementMesh
     /// <summary>Independent line segments listed as consecutive endpoint pairs, in document feet.</summary>
     public IReadOnlyList<MeshVector>? LinePairs { get; init; }
 
+    /// <summary>Whether the line pairs are datum references that are hidden by default.</summary>
+    public bool IsDatum { get; init; }
+
     /// <summary>How completely <see cref="Meshes"/> and <see cref="Placements"/> represent the element.</summary>
     public MeshCoverage Coverage { get; init; }
 
