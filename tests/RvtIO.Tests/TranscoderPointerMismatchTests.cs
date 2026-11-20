@@ -3,7 +3,7 @@ using Xunit;
 
 namespace RvtIO.Tests;
 
-public sealed class TmpMismatchUnit
+public sealed class TranscoderPointerMismatchTests
 {
     private static SchemaField Field(string name, byte type, byte mods = 0, int? reference = null) =>
         new(name, type, mods, 0, null, reference, null, null);

@@ -56,6 +56,12 @@ Tests that need real Revit files are skipped with a message when private
 fixtures are unavailable. Set `RVTIO_TEST_FILES` to the folder containing
 your private fixtures to run them. The repository ships no Revit models.
 
+The temporary downgrade probes named `Tmp*.cs` use developer-specific paths and
+are outside the standard test suite. To compile these probes for local research,
+pass `-p:RunLocalDowngradeProbes=true` and select the specific probe with a test
+filter.
+
+
 ## Code conventions
 
 - Follow the surrounding code and repository formatting settings.

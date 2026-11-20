@@ -50,6 +50,47 @@ public class R22TranscoderTests
     private static void Owned(BinaryWriter w, int tag) { w.Write(0xFFFFFFFFu); w.Write((ushort)tag); }
 
     [Fact]
+    public void Payload_PrunesExplicitlyDroppedIdsFromSameWidthRecords()
+    {
+        var schema = new SchemaDocument
+        {
+            Classes =
+            [
+                new(1, "Identifier", 0, 1, [Field("m_id", 4)], []),
+                new(2, "ElementId", 0, 1, [Field("m_id", 14, 0, 1)], []),
+                new(30, "Holder", 0, 1, [Field("m_host", 14, 0, 2), Field("m_members", 14, 0x50, 2)], []),
+            ],
+        };
+        var record = Bytes(writer =>
+        {
+            writer.Write((ushort)30);
+            writer.Write(7);
+            writer.Write(2u);
+            writer.Write(7);
+            writer.Write(42);
+        });
+        var transcoder = new R22Transcoder(schema, schema, 4);
+        Assert.Equal(record, transcoder.Payload(record, 0, record.Length));
+
+        var walker = new WideBlockWalker(schema, (owner, field) => WideBlockWalker.AllItemsKeyPrefix + owner.Name + "." + field.Name, []);
+        var walk = walker.Run(record, 0, record.Length, 30);
+        Assert.True(walk.Exact, walk.Error);
+        Assert.Collection(walk.Captures.Where(c => c.IsElementId),
+            first => { Assert.Equal(7, first.Integer); Assert.Equal(2, first.Offset); },
+            second => { Assert.Equal(7, second.Integer); Assert.Equal(10, second.Offset); },
+            third => { Assert.Equal(42, third.Integer); Assert.Equal(14, third.Offset); });
+
+        transcoder.SetDroppedElementIds(new HashSet<uint> { 7 });
+        var expected = Bytes(writer =>
+        {
+            writer.Write((ushort)30);
+            writer.Write(-1);
+            writer.Write(1u);
+            writer.Write(42);
+        });
+        Assert.Equal(expected, transcoder.Payload(record, 0, record.Length));
+    }
+    [Fact]
     public void Payload_RenumbersCutsInsertsAndLeavesOutUnknownObjects()
     {
         var block = Bytes(w =>

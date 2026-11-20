@@ -40,6 +40,7 @@ internal sealed class R22Transcoder
     private readonly bool _tagMapping;
     private HashSet<uint> _presentElements = [];
     private HashSet<uint> _droppedElements = [];
+    private bool _pruneSameWidth;
     private uint _maxElementId;
     private readonly SchemaField[]?[]? _entityFields;
     private readonly Dictionary<Guid, int>? _entityIndexOf;
@@ -134,6 +135,11 @@ internal sealed class R22Transcoder
     }
 
 
+    internal void SetDroppedElementIds(IReadOnlySet<uint> dropped)
+    {
+        _droppedElements = [.. dropped];
+        _pruneSameWidth = true;
+    }
     /// <summary>The chunks of one partition stream in the 2022 layout, cut at item boundaries; the input is the same stream
     /// concatenated. Bytes outside the section grammar are copied as they are.</summary>
     internal List<byte[]> Stream(IReadOnlyList<byte[]> chunks, out Stats stats)
@@ -968,11 +974,13 @@ internal sealed class R22Transcoder
             if (reference == _sourceIdentifier)
             {
                 int p = Take(c, _sourceWidth);
-                if (_sourceWidth == 8 && _targetIdentifierWidth == 4 && !c.Cutting)
+                bool narrow = _sourceWidth == 8 && _targetIdentifierWidth == 4;
+                if (!c.Cutting && _targetIdentifierWidth == 4 && (narrow || _pruneSameWidth && _sourceWidth == 4))
                 {
-                    long id = BitConverter.ToInt64(c.D, p);
-                    bool dangling = id is > 0 and <= uint.MaxValue && _presentElements.Count > 0
-                        && id <= _maxElementId && _droppedElements.Contains((uint)id);
+                    long id = _sourceWidth == 8 ? BitConverter.ToInt64(c.D, p) : BitConverter.ToUInt32(c.D, p);
+                    bool dangling = id is > 0 and <= uint.MaxValue &&
+                        (_pruneSameWidth || _presentElements.Count > 0 && id <= _maxElementId) &&
+                        _droppedElements.Contains((uint)id);
                     if (dangling && c.Droppable && c.DeepInArray && !c.InFixedArray)
                     {
                         // an item of a counted array that names a dropped element: the item leaves
@@ -981,13 +989,14 @@ internal sealed class R22Transcoder
                         // objects): the cut removes it together with the item bytes.
                         c.DropItem = true;
                         c.DiagDropItem++;
-                        c.Edits.Add(new(p, p + 8, BitConverter.GetBytes(-1)));
+                        c.Edits.Add(new(p, p + _sourceWidth, BitConverter.GetBytes(-1)));
                         return;
                     }
                     if (dangling && !c.DeepInArray) { id = -1; c.DiagMinusOne++; }
                     else if (dangling && c.InFixedArray) { id = -1; c.DiagMinusOne++; }
                     if (id < int.MinValue || id > uint.MaxValue) throw new Fail("id beyond 32 bits: " + id);
-                    c.Edits.Add(new(p, p + 8, BitConverter.GetBytes(unchecked((int)id))));
+                    if (narrow || dangling && id == -1)
+                        c.Edits.Add(new(p, p + _sourceWidth, BitConverter.GetBytes(unchecked((int)id))));
                 }
                 return;
             }
