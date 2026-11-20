@@ -4,5 +4,8 @@
     <Project Path="src/RvtIO.Cli/RvtIO.Cli.csproj" />
     <Project Path="src/RvtIO.Scene/RvtIO.Scene.csproj" />
   </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/LegacySupportRecovery/LegacySupportRecovery.csproj" />
+  </Folder>
   <Project Path="tests/RvtIO.Tests/RvtIO.Tests.csproj" />
 </Solution>

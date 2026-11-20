@@ -36,18 +36,43 @@ internal static class Recovery
         var selected = originalIds.Keys.ToHashSet();
         if (selected.Any(final.Rows.ContainsKey)) throw new InvalidDataException("Restored IDs collide with existing Revit 2021 IDs");
 
+        var finalHistory = final.History();
+        var sourceHistory = source.History();
+        var donorHistory = donor.History();
+        foreach (var group in groups)
+        {
+            var existing = final.Rows[group.Owner];
+            var original = source.Rows[group.Owner];
+            var retained = donor.Rows[group.Owner];
+            string expected = Uid(finalHistory, existing.OriginalId, existing.CreationDate);
+            if (Uid(sourceHistory, original.OriginalId, original.CreationDate) != expected ||
+                Uid(donorHistory, retained.OriginalId, retained.CreationDate) != expected)
+                throw new InvalidDataException($"Physical owner {group.Owner} has different UniqueIds in the inputs.");
+        }
+
         var baseOwnerIds = groups.Select(g => g.Owner).ToHashSet();
         donor.Collect(donor.Rows.Keys.Where(i => !final.Rows.ContainsKey(i)).Concat(baseOwnerIds).ToHashSet());
         final.Collect(baseOwnerIds);
+        source.Collect(groups.SelectMany(g => new[] { g.OriginalModel, g.OriginalSupport, g.OriginalMarker }).ToHashSet());
+        var associations = SourceAssociations.Read(source.Doc, PagedGzipStream.Read(source.Root, "Global", "Latest"), source.Entities);
         foreach (var group in groups)
         {
             string modelClass = donor.Class(group.Model);
-            if (modelClass is not ("AnalyticalModelColumn" or "AnalyticalModelSlab") ||
-                donor.Class(group.Support) != "BoundaryConditions" || donor.Class(group.Marker) != "FamilyInstance" ||
-                donor.Rows[group.Model].OwningId != group.Template || donor.Rows[group.Marker].OwningId != group.Support ||
-                !final.Rows.ContainsKey(group.Owner) || !source.Rows.ContainsKey(group.Owner) ||
-                source.Rows[group.OriginalMarker].OwningId != group.OriginalSupport)
-                throw new InvalidDataException($"Invalid native support group on physical element {group.Owner}.");
+            string sourceClass = modelClass switch
+            {
+                "AnalyticalModelColumn" => "AnalyticalMember",
+                "AnalyticalModelSlab" => "AnalyticalPanel",
+                _ => throw new InvalidDataException($"Unsupported native analytical class {modelClass}."),
+            };
+            long supportType = modelClass == "AnalyticalModelColumn" ? 0 : 2;
+            if (!final.Rows.ContainsKey(group.Owner) ||
+                donor.Rows[group.Model].OwningId != group.Template ||
+                source.Class(group.OriginalModel) != sourceClass ||
+                !associations.TryGetValue(group.OriginalModel, out var physicalOwners) ||
+                !physicalOwners.SetEquals([group.Owner]) ||
+                !MatchesSupport(donor, group.Model, group.Support, group.Marker, supportType) ||
+                !MatchesSupport(source, group.OriginalModel, group.OriginalSupport, group.OriginalMarker, supportType))
+                throw new InvalidDataException($"Support mapping does not match the stored associations for physical element {group.Owner}.");
         }
         var donorAssets = new Dictionary<long, string>();
         foreach (long id in donor.Records.Keys.Except(baseOwnerIds))
@@ -130,16 +155,6 @@ internal static class Recovery
         int pId = Offset("m_id"), pOriginal = Offset("m_history", "m_originalElementId"), pCreated = Offset("m_history", "m_creationDate"),
             pChanged = Offset("m_history", "m_lastModificationDate"), pUser = Offset("m_history", "m_lastUserModificationDate"),
             pPart = Offset("m_partitionId"), pOwner = Offset("m_OwningElementId");
-        var finalHistory = final.History();
-        var sourceHistory = source.History();
-        foreach (var group in groups)
-        {
-            var expected = source.Rows[group.Owner];
-            var existing = final.Rows[group.Owner];
-            if (Uid(sourceHistory, expected.OriginalId, expected.CreationDate) !=
-                Uid(finalHistory, existing.OriginalId, existing.CreationDate))
-                throw new InvalidDataException($"Physical owner {group.Owner} has a different UniqueId.");
-        }
         var merged = new byte[rawRows.Length + w * selected.Count];
         int off = H;
         rawRows.AsSpan(0, H).CopyTo(merged);
@@ -275,6 +290,22 @@ internal static class Recovery
         }
     }
 
+
+    private static bool MatchesSupport(Archive file, long host, long support, long marker, long supportType)
+    {
+        if (file.Class(support) != "BoundaryConditions" || file.Class(marker) != "FamilyInstance" ||
+            file.Rows[marker].OwningId != support)
+            return false;
+
+        var fields = file.Decode(file.Records[support].Payloads[1]).ToArray();
+        bool Matches(string declaringClass, string name, long expected) =>
+            fields.Where(f => f.DeclaringClass == declaringClass && f.Field == name)
+                .Select(f => f.Integer).SequenceEqual([expected]);
+
+        return Matches("ElemPick", "m_elemId", host) &&
+            Matches("BoundaryConditions", "m_instanceId", marker) &&
+            Matches("BoundaryConditions", "m_type", supportType);
+    }
 
     internal static (int Start, int End)? QueuedField(byte[] data, SchemaDocument schema, string typeName,
         string field, bool readEntities = false)

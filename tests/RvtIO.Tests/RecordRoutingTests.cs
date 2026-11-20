@@ -9,7 +9,7 @@ namespace RvtIO.Tests;
 /// stream, and the removal of the records that are not the current copy.</summary>
 public class RecordRoutingTests
 {
-    private static byte[] Schema(bool emptyRows = false)
+    internal static byte[] Schema(bool emptyRows = false)
     {
         var stream = new MemoryStream();
         var w = new BinaryWriter(stream);
@@ -39,7 +39,7 @@ public class RecordRoutingTests
     }
 
     /// <summary>One increment: greatest episode, element count, versions as (cause, count).</summary>
-    private static byte[] Table(IEnumerable<(int Greatest, int Total, (int Cause, int Count)[] Versions)> rows, string user = "u")
+    internal static byte[] Table(IEnumerable<(int Greatest, int Total, (int Cause, int Count)[] Versions)> rows, string user = "u")
     {
         var stream = new MemoryStream();
         var w = new BinaryWriter(stream);
