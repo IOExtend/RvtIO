@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using RvtIO.Geometry;
 using RvtIO.Internal;
 using RvtIO.Lookup;
 using RvtIO.Model;
@@ -964,12 +965,15 @@ internal static partial class ElementBuilder
             if (drop[i]) faces.RemoveAt(i);
     }
 
-    public static void AddComputedBipsFromGeometry(Element elem, GRepData grep)
+    public static void AddComputedBipsFromGeometry(Element elem, GRepData grep, ParsingState state)
     {
         if (grep.Faces.Count == 0) return;
         // Face-derived quantities hold only for slab-like categories (floors/ceilings/roofs/foundations).
         bool slabLike = elem.CategoryId is -2000032 or -2000038 or -2000035 or -2001300;
         if (!slabLike) return;
+        if (elem.CategoryId == -2000032 && state.SystemOccurrenceTypeIds.GetValueOrDefault((uint)elem.Id)
+            is { BlockCount: 1, ClassId: 1913, TypeId: > 0 })
+            ApplyCutFloorQuantities(elem);
         var existingBips = new HashSet<int>(elem.Parameters.Select(p => p.Id));
 
         GRepFace? primaryFace = null;
@@ -1271,7 +1275,7 @@ internal static partial class ElementBuilder
         AttachFamilyCutGeometry(elem, elemId, state);
 
         if (grepDataForElem != null)
-            AddComputedBipsFromGeometry(elem, grepDataForElem);
+            AddComputedBipsFromGeometry(elem, grepDataForElem, state);
 
         AddBboxDimensionsIfMissing(elem, state);
         BuildLocationCurve(elem, elemId, state);
@@ -4321,7 +4325,7 @@ internal static partial class ElementBuilder
         AttachFamilyCutGeometry(elem, eid, state);
 
         if (grepData != null)
-            AddComputedBipsFromGeometry(elem, grepData);
+            AddComputedBipsFromGeometry(elem, grepData, state);
 
         AddBboxDimensionsIfMissing(elem, state);
         BuildLocationCurve(elem, eid, state);
@@ -4355,7 +4359,7 @@ internal static partial class ElementBuilder
         AttachFamilyCutGeometry(elem, bid, state);
 
         if (grepData != null)
-            AddComputedBipsFromGeometry(elem, grepData);
+            AddComputedBipsFromGeometry(elem, grepData, state);
 
         AddBboxDimensionsIfMissing(elem, state);
         AttachDimension(elem, bid, state);
@@ -6932,6 +6936,18 @@ internal static partial class ElementBuilder
                     e.Parameters.Add(BipHelpers.MakeBipParam(-1012806, "HOST_VOLUME_COMPUTED", StorageType.Double, net * thick));
             }
         }
+    }
+
+    internal static void ApplyCutFloorQuantities(Element floor)
+    {
+        if (floor.CutOutSteps?.Any(step => step.Cutout) != true
+            || BrepMeasures.MeasuredPlanarPrism(floor.Geometry) is not ({ InnerPerimeter: > 0 } prism, var volume)) return;
+
+        // The closed body includes the inserted opening that the host sketch omits.
+        if (floor.Parameters.All(p => p.Id != -1012805))
+            floor.Parameters.Add(BipHelpers.MakeBipParam(-1012805, "HOST_AREA_COMPUTED", StorageType.Double, prism.ProfileArea));
+        if (floor.Parameters.All(p => p.Id != -1012806))
+            floor.Parameters.Add(BipHelpers.MakeBipParam(-1012806, "HOST_VOLUME_COMPUTED", StorageType.Double, volume));
     }
 
     private static readonly HashSet<int> EditedByUserCats = new()

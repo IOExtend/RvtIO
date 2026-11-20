@@ -47,6 +47,37 @@ public class SystemTypeIdentityTests
         Assert.Equal((1, (ushort)3524, (int?)500), state.SystemOccurrenceTypeIds[100]);
     }
 
+    [Theory]
+    [InlineData(2, 512, false, true)]
+    [InlineData(3, 512, false, false)]
+    [InlineData(2, 2559, false, false)]
+    [InlineData(2, 512, true, false)]
+    public void RoutedBasicWall_RecoversItsOwnTypedRootBeyondTheSequentialScan(
+        int route, ushort typeClass, bool duplicate, bool recovered)
+    {
+        byte[] block = Block(3524);
+        var frame = new PartitionFraming.Framed([block], [new(102, 100, 0, block.Length)], 4, 2);
+        var state = new ParsingState
+        {
+            AllKnownIds = [100, 500],
+            ElemRecOwningElementIds = new() { [100] = -1 },
+            FramedPartitions = duplicate ? [frame, frame with { Partition = 3 }] : [frame],
+            IncrementRoutedPartitions = new Dictionary<ulong, int> { [100] = route },
+            StaleCopiesRemoved = true,
+        };
+        state.SystemTypeRoots[500] = (1, typeClass, null);
+
+        RvtFileReader.RunTfStreamWalk(state);
+
+        Assert.Equal(recovered, state.NativeParamsFromRootClass.Contains(100));
+        if (recovered)
+        {
+            Assert.Equal(500, NativeTypePointers.Of(3524, state.NativeParams[100]));
+            Assert.Equal((1, (ushort)3524, (int?)500), state.SystemOccurrenceTypeIds[100]);
+        }
+        else Assert.False(state.SystemOccurrenceTypeIds.ContainsKey(100));
+    }
+
     [Fact]
     public void BoundsAreValidated_AndOtherHostRootsCannotBorrowTheField()
     {
@@ -240,6 +271,7 @@ public class SystemTypeIdentityTests
         writer.Write(100); writer.Write(0u); writer.Write(0u); writer.Write(cls);
         foreach (var field in TfBlockDeserializer.SerializationFields(cls)!)
         {
+            if (field.Declaring == 37 && field.Name == "m_docAccess") { writer.Write(1u); continue; }
             if (field.Declaring == 37 && field.Name == "m_id") { writer.Write(100); continue; }
             if (field.Name is "m_WallAttributesId" or "m_floorAttributesId" or "m_ceilingAttributesId")
             {

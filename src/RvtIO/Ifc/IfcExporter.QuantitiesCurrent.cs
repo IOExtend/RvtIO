@@ -835,7 +835,7 @@ public partial class IfcExporter
     private List<QuantityValue> QuantitiesOfProductCurrent(QuantityContextCurrent context, int productId, string type, string args)
     {
         var none = new List<QuantityValue>();
-        if (type is not ("IFCOPENINGELEMENT" or "IFCDOOR" or "IFCWINDOW" or "IFCWALLSTANDARDCASE" or "IFCMEMBER" or "IFCPLATE"
+        if (type is not ("IFCOPENINGELEMENT" or "IFCDOOR" or "IFCWINDOW" or "IFCWALL" or "IFCWALLSTANDARDCASE" or "IFCMEMBER" or "IFCPLATE"
             or "IFCSLAB" or "IFCCOVERING" or "IFCCOLUMN" or "IFCBEAM" or "IFCSTAIRFLIGHT" or "IFCSPACE" or "IFCRAILING"))
             return none;
         string[] arguments = SplitStepArguments(args);
@@ -849,6 +849,8 @@ public partial class IfcExporter
                 return ReadBodyExtrusionCurrent(context.W, context.IndexById, arguments[6]) is { } opening
                     ? FillerOpeningQuantitiesCurrent(context, productId, OpeningQuantitiesCurrent(context, productId, arguments, opening))
                     : none;
+            case "IFCWALL":
+                return element == null ? none : FacetedWallQuantitiesCurrent(element, context.Elements);
             case "IFCWALLSTANDARDCASE":
                 return element != null && ReadBodyExtrusionCurrent(context.W, context.IndexById, arguments[6]) is { } wall
                     ? WallQuantitiesCurrent(wall, element, context) : none;
@@ -1044,6 +1046,22 @@ public partial class IfcExporter
     private static void AddIfPositive(List<QuantityValue> list, QuantityKind kind, string name, double? value)
     {
         if (value is > 1e-12) list.Add(new(kind, name, value.Value));
+    }
+
+    private static List<QuantityValue> FacetedWallQuantitiesCurrent(Element wall, IReadOnlyDictionary<int, Element> elements)
+    {
+        var result = new List<QuantityValue>();
+        if (wall is not { CategoryId: -2000011, RootClassName: "SWall", SerializedSystemTypeId: > 0 and int typeId }
+            || !elements.TryGetValue(typeId, out var type) || type.SerializedSystemTypeClassId != 512
+            || wall.CuttingElementIds is { Count: > 0 }
+            || MeasuredPlanarPrism(wall.Geometry, wallSides: true) is not { } measured) return result;
+        // A closed body establishes volume. For the legacy layout, admit its side as the area
+        // only when the extrusion follows the stored thickness of the wall type.
+        if (wall.NativeRootClassName == null && TryGetSerializedWallWidthFeet(wall, out double width)
+            && Math.Abs(width - measured.Prism.Depth) <= 1e-6)
+            AddIfPositive(result, QuantityKind.Area, "NetSideArea", measured.Prism.ProfileArea * SquareFeetToSquareMetres);
+        AddIfPositive(result, QuantityKind.Volume, "NetVolume", measured.Volume * CubicFeetToCubicMetres);
+        return result;
     }
 
     /// <summary>Quantities for a wall written as an extrusion: Height is the extrusion depth,

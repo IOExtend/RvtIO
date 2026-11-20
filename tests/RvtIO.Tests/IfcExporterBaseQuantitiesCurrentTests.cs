@@ -51,6 +51,76 @@ public class IfcExporterBaseQuantitiesCurrentTests
     private static BrepMeasures.ShellInfo SoleShell(GeometryData geometry) => Assert.Single(BrepMeasures.ShellsOfCurrent(geometry));
 
 
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void FloorQuantities_UseTheMeasuredClosedBodyWithItsThroughOpening(bool hasCutStep, bool validMeasure)
+    {
+        var geometry = Box(4, 4, 1);
+        var opening = Box(1, 1, 1);
+        foreach (var face in opening.Faces)
+        {
+            foreach (var corner in face.OuterVertices!)
+            {
+                corner[0]++;
+                corner[1]++;
+            }
+            face.OuterVertices!.Reverse();
+        }
+        geometry.Faces[0].InnerVertices = [opening.Faces[0].OuterVertices!];
+        geometry.Faces[1].InnerVertices = [opening.Faces[1].OuterVertices!];
+        geometry.Faces.AddRange(opening.Faces.Skip(2));
+        geometry.BrepSolids![0].FaceIndices.AddRange(Enumerable.Range(6, 4));
+        foreach (var face in geometry.Faces) face.GeometryNode = 1;
+        geometry.NodeMeasures = [new(1, 50, validMeasure ? 15 : 16)];
+        var floor = new Element
+        {
+            CategoryId = -2000032, NativeRootClassName = "Floor", SerializedSystemTypeId = 20, Geometry = geometry,
+            CutOutSteps = [(4137, 30, hasCutStep)],
+        };
+
+        ElementBuilder.ApplyCutFloorQuantities(floor);
+        ElementBuilder.ApplyCutFloorQuantities(floor);
+
+        if (hasCutStep && validMeasure)
+        {
+            Assert.Equal(new[] { 15d, 15d }, floor.Parameters.Select(p => Assert.IsType<double>(p.Value)));
+            Assert.Equal(new[] { -1012805, -1012806 }, floor.Parameters.Select(p => p.Id));
+        }
+        else Assert.Empty(floor.Parameters);
+    }
+
+    [Theory]
+    [InlineData(true, 12, 1, false, true, true)]
+    [InlineData(true, 12, 2, false, true, false)]
+    [InlineData(true, 12, 1, true, true, false)]
+    [InlineData(false, 12, 1, false, false, false)]
+    [InlineData(true, 99, 1, false, false, false)]
+    public void FacetedBasicWall_ExportsOnlyTheSupportedMeasuredQuantities(
+        bool closed, double volume, double typeWidth, bool wide, bool writesVolume, bool writesArea)
+    {
+        var geometry = Box(6, 1, 2);
+        geometry.BrepSolids![0].IsClosed = closed;
+        foreach (var face in geometry.Faces) face.GeometryNode = 1;
+        geometry.NodeMeasures = [new(1, 40, volume)];
+        var wall = new Element
+        {
+            Id = 10, CategoryId = -2000011, NativeRootClassName = wide ? "SWall" : null, SerializedOwnElementClassId = 3524,
+            SerializedSystemTypeId = 20, ValidatedWallTypeThicknessFeet = typeWidth, Geometry = geometry,
+        };
+        var type = new Element { Id = 20, CategoryId = -2000011, SerializedSystemTypeClassId = 512 };
+        var w = new StepWriter();
+        int owner = w.Add("IFCOWNERHISTORY", "$,$,$,.ADDED.,$,$,$,0");
+        int wallProduct = AddProduct(w, "IFCWALL", "1ZGD7y6S5209$mGLi_sPlj", owner, placement: 0);
+
+        Assert.Equal(writesVolume ? 1 : 0, Apply(w, owner, new() { [10] = wall, [20] = type }, new() { [wallProduct] = 10 }));
+        if (writesArea) AssertQuantities(Quantities(w, "IFCQUANTITYAREA"), ("NetSideArea", 12 * SquareFeet));
+        else Assert.Empty(Quantities(w, "IFCQUANTITYAREA"));
+        if (writesVolume) AssertQuantities(Quantities(w, "IFCQUANTITYVOLUME"), ("NetVolume", 12 * CubicFeet));
+        else Assert.Empty(Quantities(w, "IFCQUANTITYVOLUME"));
+    }
+
     [Fact]
     public void Shells_Box_HaveTheVolumeAndTheSurfaceOfTheBox()
     {
