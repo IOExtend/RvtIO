@@ -120,6 +120,45 @@ public class NwcSupplementalGeometryTests
     }
 
     [Fact]
+    public void NativeAreaReinforcementKeepsBothCopiesOfTheHostOutline()
+    {
+        var host = new Element
+        {
+            Id = 2,
+            Geometry = new()
+            {
+                Faces = [new() { OuterVertices = [[1, 2, 3], [4, 2, 3], [1, 5, 3]], Normal = [0, 0, 1] }],
+            },
+        };
+        var area = new Element
+        {
+            Id = 1,
+            CategoryId = (int)BuiltInCategory.OST_AreaRein,
+            Category = nameof(BuiltInCategory.OST_AreaRein),
+            NativeRootClassName = "RebarSystem",
+            NativeRootClassChain = ["RebarSystem"],
+            SerializedHostId = host.Id,
+            AreaReinforcementPlane = new([1, 2, 3], [1, 0, 0], [0, 1, 0]),
+            BoundingBox = [1, 2, 3, 4, 5, 6],
+        };
+        var document = RvtDocument.FromInfo(new RevitFileInfo { Elements = [area, host] });
+        Assert.Empty(RvtSceneReader.Read(document, new() { ModelKey = "model" }).Document.Elements);
+
+        var scene = RvtSceneReader.Read(document, new() { ModelKey = "model", IncludeModelLinesAndReinforcement = true }).Document;
+        Assert.Equal(area.Id, Assert.Single(scene.Elements).Id);
+        var instance = Assert.Single(scene.Instances);
+        var geometry = Assert.Single(scene.Geometries);
+        Assert.Equal(SceneTopology.Lines, geometry.Topology);
+        Assert.Equal(12, geometry.Indices.Count);
+        var points = geometry.Vertices.Select(point => instance.Transform!.Value.Apply(point)).ToArray();
+        Assert.Equal(6, points.Distinct().Count());
+        Assert.Equal(new Vector3d(1 * 0.3048, 2 * 0.3048, 3 * 0.3048), points[0]);
+        Assert.Equal(6 * 0.3048, points.Max(p => p.Z), 12);
+        Assert.All(points.Chunk(2), pair => Assert.Equal(pair[0].Z, pair[1].Z));
+        Assert.Equal(2, points.Chunk(2).Count(pair => pair[0].X != pair[1].X && pair[0].Y != pair[1].Y));
+    }
+
+    [Fact]
     public void SweepKeepsTheStoredRadiusAndExtentsOfAStraightBar()
     {
         var segment = new RebarSegment(false, [4, 5, 6], [0, 0, 1], [], 0, 0, 10);

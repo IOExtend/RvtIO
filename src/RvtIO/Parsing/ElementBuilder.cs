@@ -1171,6 +1171,7 @@ internal static partial class ElementBuilder
         elem.NativeHeaderDesignOptionId = state.HeaderDesignOptions.GetValueOrDefault(elemId);
         elem.NativeRootClassName = state.NativeRootClassNames.GetValueOrDefault(elemId);
         elem.RebarBars = state.RebarBars.GetValueOrDefault(elemId);
+        elem.AreaReinforcementPlane = state.AreaReinforcementPlanes.GetValueOrDefault(elemId);
         elem.JoistSystem = state.JoistSystems.GetValueOrDefault(elemId);
         if (elem.NativeRootClassName is { } rootName) elem.NativeRootClassChain = state.WideSchema?.ChainOf(rootName);
         if (state.WideSchema is { } wideSchema && wideSchema.ByName("Symbol") is { } symbolClass

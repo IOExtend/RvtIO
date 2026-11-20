@@ -219,6 +219,18 @@ public static class RvtSceneReader
                 });
                 scene.Instances.Add(new SceneInstance { ElementId = mesh.ElementId, GeometryId = geometryId, Transform = Transform3d.Translate(start) });
             }
+            if (mesh.LinePairs is { } pairs)
+            {
+                var origin = Vector(pairs[0]) * MetresPerFoot;
+                int geometryId = scene.Geometries.Count + 1;
+                scene.Geometries.Add(new SceneGeometry
+                {
+                    Id = geometryId, Topology = SceneTopology.Lines,
+                    Vertices = pairs.Select(point => Vector(point) * MetresPerFoot - origin).ToArray(),
+                    Indices = Enumerable.Range(0, pairs.Count).ToArray(),
+                });
+                scene.Instances.Add(new SceneInstance { ElementId = mesh.ElementId, GeometryId = geometryId, Transform = Transform3d.Translate(origin) });
+            }
             foreach (var placement in mesh.Placements)
             {
                 placements++;

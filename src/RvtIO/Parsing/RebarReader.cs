@@ -58,7 +58,10 @@ internal sealed record RebarBars(int BarTypeId, int SystemId, double? BarLength,
 internal sealed record JoistSystemData(int TypeId, string? TypeName, IReadOnlyList<int> BeamIds);
 
 /// <summary>The reinforcement and the beam systems of a file by element id.</summary>
-internal sealed record ReinforcementData(Dictionary<uint, RebarBars> Bars, Dictionary<uint, JoistSystemData> Joists);
+internal sealed record AreaSketchPlane(double[] Origin, double[] XAxis, double[] YAxis);
+
+internal sealed record ReinforcementData(Dictionary<uint, RebarBars> Bars, Dictionary<uint, JoistSystemData> Joists,
+    Dictionary<uint, AreaSketchPlane> AreaPlanes);
 
 /// <summary>
 /// Centre lines of the reinforcement of a Revit file, read with the schema-driven field walk (<see cref="WideBlockWalker"/>, classes and
@@ -101,6 +104,9 @@ internal static partial class RebarReader
             "HookLengthSettings" => field.Name is "m_hookLength" or "m_offsetLength" or "m_tangentLength",
             "RebarSystemLayer" => field.Name is "m_barType" or "m_active" or "m_uncutCurves" or "m_individualLineTrf"
                 or "m_uncutRebarInstances" or "m_includedUncutBars",
+            "RebarSystemBase" => field.Name == "m_sketchId",
+            "Sketch" => field.Name is "m_absorbedCurves" or "m_pPlane",
+            "Plane" => field.Name is "m_origin" or "m_xVec" or "m_yVec",
             "RebarInSystem" => field.Name == "m_systemId",
             "RebarContainer" => field.Name is "m_rebarContainerTypeId" or "m_hostId",
             "FamilyInstance" => field.Name is "m_instOrigin" or "m_RefDir" or "m_zAxis",
@@ -115,7 +121,8 @@ internal static partial class RebarReader
         };
         if (!wanted || field.Type == 9) return null;
         string key = name + "." + field.Name;
-        return field.Name is "m_includedBars" or "m_includedUncutBars" or "m_doubles" ? WideBlockWalker.AllItemsKeyPrefix + key : key;
+        return field.Name is "m_includedBars" or "m_includedUncutBars" or "m_doubles" or "m_absorbedCurves"
+            ? WideBlockWalker.AllItemsKeyPrefix + key : key;
     }
 
     /// <summary>True for the schema of Revit 2020 and 2021, whose RebarSystemLayer has no m_uncutCurves: the bars of a system are the held
@@ -132,7 +139,8 @@ internal static partial class RebarReader
         var joists = new Dictionary<uint, JoistSystemData>();
         var joistTypeNames = new Dictionary<int, string>();
         var shapeNames = new Dictionary<int, string>();
-        var empty = new ReinforcementData(result, joists);
+        var areaPlanes = new Dictionary<uint, AreaSketchPlane>();
+        var empty = new ReinforcementData(result, joists, areaPlanes);
         var rebar = schema.ByName("Rebar")?.Id;
         var system = schema.ByName("RebarSystem")?.Id;
         var inSystem = schema.ByName("RebarInSystem")?.Id;
@@ -146,7 +154,7 @@ internal static partial class RebarReader
         var joist = schema.ByName("JoistSystem")?.Id;
         var joistType = schema.ByName("JoistSystemAttr")?.Id;
         if (rebar == null || system == null || inSystem == null || barType == null || settings == null || shape == null || joist == null || joistType == null) return empty;
-        var walker = new WideBlockWalker(schema.Document, Key, [], ids: ids);
+        var walker = new WideBlockWalker(schema.Document, Key, [], captureRootPointers: true, ids: ids);
         if (entitySchemas != null) walker.UseEntitySchemas(entitySchemas, passUnknownEntities);
         var layers = new Dictionary<uint, List<Layer>>();
         var members = new Dictionary<uint, (int System, int Layer, int Index, bool InAssembly)>();
@@ -158,6 +166,7 @@ internal static partial class RebarReader
         var containers = new Dictionary<uint, (int TypeId, int HostId, bool InAssembly, List<PendingBar> Items)>();
         var containerNames = new Dictionary<int, string>();
         var held = new Dictionary<(uint System, int Layer, int Index), PendingBar>();
+        var areaSketches = new Dictionary<uint, uint>();
         bool heldLayout = HeldLayout(schema);
         double rounding = 0;
         WideElementRecords.BuildIndex(streams, schema, wanted, (id, data, offset, size, cls) =>
@@ -165,6 +174,9 @@ internal static partial class RebarReader
             if (cls != rebar && cls != system && cls != inSystem && cls != barType && cls != settings && cls != shape && cls != joist && cls != joistType && cls != hookType
                 && cls != container && cls != containerType) return;
             var walk = walker.Run(data, offset, size, cls, cls == shape ? (w, first) => ConstraintsValid(walker, w, first) : null);
+            if (cls == system && walk.RootRead &&
+                walk.Captures.FirstOrDefault(capture => capture.AtRoot && capture.Key == "RebarSystemBase.m_sketchId").Integer is > 0 and <= int.MaxValue and long sketch)
+                areaSketches.TryAdd(id, (uint)sketch);
             // The bar of a Rebar that stopped behind an extensible storage entity is its RebarInstance, read before the entity payloads.
             if (cls == rebar && walk.BeforeEntityBlobs() is { } beforeBlobs)
             {
@@ -224,6 +236,35 @@ internal static partial class RebarReader
             }
             else if (ReadMember(walker, walk, byQueue) is { } member) members.TryAdd(id, member);
         }, framed, ids);
+        if (areaSketches.Count > 0)
+        {
+            const string curvesKey = WideBlockWalker.AllItemsKeyPrefix + "Sketch.m_absorbedCurves";
+            var planes = new Dictionary<uint, AreaSketchPlane>();
+            WideElementRecords.BuildIndex(streams, schema, areaSketches.Values.ToHashSet(), (id, data, offset, size, cls) =>
+            {
+                if (!walker.IsA(cls, "Sketch")) return;
+                var walk = walker.Run(data, offset, size, cls);
+                // A sketch with a single direction line takes its reinforcement boundary from the host face.
+                if (!walk.RootRead || walk.Captures.FirstOrDefault(c => c.AtRoot && c.Key == curvesKey + "#").Integer != 1
+                    || walk.Captures.FirstOrDefault(c => c.AtRoot && c.Key == curvesKey + "@0") is not
+                        { Kind: WideBlockWalker.CaptureKind.PointerClass, Integer: >= 0 and <= int.MaxValue } direction
+                    || walker.Class((int)direction.Integer)?.Name != "GLine"
+                    || walk.RootPointers?.TryGetValue("Sketch.m_pPlane", out int plane) != true
+                    || plane >= walk.QueueEnd.Count || walker.Class(walk.Queue[plane])?.Name != "Plane")
+                    return;
+
+                double[]? Vector(string field)
+                {
+                    var values = walk.Captures.Where(c => c.QueueIndex == plane && c.Kind == WideBlockWalker.CaptureKind.Real
+                        && c.Field == field).Select(c => c.Real).ToArray();
+                    return values.Length == 3 && values.All(double.IsFinite) ? values : null;
+                }
+                if (Vector("m_origin") is { } origin && Vector("m_xVec") is { } x && Vector("m_yVec") is { } y)
+                    planes.TryAdd(id, new(origin, x, y));
+            }, framed, ids);
+            foreach (var (id, sketch) in areaSketches)
+                if (planes.TryGetValue(sketch, out var plane)) areaPlanes.Add(id, plane);
+        }
         RebarBars? Solve(PendingBar bar) =>
             diameters.TryGetValue(bar.BarTypeId, out var barDiameters) && barKinds.TryGetValue(bar.BarTypeId, out var kind)
             && shapeDefinitions.TryGetValue(bar.ShapeId, out var definition) ? SolveShapeDriven(bar, definition, hookKinds, kind, barDiameters.Model) : null;

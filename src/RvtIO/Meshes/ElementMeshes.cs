@@ -125,14 +125,18 @@ public static class ElementMeshes
                 var line = ModelLine(curve);
                 var arc = curve is { CurveType: "Arc" } && GridAxis.Tessellate([curve], ArcChordErrorFeet) is { } samples
                     ? samples.Select(p => new MeshVector(p[0], p[1], p[2])).ToArray() : null;
+                var linePairs = options.IncludeModelLinesAndReinforcement && AreaReinforcementBounds(element) is { } bounds
+                    && element.SerializedHostId is int hostId && document.GetElement(hostId)?.Geometry is { } host
+                    ? AreaReinforcementOutline(element.AreaReinforcementPlane!, host, bounds) : null;
                 var rebar = options.IncludeModelLinesAndReinforcement && element.RebarBars is { } bars ? ReinforcementMeshes.Build(bars) : null;
                 elements.Add(new ElementMesh
                 {
                     ElementId = element.Id,
                     Line = line,
                     Arc = arc,
+                    LinePairs = linePairs,
                     Meshes = rebar == null ? [] : [rebar],
-                    Coverage = line != null || arc != null || rebar != null ? MeshCoverage.Complete
+                    Coverage = line != null || arc != null || linePairs != null || rebar != null ? MeshCoverage.Complete
                         : info.WideLayoutNotRewritten ? MeshCoverage.Undecoded : MeshCoverage.NoGeometry,
                 });
                 continue;
@@ -196,6 +200,7 @@ public static class ElementMeshes
         {
             var curve = includeModelLinesAndReinforcement ? ModelCurve(element) : null;
             bool modelLine = curve?.CurveType == "Arc" || ModelLine(curve) != null;
+            bool areaReinforcement = includeModelLinesAndReinforcement && AreaReinforcementBounds(element) != null;
             bool rebar = includeModelLinesAndReinforcement && element.RebarBars is { Bars.Count: > 0 } or { Items.Count: > 0 };
             if (element.IsBlockOnly || element.IsGroupTemplate
                 || designOptions.InNonPrimaryOption(element) == true || phaseFilter?.Excludes(element) == true
@@ -203,14 +208,16 @@ public static class ElementMeshes
                 || ProductRules.IsValidatedStackedWallContainer(element, elementsById)
                 || info.ElemTableIsExact && element.IsDiscovered
                 || element.SerializedFamilyId is > 0
-                || (!modelLine && ProductRules.IsNonPhysicalCategory(element.Category)))
+                || (!modelLine && !areaReinforcement && ProductRules.IsNonPhysicalCategory(element.Category)))
                 continue;
             bool namesPhase = ProductRules.HasProjectPhaseReference(element) || ProductRules.IsTransformOnlyFamily(element);
-            if (!namesPhase && !modelLine && !rebar && (typeElementIds.Contains(element.Id) || element.CategoryId != WallsCategoryId)) continue;
+            if (!namesPhase && !modelLine && !rebar && !areaReinforcement
+                && (typeElementIds.Contains(element.Id) || element.CategoryId != WallsCategoryId)) continue;
             GeometryData? body = element.Geometry;
             if (element.SerializedComputedSymbolGeometry is { } computed) body = computed;
             else if (ProductRules.HasOnlyUnfilledFaces(element)) continue;
-            if (body != null || modelLine || rebar || info.WideLayoutNotRewritten && element.BoundingBox != null) drawable.Add((element, body));
+            if (body != null || modelLine || rebar || areaReinforcement || info.WideLayoutNotRewritten && element.BoundingBox != null)
+                drawable.Add((element, body));
         }
         // A stair places its runs and landings, a model group its members: those are drawn as elements of their own.
         var ids = drawable.Select(item => item.Item1.Id).ToHashSet();
@@ -232,6 +239,72 @@ public static class ElementMeshes
             || !element.Parameters.Any(p => p.Id == (int)BuiltInParameter.CURVE_IS_DETAIL && p.Value is 0))
             return null;
         return element.NativeModelArc ?? (element.Location is { CurveType: "Line" } line ? line : null);
+    }
+
+    private static double[]? AreaReinforcementBounds(Element element) =>
+        element.CategoryId == (int)BuiltInCategory.OST_AreaRein && element.RootClassIs("RebarSystem")
+        && element.AreaReinforcementPlane != null && element.SerializedHostId is > 0
+        && element.BoundingBox is [var x0, var y0, var z0, var x1, var y1, var z1] bounds
+        && bounds.All(double.IsFinite) && x0 < x1 && y0 < y1 && z0 < z1
+        ? bounds : null;
+
+    private static MeshVector[]? AreaReinforcementOutline(AreaSketchPlane plane, GeometryData host, double[] bounds)
+    {
+        const double tolerance = 1e-5; // Feet. The source envelope and face coordinates can round independently.
+        var direction = Pt3.Cross(Pt3.From(plane.XAxis), Pt3.From(plane.YAxis));
+        double length = direction.Norm;
+        if (!(length > 0 && double.IsFinite(length))) return null;
+        var normal = direction / length;
+        var origin = Pt3.From(plane.Origin);
+        var faces = host.Faces.Where(face => face.OuterVertices is { Count: >= 3 } loop &&
+            loop.All(point => point.Length == 3 && Math.Abs(normal.Dot(Pt3.From(point) - origin)) <= tolerance))
+            .Take(2).ToArray();
+        if (faces.Length != 1) return null;
+
+        // The host face supplies the outline. The area's own bounds locate its two parallel copies.
+        var points = faces[0].OuterVertices!.Select(Pt3.From).ToArray();
+        double[] axis = normal.ToArray();
+        int dominant = Math.Abs(axis[0]) >= Math.Abs(axis[1]) ? 0 : 1;
+        if (Math.Abs(axis[2]) > Math.Abs(axis[dominant])) dominant = 2;
+        var profileBounds = Bounds(points);
+        double first = (bounds[dominant] - profileBounds[dominant]) / axis[dominant];
+        double second = (bounds[dominant + 3] - profileBounds[dominant + 3]) / axis[dominant];
+        if (!double.IsFinite(first) || !double.IsFinite(second) || Math.Abs(first - second) <= tolerance) return null;
+        var front = points.Select(point => point + normal * first).ToArray();
+        var back = points.Select(point => point + normal * second).ToArray();
+        if (Bounds(front.Concat(back)).Zip(bounds).Any(pair => Math.Abs(pair.First - pair.Second) > tolerance))
+            return null;
+        var pairs = new List<MeshVector>(4 * points.Length);
+        AddOutline(front);
+        AddOutline(back);
+        return pairs.ToArray();
+
+        void AddOutline(Pt3[] loop)
+        {
+            for (int i = 0; i < loop.Length; i++)
+            {
+                var a = loop[i];
+                var b = loop[(i + 1) % loop.Length];
+                pairs.Add(new(a.X, a.Y, a.Z));
+                pairs.Add(new(b.X, b.Y, b.Z));
+            }
+        }
+
+        static double[] Bounds(IEnumerable<Pt3> source)
+        {
+            var bounds = new double[] { double.PositiveInfinity, double.PositiveInfinity, double.PositiveInfinity,
+                double.NegativeInfinity, double.NegativeInfinity, double.NegativeInfinity };
+            foreach (var point in source)
+            {
+                bounds[0] = Math.Min(bounds[0], point.X);
+                bounds[1] = Math.Min(bounds[1], point.Y);
+                bounds[2] = Math.Min(bounds[2], point.Z);
+                bounds[3] = Math.Max(bounds[3], point.X);
+                bounds[4] = Math.Max(bounds[4], point.Y);
+                bounds[5] = Math.Max(bounds[5], point.Z);
+            }
+            return bounds;
+        }
     }
 
     private static (MeshVector Start, MeshVector End)? ModelLine(LocationCurve? curve)
