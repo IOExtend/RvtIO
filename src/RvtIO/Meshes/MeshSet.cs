@@ -30,6 +30,9 @@ public sealed class ElementMesh
     /// is given only when the element's geometry is exactly its symbols placed rigidly; any other element has its own triangles.</summary>
     public IReadOnlyList<SymbolPlacement> Placements { get; init; } = [];
 
+    /// <summary>Drawable component IDs that make up all the geometry of this container.</summary>
+    public IReadOnlyList<int> ComponentIds { get; init; } = [];
+
     /// <summary>The endpoints of a straight model line in document coordinates (feet), if present.</summary>
     public (MeshVector Start, MeshVector End)? Line { get; init; }
 

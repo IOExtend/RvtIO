@@ -57,6 +57,15 @@ internal static class NwcExport
                     AddText(node, $"Revit {set.Name} Property", property.Name, property.Value.Text);
             }
         }
+        if (native)
+            foreach (var element in scene.Elements)
+                if (element.ParentId is long parentId)
+                {
+                    var node = nodes[element.Id];
+                    node.Parent!.Children.Remove(node);
+                    node.Parent = nodes[parentId];
+                    node.Parent.Children.Add(node);
+                }
 
         var geometries = scene.Geometries.ToDictionary(geometry => geometry.Id);
         var materials = native

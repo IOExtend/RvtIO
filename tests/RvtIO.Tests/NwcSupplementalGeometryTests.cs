@@ -38,6 +38,47 @@ public class NwcSupplementalGeometryTests
     }
 
     [Fact]
+    public void NativeExportKeepsTheStairIdAboveItsAlreadyDrawnComponents()
+    {
+        var triangle = new GeoFace
+        {
+            OuterVertices = [[0, 0, 0], [1, 0, 0], [1, 1, 0]],
+            Normal = [0, 0, 1],
+            GeometryNode = 1,
+        };
+        var run = Product(1, BuiltInCategory.OST_StairsRuns, "StairsRun", new() { Faces = [triangle] });
+        var stair = Product(2, BuiltInCategory.OST_Stairs, "StairsElement", new()
+        {
+            Faces = [triangle],
+            ExactMappedInstances = [new() { SymbolId = run.Id, Transform = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0] }],
+        });
+        var document = RvtDocument.FromInfo(new RevitFileInfo { Elements = [run, stair] });
+
+        Assert.Equal(run.Id, Assert.Single(RvtSceneReader.Read(document, new() { ModelKey = "model" }).Document.Elements).Id);
+        var scene = RvtSceneReader.Read(document, new() { ModelKey = "model", IncludeModelLinesAndReinforcement = true }).Document;
+        Assert.Equal(stair.Id, scene.Elements.Single(e => e.Id == run.Id).ParentId);
+        Assert.Single(scene.Instances);
+        var native = Nwc.NwcExport.Build(scene, "model.rvt", 0, DateTime.UnixEpoch, native: true);
+        var parent = Assert.Single(native.RootNode!.Children);
+        var child = Assert.Single(parent.Children);
+        Assert.Contains(parent.Properties, property => property.Name == "Element ID" && property.Value == "2");
+        Assert.Contains(child.Properties, property => property.Name == "Element ID" && property.Value == "1");
+        Assert.Same(child, Assert.Single(native.Meshes).Node);
+
+        static Element Product(int id, BuiltInCategory category, string className, GeometryData geometry) => new()
+        {
+            Id = id,
+            CategoryId = (int)category,
+            Category = category.ToString(),
+            NativeRootClassName = className,
+            NativeRootClassChain = [className],
+            Geometry = geometry,
+            SerializedCreatedPhaseId = 3,
+            Parameters = [new() { Id = -1012100, Value = 3 }],
+        };
+    }
+
+    [Fact]
     public void SweepKeepsTheStoredRadiusAndExtentsOfAStraightBar()
     {
         var segment = new RebarSegment(false, [4, 5, 6], [0, 0, 1], [], 0, 0, 10);

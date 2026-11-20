@@ -225,6 +225,15 @@ public static class RvtSceneReader
             coverage[mesh.Coverage] = coverage.GetValueOrDefault(mesh.Coverage) + 1;
             if (CoverageDiagnostic(mesh, sceneElement.SourceId) is { } diagnostic) report.Add(diagnostic);
         }
+        Dictionary<long, SceneElement>? sceneElements = null;
+        foreach (var mesh in meshes.Elements)
+        {
+            if (mesh.ComponentIds.Count == 0) continue;
+            sceneElements ??= scene.Elements.ToDictionary(element => element.Id);
+            foreach (int component in mesh.ComponentIds)
+                if (sceneElements.TryGetValue(component, out var element))
+                    element.ParentId = mesh.ElementId;
+        }
         if (withoutUniqueId > 0)
             report.Add(new(SceneSeverity.Warning, "no-source-id",
                 $"{withoutUniqueId} elements have no Revit UniqueId: their SourceId is empty and they cannot be identified outside this scene."));
