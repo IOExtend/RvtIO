@@ -203,6 +203,43 @@ public class FramedElementTypesTests
         Assert.All(new[] { 10, 11, 12 }, id => Assert.Equal(99, fixture.TypeOf(id)));
     }
 
+    [Theory]
+    [InlineData("LinearDimString", "DimensionStyle", -1)]
+    [InlineData("TextNote", "TextNoteAttributes", -1)]
+    [InlineData("SWall", "BasicWallType", 30)]
+    public void KeepCopiesRestoresOnlyTypeIdFromASingleUnanchoredRecord(string kind, string target, int oldType)
+    {
+        var fixture = new Fixture();
+        fixture.Add(kind, 10, w => fixture.Id(w, 20), partition: 1);
+        fixture.Add(target, 20, partition: 0);
+        var element = new Element { Id = 10, TypeId = oldType, Name = "Stored name", HostId = 45 };
+        element.Parameters.Add(new Parameter { Value = "Stored parameter" });
+
+        Assert.Equal(20, fixture.Apply(element, recoverUnanchoredTypes: true));
+        Assert.Equal("Stored name", element.Name);
+        Assert.Equal(45, element.HostId);
+        Assert.Equal("Stored parameter", Assert.Single(element.Parameters).Value);
+    }
+
+    [Theory]
+    [InlineData(false, false, false, false)]
+    [InlineData(true, true, false, false)]
+    [InlineData(true, false, true, false)]
+    [InlineData(true, false, false, true)]
+    public void UnanchoredWallRequiresKeepModeAnUnambiguousRootAndARealType(
+        bool keepCopies, bool anchored, bool otherCopy, bool wrongTarget)
+    {
+        var fixture = new Fixture();
+        fixture.Add("SWall", 10, w => fixture.Id(w, 20), partition: 1);
+        if (otherCopy) fixture.Add("SWall", 10, w => fixture.Id(w, 30), partition: 0);
+        if (wrongTarget) fixture.Add("SWall", 20, w => fixture.Id(w, 30));
+        else fixture.Add("BasicWallType", 20);
+        fixture.Add("BasicWallType", 30);
+
+        var element = new Element { Id = 10, TypeId = 30 };
+        Assert.Equal(30, fixture.Apply(element, recoverUnanchoredTypes: keepCopies, anchored: anchored));
+    }
+
     private sealed class Fixture
     {
         private readonly SchemaDocument _schema = new();
@@ -261,6 +298,12 @@ public class FramedElementTypesTests
             Class("RoofSoffitType", element);
             Class("Ramp", element, Ref("m_rampAttrId"));
             Class("RampAttributes", element);
+            Class("LinearDimString", Class("Dimension", element, Ref("m_styleSymbolId")));
+            Class("DimensionStyle", element);
+            Class("TextNote", Class("TextElement", element, Ref("m_attrId")));
+            Class("TextNoteAttributes", element);
+            Class("SWall", Class("VWall", element, Ref("m_WallAttributesId")));
+            Class("BasicWallType", element);
             Class("Other", element);
         }
 
@@ -318,13 +361,14 @@ public class FramedElementTypesTests
             => Apply(new Element { Id = owner, TypeId = 99, CategoryId = (int)category }, wasRouted, stairOwner);
 
         internal long Apply(Element element, bool wasRouted = false, int? stairOwner = null,
-            IReadOnlyDictionary<ulong, int>? typePartitions = null)
+            IReadOnlyDictionary<ulong, int>? typePartitions = null, bool recoverUnanchoredTypes = false, bool anchored = false)
         {
             var ids = new ElementIdMap(_ids.Select(id => new ElemTableLayout.Row(id, id, 0, 0, 0)).ToArray());
             var state = new ParsingState { ElementIds = ids, ElemTable = _ids.ToDictionary(id => (uint)ids.Key(id), _ => 0u) };
             if (wasRouted) state.IncrementRoutedPartitions = new Dictionary<ulong, int> { [(uint)element.Id] = 1 };
             if (stairOwner is int stair) state.ElemRecOwningElementIds = new Dictionary<uint, int> { [(uint)element.Id] = stair };
-            FramedElementTypes.Apply(_schema, new Dictionary<Guid, SchemaField[]?>(), _frames, state, [element], typePartitions);
+            if (anchored) state.NativeParamsFromRootClass.Add((uint)element.Id);
+            FramedElementTypes.Apply(_schema, new Dictionary<Guid, SchemaField[]?>(), _frames, state, [element], typePartitions, recoverUnanchoredTypes);
             return ids.SourceId(element.TypeId);
         }
     }

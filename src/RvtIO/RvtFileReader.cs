@@ -840,7 +840,8 @@ public partial class RvtFileReader
             && (wideSchema?.Document ?? TfSchemaReader.Read(root)) is { } typeSchema)
         {
             int typeLinks = FramedElementTypes.Apply(typeSchema, EntitySchemaReader.Read(root, typeSchema),
-                framedStreams, state, rvtInfo.Elements, routing.UnroutedTypePartitions);
+                framedStreams, state, rvtInfo.Elements, routing.UnroutedTypePartitions,
+                recoverUnanchoredTypes: !_options.ResolveCurrentCopies);
             diag?.WriteLine($"Framed type references: {typeLinks} corrected");
         }
         rvtInfo.ElementIds = ids;
