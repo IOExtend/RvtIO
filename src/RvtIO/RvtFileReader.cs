@@ -65,7 +65,7 @@ public partial class RvtFileReader
 
         Dictionary<string, TfClassRegistry.TfClassDef>? tfSchemas = null;
         LogPhase("Decompressing partitions...");
-        var chunks = DecompressPartitions(root, diag, out var ownPartitionWallParts, out var partitionStreams, out var framedStreams, out bool staleCopiesRemoved, out var incrementRoutedPartitions, collectFamilyStorage: true);
+        var chunks = DecompressPartitions(root, diag, out var ownPartitionWallParts, out var partitionStreams, out var framedStreams, out bool staleCopiesRemoved, out var routing, collectFamilyStorage: true);
         var fmtChunks = DecompressStorage(root, "Formats", diag);
         if (fmtChunks.Count > 0)
         {
@@ -91,7 +91,7 @@ public partial class RvtFileReader
             var (wideInfo, wideState) = ParseModel(root, chunks, framedStreams, partitionStreams.Sum(s => s.Count),
                 r22View: false, partitionStreams, framedStreams, wideSchema, elemTable, elemWorksets, fileMetadata,
                 projectInfo, transmissionData, episodeTable, elemRecHistories, elemRecOwners, tfSchemas, ownPartitionWallParts,
-                staleCopiesRemoved, incrementRoutedPartitions, elemTableIsExact, previewBase64, previewMime, diag, LogPhase, ids);
+                staleCopiesRemoved, routing, elemTableIsExact, previewBase64, previewMime, diag, LogPhase, ids);
             WideModel = wideInfo;
             WideState = wideState;
         }
@@ -112,7 +112,7 @@ public partial class RvtFileReader
         var (rvtInfo, state) = ParseModel(root, chunks, readFrames, partitionChunkCount,
             r22View, partitionStreams, framedStreams, wideSchema, elemTable, elemWorksets, fileMetadata,
             projectInfo, transmissionData, episodeTable, elemRecHistories, elemRecOwners, tfSchemas, ownPartitionWallParts,
-            staleCopiesRemoved, incrementRoutedPartitions, elemTableIsExact, previewBase64, previewMime, diag, LogPhase, ids);
+            staleCopiesRemoved, routing, elemTableIsExact, previewBase64, previewMime, diag, LogPhase, ids);
         ExtensibleStorageReader.Apply(root, rvtInfo, framedStreams);
         LastParsingState = state;
         return rvtInfo;
@@ -138,7 +138,7 @@ public partial class RvtFileReader
         Dictionary<string, TfClassRegistry.TfClassDef>? tfSchemas,
         Dictionary<uint, OwnPartitionParts.WallParts>? ownPartitionWallParts,
         bool staleCopiesRemoved,
-        IReadOnlyDictionary<ulong, int>? incrementRoutedPartitions,
+        (IReadOnlyDictionary<ulong, int>? Current, IReadOnlyDictionary<ulong, int>? UnroutedTypePartitions) routing,
         bool elemTableIsExact,
         string? previewBase64,
         string? previewMime,
@@ -172,7 +172,7 @@ public partial class RvtFileReader
             R22View = r22View,
             StaleCopiesRemoved = staleCopiesRemoved,
             FramedPartitions = readFrames,
-            IncrementRoutedPartitions = LocalPartitionRoutes(incrementRoutedPartitions, ids),
+            IncrementRoutedPartitions = LocalPartitionRoutes(routing.Current, ids),
             PartitionChunkCount = partitionChunkCount,
         };
         ReadWideElementIndex(root, state, partitionStreams, framedStreams, wideSchema, diag);
@@ -840,7 +840,7 @@ public partial class RvtFileReader
             && (wideSchema?.Document ?? TfSchemaReader.Read(root)) is { } typeSchema)
         {
             int typeLinks = FramedElementTypes.Apply(typeSchema, EntitySchemaReader.Read(root, typeSchema),
-                framedStreams, state, rvtInfo.Elements);
+                framedStreams, state, rvtInfo.Elements, routing.UnroutedTypePartitions);
             diag?.WriteLine($"Framed type references: {typeLinks} corrected");
         }
         rvtInfo.ElementIds = ids;
@@ -929,7 +929,7 @@ public partial class RvtFileReader
         var (previewBase64, previewMime) = PreviewImageReader.Read(root);
 
         LogPhase("Decompressing partitions...");
-        var chunks = DecompressPartitions(root, diag, out var ownPartitionWallParts, out var partitionStreams, out var framedStreams, out bool staleCopiesRemoved, out var incrementRoutedPartitions);
+        var chunks = DecompressPartitions(root, diag, out var ownPartitionWallParts, out var partitionStreams, out var framedStreams, out bool staleCopiesRemoved, out var routing);
 
         // Episode GUID table: nested stream Global/History (see Read() above).
         var (elemRecHistories, elemRecOwners, wideSchema) = ReadElemRecs(root, ids);
@@ -968,7 +968,7 @@ public partial class RvtFileReader
             R22View = r22View,
             StaleCopiesRemoved = staleCopiesRemoved,
             FramedPartitions = readFrames,
-            IncrementRoutedPartitions = LocalPartitionRoutes(incrementRoutedPartitions, ids),
+            IncrementRoutedPartitions = LocalPartitionRoutes(routing.Current, ids),
             PartitionChunkCount = partitionChunkCount,
         };
         ReadWideElementIndex(root, state, partitionStreams, framedStreams, wideSchema, diag);
@@ -1305,7 +1305,9 @@ public partial class RvtFileReader
     private List<byte[]> DecompressPartitions(RootStorage root, TextWriter? diag,
         out Dictionary<uint, OwnPartitionParts.WallParts>? ownPartitionWallParts,
         out List<IReadOnlyList<byte[]>> partitionStreams, out List<PartitionFraming.Framed?> framedStreams,
-        out bool staleCopiesRemoved, out IReadOnlyDictionary<ulong, int>? incrementRoutedPartitions, bool collectFamilyStorage = false)
+        out bool staleCopiesRemoved,
+        out (IReadOnlyDictionary<ulong, int>? Current, IReadOnlyDictionary<ulong, int>? UnroutedTypePartitions) routes,
+        bool collectFamilyStorage = false)
     {
         staleCopiesRemoved = false;
         var partStor = root.OpenStorage("Partitions");
@@ -1321,9 +1323,10 @@ public partial class RvtFileReader
         framedStreams = [];
         ownPartitionWallParts = null;
         var routing = partEntries.Count > 1
-            ? PlanRecordRouting(root, partStor, partEntries.Select(e => e.Name).ToList(), _options.ResolveCurrentCopies ? diag : null)
+            ? PlanRecordRouting(root, partStor, partEntries.Select(e => e.Name).ToList(), _options.ResolveCurrentCopies ? diag : null,
+                recoverTypeIds: collectFamilyStorage)
             : null;
-        incrementRoutedPartitions = routing?.Current;
+        routes = (routing?.Current, routing?.UnroutedTypePartitions);
         // the exact framing of the partition streams (PartitionFraming), when the class table names its marker classes and the id width is known
         var formats = FormatsSchema.TryRead(root);
         var framing = formats != null && PartitionFraming.TagsOf(formats) is { } framingTags
@@ -1419,11 +1422,13 @@ public partial class RvtFileReader
         return chunks;
     }
 
-    private sealed record RoutingPlan(RecordRouting.Census Census, Dictionary<ulong, int> Current);
+    private sealed record RoutingPlan(RecordRouting.Census Census, Dictionary<ulong, int> Current,
+        IReadOnlyDictionary<ulong, int>? UnroutedTypePartitions);
 
     /// <summary>The current copy of every element that several partition streams hold (<see cref="RecordRouting"/>), or null with the
     /// reason in the diagnostics when the framing, the element table or the increment table does not decode.</summary>
-    private static RoutingPlan? PlanRecordRouting(RootStorage root, Storage partStor, IReadOnlyList<string> names, TextWriter? diag)
+    private static RoutingPlan? PlanRecordRouting(RootStorage root, Storage partStor, IReadOnlyList<string> names, TextWriter? diag,
+        bool recoverTypeIds)
     {
         var schema = FormatsSchema.TryRead(root);
         var census = RecordRouting.Begin(schema, out var failure);
@@ -1444,7 +1449,9 @@ public partial class RvtFileReader
         }
         var current = RecordRouting.Current(census, rows, table);
         diag?.WriteLine($"Record routing: {current.Count} elements are held by several partitions; {census.KeyedRecords} keyed-block records are not project elements");
-        return new RoutingPlan(census, current);
+        return new RoutingPlan(census, current, recoverTypeIds
+            ? FramedElementTypes.TypePartitionsWithoutRoutedCopy(census.Holders, rows, table, current)
+            : null);
     }
 
     private void RecordStream(string name, long rawBytes, int members, int decoded, int failed, int recovered, int unverified, long unpackedBytes = 0)
