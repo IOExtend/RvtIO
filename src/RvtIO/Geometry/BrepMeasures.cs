@@ -125,21 +125,29 @@ internal static class BrepMeasures
         return result;
     }
 
-    /// <summary>Measures a single planar extrusion whose closed faces and stored node volume agree.</summary>
-    internal static (ShellPrism Prism, double Volume)? MeasuredPlanarPrism(GeometryData? geometry, bool wallSides = false)
+    /// <summary>Orients the complete planar shell of a single solid with a stored measure.</summary>
+    internal static ShellInfo? MeasuredPlanarShell(GeometryData? geometry, out double geometricVolume)
     {
+        geometricVolume = 0;
         if (geometry is not { UntriangulatedFaces: 0, BrepSolids: [{ IsClosed: true } solid],
                 NodeMeasures: [{ Node: > 0, Volume: > 0 } measure] }
             || !double.IsFinite(measure.Volume)
             || solid.FaceIndices.Count != geometry.Faces.Count
             || geometry.Faces.Any(face => face.CurvedSurface || face.GeometryNode != measure.Node)
-            || !FacetedShell.TryOrientExactFacetedShell(geometry.Faces, solid.FaceIndices, out var faces, triangulateNonPlanarFaces: false))
+            || !FacetedShell.TryOrientExactFacetedShell(geometry.Faces, solid.FaceIndices,
+                out var faces, out geometricVolume, triangulateNonPlanarFaces: false))
             return null;
-        var shell = new ShellInfo(faces, Closed: true, measure.Volume, measure.Area);
-        if (FindPrismCurrent(shell, verticalOnly: !wallSides, wallSides: wallSides) is not { ProfileArea: > 0 } prism
-            || !(Math.Abs(prism.ProfileArea * prism.Depth - measure.Volume) <= measure.Volume * 1e-6))
+        return new ShellInfo(faces, Closed: true, measure.Volume, measure.Area);
+    }
+
+    /// <summary>Measures a single planar extrusion whose closed faces and stored node volume agree.</summary>
+    internal static (ShellPrism Prism, double Volume)? MeasuredPlanarPrism(GeometryData? geometry, bool wallSides = false)
+    {
+        if (MeasuredPlanarShell(geometry, out _) is not { } shell
+            || FindPrismCurrent(shell, verticalOnly: !wallSides, wallSides: wallSides) is not { ProfileArea: > 0 } prism
+            || !(Math.Abs(prism.ProfileArea * prism.Depth - shell.Volume) <= shell.Volume * 1e-6))
             return null;
-        return (prism, measure.Volume);
+        return (prism, shell.Volume);
     }
 
     /// <summary>The prism of a shell: two planar faces of equal net area (within 1e-4 ft2) facing each other on

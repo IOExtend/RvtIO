@@ -61,9 +61,15 @@ internal static class FacetedShell
     /// </summary>
     internal static bool TryOrientExactFacetedShell(IReadOnlyList<GeoFace> faces,
         IReadOnlyCollection<int> faceIndices, out List<GeoFace> orientedFaces,
+        bool triangulateNonPlanarFaces, HashSet<(long X, long Y, long Z)>? splitVertices = null) =>
+        TryOrientExactFacetedShell(faces, faceIndices, out orientedFaces, out _, triangulateNonPlanarFaces, splitVertices);
+
+    internal static bool TryOrientExactFacetedShell(IReadOnlyList<GeoFace> faces,
+        IReadOnlyCollection<int> faceIndices, out List<GeoFace> orientedFaces, out double volume,
         bool triangulateNonPlanarFaces, HashSet<(long X, long Y, long Z)>? splitVertices = null)
     {
         orientedFaces = [];
+        volume = 0;
         var indices = faceIndices.Distinct().Order().ToList();
         if (indices.Count < 4 || indices.Any(index => (uint)index >= faces.Count))
             return false;
@@ -175,6 +181,7 @@ internal static class FacetedShell
         if (signedVolume < 0)
             foreach (var face in orientedFaces)
                 ReverseFace(face, detachVertices: true);
+        volume = Math.Abs(signedVolume);
         if (!triangulateNonPlanarFaces)
             return true;
         var triangulatedFaces = TriangulateNonPlanarFacetedFaces(orientedFaces);

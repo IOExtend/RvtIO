@@ -1,4 +1,5 @@
 using RvtIO.Internal;
+using RvtIO.Model;
 using RvtIO.Parsing;
 using Xunit;
 
@@ -305,6 +306,52 @@ public class OwnElementClassTests
 
         if (duplicate) Assert.False(state.NativeParams.ContainsKey(123));
         else Assert.Equal(style, NativeTypePointers.Of(textNote, state.NativeParams[123]));
+    }
+
+    [Theory]
+    [InlineData(1794, -2002000, true, false)]
+    [InlineData(1794, -2000150, true, false)]
+    [InlineData(3061, -2003101, true, false)]
+    [InlineData(1794, -2003101, false, false)]
+    [InlineData(1794, -2000150, false, true)]
+    public void CategoryComesFromTheCompatibleCurrentProjectHeader(
+        ushort rootClass, int category, bool accepted, bool conflictingHeader)
+    {
+        byte[] root = Frame(rootClass);
+        byte[] Header(int value)
+        {
+            var header = new byte[22];
+            BitConverter.GetBytes(123u).CopyTo(header, 0);
+            BitConverter.GetBytes(10u).CopyTo(header, 4);
+            BitConverter.GetBytes((ushort)0x053C).CopyTo(header, 8);
+            BitConverter.GetBytes(value).CopyTo(header, 14);
+            BitConverter.GetBytes(10u).CopyTo(header, 18);
+            return header;
+        }
+
+        byte[] header = Header(category);
+        var frame = new PartitionFraming.Framed([[.. header, .. root]],
+            [new(101, 123, 0, header.Length), new(102, 123, header.Length, root.Length)], 4, 2);
+        byte[] other = Header(-2000700);
+        var conflict = new PartitionFraming.Framed([other], [new(101, 123, 0, other.Length)], 4, 3);
+        var state = new ParsingState
+        {
+            AllKnownIds = [123],
+            ElemRecOwningElementIds = new() { [123] = -1 },
+            FramedPartitions = conflictingHeader ? [frame, conflict] : [frame],
+            StaleCopiesRemoved = true,
+        };
+        var element = new Element { Id = 123 };
+
+        RvtFileReader.RunTfStreamWalk(state);
+        ElementBuilder.PostProcess(new RevitFileInfo { Elements = [element] }, state);
+
+        Assert.Equal(accepted ? (int?)category : null, state.CurrentFramedCategories.GetValueOrDefault(123u));
+        if (accepted)
+        {
+            Assert.Equal(category, element.CategoryId);
+            Assert.Equal(category, element.Parameters.Single(p => p.Id == -1140362).Value);
+        }
     }
 
     private static uint Size(byte[] bytes) => BitConverter.ToUInt32(bytes, 8);

@@ -8,6 +8,42 @@ namespace RvtIO.Tests;
 
 public class FamilySymbolReferenceSourceTests
 {
+    [Theory]
+    [InlineData(-2000150, true, false, true)]
+    [InlineData(-2000150, false, false, false)]
+    [InlineData(-2000150, true, true, false)]
+    [InlineData(-2002000, true, false, false)]
+    public void CurrentFramedAnnotationUsesItsOwnUnambiguousSymbol(
+        int category, bool hasSymbol, bool duplicate, bool recovered)
+    {
+        var header = new byte[22];
+        BitConverter.GetBytes(100u).CopyTo(header, 0);
+        BitConverter.GetBytes(10u).CopyTo(header, 4);
+        BitConverter.GetBytes((ushort)0x053C).CopyTo(header, 8);
+        BitConverter.GetBytes(category).CopyTo(header, 14);
+        BitConverter.GetBytes(10u).CopyTo(header, 18);
+        byte[] root = Block(1794, project: true), symbol = Block(1829, project: true);
+        var instance = new PartitionFraming.Framed([[.. header, .. root]],
+            [new(101, 100, 0, header.Length), new(102, 100, header.Length, root.Length)], 4, 2);
+        var frames = new List<PartitionFraming.Framed?> { instance };
+        if (hasSymbol) frames.Add(new([symbol], [new(102, 500, 0, symbol.Length)], 4, 1));
+        if (duplicate) frames.Add(instance with { Partition = 3 });
+        var state = new ParsingState
+        {
+            AllKnownIds = [100, 500],
+            ElemRecOwningElementIds = new() { [100] = -1, [500] = -1 },
+            FramedPartitions = frames,
+            StaleCopiesRemoved = true,
+        };
+        var annotation = new Element { Id = 100, TypeId = 123, CategoryId = category };
+
+        RvtFileReader.RunTfStreamWalk(state);
+        ElementBuilder.ApplyNativeParams(new RevitFileInfo { Elements = [annotation] }, state);
+
+        Assert.Equal(recovered, state.NativeParamsFromRootClass.Contains(100));
+        Assert.Equal(recovered ? 500 : 123, annotation.TypeId);
+    }
+
     [Fact]
     public void DoorNameAfterCanonicalizationUsesTheOwnSymbolNameRatherThanAnEarlierTypeGuess()
     {
@@ -233,7 +269,7 @@ public class FamilySymbolReferenceSourceTests
     private static void Record(ParsingState state, byte[] block) => RvtFileReader.RecordFamilySymbolReferenceSource(
         state, block, 0, Size(block), BitConverter.ToUInt16(block,12), BitConverter.ToUInt32(block,0));
 
-    private static byte[] Block(ushort cls, string? mutation = null)
+    private static byte[] Block(ushort cls, string? mutation = null, bool project = false)
     {
         using var stream = new MemoryStream(); using var writer = new BinaryWriter(stream);
         int owner = cls == 1794 ? 100 : 500;
@@ -242,6 +278,7 @@ public class FamilySymbolReferenceSourceTests
         foreach (var field in TfBlockDeserializer.SerializationFields(cls)!)
         {
             if (field.Declaring == 37 && field.Name == "m_id") { writer.Write(owner); continue; }
+            if (project && field.Declaring == 37 && field.Name == "m_docAccess") { writer.Write(1u); continue; }
             if (mutation == "truncated_root" && field.Name == (cls == 1794 ? "m_masterSymbolId" : "m_subInstData")) break;
             if (field.Declaring == 1794 && field.Name == "m_masterSymbolId")
             { writer.Write(mutation switch { "zero_type" => 0, "negative_type" => -1, "self_type" => owner, _ => 500 }); continue; }

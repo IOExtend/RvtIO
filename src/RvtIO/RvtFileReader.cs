@@ -2373,9 +2373,9 @@ public partial class RvtFileReader
         {
             StairComponentSource.Record(state, data, start, size, classId, owner);
             if (classId is 2335 or 3971
-                || classId == 3524 && partition is int partWithWall
-                    && state.IncrementRoutedPartitions?.TryGetValue(owner, out int currentWallPartition) == true
-                    && partWithWall == currentWallPartition)
+                || classId is 1005 or 3524 && partition is int partWithType
+                    && (state.IncrementRoutedPartitions?.TryGetValue(owner, out int currentTypePartition) != true
+                        || partWithType == currentTypePartition))
                 unanchoredTypeRoots?.Add((data, start, size, classId, owner));
             if (classId == 3471)
             {
@@ -2400,6 +2400,33 @@ public partial class RvtFileReader
         }
         foreach (var (data, start, size, classId, owner, _) in roots)
             if (classId is 3524 or 361) RecordWallLocationLine(state, data, start, size, classId, owner);
+
+        if (!state.StaleCopiesRemoved) return;
+        foreach (var frame in state.FramedPartitions)
+            foreach (var record in frame!.Items)
+            {
+                if (record.Channel != 101 || record.Owner > uint.MaxValue) continue;
+                uint owner = (uint)record.Owner;
+                if (state.WalkedElementClassRoots.GetValueOrDefault(owner) is not { BlockCount: 1, ClassId: 1794 or 3061 } own
+                    || state.IncrementRoutedPartitions?.TryGetValue(owner, out int currentPartition) == true
+                        && frame.Partition != currentPartition)
+                    continue;
+                var (data, start, _) = frame.Bytes(record);
+                int? category = ElementHeaderCategory.Read(data, start);
+                // These categories are carried by the header of the occurrence, independently of the type.
+                if (!(own.ClassId == 1794 && category is -2000150 or -2002000
+                    || own.ClassId == 3061 && category == -2003101))
+                    category = null;
+                if (!state.CurrentFramedCategories.TryAdd(owner, category)
+                    && state.CurrentFramedCategories[owner] != category)
+                    state.CurrentFramedCategories[owner] = null;
+            }
+        if (unanchoredTypeRoots != null)
+            foreach (var (data, start, size, classId, owner, partition) in roots)
+                if (classId == 1794 && state.CurrentFramedCategories.GetValueOrDefault(owner) == -2000150
+                    && (state.IncrementRoutedPartitions?.TryGetValue(owner, out int currentPartition) != true
+                        || partition == currentPartition))
+                    unanchoredTypeRoots.Add((data, start, size, classId, owner));
     }
 
     /// <summary>Hands <see cref="BlockParser.ParseBlock"/> the channel-102 and 103 records of the project's own block (the root objects and the
@@ -2622,6 +2649,13 @@ public partial class RvtFileReader
                         continue;
                     state.SystemOccurrenceTypeIds[owner] = (1, classId, typeId);
                 }
+                if (classId == 1005
+                    && state.WalkedElementClassRoots.GetValueOrDefault((uint)typeId) is not { BlockCount: 1, ClassId: 1020 })
+                    continue;
+                if (classId == 1794
+                    && (TfBlockDeserializer.ExtractFamilyInstanceSymbolId(data, start, size, classId) != typeId
+                        || state.WalkedElementClassRoots.GetValueOrDefault((uint)typeId) is not { BlockCount: 1, ClassId: 1829 }))
+                    continue;
                 state.NativeParams[owner] = parameters;
                 state.NativeParamsFromRootClass.Add(owner);
             }
