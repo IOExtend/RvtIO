@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using RvtIO.BuiltIns;
 using RvtIO.Ifc;
 using RvtIO.Model;
 using Xunit;
@@ -44,6 +45,38 @@ public class IfcExporterSiteLocationTests
     }
 
     private static string SiteArgs(string ifc) => Regex.Match(ifc, @"#\d+=IFCSITE\((.*?)\);").Groups[1].Value;
+
+    [SkippableFact]
+    public void Export_TopographyIsTheProjectSiteAndSiteFamilyKeepsItsGlobalIdAsProxy()
+    {
+        var info = new RvtFileReader().Read(TestFiles.Find("Test_2022.rvt"));
+        var family = info.Elements.OrderBy(element => element.Id).First(element =>
+            element.CategoryId == (int)BuiltInCategory.OST_Site && element.RootClassName == "FamilyInstance"
+            && !element.IsDiscovered && !element.IsBlockOnly && element.Geometry?.Faces.Count > 0);
+        string globalId = IfcGuid.ToIfcGuid(Assert.IsType<Guid>(family.SerializedExportId));
+
+        using var output = new StringWriter();
+        new IfcExporter { Profile = IfcProfile.Current }.Export(info, output);
+        var entities = Entities(output.ToString());
+
+        var proxy = Assert.Single(entities, entity => entity.Value.Args.StartsWith($"'{globalId}',", StringComparison.Ordinal));
+        Assert.Equal("IFCBUILDINGELEMENTPROXY", proxy.Value.Type);
+        string[] proxyArgs = IfcExporter.SplitStepArguments(proxy.Value.Args);
+        Assert.Equal("IFCPRODUCTDEFINITIONSHAPE", entities[Ref(proxyArgs[6])].Type);
+        Assert.Contains(entities.Values, entity => entity.Type == "IFCRELCONTAINEDINSPATIALSTRUCTURE"
+            && IfcExporter.SplitStepArguments(entity.Args) is var containment
+            && IfcExporter.SplitStepArguments(containment[4][1..^1]).Contains($"#{proxy.Key}")
+            && entities[Ref(containment[5])].Type == "IFCBUILDINGSTOREY");
+
+        var site = Assert.Single(entities, entity => entity.Value.Type == "IFCSITE");
+        string[] siteArgs = IfcExporter.SplitStepArguments(site.Value.Args);
+        Assert.Contains(info.Elements, element => element.CategoryId == (int)BuiltInCategory.OST_Topography
+            && siteArgs[2].EndsWith($":{element.Id}'", StringComparison.Ordinal));
+        Assert.Equal("IFCPRODUCTDEFINITIONSHAPE", entities[Ref(siteArgs[6])].Type);
+        int projectId = Assert.Single(entities, entity => entity.Value.Type == "IFCPROJECT").Key;
+        Assert.Contains(entities.Values, entity => entity.Type == "IFCRELAGGREGATES"
+            && entity.Args.EndsWith($",#{projectId},(#{site.Key})", StringComparison.Ordinal));
+    }
 
     private static readonly double[] CcTransform =
         [1.0, 0, 0, 0, 1.0, 0, 0, 0, 1.0, 343696.5743381642, 283643.7554585116, 11.975065616797893];

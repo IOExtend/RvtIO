@@ -64047,7 +64047,6 @@ public partial class IfcExporter
             $"{S(IfcGuid.FromName($"wall-common-rel:{elem.Id}"))},{R(ownerHistId)},$,$,{StepWriter.List(R(elemEntityId))},{R(psetId)}");
     }
 
-    /// <summary>IFCSITE here is a site-category family instance, not the project's site.</summary>
     private static readonly HashSet<string> ExportIdProductClasses = new(StringComparer.Ordinal)
     {
         "IFCWALL", "IFCWALLSTANDARDCASE", "IFCCURTAINWALL", "IFCSLAB", "IFCROOF", "IFCFOOTING",
@@ -68516,7 +68515,7 @@ public partial class IfcExporter
             -2001160 => "IFCFLOWTERMINAL",      // OST_PlumbingFixtures 1333/1333
             -2001120 => "IFCFLOWTERMINAL",      // OST_LightingFixtures
             -2001040 => "IFCBUILDINGELEMENTPROXY", // OST_ElectricalEquipment
-            -2001260 => "IFCSITE",              // OST_Site family instances
+            -2001260 => "IFCBUILDINGELEMENTPROXY", // OST_Site family instances
             -2001340 => "IFCSITE",              // OST_Topography (surface model)
             -2001360 => "IFCBUILDINGELEMENTPROXY", // OST_Planting / RPC
             -2001263 => "IFCSLAB",              // OST_BuildingPad

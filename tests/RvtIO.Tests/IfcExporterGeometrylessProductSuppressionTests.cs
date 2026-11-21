@@ -153,7 +153,7 @@ public class IfcExporterGeometrylessProductSuppressionTests
     }
 
     [Fact]
-    public void RepresentationlessSiteProduct_IsNotSuppressed()
+    public void RepresentationlessSiteFamily_IsSuppressed()
     {
         var info = new RevitFileInfo();
         info.Elements.Add(SiteInstance(id: 330, typeId: 331));
@@ -165,10 +165,9 @@ public class IfcExporterGeometrylessProductSuppressionTests
             new IfcExporter(diagnostics).Export(info, path);
             string ifc = File.ReadAllText(path);
 
-            // Two IFCSITE entities: the spatial container written for every file, plus this
-            // representation-less site product from the element loop.
-            Assert.Equal(2, Regex.Matches(ifc, @"#\d+=IFCSITE\(").Count);
-            Assert.Contains("IFC geometry-less element products suppressed: 0", diagnostics.ToString());
+            Assert.Single(Regex.Matches(ifc, @"#\d+=IFCSITE\("));
+            Assert.DoesNotContain("=IFCBUILDINGELEMENTPROXY(", ifc);
+            Assert.Contains("IFC geometry-less element products suppressed: 1 - IFCBUILDINGELEMENTPROXY=1", diagnostics.ToString());
         }
         finally { Cleanup(path); }
     }
@@ -899,7 +898,7 @@ public class IfcExporterGeometrylessProductSuppressionTests
             Id = id,
             TypeId = typeId,
             IsDiscovered = true,
-            CategoryId = -2001260, // OST_Site family instances -> IFCSITE
+            CategoryId = -2001260, // OST_Site
             Category = "OST_Site",
             Name = "SiteType",
             FamilyName = "SiteFamily",
