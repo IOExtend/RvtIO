@@ -1052,9 +1052,24 @@ public partial class IfcExporter
     {
         var result = new List<QuantityValue>();
         if (wall is not { CategoryId: -2000011, RootClassName: "SWall", SerializedSystemTypeId: > 0 and int typeId }
-            || !elements.TryGetValue(typeId, out var type) || type.SerializedSystemTypeClassId != 512
-            || wall.CuttingElementIds is { Count: > 0 }
-            || MeasuredPlanarPrism(wall.Geometry, wallSides: true) is not { } measured) return result;
+            || !elements.TryGetValue(typeId, out var type) || type.SerializedSystemTypeClassId != 512) return result;
+        if (wall.CuttingElementIds is { Count: > 0 } cutters)
+        {
+            if (wall.CutOutSteps is not { Count: > 0 } steps
+                || steps.Any(step => step.Cutout && step.ClassId != 4137)
+                || !steps.Where(step => step.Cutout).Select(step => step.ElementId).ToHashSet().SetEquals(cutters)
+                || !TryGetSerializedWallWidthFeet(wall, out double cutWallWidth)
+                || MeasuredPlanarShell(wall.Geometry, out double geometricVolume) is not { } shell) return result;
+            // Through-cuts need not be perpendicular to the wall sides.
+            double area = LargestVerticalFaceAreaCurrent([shell]);
+            if (!(Math.Abs(area * cutWallWidth - shell.Volume) <= shell.Volume * 1e-6)
+                && (!(Math.Abs(geometricVolume - shell.Volume) <= shell.Volume * 1e-6)
+                    || !HasOpposedWallSidePlanes(shell, area, cutWallWidth))) return result;
+            AddIfPositive(result, QuantityKind.Area, "NetSideArea", area * SquareFeetToSquareMetres);
+            AddIfPositive(result, QuantityKind.Volume, "NetVolume", shell.Volume * CubicFeetToCubicMetres);
+            return result;
+        }
+        if (MeasuredPlanarPrism(wall.Geometry, wallSides: true) is not { } measured) return result;
         // A closed body establishes volume. For the legacy layout, admit its side as the area
         // only when the extrusion follows the stored thickness of the wall type.
         if (wall.NativeRootClassName == null && TryGetSerializedWallWidthFeet(wall, out double width)

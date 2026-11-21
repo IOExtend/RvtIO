@@ -91,6 +91,9 @@ internal class ParsingState
     /// a null value marks an id whose records disagree or whose header could not be read.</summary>
     public Dictionary<uint, int?> HeaderCategories { get; } = new();
 
+    // Categories proved by the current project's own framed header and a compatible root.
+    internal Dictionary<uint, int?> CurrentFramedCategories { get; } = new();
+
     /// <summary>ElementHeader.m_designOptionId per element id (files with 64-bit ids; null: the records of the id disagree).</summary>
     public Dictionary<uint, int?> HeaderDesignOptions { get; } = new();
 

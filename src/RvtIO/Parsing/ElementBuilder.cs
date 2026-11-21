@@ -6833,7 +6833,8 @@ internal static partial class ElementBuilder
         {
             if (e.Id < 0) continue;
             int cat;
-            if (useHeader && e.NativeHeaderCategoryId is int header && header != -1) cat = header;
+            if (state.CurrentFramedCategories.GetValueOrDefault((uint)e.Id) is int current) cat = current;
+            else if (useHeader && e.NativeHeaderCategoryId is int header && header != -1) cat = header;
             else if (!state.ElemClassIdx.TryGetValue((uint)e.Id, out var cls)
                 || !TfClassRegistry.HighPurityClassCategory.TryGetValue(cls, out cat)) continue;
             if (e.CategoryId == cat && (e.Id != 0 || e.Parameters.Any(p => p.Id == -1140362))) continue;
@@ -6893,7 +6894,14 @@ internal static partial class ElementBuilder
             if (sk == null && e.References != null)
                 foreach (var r in e.References)
                     if (byId.TryGetValue(r, out var re) && re.SketchLoops != null) { sk = re.SketchLoops; break; }
-            if (sk == null || sk.Count == 0) continue;
+            if (sk == null || sk.Count == 0)
+            {
+                if (state is { StaleCopiesRemoved: true }
+                    && e.References?.Any(r => r > 0
+                        && state.WalkedElementClassRoots.GetValueOrDefault((uint)r) is { BlockCount: 1, ClassId: 4065 }) == true)
+                    ApplyUnsketchedFloorArea(e);
+                continue;
+            }
 
             double outerA = 0, sumA = 0, outerP = 0;
             foreach (var loop in sk)
@@ -6936,6 +6944,17 @@ internal static partial class ElementBuilder
                     e.Parameters.Add(BipHelpers.MakeBipParam(-1012806, "HOST_VOLUME_COMPUTED", StorageType.Double, net * thick));
             }
         }
+    }
+
+    internal static void ApplyUnsketchedFloorArea(Element floor)
+    {
+        if (floor is not { CategoryId: -2000032, RootClassName: "Floor", SerializedSystemTypeId: > 0 }
+            || floor.CuttingElementIds is { Count: > 0 }
+            || floor.CutOutSteps?.Any(step => step.Cutout) == true
+            || floor.Parameters.Any(p => p.Id == -1012805)
+            || BrepMeasures.MeasuredPlanarPrism(floor.Geometry) is not ({ InnerPerimeter: 0 } prism, _)) return;
+
+        floor.Parameters.Add(BipHelpers.MakeBipParam(-1012805, "HOST_AREA_COMPUTED", StorageType.Double, prism.ProfileArea));
     }
 
     internal static void ApplyCutFloorQuantities(Element floor)

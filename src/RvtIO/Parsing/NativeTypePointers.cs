@@ -24,6 +24,7 @@ internal static class NativeTypePointers
         [993] = "108:m_dbViewTypeId",
         [995] = "108:m_dbViewTypeId",
         [1004] = "108:m_dbViewTypeId",
+        [1005] = "108:m_dbViewTypeId",
         [1011] = "108:m_dbViewTypeId",
         [1016] = "108:m_dbViewTypeId",
         [1322] = "422:m_groupId",

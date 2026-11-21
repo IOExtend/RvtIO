@@ -19,6 +19,7 @@ public class NativeTypePointersTests
     [InlineData(3475, "3475:m_symbolId")]          // room tag
     [InlineData(527, "527:m_symbolId")]            // independent tag
     [InlineData(804, "804:m_typeId")]              // continuous footing
+    [InlineData(1005, "108:m_dbViewTypeId")]       // plan view
     [InlineData(3111, "3111:m_stairsAttrId")]      // stairs in the wide schema
     [InlineData(3989, "823:m_typeId")]             // continuous rail type
     public void TypeIdIsTheFieldOfTheRootClass(ushort rootClass, string key)

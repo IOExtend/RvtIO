@@ -34,6 +34,34 @@ public partial class IfcExporter
         shells.Sum(shell => FaceAreasCurrent(shell.Faces.Where(face => !face.CurvedSurface && FaceUnitNormal(face) is { } n && Math.Abs(n[2]) < 1e-9))
             .DefaultIfEmpty(0).Max());
 
+    private static bool HasOpposedWallSidePlanes(ShellInfo shell, double sideArea, double width)
+    {
+        const double planeTolerance = 1e-6;
+        foreach (var side in shell.Faces)
+        {
+            if (NetFaceArea(side) != sideArea
+                || FaceUnitNormal(side) is not { } normal || Math.Abs(normal[2]) >= 1e-9) continue;
+            var point = side.OuterVertices![0];
+            double Offset(double[] v) => (v[0] - point[0]) * normal[0] +
+                (v[1] - point[1]) * normal[1] + (v[2] - point[2]) * normal[2];
+            foreach (var other in shell.Faces)
+            {
+                if (FaceUnitNormal(other) is not { } n
+                    || normal[0] * n[0] + normal[1] * n[1] + normal[2] * n[2] > -1 + 1e-9) continue;
+                double offset = Offset(other.OuterVertices![0]);
+                if (Math.Abs(offset + width) <= planeTolerance
+                    && NetFaceArea(other) is { } oppositeArea
+                    && Math.Abs((sideArea + oppositeArea) * width / 2 - shell.Volume) <= shell.Volume * 1e-6
+                    && shell.Faces.All(face => face.OuterVertices!.All(vertex =>
+                    {
+                        double distance = Offset(vertex);
+                        return distance >= offset - planeTolerance && distance <= planeTolerance;
+                    }))) return true;
+            }
+        }
+        return false;
+    }
+
     /// <summary>An exact end face: a planar face that carries the area of the Revit face (<see cref="GeoFace.QuadratureArea"/>).</summary>
     private static bool IsExactCap(GeoFace face) => face.PlaneSurface && face.QuadratureArea != null && face.OuterVertices is { Count: >= 3 };
 
