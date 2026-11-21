@@ -836,6 +836,13 @@ public partial class RvtFileReader
             ?? (lengthOptions == null ? null : ProjectLengthUnits.StoredLengthUnit(lengthOptions.Value, out lengthUnitIssue));
         if (rvtInfo.SerializedLengthUnit == null)
             rvtInfo.SerializedLengthUnitIssue = state.WideLengthUnitIssue ?? lengthUnitIssue;
+        if ((wideSchema?.Release != 2027 || r22View)
+            && (wideSchema?.Document ?? TfSchemaReader.Read(root)) is { } typeSchema)
+        {
+            int typeLinks = FramedElementTypes.Apply(typeSchema, EntitySchemaReader.Read(root, typeSchema),
+                framedStreams, state, rvtInfo.Elements);
+            diag?.WriteLine($"Framed type references: {typeLinks} corrected");
+        }
         rvtInfo.ElementIds = ids;
         rvtInfo.AttachSourceElementIds();
         var (exportIds, replacedUniqueIds) = ElementBuilder.ApplyExportIds(rvtInfo.Elements, state);
