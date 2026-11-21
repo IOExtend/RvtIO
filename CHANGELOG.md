@@ -6,6 +6,10 @@ API between minor releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- Avoid overflow when triangulating trimmed faces with 46,341 or more vertices after bridging.
+
 ## [0.6.3] - 2026-11-20
 
 ### Fixed

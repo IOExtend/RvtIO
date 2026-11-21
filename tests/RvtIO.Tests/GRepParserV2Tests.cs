@@ -548,6 +548,21 @@ public class GRepParserV2Tests
     }
 
     [Fact]
+    public void TrimTriangulation_ClipsARingWhoseVertexCountSquaredExceedsInt32()
+    {
+        // The parabola and its closing chord form a convex ring with no collinear vertices to simplify.
+        const int count = 46_341;
+        var ring = Enumerable.Range(0, count).Select(index => new[] { (double)index, (double)index * index }).ToList();
+
+        var polygons = GRepParserV2.TriangulateTrimRegions([ring], out bool outOfBudget);
+
+        Assert.False(outOfBudget);
+        Assert.NotNull(polygons);
+        Assert.Equal(count - 2, polygons.Count);
+        Assert.Equal(PolygonArea(ring), polygons.Sum(PolygonArea));
+    }
+
+    [Fact]
     public void TrimTriangulation_TellsARunOutBudgetApartFromLoopsThatDoNotTriangulate()
     {
         var rings = PerforatedTrimRings();
