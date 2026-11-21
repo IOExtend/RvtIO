@@ -4819,6 +4819,17 @@ internal static partial class TfBlockDeserializer
     {
         switch (f.Declaring, f.Name)
         {
+            // The R22 table omits the item type: a color and an ElementId, both four bytes.
+            case (1013, "m_colorToCategoryIdMap") when c.RootClassId == 1012
+                && f is { Type: 14, Mods: 80, Ref: null, Cnt: null }:
+            {
+                uint count = ReadU32(c);
+                if (count == uint.MaxValue) return true;
+                long bytes = count * 8L;
+                if (bytes > c.End - c.Pos) throw Fail;
+                c.Pos += (int)bytes;
+                return true;
+            }
             // A mullion's nominal axis belongs to the first reference of its own symbol, not its trimmed solid.
             case (1829, "m_refs") when IsSubclassOf(c.RootClassId, 1829) && f.Type == 14 && f.Mods == 81
                 && ReferenceEquals(queue, c.RootQueue):
