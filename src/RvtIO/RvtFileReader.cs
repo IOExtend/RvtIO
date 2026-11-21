@@ -2372,10 +2372,11 @@ public partial class RvtFileReader
         foreach (var (data, start, size, classId, owner, partition) in roots)
         {
             StairComponentSource.Record(state, data, start, size, classId, owner);
-            if (classId is 2335 or 3971
+            if (classId == 1012 && state.WideSchema == null
+                || state.StaleCopiesRemoved && (classId is 2335 or 3971
                 || classId is 1005 or 3524 && partition is int partWithType
                     && (state.IncrementRoutedPartitions?.TryGetValue(owner, out int currentTypePartition) != true
-                        || partWithType == currentTypePartition))
+                        || partWithType == currentTypePartition)))
                 unanchoredTypeRoots?.Add((data, start, size, classId, owner));
             if (classId == 3471)
             {
@@ -2450,6 +2451,42 @@ public partial class RvtFileReader
                     pending.RemoveRange(queued, pending.Count - queued);
             }
     }
+    private static void RecoverFramedScheduleTypes(ParsingState state,
+        List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner)> roots)
+    {
+        const string typeField = "m_dbViewTypeId";
+        foreach (var schedule in roots.Where(root => root.Class == 1012).GroupBy(root => root.Owner))
+        {
+            uint owner = schedule.Key;
+            state.NativeParams.TryGetValue(owner, out var native);
+            if (state.ElemClassIdx.GetValueOrDefault(owner) != 1012
+                || (native?.Fields.GetValueOrDefault(typeField) ?? 0) > 0
+                || state.WalkedElementClassRoots.GetValueOrDefault(owner)?.BlockCount != schedule.Count())
+                continue;
+
+            // Without pruning, the remaining project copies must agree on the stored reference.
+            int typeId = 0;
+            foreach (var (data, start, size, classId, _) in schedule)
+            {
+                if (!TfBlockDeserializer.TryExtractOwnElementClass(data, start, size, classId, out int ownId)
+                    || ownId != owner
+                    || TfBlockDeserializer.ExtractParams(data, start, size, classId) is not { } fields
+                    || !fields.Fields.TryGetValue(typeField, out int value) || value <= 0
+                    || typeId != 0 && typeId != value)
+                {
+                    typeId = 0;
+                    break;
+                }
+                typeId = value;
+            }
+            if (typeId <= 0
+                || state.WalkedElementClassRoots.GetValueOrDefault((uint)typeId) is not { BlockCount: 1, ClassId: 1020 })
+                continue;
+            if (native == null) state.NativeParams.Add(owner, native = new());
+            native.Fields[typeField] = typeId;
+        }
+    }
+
     /// <summary>Continuous-stream anchored block walk (see TfStreamWalker): native param
     /// stores + full-coverage re-run of block-driven signals (curve owners, node owners,
     /// registry categories, sketch/detail curves).</summary>
@@ -2467,7 +2504,7 @@ public partial class RvtFileReader
         // the roots the class and stair sources count: the records of the project's block when every stream is read by its framing
         bool framedRoots = state.ReadsFramedRecords;
         List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner)>? unanchoredTypeRoots =
-            framedRoots && state.StaleCopiesRemoved ? [] : null;
+            framedRoots ? [] : null;
         if (framedRoots) RecordFramedRoots(state, unanchoredTypeRoots);
         TfStreamWalker.Walk(state.Chunks, state.AllKnownIds, (seg, bs, ds, cls, eid) =>
         {
@@ -2632,11 +2669,13 @@ public partial class RvtFileReader
             // AnalyticalNodeOwners, registry category assignment.
         }, (seg, recordStart, eid) => ElementHeaderCategory.Record(state, seg, recordStart, eid));
 
-        // Pruning can leave an element's own record where the sequential scan cannot anchor.
         if (unanchoredTypeRoots != null)
+        {
+            RecoverFramedScheduleTypes(state, unanchoredTypeRoots);
+            // Pruning can leave an element's own record where the sequential scan cannot anchor.
             foreach (var (data, start, size, classId, owner) in unanchoredTypeRoots)
             {
-                if (state.NativeParamsFromRootClass.Contains(owner)
+                if (classId == 1012 || state.NativeParamsFromRootClass.Contains(owner)
                     || !state.WalkedElementClassRoots.TryGetValue(owner, out var root)
                     || root.BlockCount != 1 || root.ClassId != classId
                     || TfBlockDeserializer.ExtractParams(data, start, size, classId) is not { } parameters
@@ -2659,6 +2698,7 @@ public partial class RvtFileReader
                 state.NativeParams[owner] = parameters;
                 state.NativeParamsFromRootClass.Add(owner);
             }
+        }
 
         ApplyFirstDecodableGReps(state, walkGReps);
 
