@@ -4990,8 +4990,8 @@ internal static partial class GRepParserV2
                 (previous[1] + current[1] + next[1]) / 3 };
             return InsideRegion(centroid);
         }
-        int guard = polygon.Count * polygon.Count;
-        while (count > 3 && guard-- > 0)
+        // Each iteration removes one vertex or returns; the trim budget limits the search for ears.
+        while (count > 3)
         {
             int ear;
             while ((ear = NextCandidate()) >= 0 && !IsEar(ear)) { }
