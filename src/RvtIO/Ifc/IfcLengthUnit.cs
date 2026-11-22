@@ -61,14 +61,16 @@ internal static class IfcLengthUnit
 
     /// <summary>The conversion of the finished entity list for a unit family. Millimetre is <see cref="ToMillimetres"/>
     /// (what every file wrote before the family existed); Metre keeps the metres of the table and moves the
-    /// millimetre-written attributes; Foot divides every length, area and volume by its factor, which is what the Revit
-    /// internal unit is, so those files are printed in the values of the document itself.</summary>
+    /// millimetre-written attributes; the other families convert lengths, areas and volumes to their corresponding units.</summary>
     internal static Func<string, string, string> Converter(IfcUnitFamily family, bool exactQuantities = false) =>
         family == IfcUnitFamily.Millimetre ? (type, args) => ToMillimetres(type, args, exactQuantities) : (type, args) => ToFamily(type, args, family, exactQuantities);
 
     internal const double MetresPerFoot = 0.3048;
     internal const double SquareMetresPerSquareFoot = MetresPerFoot * MetresPerFoot;
     internal const double CubicMetresPerCubicFoot = MetresPerFoot * MetresPerFoot * MetresPerFoot;
+    internal const double MetresPerInch = 0.0254;
+    internal const double SquareMetresPerSquareInch = MetresPerInch * MetresPerInch;
+    internal const double CubicMetresPerCubicInch = MetresPerInch * MetresPerInch * MetresPerInch;
 
     /// <summary>Attributes written in millimetres at their source (the overall size of a door or window, the nominal diameter
     /// and the length of a bar, the radius of a swept disk).</summary>
@@ -101,6 +103,14 @@ internal static class IfcLengthUnit
         (SourceUnit.Millimetre, IfcUnitFamily.Metre) => 1000,
         (SourceUnit.SquareMetre, IfcUnitFamily.Foot) => SquareMetresPerSquareFoot,
         (SourceUnit.CubicMetre, IfcUnitFamily.Foot) => CubicMetresPerCubicFoot,
+        (SourceUnit.Metre, IfcUnitFamily.Centimetre) => 0.01,
+        (SourceUnit.Millimetre, IfcUnitFamily.Centimetre) => 10,
+        (SourceUnit.SquareMetre, IfcUnitFamily.Centimetre) => 0.0001,
+        (SourceUnit.CubicMetre, IfcUnitFamily.Centimetre) => 0.000001,
+        (SourceUnit.Metre, IfcUnitFamily.Inch) => MetresPerInch,
+        (SourceUnit.Millimetre, IfcUnitFamily.Inch) => 25.4,
+        (SourceUnit.SquareMetre, IfcUnitFamily.Inch) => SquareMetresPerSquareInch,
+        (SourceUnit.CubicMetre, IfcUnitFamily.Inch) => CubicMetresPerCubicInch,
         _ => 1,
     };
 

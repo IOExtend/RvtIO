@@ -109,9 +109,15 @@ extension and label helpers carry the ids and names stored in the file format.
 |---|---|
 | `IfcExporter` | Writes IFC from a `RevitFileInfo` (`Export`). Properties: `Profile`, `BaseQuantities`, `OpeningQuantitiesSwapped` (true writes the legacy Width and Height of door and window openings; default false), `OpeningQuantitiesInHostAxes` (the opposite of it, kept for compatibility), `ExportPhaseId`, `ExportAllPhases`, `RoomExportPhaseId`, `ExportRoomsOfAllPhases`, `RevitParameterGroups`, `LengthUnit`, `Timestamp`, `SkipLog`, `ExportedProducts`, `ExportedElementQualities`, `DiagnosticOutput`. |
 | `IfcProfile` | `Legacy` or `Current` (the default) output profile. |
-| `IfcUnitFamily` | The length unit family an IFC export declares (`Millimetre`, `Metre` or `Foot`), chosen explicitly via `IfcExporter.LengthUnit` or derived in the current profile from the length format of the project (`Metre` for metres and for metres and centimetres, `Foot` for feet, feet and fractional inches and US survey feet, `Millimetre` for millimetres, for every other format and for an unreadable one; the legacy profile defaults to millimetres). |
+| `IfcUnitFamily` | Set `IfcExporter.LengthUnit` to `Millimetre`, `Centimetre`, `Metre`, `Inch` or `Foot`. `Centimetre` and `Inch` declare the corresponding square and cubic units and are explicit overrides only. Without an override, the current profile maps the stored project format to millimetres, metres or feet as before; the legacy profile defaults to millimetres. |
 | `CompactJsonExporter` | `Export(rvtPath, outputPath, readerOptions, options)` reads a file and writes the compact JSON. |
 | `CompactJsonExportOptions` | `JsonClassNamePrefix`: text put in front of every class name in the `name` field. |
+
+**Compact JSON unit policy.** `IfcExporter.LengthUnit` and `--ifc-length-unit` never affect JSON. Any future compact JSON
+override must be a separate opt-in setting. Convert only values with a resolved length, area or volume specification
+from their raw stored value and identify the resulting unit; do not parse or relabel the project's formatted strings.
+Values with unknown specs or no stored value keep their existing behavior. Other specs and full JSON are out of scope.
+No compact JSON override is implemented.
 
 ## Sheets and viewports
 

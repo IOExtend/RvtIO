@@ -6,6 +6,11 @@ API between minor releases.
 
 ## [Unreleased]
 
+### Added
+
+- IFC export supports explicit centimetres (`cm`) and inches (`in`) in the CLI and API, with the corresponding square
+  and cubic units in both profiles. Default IFC output and JSON units are unchanged.
+
 ### Fixed
 
 - Avoid overflow when triangulating trimmed faces with 46,341 or more vertices after bridging.
