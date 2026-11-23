@@ -48,8 +48,12 @@ public class RvtReaderOptions
     /// <summary>Collects the streams read, how much of each decoded, and the limits that cut a stream. Null to collect nothing.</summary>
     public RvtReadDiagnostics? Diagnostics { get; set; }
 
-    /// <summary>Receives ordered phase and work-count updates from <see cref="RvtFileReader.Read"/>.
-    /// The reader calls <see cref="IProgress{T}.Report"/> on the reading thread.</summary>
+    /// <summary>Receives phase and work-count updates from <see cref="RvtFileReader.Read"/> in the order the phases run.
+    /// The reader calls <see cref="IProgress{T}.Report"/> synchronously on the thread that calls <c>Read</c>, one call at a time, and
+    /// does not catch an exception the observer throws: it ends the read. <see cref="Progress{T}"/> instead posts each update to the
+    /// <see cref="System.Threading.SynchronizationContext"/> it captured when it was created, or to the thread pool when there is none, so
+    /// its handler can run after <c>Read</c> has returned and, on the thread pool, out of order. Implement
+    /// <see cref="IProgress{T}"/> to see the updates in order on the reading thread.</summary>
     public IProgress<RvtReadProgress>? Progress { get; set; }
 
     /// <summary>Write diagnostic/progress messages to this TextWriter. Null for silent operation.</summary>

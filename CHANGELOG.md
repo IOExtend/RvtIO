@@ -6,6 +6,13 @@ API between minor releases.
 
 ## [Unreleased]
 
+### Added
+
+- Report progress while reading a Revit file: `RvtReadProgress` (phase, completed and total units),
+  `RvtReaderOptions.Progress` and `RvtSceneOptions.ReadProgress` (for `RvtSceneReader.Read(path)`). The reader calls
+  `IProgress<RvtReadProgress>.Report` synchronously on the reading thread, in phase order; see
+  [the public API](docs/public-api.md) for the phases.
+
 ### Fixed
 
 - Avoid overflow when triangulating trimmed faces with 46,341 or more vertices after bridging.

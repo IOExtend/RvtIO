@@ -30,8 +30,10 @@ Only `Read(path)` reports the diagnostics of the read (`read-cut`, `failed-membe
 `unverified-members`), as only it opens the file; if you open the document yourself, read them from the
 `RvtReaderOptions.Diagnostics` you opened it with.
 
-Set `RvtSceneOptions.ReadProgress` to observe the reader phases and work counts during `Read(path)`.
-The final reader update marks completion of the file read. Mesh extraction and scene mapping follow.
+Set `RvtSceneOptions.ReadProgress` to observe the reader phases and work counts during `Read(path)`; it is the
+`RvtReaderOptions.Progress` of that read (see [the public API](public-api.md)), including its guarantees on order and thread.
+Pass an `IProgress<RvtReadProgress>` of your own when order matters, as `Progress<T>` can deliver updates late and out of order.
+The final reader update, `complete`, marks the end of the file read. Mesh extraction and scene mapping follow it and report nothing.
 
 Set `RvtSceneOptions.IncludeModelLinesAndReinforcement` to include straight model lines as line primitives and reinforcement with decoded bar paths as triangles. The native RVT-to-NWC tool enables this option.
 

@@ -9,7 +9,8 @@ public sealed class RvtSceneOptions
     public string? ModelKey { get; set; }
 
     /// <summary>Receives file-read progress for <see cref="RvtSceneReader.Read(string, RvtSceneOptions?)"/>.
-    /// Applies when the adapter opens the file.</summary>
+    /// Applies when the adapter opens the file. It is <see cref="RvtReaderOptions.Progress"/> of that read, with the same guarantees on
+    /// order and thread; the last update, <c>complete</c>, ends the file read, and the meshes and the scene are built after it.</summary>
     public IProgress<RvtReadProgress>? ReadProgress { get; set; }
 
     /// <summary>Includes straight model lines and reinforcement described by its centre lines.</summary>
