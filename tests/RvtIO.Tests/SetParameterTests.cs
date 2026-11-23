@@ -454,6 +454,7 @@ public sealed class SetParameterTests : IDisposable
     [InlineData("a.rvt|b.rvt|70|0|v")]
     [InlineData("a.rvt|b.rvt|70|NOT_A_PARAMETER|v")]
     [InlineData("a.rvt|b.rvt|70|client_name|v")]
+    [InlineData("a.rvt|b.rvt|70|ALL_MODEL_MARK,ALL_MODEL_COST|v")]
     public void SetParameterReportsUsageForMalformedArguments(string joined)
     {
         var (exit, output, error) = RunCli((o, e) => SetParameterCommand.Run(joined.Split('|'), o, e));
@@ -469,6 +470,7 @@ public sealed class SetParameterTests : IDisposable
     [InlineData(" |b.rfa|Type|71|v")]
     [InlineData("a.rfa|b.rfa|Type|0|v")]
     [InlineData("a.rfa|b.rfa|Type|NOT_A_PARAMETER|v")]
+    [InlineData("a.rfa|b.rfa|Type|ALL_MODEL_MARK,ALL_MODEL_COST|v")]
     public void SetFamilyParameterReportsUsageForMalformedArguments(string joined)
     {
         var (exit, output, error) = RunCli((o, e) => SetParameterCommand.Run(joined.Split('|'), o, e, familyFile: true));
@@ -521,6 +523,47 @@ public sealed class SetParameterTests : IDisposable
         Assert.Equal("", output);
         Assert.False(File.Exists(Output));
         Assert.Equal(hash, SHA256.HashData(File.ReadAllBytes(source)));
+    }
+
+    [Theory]
+    [InlineData("""{"typeName":"A","parameterId":71,"value":"x"}""", "Expected a non-empty array")]
+    [InlineData("[]", "Expected a non-empty array")]
+    [InlineData("""[{"typeName":"A","parameterId":71}]""", "Edit 1 must have")]
+    [InlineData("""[{"typeName":"A","parameterId":71,"value":"x","extra":1}]""", "Edit 1 must have")]
+    [InlineData("""[{"typeName":"A","parameterId":0,"value":"x"}]""", "Edit 1 must have")]
+    [InlineData("""[{"typeName":"A","parameterId":71,"value":5}]""", "Edit 1 must have")]
+    [InlineData("""[{"typeName":" ","parameterId":71,"value":"x"}]""", "Edit 1 requires a family typeName")]
+    [InlineData("""[{"typeName":5,"parameterId":71,"value":"x"}]""", "Edit 1 requires a family typeName")]
+    [InlineData("""[{"elementId":70,"parameterId":71,"value":"x"}]""", "Edit 1 requires a family typeName")]
+    [InlineData("""[{"typeName":"A","parameterId":71,"value":"x"},{"typeName":"","parameterId":71,"value":"x"}]""",
+        "Edit 2 requires a family typeName")]
+    public void EditParametersRefusesAMalformedFamilyManifestBeforeWriting(string json, string message)
+    {
+        string project = CreateSource();
+        string source = Path.ChangeExtension(project, ".rfa");
+        File.Move(project, source);
+        string output = Path.Combine(_folder, "output.rfa");
+        byte[] hash = SHA256.HashData(File.ReadAllBytes(source));
+        var (exit, stdout, error) = RunCli((o, e) => SetParameterCommand.RunBatch([source, output, Manifest(json)], o, e));
+        Assert.Equal(RvtExitCodes.Usage, exit);
+        Assert.StartsWith("error: ", error);
+        Assert.Contains(message, error);
+        Assert.Equal("", stdout);
+        Assert.False(File.Exists(output));
+        Assert.Equal(hash, SHA256.HashData(File.ReadAllBytes(source)));
+    }
+
+    // The manifest is read by the source extension; the writer then refuses an output of the other kind.
+    [Theory]
+    [InlineData("source.rfa", "output.rvt", """[{"typeName":"A","parameterId":71,"value":"x"}]""")]
+    [InlineData("source.rvt", "output.rfa", """[{"elementId":70,"parameterId":71,"value":"x"}]""")]
+    public void EditParametersReadsTheManifestByTheSourceExtension(string source, string output, string json)
+    {
+        var (exit, _, error) = RunCli((o, e) => SetParameterCommand.RunBatch(
+            [Path.Combine(_folder, source), Path.Combine(_folder, output), Manifest(json)], o, e));
+        Assert.Equal(SaveAsCommand.Refused, exit);
+        Assert.StartsWith("error [unsupported-parameter-file]: ", error);
+        Assert.False(File.Exists(Path.Combine(_folder, output)));
     }
 
     [Fact]

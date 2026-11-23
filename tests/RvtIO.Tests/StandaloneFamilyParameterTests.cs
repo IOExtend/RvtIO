@@ -263,6 +263,38 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
         Assert.Equal(hash, SHA256.HashData(File.ReadAllBytes(source)));
     }
 
+    // The file kind comes from the streams, not from the extension, so a family saved under an .rvt name reaches the kind check.
+    private string FamilyNamedAsProject()
+    {
+        string family = CreateSource();
+        string source = Path.ChangeExtension(family, ".rvt");
+        File.Move(family, source);
+        return source;
+    }
+
+    [Fact]
+    public void AProjectBatchRefusesAFamilyContainer()
+    {
+        string source = FamilyNamedAsProject(), output = Path.Combine(_folder, "edited.rvt");
+        byte[] hash = SHA256.HashData(File.ReadAllBytes(source));
+        var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetParameters(source, output,
+            [new(1, (long)BuiltInParameter.ALL_MODEL_MARK, "x")]));
+        Assert.Equal("unsupported-parameter-file", error.Kind);
+        Assert.False(File.Exists(output));
+        Assert.Equal(hash, SHA256.HashData(File.ReadAllBytes(source)));
+    }
+
+    [Fact]
+    public void AProjectManifestRefusesAFamilyContainer()
+    {
+        string source = FamilyNamedAsProject(), output = Path.Combine(_folder, "edited.rvt"), manifest = Path.Combine(_folder, "edits.json");
+        File.WriteAllText(manifest, $$"""[{"elementId":1,"parameterId":{{(int)BuiltInParameter.ALL_MODEL_MARK}},"value":"x"}]""");
+        using var error = new StringWriter();
+        Assert.Equal(SaveAsCommand.Refused, SetParameterCommand.RunBatch([source, output, manifest], TextWriter.Null, error));
+        Assert.StartsWith("error [unsupported-parameter-file]: ", error.ToString());
+        Assert.False(File.Exists(output));
+    }
+
     [Fact]
     public void ManifestRequiresAnExplicitValue()
     {
@@ -515,6 +547,41 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
         }
         Assert.Equal(PartitionStreamEditorTests.TaggedBody(FamilyClass, FamilyBody(type == "B" ? value : "Original B", a, b)),
             ReadFamilyBody(root, 2022));
+    }
+
+    // Revit names the element after the caption with underscores for spaces and keeps the caption in displayName, so a
+    // multi-word parameter is matched by displayName and its element name never equals the caption.
+    [Theory]
+    [InlineData("A", "New A")]
+    [InlineData("B", "Новое значение")]
+    public void ReplacesPartAtomEntriesWhoseElementNameDiffersFromTheCaption(string type, string value)
+    {
+        string source = CreateSource(caption: "Frame Material", elementName: "Frame_Material");
+        RvtWriter.SetFamilyParameter(source, Output, type, ParameterId, value);
+
+        using var root = RootStorage.OpenRead(Output);
+        string a = type == "A" ? value : "Original A", b = type == "B" ? value : "Original B";
+        foreach (var part in ReadParts(root))
+        {
+            var entry = Assert.Single(part.Elements(), e => e.Name.LocalName == "Frame_Material");
+            Assert.Equal("Frame Material", (string?)entry.Attribute("displayName"));
+            Assert.Equal(part.Elements().First().Value == "A" ? a : b, entry.Value);
+        }
+        Assert.Equal(PartitionStreamEditorTests.TaggedBody(FamilyClass, FamilyBody(type == "B" ? value : "Original B", a, b)),
+            ReadFamilyBody(root, 2022));
+    }
+
+    [Fact]
+    public void ClearsAPartAtomEntryWhoseElementNameDiffersFromTheCaption()
+    {
+        string source = CreateSource(caption: "Frame Material", elementName: "Frame_Material");
+        RvtWriter.SetFamilyParameter(source, Output, "A", ParameterId, "");
+
+        using var root = RootStorage.OpenRead(Output);
+        var parts = ReadParts(root);
+        Assert.Single(parts[0].Elements());
+        Assert.Equal("Original B", Assert.Single(parts[1].Elements(), e => e.Name.LocalName == "Frame_Material").Value);
+        Assert.Equal(PartitionStreamEditorTests.TaggedBody(FamilyClass, FamilyBody("Original B", "", "Original B")), ReadFamilyBody(root, 2022));
     }
 
     [Fact]
@@ -793,7 +860,7 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
         int release = 2022, bool shared = false, string? blankType = null, string caption = "Proof", bool visible = true,
         string? forgeId = null, (string A, string B)? comments = null, bool importedImage = false, bool imageHolderMismatch = false,
         FamilyShape? shape = null, (int A, int B, bool Instance)? nested = null, bool staleMetadataGuid = false,
-        (int A, int B)? customImage = null, bool plainName = false, BuiltInNumber? number = null)
+        (int A, int B)? customImage = null, bool plainName = false, BuiltInNumber? number = null, string elementName = "Proof")
     {
         var references = customImage is { } values ? (values.A, values.B, false) : nested;
         importedImage |= customImage.HasValue;
@@ -1046,7 +1113,7 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
                 if (customImage is { } image && !(staleMetadata && type == "A"))
                     value = ImageText(type == "A" ? image.A : image.B);
                 // Revit omits displayName when the element name already equals the caption.
-                var parameter = new XElement(ns + (plainName ? caption : "Proof"), plainName ? null : new XAttribute("displayName", caption),
+                var parameter = new XElement(ns + (plainName ? caption : elementName), plainName ? null : new XAttribute("displayName", caption),
                     new XAttribute("type", shared ? "shared" : "custom"),
                     new XAttribute("typeOfParameter", customImage.HasValue ? "Image" : nested.HasValue ? "Family type: Generic Models" : "Text"), value);
                 if (shared)

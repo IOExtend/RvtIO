@@ -223,6 +223,12 @@ public sealed class ParameterFormulaEvaluatorTests
     [InlineData(Ln, 10, NumberSpec, 2.302585092994046, UnitType.UT_Number)]
     [InlineData(Sqrt, 9, NumberSpec, 3, UnitType.UT_Number)]
     [InlineData(Sqrt, 16, AreaSpec, 4, UnitType.UT_Length)]
+    [InlineData(Sqrt, 0, NumberSpec, 0, UnitType.UT_Number)]
+    [InlineData(Sqrt, 0, AreaSpec, 0, UnitType.UT_Length)]
+    [InlineData(Asin, 1, NumberSpec, 1.5707963267948966, UnitType.UT_Angle)]
+    [InlineData(Asin, -1, NumberSpec, -1.5707963267948966, UnitType.UT_Angle)]
+    [InlineData(Acos, 1, NumberSpec, 0, UnitType.UT_Angle)]
+    [InlineData(Acos, -1, NumberSpec, 3.141592653589793, UnitType.UT_Angle)]
     [InlineData(Abs, -3, LengthSpec, 3, UnitType.UT_Length)]
     [InlineData(Abs, -3, NumberSpec, 3, UnitType.UT_Number)]
     public void CalculatesTheMathFunctionsWithTheirUnits(long function, double argument, string spec, double expected, UnitType unit) =>
@@ -268,7 +274,8 @@ public sealed class ParameterFormulaEvaluatorTests
         AssertValue(7, UnitType.UT_Number, Calculate(Call(If, False, new Num(5), new Num(7))));
         foreach (var (function, left, right, expected) in new (long, Node, Node, bool)[]
                  {
-                     (Or, True, False, true), (Or, False, False, false), (And, True, True, true), (And, True, False, false),
+                     (Or, True, False, true), (Or, False, True, true), (Or, False, False, false),
+                     (And, True, True, true), (And, True, False, false),
                  })
         {
             var value = Calculate(Call(function, left, right));
@@ -297,6 +304,7 @@ public sealed class ParameterFormulaEvaluatorTests
     [InlineData(Log, 0, NumberSpec)]
     [InlineData(Log, 1e-10, NumberSpec)]
     [InlineData(Ln, 0, NumberSpec)]
+    [InlineData(Ln, 1e-10, NumberSpec)]
     [InlineData(Asin, 2, NumberSpec)]
     [InlineData(Acos, -2, NumberSpec)]
     [InlineData(Tan, 1.5707963267948966, AngleSpec)]
@@ -317,6 +325,30 @@ public sealed class ParameterFormulaEvaluatorTests
         Assert.Null(Evaluate(Call(Sin, Call(Sqrt, new Num(-1)))));
         AssertValue(0, UnitType.UT_Number, Calculate(new Binary(Power, new Num(0), new Num(2))));
     }
+
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(0, -1)]
+    [InlineData(-8, 0.5)]
+    public void RefusesAPowerWithoutADefinedResult(double number, double exponent) =>
+        AssertRefused(new Binary(Power, new Num(number), new Num(exponent)));
+
+    [Theory]
+    [InlineData(1e-9, 0)]
+    [InlineData(0, 1e-9)]
+    [InlineData(1, 1 + 1e-12)]
+    [InlineData(-1, -1 - 1e-12)]
+    public void RefusesAChangeWithinTheComparisonTolerance(double before, double after) =>
+        Assert.Equal("unverified-parameter-storage",
+            Assert.Throws<RvtWriteRefusedException>(() => ParameterFormulaEvaluator.VerifyStableChange(before, after)).Kind);
+
+    [Theory]
+    [InlineData(1, 1)]
+    [InlineData(1, 2)]
+    [InlineData(0, 2e-9)]
+    [InlineData(-1, 1)]
+    public void AcceptsAnIdenticalOrClearlyDifferentValue(double before, double after) =>
+        ParameterFormulaEvaluator.VerifyStableChange(before, after);
 
     [Fact]
     public void RefusesWhatNeitherRevitNorTheEvaluatorDefines()
