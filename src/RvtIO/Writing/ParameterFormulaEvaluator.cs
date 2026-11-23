@@ -80,7 +80,8 @@ internal static class ParameterFormulaEvaluator
                         throw Unsupported();
                     var left = Visit(Child(slot, "BinaryOperatorExpression.m_pLeftSubexpression"), remaining - 1);
                     var right = Visit(Child(slot, "BinaryOperatorExpression.m_pRightSubexpression"), remaining - 1);
-                    return left is { } lhs && right is { } rhs ? Calculate((BinaryOperator)operation, lhs, rhs) : null;
+                    return left is { } lhs && right is { } rhs
+                        ? Calculate((BinaryOperator)operation, lhs, rhs, allowCompoundUnits: true) : null;
                 case "FunctionExpression":
                     return EvaluateFunction(slot, remaining);
                 default:
@@ -159,7 +160,8 @@ internal static class ParameterFormulaEvaluator
                         right.InputId != 0 && (left.InputId != 0 || operation == BinaryOperator.Divide))
                         throw Unsupported();
 
-                    var offset = Calculate(operation, left.Offset, right.Offset) ?? throw Unsupported();
+                    // Direct assignments to formula results have separate verification requirements.
+                    var offset = Calculate(operation, left.Offset, right.Offset, allowCompoundUnits: false) ?? throw Unsupported();
                     if (left.InputId == 0 && right.InputId == 0)
                         return new(0, 0, offset, true);
 
@@ -260,7 +262,7 @@ internal static class ParameterFormulaEvaluator
         return up ? Math.Ceiling(value) : Math.Floor(value);
     }
 
-    private static Value? Calculate(BinaryOperator operation, Value left, Value right)
+    private static Value? Calculate(BinaryOperator operation, Value left, Value right, bool allowCompoundUnits)
     {
         if (left.Kind != ValueKind.Number || right.Kind != ValueKind.Number)
             throw Unsupported();
@@ -296,6 +298,8 @@ internal static class ParameterFormulaEvaluator
             },
             _ => null,
         };
+        if (unit is null && allowCompoundUnits)
+            unit = CompoundUnit(operation, left.Unit, right.Unit);
         if (unit is null)
             throw Unsupported();
 
@@ -332,6 +336,19 @@ internal static class ParameterFormulaEvaluator
         return double.IsFinite(magnitude) && magnitude > ComparisonTolerance &&
             Math.Abs(after - before) < Math.BitDecrement(magnitude * ComparisonTolerance);
     }
+
+    private static UnitType? CompoundUnit(BinaryOperator operation, UnitType left, UnitType right) => (operation, left, right) switch
+    {
+        (BinaryOperator.Multiply, UnitType.UT_MassDensity, UnitType.UT_Volume) or
+        (BinaryOperator.Multiply, UnitType.UT_Volume, UnitType.UT_MassDensity) => UnitType.UT_Mass,
+        (BinaryOperator.Multiply, UnitType.UT_Speed, UnitType.UT_TimeInterval) or
+        (BinaryOperator.Multiply, UnitType.UT_TimeInterval, UnitType.UT_Speed) => UnitType.UT_Length,
+        (BinaryOperator.Divide, UnitType.UT_Mass, UnitType.UT_Volume) => UnitType.UT_MassDensity,
+        (BinaryOperator.Divide, UnitType.UT_Mass, UnitType.UT_MassDensity) => UnitType.UT_Volume,
+        (BinaryOperator.Divide, UnitType.UT_Length, UnitType.UT_TimeInterval) => UnitType.UT_Speed,
+        (BinaryOperator.Divide, UnitType.UT_Length, UnitType.UT_Speed) => UnitType.UT_TimeInterval,
+        _ => null,
+    };
 
     private static int? Power(UnitType unit) => unit switch
     {

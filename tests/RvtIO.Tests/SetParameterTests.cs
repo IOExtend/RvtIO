@@ -190,6 +190,52 @@ public sealed class SetParameterTests : IDisposable
     }
 
     [Theory]
+    [InlineData(3, "volume", "massDensity", "mass", "4 ft3", false)]
+    [InlineData(3, "volume", "massDensity", "mass", "4 ft3", true)]
+    [InlineData(3, "time", "speed", "length", "4 s", false)]
+    [InlineData(3, "time", "speed", "length", "4 s", true)]
+    [InlineData(4, "mass", "volume", "massDensity", "4 kg", false)]
+    [InlineData(4, "mass", "massDensity", "volume", "4 kg", false)]
+    [InlineData(4, "length", "time", "speed", "4 ft", false)]
+    [InlineData(4, "length", "speed", "time", "4 ft", false)]
+    public void RecalculatesGlobalProductsAndQuotientsWithDifferentUnits(int operation, string inputSpec,
+        string factorSpec, string resultSpec, string requested, bool constantFirst)
+    {
+        var input = new GlobalFixture(Kind.Number, SpecId: PhysicalSpec(inputSpec));
+        var result = new GlobalFixture(Kind.Number, SpecId: PhysicalSpec(resultSpec));
+        var expression = new GlobalBinary(operation, DefinitionId, 2, constantFirst, PhysicalSpec(factorSpec));
+        string source = CreateSource(globalParameter: input, globalFormulas: new(SpecId: result.SpecId,
+            ConstantSpecId: result.SpecId, Binary: expression, Cached: operation == 3 ? 4 : 1));
+        var write = RvtWriter.SetParameter(source, Output, DefinitionId, DefinitionId, requested);
+        Assert.Equal(3, write.RewrittenRecordCount);
+
+        using var root = RootStorage.OpenRead(Output);
+        Assert.Equal(GlobalBody(input, "4"), ReadBody(root, DefinitionId));
+        Assert.Equal(GlobalBody(result, operation == 3 ? "8" : "2", BindingId, expression), ReadBody(root, BindingId));
+        Assert.Equal(GlobalBody(result, operation == 3 ? "9" : "3", GlobalFormulaResultId,
+            new(1, BindingId, 1, SpecId: result.SpecId)), ReadBody(root, GlobalFormulaResultId));
+    }
+
+    [Fact]
+    public void RefusesAnUnverifiedCombinationOfMeasuredUnitsAtomically()
+    {
+        var input = new GlobalFixture(Kind.Number, SpecId: PhysicalSpec("mass"));
+        string outputSpec = PhysicalSpec("length");
+        var mixed = new GlobalBinary(3, DefinitionId, 2, SpecId: PhysicalSpec("time"));
+        string source = CreateSource(globalParameter: input, globalFormulas: new(SpecId: outputSpec,
+            ConstantSpecId: outputSpec, Binary: mixed));
+        byte[] original = File.ReadAllBytes(source);
+        var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetParameters(source, Output,
+            [new(ProjectId, (int)BuiltInParameter.CLIENT_NAME, "Staged"), new(DefinitionId, DefinitionId, "4 kg")]));
+        Assert.Equal("unverified-parameter-storage", error.Kind);
+        Assert.False(File.Exists(Output));
+        Assert.Equal(original, File.ReadAllBytes(source));
+    }
+
+    private static string PhysicalSpec(string name) => name == "mass" ? "autodesk.spec.aec.structural:mass-2.0.0"
+        : "autodesk.spec.aec:" + name + "-2.0.0";
+
+    [Theory]
     [InlineData(false, "read-only-parameter")]
     [InlineData(true, "unverified-parameter-storage")]
     public void RejectsBatchesWithAWritableCurrencyInputAndAnInvalidFormulaEdit(bool stale, string code)
@@ -1108,7 +1154,7 @@ public sealed class SetParameterTests : IDisposable
         bool Derived = false, bool PrimaryAndDerived = false);
     private sealed record GlobalFormulaFixture(int Operation = 3, bool Stale = false, bool Consumer = false,
         bool IntegerResult = false, bool Conditional = false, int Function = 0, bool CurrencyResult = false,
-        string? SpecId = null, string? ConstantSpecId = null);
+        string? SpecId = null, string? ConstantSpecId = null, GlobalBinary? Binary = null, double? Cached = null);
     private sealed record GlobalBinary(int Operation, int Parameter, double Constant, bool ConstantFirst = false, string? SpecId = null);
     private const int GlobalFormulaResultId = 73;
     private const int GlobalFormulaConsumerId = 74;
@@ -2289,15 +2335,15 @@ public sealed class SetParameterTests : IDisposable
                 var number = new GlobalFixture(Kind.Number);
                 bool division = globalFormulas.Operation == 4;
                 bool conditional = globalFormulas.Conditional;
-                var first = new GlobalBinary(globalFormulas.Operation, DefinitionId, division ? 12 : globalFormulas.IntegerResult ? 1.25 : 2,
+                var first = globalFormulas.Binary ?? new GlobalBinary(globalFormulas.Operation, DefinitionId, division ? 12 : globalFormulas.IntegerResult ? 1.25 : 2,
                     ConstantFirst: division, SpecId: globalFormulas.ConstantSpecId);
                 int function = globalFormulas.Function;
-                double cached = function switch
+                double cached = globalFormulas.Cached ?? (function switch
                 {
                     7 => Math.Exp(2),
                     9 => Math.Sqrt(2),
                     _ => conditional ? 2 : globalFormulas.Stale ? 13 : division ? 6 : globalFormulas.IntegerResult ? 3 : 4,
-                };
+                });
                 var resultKind = conditional || globalFormulas.IntegerResult ? Kind.Integer : Kind.Number;
                 records.Add((BindingId, 59, GlobalBody(new(resultKind, Currency: globalFormulas.CurrencyResult, SpecId: globalFormulas.SpecId),
                     cached.ToString(CultureInfo.InvariantCulture), BindingId,

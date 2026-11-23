@@ -128,6 +128,10 @@ associations. Revit accepted `CurrencyInput + 2` in the tested formulas and reje
 Mass, Force, Mass Density, Speed, Slope, and Time also support verified formula dependencies and existing global
 associations. Formulas can scale the quantity and add a compatible measured constant. Revit evaluates Slope as
 a ratio in formulas. For example, a formula that adds 2 percentage points stores the constant as the number `0.02`.
+Recalculation also supports Mass Density multiplied by Volume to give Mass, and Speed multiplied by Time to give
+Length. Each product accepts either operand order. Dividing Mass or Length by one factor gives the other factor.
+The same operations apply to verified family type and instance formulas in projects, and to type values and instance
+defaults in standalone families.
 An existing association between Number and Slope transfers the ratio directly. For example, a Number global
 of `0.375` updates its associated Slope parameter to `37.5 %`. Use the global's own input format when editing
 it. A Number global can update a project-bound or loaded-family Slope parameter. A Slope global can update a
@@ -503,6 +507,13 @@ Save As and reopening without Audit. In those releases the affected records in 2
 writes byte for byte. Revit 2027 verified the three 2026-format projects after upgrade. Forty-eight refused
 batches preserved the source bytes and created no output.
 
+Mixed-unit formula checks covered eight products and quotients in 48 edited files. The tests changed global
+parameters and loaded family type and instance inputs in projects, and type values and instance defaults in
+standalone families. Replacement and ordered batch results matched the Revit API after Save As and reopening
+without Audit. The affected records in 42 files matched native Revit 2020–2025 and 2027 writes byte for byte.
+The six 2026-format files were verified after upgrade in Revit 2027, with projects and families checked in
+separate sessions. Thirty-two invalid batches preserved the source bytes and created no output.
+
 Global assignments to loaded family parameters matched 240 Revit API assignments across the eight formats.
 The fixtures included shared family definitions, empty text, unitless and measured values, links to recalculated
 global formula results, and type inputs consumed by formulas on multiple placements with separate local inputs.
@@ -707,7 +718,7 @@ sample from Autodesk and controlled project and family fixtures converted to the
 | User Currency parameters in standalone families | RvtIO supports verified type values, instance defaults, and formula dependencies. Additional Currency display formats still require coverage. |
 | Family-declared Currency parameters in projects | RvtIO supports the verified primary type and top-level instance assignments, exact type formula inverses, and existing global associations described above. Other formula paths and geometry dependencies still require coverage. |
 | Project-bound Currency parameters | RvtIO supports verified shared values on walls, basic wall types, rooms, and loaded family types and instances. Non-shared bindings and other owner classes still require coverage. |
-| Additional measurable specs and units | RvtIO supports the input units listed above, including Mass, Force, Mass Density, Speed, Slope, and Time. Revit 2025 accepted formulas multiplying Mass Density by Volume and Speed by Time. Those products, further measurable specs, and additional display formats still require coverage. |
+| Additional measurable specs and units | RvtIO supports the input units and verified formula combinations listed above. Further measurable specs, combinations, and display formats still require coverage. This includes standalone family metadata with the feet (`'`) and cubic feet (`CF`) labels observed in Revit 2025. |
 | Invalid standalone image references | Revit 2022 and 2027 rejected a missing element ID and an existing family element that was outside the image class. RvtIO requires a local imported image with a verified raster record, or the explicit None value. |
 | Standalone instance and shared Image definitions | The Revit API prohibits creating instance Image parameters. Revit 2025 also rejected the tested attempt to create a shared type definition. RvtIO supports the non-shared type scope described above. [Autodesk FamilyManager.AddParameter reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/3ac89d60-4b71-694f-002f-125d2e6565fc.htm) |
 | Linked images in standalone families | Revit 2025 rejected `ImageTypeSource.Link` when creating an image in a family document. The verified standalone Image path uses imported images. [Autodesk ImageType.Create reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/31bb13e3-e8f5-cb66-18d0-619578d56cde.htm) |
