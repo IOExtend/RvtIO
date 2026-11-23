@@ -299,7 +299,8 @@ public class PrintCommandTests
             RvtDocument document;
             try { document = RvtDocument.Open(path); }
             catch (RvtInputException) { continue; }
-            if (SheetComposer.Sheets(document).FirstOrDefault() is { } sheet) return (path, sheet.Number);
+            if (SheetComposer.Sheets(document).FirstOrDefault(sheet => sheet.Number != null)?.Number is { } number)
+                return (path, number);
         }
         return null;
     }

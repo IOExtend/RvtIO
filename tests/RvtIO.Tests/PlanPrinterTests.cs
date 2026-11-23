@@ -341,7 +341,6 @@ public class PlanPrinterTests
         Assert.InRange(xs.Max(), pageRight - 0.01, pageRight + 0.01);
     }
 
-
     [SkippableFact]
     public void SampleFile_PlanElevationMarksUseTheirSavedViewsAndCrop()
     {

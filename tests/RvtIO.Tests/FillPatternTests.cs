@@ -135,6 +135,7 @@ public class FillPatternTests
         Assert.Equal(0.02 * 304.8, tile.Spacing, 8);
         Assert.Equal(0.5, tile.Angle);
         Assert.Equal((15 + 0.001 * 304.8, 25 + 0.002 * 304.8), (tile.X, tile.Y));
+        Assert.NotNull(tile.Segments);
         Assert.Equal([0.1 * 304.8, 0.2 * 304.8], tile.Segments);
     }
 
