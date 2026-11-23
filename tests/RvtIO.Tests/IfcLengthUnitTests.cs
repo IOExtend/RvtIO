@@ -444,6 +444,16 @@ public class IfcLengthUnitChoiceOptionTests
             foreach (string ifc in outputs.Values)
                 AssertValidIfcUnitGraph(ifc);
 
+            // the units must be the ones IfcProject.UnitsInContext assigns, not merely entities somewhere in the file
+            foreach (var (family, ifc) in outputs)
+            {
+                var (length, area, volume) = AssignedUnitsOfFamily[family];
+                var assigned = AssignedUnits(ifc);
+                Assert.Equal(length, assigned[".LENGTHUNIT."]);
+                Assert.Equal(area, assigned[".AREAUNIT."]);
+                Assert.Equal(volume, assigned[".VOLUMEUNIT."]);
+            }
+
             var mmMetrics = ExtractPhysicalMetricsInSi(outputs[IfcUnitFamily.Millimetre], IfcUnitFamily.Millimetre);
             Assert.NotEmpty(mmMetrics.Points);
             Assert.NotEmpty(mmMetrics.StoreyElevations);
@@ -479,6 +489,62 @@ public class IfcLengthUnitChoiceOptionTests
         Assert.Equal(expected, double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture), 15);
     }
 
+    /// <summary>The length, area and volume unit each family assigns, as <see cref="AssignedUnits"/> describes them.</summary>
+    private static readonly Dictionary<IfcUnitFamily, (string Length, string Area, string Volume)> AssignedUnitsOfFamily = new()
+    {
+        [IfcUnitFamily.Millimetre] = ("IFCSIUNIT .MILLI. .METRE.", "IFCSIUNIT $ .SQUARE_METRE.", "IFCSIUNIT $ .CUBIC_METRE."),
+        [IfcUnitFamily.Metre] = ("IFCSIUNIT $ .METRE.", "IFCSIUNIT $ .SQUARE_METRE.", "IFCSIUNIT $ .CUBIC_METRE."),
+        [IfcUnitFamily.Foot] = ("IFCCONVERSIONBASEDUNIT 'FOOT'", "IFCCONVERSIONBASEDUNIT 'SQUARE FOOT'", "IFCCONVERSIONBASEDUNIT 'CUBIC FOOT'"),
+        [IfcUnitFamily.Centimetre] = ("IFCSIUNIT .CENTI. .METRE.", "IFCSIUNIT .CENTI. .SQUARE_METRE.", "IFCSIUNIT .CENTI. .CUBIC_METRE."),
+        [IfcUnitFamily.Inch] = ("IFCCONVERSIONBASEDUNIT 'INCH'", "IFCCONVERSIONBASEDUNIT 'SQUARE INCH'", "IFCCONVERSIONBASEDUNIT 'CUBIC INCH'"),
+    };
+
+    /// <summary>The units of <c>IfcProject.UnitsInContext</c> by unit type (<c>.LENGTHUNIT.</c> and the like), each resolved to the
+    /// entity that defines it: an IfcSIUnit as "type prefix name", an IfcConversionBasedUnit as "type name".</summary>
+    private static Dictionary<string, string> AssignedUnits(string ifc)
+    {
+        var entities = ParseEntities(ifc);
+        var project = Assert.Single(entities.Values, entity => entity.Type == "IFCPROJECT");
+        string[] projectArgs = IfcExporter.SplitStepArguments(project.Args);
+        Assert.True(TryParseRef(projectArgs[8], out int assignmentId), "UnitsInContext is not a reference.");
+        Assert.Equal("IFCUNITASSIGNMENT", entities[assignmentId].Type);
+        Assert.True(TryParseRefList(IfcExporter.SplitStepArguments(entities[assignmentId].Args)[0], out var unitRefs));
+        var units = new Dictionary<string, string>();
+        foreach (int id in unitRefs)
+        {
+            var (type, args) = entities[id];
+            string[] a = IfcExporter.SplitStepArguments(args);
+            units.Add(a[1], type switch
+            {
+                "IFCSIUNIT" => $"{type} {a[2]} {a[3]}",
+                "IFCCONVERSIONBASEDUNIT" => $"{type} {a[2]}",
+                _ => type,
+            });
+        }
+        return units;
+    }
+
+    private static Dictionary<int, (string Type, string Args)> ParseEntities(string ifc)
+    {
+        var entities = new Dictionary<int, (string Type, string Args)>();
+        foreach (string rawLine in ifc.Split('\n'))
+        {
+            string line = rawLine.Trim();
+            if (!line.StartsWith('#')) continue;
+            int eq = line.IndexOf('=');
+            int open = eq > 1 ? line.IndexOf('(', eq + 1) : -1;
+            if (open < 0 || !line.EndsWith(");", StringComparison.Ordinal)
+                || !int.TryParse(line.AsSpan(1, eq - 1), NumberStyles.Integer, CultureInfo.InvariantCulture, out int id))
+                continue;
+            entities.Add(id, (line[(eq + 1)..open].Trim(), line[(open + 1)..^2]));
+        }
+        return entities;
+    }
+
+    // The bar is one line of 1 foot and a quarter circle. Its directrix end parameter is the line length in file units plus the arc
+    // in degrees, the convention of the millimetre, metre and foot output (RebarReaderTests pins 304.8 + 90 for millimetres). That is
+    // not the parameter span of the composite curve, which would be 1 + 90; centimetres and inches keep the convention because
+    // there is no reference in those units to justify another. The expected line parameter is the foot in the unit of the file.
     [Theory]
     [InlineData(IfcUnitFamily.Centimetre, 0.01, 30.48)]
     [InlineData(IfcUnitFamily.Inch, 0.0254, 12.0)]
