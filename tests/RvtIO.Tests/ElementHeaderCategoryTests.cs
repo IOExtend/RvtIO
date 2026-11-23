@@ -172,6 +172,29 @@ public class ElementHeaderCategoryTests
         Assert.Equal([0L, 1L << 20, 2L << 20, junk.LongLength], updates.Select(update => update.Completed));
         Assert.All(updates, update => Assert.Equal(junk.LongLength, update.Total));
     }
+
+    [Fact]
+    public void Walk_ReportsOffsetsOfTheWholeStreamAcrossSegments()
+    {
+        // 8 chunks of 1,500,000 bytes in segments of at most 3,500,000: the first holds two chunks, the others the 1,100,000 bytes carried
+        // over from the last one and one chunk. A segment visits all but its last 1,100,000 bytes, so it starts 1,900,000 and then
+        // 1,500,000 bytes behind the end of the one before; the reports are 1 MiB apart in a segment, counted from where it starts.
+        var chunks = Enumerable.Range(0, 8).Select(_ => new byte[1_500_000]).ToArray();
+        var updates = new List<(long Completed, long Total)>();
+        TfStreamWalker.Walk(chunks, [], (_, _, _, _, _) => { },
+            progress: (completed, total) => updates.Add((completed, total)), segTarget: 3_500_000);
+
+        long[] expected = [0, 1_048_576, 2_948_576, 4_448_576, 5_948_576, 7_448_576, 8_948_576, 10_448_576, 11_497_152, 12_000_000];
+        Assert.Equal(expected, updates.Select(update => update.Completed));
+        Assert.All(updates, update => Assert.Equal(12_000_000, update.Total));
+    }
+
+    [Fact]
+    public void Walk_RejectsASegmentTargetThatCannotHoldTheCarriedOverlap()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            TfStreamWalker.Walk([new byte[16]], [], (_, _, _, _, _) => { }, segTarget: 3 * 1_100_000));
+    }
 }
 
 /// <summary>Test_2022.rvt against the header category of the current profile, one element per (class, category) pair; the vectors are the ones below.</summary>

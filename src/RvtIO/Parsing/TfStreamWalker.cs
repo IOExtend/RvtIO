@@ -16,10 +16,13 @@ internal static partial class TfStreamWalker
 
     private const int MaxBlock = 1_100_000; // > any real block/record size we accept
 
+    /// <summary>Walks the concatenated chunks in segments of at most <paramref name="segTarget"/> bytes (tests pass a small one to
+    /// reach the second segment). <paramref name="progress"/> gets the offset in the concatenated stream and its length.</summary>
     public static void Walk(IReadOnlyList<byte[]> chunks, HashSet<uint> knownIds, BlockVisitor visit,
-        RecordVisitor? visitRecord = null, Action<long, long>? progress = null)
+        RecordVisitor? visitRecord = null, Action<long, long>? progress = null, long segTarget = 1_400_000_000)
     {
-        const long segTarget = 1_400_000_000;
+        // As in WalkStreaming: the carried overlap and two maximum-sized items must fit in a segment.
+        if (segTarget <= 3 * MaxBlock) throw new ArgumentOutOfRangeException(nameof(segTarget));
         long total = 0;
         foreach (var c in chunks) total += c.Length;
         progress?.Invoke(0, total);
