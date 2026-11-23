@@ -6,6 +6,14 @@ API between minor releases.
 
 ## [Unreleased]
 
+### Added
+
+- Read a document, a file model or a scene from a readable, seekable stream with `RvtDocument.OpenStream`,
+  `RvtFileReader.ReadStream` and `RvtSceneReader.ReadStream`. The stream is read from its beginning whatever its
+  position and is only read: it is never written to, shortened or closed, also when it is writable. Errors are the
+  `RvtInputException` kinds of a path read, and a failure of the stream itself is thrown as it was. A document opened from
+  a stream has no `SourcePath`, so `SaveAs` throws and printing leaves out the images it takes from the file.
+
 ### Fixed
 
 - Avoid overflow when triangulating trimmed faces with 46,341 or more vertices after bridging.

@@ -54,6 +54,10 @@ reader decodes the PNG it finds there (8 bits per channel, RGB, RGBA or palette)
 embeds it as an image object with Flate compression. The logo is fitted into the logo area of the title block strip with
 its aspect preserved. The API is `PdfRasterImage` and `PdfPage.DrawImage`.
 
+The images are read from the file at `RvtDocument.SourcePath`. A document opened from a stream (`RvtDocument.OpenStream`) has
+no path, so the logo is left out of the title block strip, a rendering view placed on a sheet draws no image, and a rendering
+view printed on its own is drawn as the isometric massing of the model, as a 3D view is.
+
 ## 3D views
 
 A 3D view placed on a sheet (a rendering that has no image, a solar analysis) prints as an isometric projection of the

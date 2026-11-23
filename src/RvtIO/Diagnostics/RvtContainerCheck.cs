@@ -24,22 +24,46 @@ public static class RvtContainerCheck
         try { file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { throw new RvtInputException("cannot-open", $"'{info.Name}' cannot be opened ({ex.GetType().Name}); the file may be in use or not readable.", ex); }
-        using var _ = file;
+        using var opened = file;
+        using var root = OpenVerified(file, info.Name, out _, surfaceStreamFailures: false);
+    }
+
+    internal static RootStorage OpenVerified(Stream stream, string name, out ReadOnlyStreamView view, bool surfaceStreamFailures = true)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        if (!stream.CanRead || !stream.CanSeek)
+            throw new ArgumentException("The Revit input stream must be readable and seekable.", nameof(stream));
+        if (stream.Length == 0)
+            throw new RvtInputException("empty-file", $"'{name}' is empty.");
+        stream.Position = 0;
+
+        // OpenMcdf trims a writable stream when it closes the root, so it gets a read-only view: the caller's stream is neither
+        // changed nor closed, whatever its access. A failure of the stream itself is not damage of the file and is thrown as it was
+        // (when asked to: the file path keeps reporting it as an input error).
+        view = new ReadOnlyStreamView(stream);
         RootStorage root;
-        try { root = RootStorage.Open(file, StorageModeFlags.LeaveOpen); }
+        try { root = RootStorage.Open(view, StorageModeFlags.LeaveOpen); }
         catch (Exception ex) when (ex is not OutOfMemoryException)
-        { throw new RvtInputException("not-a-compound-file", $"'{info.Name}' is not a Revit file: its compound file header or directory cannot be read ({ex.Message}). The file may be cut or damaged.", ex); }
-        using (root)
+        {
+            if (surfaceStreamFailures) view.ThrowStreamFailure();
+            throw new RvtInputException("not-a-compound-file", $"'{name}' is not a Revit file: its compound file header or directory cannot be read ({ex.Message}). The file may be cut or damaged.", ex);
+        }
+
+        try
         {
             var buffer = new byte[1 << 20];
             int visited = 0;
-            try { Walk(root, "", buffer, ref visited); }
-            catch (Exception ex) when (ex is not (OutOfMemoryException or RvtLimitException))
-            {
-                string where = ex is EndOfStreamException eos && eos.Data["stream"] is string name ? $" in stream '{name}'" : "";
-                throw new RvtInputException("truncated-or-damaged",
-                    $"'{info.Name}' is cut or damaged: the compound file ends early{where} ({ex.Message}).", ex);
-            }
+            Walk(root, "", buffer, ref visited);
+            return root;
+        }
+        catch (Exception ex)
+        {
+            root.Dispose();
+            if (ex is OutOfMemoryException or RvtLimitException) throw;
+            if (surfaceStreamFailures) view.ThrowStreamFailure();
+            string where = ex is EndOfStreamException eos && eos.Data["stream"] is string entryName ? $" in stream '{entryName}'" : "";
+            throw new RvtInputException("truncated-or-damaged",
+                $"'{name}' is cut or damaged: the compound file ends early{where} ({ex.Message}).", ex);
         }
     }
 

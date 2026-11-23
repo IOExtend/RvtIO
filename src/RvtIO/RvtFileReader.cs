@@ -38,12 +38,38 @@ public partial class RvtFileReader
     public RevitFileInfo Read(string rvtPath)
     {
         RvtContainerCheck.Verify(rvtPath);
+        using var root = RootStorage.OpenRead(rvtPath);
+        return ReadCore(root);
+    }
+
+    /// <summary>Reads a Revit compound file from the beginning of a readable, seekable stream, whatever its position.
+    /// The stream is only read: it is never written to, shortened or closed, also when it is writable, and its position may change.</summary>
+    /// <remarks>A failure of the stream itself, such as an <see cref="IOException"/>, a cancellation or a stream closed while it is read,
+    /// is thrown as the stream threw it; it is not reported as a file that is cut or damaged. A stream that ends early is.
+    /// The result carries no file path: a document made from it with <see cref="RvtDocument.FromInfo"/> has no
+    /// <see cref="RvtDocument.SourcePath"/>, so <see cref="RvtDocument.SaveAs"/> throws <see cref="InvalidOperationException"/> for it
+    /// and printing cannot read the images it takes from the file.</remarks>
+    /// <param name="stream">The Revit file, which the caller keeps.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="stream"/> is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="stream"/> is not readable or not seekable, or is closed.</exception>
+    /// <exception cref="RvtInputException">The stream is empty, is not a compound file, or is cut or damaged.</exception>
+    /// <exception cref="RvtLimitException">A stream is longer than one array can hold, or a file with no project
+    /// partitions contains a source element ID above the range of document-local keys.</exception>
+    public RevitFileInfo ReadStream(Stream stream)
+    {
+        using var root = RvtContainerCheck.OpenVerified(stream, "Revit input stream", out var view);
+        var info = ReadCore(root);
+        // The decoders absorb a read that fails and go on with less data; such a result is not returned.
+        view.ThrowStreamFailure();
+        return info;
+    }
+
+    private RevitFileInfo ReadCore(RootStorage root)
+    {
         var diag = _options.DiagnosticOutput;
         using var diagnosticScope = DiagnosticSink.Use(diag);
         var sw = System.Diagnostics.Stopwatch.StartNew();
         void LogPhase(string name) { diag?.WriteLine($"[{sw.Elapsed.TotalSeconds:F1}s] {name}"); }
-
-        using var root = RootStorage.OpenRead(rvtPath);
 
         var elemTable = ElemTableReader.Read(root, out var elemWorksets, out _, out bool elemTableIsExact, out var ids,
             allowWideIds: root.TryOpenStorage("Partitions", out _),
