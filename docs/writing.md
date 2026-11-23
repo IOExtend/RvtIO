@@ -322,7 +322,8 @@ The command uses the same exit codes as `set-parameter`.
 `SetParameters` edits one local RVT and `SetFamilyParameters` edits one local RFA. Each takes a non-empty list and
 applies it in order. Repeated edits to the same parameter see the previous value in the batch. The writer publishes
 the new file only after every operation and the final container pass validation. A refused edit leaves the source
-untouched and produces no destination file.
+untouched and produces no destination file. The writer plans each edit with its own pass over the project or family
+records, so the time of a batch grows in proportion to the number of edits and to the size of the file.
 
 ```csharp
 RvtWriter.SetParameters("project.rvt", "project.edited.rvt",
