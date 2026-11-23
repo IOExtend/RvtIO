@@ -8,6 +8,9 @@ API between minor releases.
 
 ### Added
 
+- Update verified Number and Slope parameters through existing associations between the two specs, including
+  the release-specific rules for Number parameters bound in the project.
+
 - Edit verified project and family parameters in local Revit 2020вЂ“2027 files without Revit. The API and CLI support single assignments and atomic batches, including supported clears, measured values, references, and verified family and global formulas. See the [writing guide](docs/writing.md).
 
 ### Fixed

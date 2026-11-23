@@ -101,7 +101,7 @@ unit formats below. A writable Currency global takes a finite invariant number w
 for example `1234.56789` or `-58.625`. The writer refuses differences for which Revit can retain the previous
 number under its comparison tolerance. Use an empty string to assign empty Text, or `0` to assign an unchecked Yes/No value.
 If a global value controls a verified project-bound user parameter, RvtIO updates both values in the same batch.
-The controlled property must have matching storage and units, and its saved value must match the previous global
+The controlled property must have matching storage and compatible units, and its saved value must match the previous global
 value. This applies to project properties controlled directly by the edited global and to properties controlled by
 the result of a recalculated global formula. The element parameter remains read-only through a direct assignment.
 [Autodesk GlobalParameter.SetValue reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/df012c22-6e65-8de5-1057-f15660d02288.htm)
@@ -128,8 +128,12 @@ associations. Revit accepted `CurrencyInput + 2` in the tested formulas and reje
 Mass, Force, Mass Density, Speed, Slope, and Time also support verified formula dependencies and existing global
 associations. Formulas can scale the quantity and add a compatible measured constant. Revit evaluates Slope as
 a ratio in formulas. For example, a formula that adds 2 percentage points stores the constant as the number `0.02`.
-RvtIO currently requires matching specs for associations. Revit 2025 also saved and reopened a Slope project
-parameter with a Number global association. That combination still requires RvtIO coverage.
+An existing association between Number and Slope transfers the ratio directly. For example, a Number global
+of `0.375` updates its associated Slope parameter to `37.5 %`. Use the global's own input format when editing
+it. A Number global can update a project-bound or loaded-family Slope parameter. A Slope global can update a
+Number type parameter declared in a loaded family. Using a Slope global with a shared Number parameter bound
+in the project requires Revit 2022 or later. Revit 2020 and 2021 refused that project binding on the wall
+instances and basic wall types tested.
 [Autodesk global parameter association reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/796f3d95-956e-a2a9-7f8e-e8efd2a0eea0.htm)
 Mathematical functions include `abs`, `sqrt`, `exp`, `log`, `ln`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`,
 and `pi()`. Square roots support scalars and areas. Trigonometric functions accept angles in radians internally,
@@ -491,6 +495,13 @@ project-bound and family-declared values. The fixtures used scaling, sums of com
 constants. For 70 files, the affected records matched Revit 2020–2025 and 2027. Revit 2027 verified ten files after
 upgrading them from the 2026 format. All files matched the API values and, for families, their `PartAtom` entries
 after Save As and reopening without Audit. Fifty-six refused batches preserved the source bytes and created no output.
+
+Number and Slope association checks covered first edits, replacements, and ordered batches in 24 projects.
+The fixtures included direct and formula-driven associations on wall instances, basic wall types, and loaded
+family elements. Revit 2020–2025 and 2027 matched the saved parameter values and dependent formulas after
+Save As and reopening without Audit. In those releases the affected records in 21 files also matched native
+writes byte for byte. Revit 2027 verified the three 2026-format projects after upgrade. Forty-eight refused
+batches preserved the source bytes and created no output.
 
 Global assignments to loaded family parameters matched 240 Revit API assignments across the eight formats.
 The fixtures included shared family definitions, empty text, unitless and measured values, links to recalculated

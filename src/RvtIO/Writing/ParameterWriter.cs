@@ -428,7 +428,8 @@ internal static class ParameterWriter
             string? definitionClass = walker.Class(BinaryPrimitives.ReadUInt16LittleEndian(definition))?.Name;
             var target = FormulaParameterStorage.Read(walker, definitionWalk, slot,
                 includeCurrency: definitionClass == "ParamElemExternal");
-            value.VerifyFormat(target);
+            // Revit 2020–2021 refuse Slope globals on Number parameters bound in the project.
+            value.VerifyFormat(target, allowSlopeGlobalToNumber: SchemaRelease.FromSchema(formats) is >= 2022);
             return (target.Storage, value.Replacement, target.Unit);
         }
     }

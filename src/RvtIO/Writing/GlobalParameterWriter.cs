@@ -21,9 +21,13 @@ internal static class GlobalParameterWriter
     internal readonly record struct PropertyTarget(long ElementId, long ParameterId);
     internal readonly record struct PropertyValue(long GlobalId, FormulaParameterStorage Format, byte[] Previous, byte[] Replacement)
     {
-        internal void VerifyFormat(FormulaParameterStorage target)
+        internal void VerifyFormat(FormulaParameterStorage target, bool allowSlopeGlobalToNumber = false)
         {
-            if (target.Storage != Format.Storage || target.Unit != Format.Unit || target.Kind != Format.Kind)
+            // Revit transfers the stored slope ratio directly between Slope and Number.
+            bool slopeNumber = (Format.Unit, target.Unit) is (UnitType.UT_Number, UnitType.UT_Slope)
+                || (allowSlopeGlobalToNumber && (Format.Unit, target.Unit) is (UnitType.UT_Slope, UnitType.UT_Number));
+            if (target.Storage != Format.Storage || target.Kind != Format.Kind ||
+                (target.Unit != Format.Unit && !slopeNumber))
                 throw ParameterWriter.Unverified("The controlled property and global parameter have different types.");
             _ = target.Decode(Replacement);
         }

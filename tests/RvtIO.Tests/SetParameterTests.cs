@@ -690,32 +690,59 @@ public sealed class SetParameterTests : IDisposable
     }
 
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public void ASlopeGlobalRequiresMatchingStorageOnItsAssociatedParameter(bool matchingSpec)
+    [InlineData(2022, true, true)]
+    [InlineData(2022, true, false)]
+    [InlineData(2022, false, true)]
+    [InlineData(2021, false, true)]
+    [InlineData(2020, false, true)]
+    public void SlopeAndNumberAssociationsUseTheStoredRatio(int release, bool slopeDriver, bool slopeProperty)
     {
         const string slope = "autodesk.spec.aec:slope-2.0.0";
         var parameter = new UserParameter(Kind.Number, true,
-            DefinitionSpec: matchingSpec ? (UnitType.UT_Slope, slope) : null);
+            DefinitionSpec: slopeProperty ? (UnitType.UT_Slope, slope) : null);
         var association = new ProjectAssociation((BuiltInParameter)DefinitionId, GlobalId: PropertyGlobalId);
-        var global = new GlobalFixture(Kind.Number, InitialValue: "1.5", SpecId: slope);
-        string source = CreateSource(wall: true, user: parameter, association: association, globalParameter: global);
-        if (!matchingSpec)
-        {
-            byte[] before = File.ReadAllBytes(source);
-            var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetParameters(source, Output,
-                [new(ProjectId, (int)BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS, "Staged"), new(PropertyGlobalId, PropertyGlobalId, "25 %")]));
-            Assert.Equal("unverified-parameter-storage", error.Kind);
-            Assert.Contains("different types", error.Message);
-            Assert.False(File.Exists(Output));
-            Assert.Equal(before, File.ReadAllBytes(source));
-            return;
-        }
+        var global = new GlobalFixture(Kind.Number, InitialValue: "1.5", SpecId: slopeDriver ? slope : null);
+        string source = CreateSource(wall: true, user: parameter, association: association, globalParameter: global, release: release);
 
-        RvtWriter.SetParameter(source, Output, PropertyGlobalId, PropertyGlobalId, "25 %");
+        RvtWriter.SetParameters(source, Output,
+            [new(PropertyGlobalId, PropertyGlobalId, slopeDriver ? "-62.5 %" : "-0.625"),
+             new(PropertyGlobalId, PropertyGlobalId, slopeDriver ? "25 %" : "0.25")]);
         using var root = RootStorage.OpenRead(Output);
-        Assert.Equal(UserBody(parameter, "0.25", association: association), ReadBody(root));
-        Assert.Equal(GlobalBody(global, "0.25", PropertyGlobalId), ReadBody(root, PropertyGlobalId));
+        Assert.Equal(UserBody(parameter, "0.25", association: association), ReadBody(root, release: release));
+        Assert.Equal(GlobalBody(global, "0.25", PropertyGlobalId, release: release), ReadBody(root, PropertyGlobalId, release));
+    }
+
+    [Theory]
+    [InlineData(2020)]
+    [InlineData(2021)]
+    public void LegacyProjectBindingsRefuseSlopeGlobalsOnNumberParameters(int release)
+    {
+        var association = new ProjectAssociation((BuiltInParameter)DefinitionId, GlobalId: PropertyGlobalId);
+        string source = CreateSource(wall: true, user: new(Kind.Number, true), association: association, release: release,
+            globalParameter: new(Kind.Number, InitialValue: "1.5", SpecId: "autodesk.spec.aec:slope-2.0.0"));
+        byte[] before = File.ReadAllBytes(source);
+        var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetParameters(source, Output,
+            [new(ProjectId, (int)BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS, "Staged"), new(PropertyGlobalId, PropertyGlobalId, "25 %")]));
+        Assert.Equal("unverified-parameter-storage", error.Kind);
+        Assert.Contains("different types", error.Message);
+        Assert.False(File.Exists(Output));
+        Assert.Equal(before, File.ReadAllBytes(source));
+    }
+
+    [Fact]
+    public void AForceAssociationToSlopeRefusesTheEntireBatch()
+    {
+        var parameter = new UserParameter(Kind.Number, true, DefinitionSpec: (UnitType.UT_Slope, "autodesk.spec.aec:slope-2.0.0"));
+        var association = new ProjectAssociation((BuiltInParameter)DefinitionId, GlobalId: PropertyGlobalId);
+        string source = CreateSource(wall: true, user: parameter, association: association,
+            globalParameter: new(Kind.Number, InitialValue: "1.5", SpecId: "autodesk.spec.aec.structural:force-2.0.0"));
+        byte[] before = File.ReadAllBytes(source);
+        var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetParameters(source, Output,
+            [new(ProjectId, (int)BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS, "Staged"), new(PropertyGlobalId, PropertyGlobalId, "25 kN")]));
+        Assert.Equal("unverified-parameter-storage", error.Kind);
+        Assert.Contains("different types", error.Message);
+        Assert.False(File.Exists(Output));
+        Assert.Equal(before, File.ReadAllBytes(source));
     }
 
     [Fact]
@@ -2249,7 +2276,7 @@ public sealed class SetParameterTests : IDisposable
             {
                 string initial = globalParameter.InitialValue ?? (globalFormulas is null ? "0" : globalFormulas.Conditional ? "1" : "2");
                 int id = association?.GlobalId ?? DefinitionId;
-                records.Add(((ulong)id, 59, GlobalBody(globalParameter, initial, id)[2..]));
+                records.Add(((ulong)id, 59, GlobalBody(globalParameter, initial, id, release: release)[2..]));
                 if (globalParameter.Consumer)
                     records.Add((BindingId, 61, Pack(writer =>
                     {
@@ -2886,7 +2913,7 @@ public sealed class SetParameterTests : IDisposable
     }
 
     private static byte[] GlobalBody(GlobalFixture parameter, string value = "0", int id = DefinitionId, GlobalBinary? binary = null,
-        bool conditional = false, int function = 0) => Pack(writer =>
+        bool conditional = false, int function = 0, int release = 2022) => Pack(writer =>
     {
         writer.Write((ushort)59);
         WriteEmptyElement(writer, id);
@@ -2909,8 +2936,16 @@ public sealed class SetParameterTests : IDisposable
         }
         if (parameter.Kind == Kind.Number)
         {
-            WriteText(writer, parameter.SpecId ??
-                (parameter.Currency ? "autodesk.spec.measurable:currency-2.0.0" : "autodesk.spec.aec:number-2.0.0"));
+            if (release == 2020)
+                writer.Write((int)(parameter.SpecId switch
+                {
+                    null => parameter.Currency ? UnitType.UT_Currency : UnitType.UT_Number,
+                    "autodesk.spec.aec:slope-2.0.0" => UnitType.UT_Slope,
+                    _ => throw new ArgumentException("The fixture does not supply a legacy unit for this spec.", nameof(parameter)),
+                }));
+            else
+                WriteText(writer, parameter.SpecId ??
+                    (parameter.Currency ? "autodesk.spec.measurable:currency-2.0.0" : "autodesk.spec.aec:number-2.0.0"));
             writer.Write(1);
             writer.Write(false);
         }

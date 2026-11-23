@@ -177,7 +177,7 @@ internal static class LoadedFamilyParameterWriter
         (StorageType Storage, byte[] Replacement, UnitType? Quantity) PrepareDriven(GlobalParameterWriter.PropertyValue value)
         {
             var format = FormulaParameterStorage.Read(walker, def, slot, includeCurrency: true);
-            value.VerifyFormat(format);
+            value.VerifyFormat(format, allowSlopeGlobalToNumber: true);
             return (format.Storage, value.Replacement, format.Unit);
         }
 
