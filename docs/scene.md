@@ -27,13 +27,13 @@ takes the meshes you extracted from that document yourself, for example with `El
 own. Open a file of a release other than
 Revit 2022 with `R22Layout = true`, or its elements have no geometry and the result has the error `geometry-undecoded`.
 `Read(path)` and `ReadStream(stream, options)` report the diagnostics of the read (`read-cut`, `failed-members`,
-`recovered-members`, `unverified-members`), because they open the file themselves; if you open the document yourself, read
+`recovered-members`, `unverified-members`), because they read the file themselves; if you open the document yourself, read
 them from the `RvtReaderOptions.Diagnostics` you opened it with.
 
 `ReadStream(stream, options)` reads from the beginning of a readable, seekable stream (whatever its position) with the same
 reader options as `Read(path)`. It needs `RvtSceneOptions.ModelKey`, because a stream has no file name. The stream is only
-read: the call never writes to it, shortens it or closes it, also when it is writable. An empty, non-RVT, cut or damaged
-stream is an `RvtInputException`, as for a file; a failure of the stream itself (an `IOException`, a cancellation) reaches
+read: the call never writes to it, shortens it or closes it, also when it is writable. A stream that is empty, is not a
+compound file, or is cut or damaged is an `RvtInputException`, as for a path read; a failure of the stream itself (an `IOException`, a cancellation) reaches
 you as the stream threw it, not as a damaged file. A null stream is an `ArgumentNullException`; an unreadable, non-seekable or
 closed one is an `ArgumentException`.
 
