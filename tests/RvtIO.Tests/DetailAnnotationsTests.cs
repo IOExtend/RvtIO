@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using RvtIO.BuiltIns;
 using RvtIO.Model;
 using RvtIO.Parsing;
+using RvtIO.Pdf;
 using RvtIO.Print;
 using Xunit;
 
@@ -9,6 +10,56 @@ namespace RvtIO.Tests;
 
 public sealed class DetailAnnotationsTests
 {
+    [Theory]
+    [InlineData("4", "A105", true, true)]
+    [InlineData("Д-1", "A105", false, true)]
+    [InlineData("4", "Лист-1", true, false)]
+    [InlineData("Д-1", "Лист-1", false, false)]
+    public void DrawCallouts_WithoutAFontWritesOnlyTextTheStandardFontHolds(
+        string detailNumber, string sheetNumber, bool detailDrawn, bool sheetDrawn)
+    {
+        const int sheetId = 10, parentId = 20, childId = 30, typeId = 31, tagId = 32, headId = 33, viewportId = 40;
+        var parentCrop = new ViewCropFrame(0, 0, 0, [1, 0, 0], [0, 1, 0], [0, 0, 1], 0, 0, 100, 100, true);
+        var childCrop = parentCrop with { X0 = 10, Y0 = 10, X1 = 20, Y1 = 20 };
+        var sheet = new Element { Id = sheetId, Parameters = { Param(BuiltInParameter.SHEET_NUMBER, sheetNumber, StorageType.String) } };
+        var parent = new Element { Id = parentId, ViewCrop = parentCrop };
+        var document = RvtDocument.FromInfo(new RevitFileInfo
+        {
+            Elements =
+            {
+                sheet, parent,
+                new Element { Id = childId, TypeId = typeId, ViewCrop = childCrop, SectionCallout = (parentId, [30, 30, 0]) },
+                new Element { Id = typeId, Parameters = { Param(BuiltInParameter.CALLOUT_TAG, tagId, StorageType.ElementId) } },
+                new Element
+                {
+                    Id = tagId,
+                    Parameters =
+                    {
+                        Param(BuiltInParameter.CALLOUT_CORNER_SHEET_RADIUS, 0.01, StorageType.Double),
+                        Param(BuiltInParameter.CALLOUT_ATTR_HEAD_TAG, headId, StorageType.ElementId),
+                    },
+                },
+                new Element { Id = headId, FamilyName = "M_Callout Head", BoundingBox = [0, 0, 0, 0.02, 0.02, 0] },
+                new Element
+                {
+                    Id = viewportId, ViewportViewId = childId, SerializedOwnerDbViewId = sheetId,
+                    Parameters = { Param(BuiltInParameter.VIEWPORT_DETAIL_NUMBER, detailNumber, StorageType.String) },
+                },
+            },
+        });
+        var page = new PdfDocument().AddPage(PdfPageSize.A3);
+
+        // The standard PDF font holds printable ASCII only: text outside it is left out instead of throwing.
+        DetailAnnotations.DrawCallouts(page, document, sheet, parent, parentCrop, 50, 150, 350);
+
+        Assert.Contains("q 1 J 1 j", page.Content);
+        Assert.Equal(detailDrawn, page.Content.Contains($"({detailNumber}) Tj", StringComparison.Ordinal));
+        Assert.Equal(sheetDrawn, page.Content.Contains($"({sheetNumber}) Tj", StringComparison.Ordinal));
+    }
+
+    private static Parameter Param(BuiltInParameter id, object value, StorageType storage) =>
+        new() { Id = (int)id, Definition = new() { Id = (int)id }, StorageType = storage, Value = value };
+
     [Theory]
     [InlineData(BuiltInCategory.OST_Floors, 0, 2)]
     [InlineData(BuiltInCategory.OST_Floors, 10, 0)]

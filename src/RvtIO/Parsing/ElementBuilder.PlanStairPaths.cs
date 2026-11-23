@@ -6,7 +6,7 @@ namespace RvtIO.Parsing;
 
 internal static partial class ElementBuilder
 {
-    private static Dictionary<int, List<RevitFileInfo.PlanStairPath>> ReadPlanStairPaths(ParsingState state)
+    internal static Dictionary<int, List<RevitFileInfo.PlanStairPath>> ReadPlanStairPaths(ParsingState state)
     {
         var byView = new Dictionary<int, List<RevitFileInfo.PlanStairPath>>();
         foreach (var (id, path) in state.NativeParams)

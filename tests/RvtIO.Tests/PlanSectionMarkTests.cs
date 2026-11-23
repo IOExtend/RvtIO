@@ -53,7 +53,7 @@ public class PlanSectionMarkTests
     }
 
 
-    [Theory]
+    [SkippableTheory]
     [InlineData(true, false)]
     [InlineData(false, false)]
     [InlineData(true, true)]

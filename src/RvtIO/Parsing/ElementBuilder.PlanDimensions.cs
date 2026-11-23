@@ -6,7 +6,7 @@ namespace RvtIO.Parsing;
 
 internal static partial class ElementBuilder
 {
-    private static void ReadPlanDimensions(RevitFileInfo info, ParsingState state)
+    internal static void ReadPlanDimensions(RevitFileInfo info, ParsingState state)
     {
         var byView = new Dictionary<int, List<RevitFileInfo.PlanDimension>>();
         var styles = new Dictionary<int, RevitFileInfo.PlanDimensionStyle>();

@@ -7,7 +7,7 @@ namespace RvtIO.Parsing;
 
 internal static partial class ElementBuilder
 {
-    private static TfBlockDeserializer.ScheduleTableDef ResolveRevisionTextTypes(ParsingState state,
+    internal static TfBlockDeserializer.ScheduleTableDef ResolveRevisionTextTypes(ParsingState state,
         TfBlockDeserializer.ScheduleTableDef table)
     {
         if (table.CategoryId != (int)BuiltInCategory.OST_Revisions
@@ -29,7 +29,7 @@ internal static partial class ElementBuilder
         }
     }
 
-    private static Dictionary<int, List<List<RevitFileInfo.ScheduleCellValue>>> EvaluateScheduleRows(RevitFileInfo info, ParsingState state)
+    internal static Dictionary<int, List<List<RevitFileInfo.ScheduleCellValue>>> EvaluateScheduleRows(RevitFileInfo info, ParsingState state)
     {
         var result = new Dictionary<int, List<List<RevitFileInfo.ScheduleCellValue>>>();
         foreach (var (id, entry) in state.ScheduleTables)
@@ -41,7 +41,7 @@ internal static partial class ElementBuilder
         return result;
     }
 
-    private static List<List<RevitFileInfo.ScheduleCellValue>>? BuildScheduleRows(TfBlockDeserializer.ScheduleTableDef table,
+    internal static List<List<RevitFileInfo.ScheduleCellValue>>? BuildScheduleRows(TfBlockDeserializer.ScheduleTableDef table,
         IEnumerable<Element> elements, ParsingState state)
     {
         // shortcut: itemized instance rows with flat sorting and integer filters, until other schedule expression types are evaluated.

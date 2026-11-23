@@ -92,6 +92,43 @@ public class PdfTrueTypeFontTests
         Assert.Contains($"/Type /FontDescriptor /FontName {name} /Flags", pdf);
     }
 
+    [SkippableFact]
+    public void Document_WiresTheRegularAndBoldFontsThroughThePageResourcesAndTheCrossReference()
+    {
+        byte[] file = Font().File_;
+        // A macOS style name with a space, on both fonts, so the names are escaped in every dictionary of each.
+        var regular = new PdfTrueTypeFont(file, "Arial Regular");
+        var bold = new PdfTrueTypeFont(file, "Arial Bold");
+        var document = new PdfDocument { Font = regular, BoldFont = bold };
+        var page = document.AddPage(PdfPageSize.A4);
+        page.DrawText("A", 10, 10);
+        page.DrawStyledText("B", 30, 30, 5, PdfTextAlignment.Center, 0, true, new PdfColor(.9, .9, .9));
+
+        // The table is checked object by object: every offset must point at the object it names.
+        var objects = PdfObjects.Write(document);
+
+        string pageObject = objects[objects.IdOf("/Type /Page /Parent")];
+        int helvetica = objects.Reference(pageObject, "/F1 ");
+        int regularId = objects.Reference(pageObject, "/F2 ");
+        int boldId = objects.Reference(pageObject, "/F3 ");
+        Assert.Equal(3, new[] { helvetica, regularId, boldId }.Distinct().Count());
+        Assert.StartsWith("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica", objects[helvetica]);
+        foreach (var (id, name, characters) in new[] { (regularId, "Arial#20Regular", "A"), (boldId, "Arial#20Bold", "B") })
+        {
+            // Type0 font, its CID font, the descriptor, the font file and the character map each in an object of its own.
+            string type0 = objects[id];
+            Assert.StartsWith($"<< /Type /Font /Subtype /Type0 /BaseFont /{name} /Encoding /Identity-H", type0);
+            string cid = objects[objects.Reference(type0, "/DescendantFonts ")];
+            Assert.StartsWith($"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /{name} ", cid);
+            string descriptor = objects[objects.Reference(cid, "/FontDescriptor ")];
+            Assert.StartsWith($"<< /Type /FontDescriptor /FontName /{name} ", descriptor);
+            string fontFile = objects[objects.Reference(descriptor, "/FontFile2 ")];
+            Assert.StartsWith($"<< /Length {file.Length} /Length1 {file.Length} >>\nstream\n", fontFile);
+            string toUnicode = objects[objects.Reference(type0, "/ToUnicode ")];
+            Assert.Contains($"<{(id == regularId ? regular : bold).GlyphOf(characters[0]):X4}> <00{(int)characters[0]:X2}>", toUnicode);
+        }
+    }
+
     [Fact]
     public void Document_WithoutAFont_StillUsesHelvetica()
     {

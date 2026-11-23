@@ -5,7 +5,7 @@ namespace RvtIO.Parsing;
 
 internal static partial class ElementBuilder
 {
-    private static List<RevitFileInfo.PlanElevationMark> ReadPlanElevationMarks(ParsingState state)
+    internal static List<RevitFileInfo.PlanElevationMark> ReadPlanElevationMarks(ParsingState state)
     {
         var result = new List<RevitFileInfo.PlanElevationMark>();
         foreach (var (markerId, marker) in state.NativeParams)

@@ -5,7 +5,7 @@ namespace RvtIO.Parsing;
 
 internal static partial class ElementBuilder
 {
-    private static Dictionary<int, List<RevitFileInfo.SiteContourLabel>> BuildSiteContourLabels(ParsingState state)
+    internal static Dictionary<int, List<RevitFileInfo.SiteContourLabel>> BuildSiteContourLabels(ParsingState state)
     {
         var labels = new Dictionary<int, List<RevitFileInfo.SiteContourLabel>>();
         foreach (var (id, element) in state.NativeParams)

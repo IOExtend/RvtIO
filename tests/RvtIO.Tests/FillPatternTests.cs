@@ -41,11 +41,132 @@ public class FillPatternTests
         Assert.Equal(valid ? new FillHatch.ModelGrid(7, 5, 0, 4) : null, grid);
     }
 
+    private static RvtDocument DocumentWithPattern(params TfBlockDeserializer.PatternGrid[] grids)
+    {
+        var doc = RvtDocument.FromInfo(new RevitFileInfo());
+        doc.RawData.FillPatterns = new Dictionary<int, (string, IReadOnlyList<TfBlockDeserializer.PatternGrid>)>
+        {
+            [8] = ("Pattern", grids),
+        };
+        return doc;
+    }
+
+    [Theory]
+    [InlineData(1, 4, 0, 1, true)]
+    [InlineData(0, 4, 0, 1, false)]
+    [InlineData(1, 0, 0, 1, false)]
+    [InlineData(1, -4, 0, 1, false)]
+    [InlineData(1, 4, 2, 1, false)]
+    [InlineData(1, 4, 0, 2, false)]
+    public void ProjectModelGrid_KeepsOnlyOneContinuousGridOfTheFaceTarget(
+        int target, double offset, int dashCount, int gridCount, bool valid)
+    {
+        double[] segments = dashCount == 0 ? [] : [0.25, 0.75];
+        var grids = Enumerable.Range(0, gridCount)
+            .Select(_ => new TfBlockDeserializer.PatternGrid(0, 2, 3, 0, offset, segments, Target: target, Orientation: 0))
+            .ToArray();
+        var face = new GeoFace { ModelPattern = new(8, [5, 1, 2], [1, 0, 0], [0, 0, 1]) };
+
+        var grid = FillHatch.ProjectModelGrid(DocumentWithPattern(grids), face, p => (p[0], p[2]));
+
+        Assert.Equal(valid, grid != null);
+    }
+
+    [Fact]
+    public void ProjectModelGrid_NeedsTheFacePlacementAndItsPattern()
+    {
+        var grid = new TfBlockDeserializer.PatternGrid(0, 2, 3, 0, 4, [], Target: 1, Orientation: 0);
+        var placed = new GeoFace { ModelPattern = new(8, [5, 1, 2], [1, 0, 0], [0, 0, 1]) };
+        var unknownPattern = new GeoFace { ModelPattern = new(9, [5, 1, 2], [1, 0, 0], [0, 0, 1]) };
+
+        Assert.Null(FillHatch.ProjectModelGrid(DocumentWithPattern(grid), new GeoFace(), p => (p[0], p[2])));
+        Assert.Null(FillHatch.ProjectModelGrid(DocumentWithPattern(grid), unknownPattern, p => (p[0], p[2])));
+        Assert.NotNull(FillHatch.ProjectModelGrid(DocumentWithPattern(grid), placed, p => (p[0], p[2])));
+    }
+
+    [Theory]
+    [InlineData(1, 0, 0.25, 0.75, true)]
+    [InlineData(2, 0, 0.25, 0.75, false)]
+    [InlineData(1, 1, 0.25, 0.75, false)]
+    [InlineData(1, 0, 0.0, 0.0, false)]
+    [InlineData(1, 0, -0.25, 1.0, false)]
+    public void ProjectDashedModelGrids_KeepsOnlyDashesWithAPositivePeriodAndNoNegativeSegment(
+        int target, int orientation, double dash, double gap, bool valid)
+    {
+        var grid = new TfBlockDeserializer.PatternGrid(0, 2, 3, 0, 4, [dash, gap], Target: target, Orientation: orientation);
+        var face = new GeoFace { ModelPattern = new(8, [5, 1, 2], [1, 0, 0], [0, 0, 1]) };
+
+        var grids = FillHatch.ProjectDashedModelGrids(DocumentWithPattern(grid), face, p => (p[0], p[2]));
+
+        Assert.Equal(valid, grids != null);
+    }
+
+    [Fact]
+    public void ProjectDashedModelGrids_RefusesAContinuousGrid()
+    {
+        var continuous = new TfBlockDeserializer.PatternGrid(0, 2, 3, 0, 4, [], Target: 1, Orientation: 0);
+        var face = new GeoFace { ModelPattern = new(8, [5, 1, 2], [1, 0, 0], [0, 0, 1]) };
+
+        Assert.Null(FillHatch.ProjectDashedModelGrids(DocumentWithPattern(continuous), face, p => (p[0], p[2])));
+    }
+
+    [Fact]
+    public void ProjectDashedModelGrids_RefusesAPatternWhenOneOfItsGridsIsRefused()
+    {
+        var dashed = new TfBlockDeserializer.PatternGrid(0, 2, 3, 0, 4, [0.25, 0.75], Target: 1, Orientation: 0);
+        var degenerate = dashed with { Offset = 0 };
+        var face = new GeoFace { ModelPattern = new(8, [5, 1, 2], [1, 0, 0], [0, 0, 1]) };
+
+        Assert.Equal(2, FillHatch.ProjectDashedModelGrids(DocumentWithPattern(dashed, dashed with { Angle = 1 }), face, p => (p[0], p[2]))!.Count);
+        Assert.Null(FillHatch.ProjectDashedModelGrids(DocumentWithPattern(dashed, degenerate), face, p => (p[0], p[2])));
+        Assert.Null(FillHatch.ProjectDashedModelGrids(DocumentWithPattern(), face, p => (p[0], p[2])));
+    }
+
+    [Theory]
+    [InlineData(-0.02, -0.01)]
+    [InlineData(0.02, 0.01)]
+    public void DraftingTiles_ShiftFollowsTheSignOfTheOffset(double offset, double expectedShift)
+    {
+        var grid = new TfBlockDeserializer.PatternGrid(0.5, 0.001, 0.002, 0.01, offset, [0.1, 0.2]);
+
+        var tile = Assert.Single(FillHatch.DraftingTiles([grid], 15, 25, 0.1)!);
+
+        Assert.Equal(expectedShift * 304.8, tile.Shift, 8);
+        Assert.Equal(0.02 * 304.8, tile.Spacing, 8);
+        Assert.Equal(0.5, tile.Angle);
+        Assert.Equal((15 + 0.001 * 304.8, 25 + 0.002 * 304.8), (tile.X, tile.Y));
+        Assert.Equal([0.1 * 304.8, 0.2 * 304.8], tile.Segments);
+    }
+
+    [Fact]
+    public void DraftingTiles_RefuseALineSpacingThatDoesNotExceedThePenWidth()
+    {
+        var grid = new TfBlockDeserializer.PatternGrid(0, 0, 0, 0, 0.01, [0.1, 0.2]);
+        double spacing = 0.01 * 304.8;
+
+        Assert.Null(FillHatch.DraftingTiles([grid], 0, 0, spacing));
+        Assert.Null(FillHatch.DraftingTiles([grid], 0, 0, spacing * 2));
+        Assert.Single(FillHatch.DraftingTiles([grid], 0, 0, spacing / 2)!);
+    }
+
+    [Fact]
+    public void DraftingTiles_SkipsContinuousGridsAndRefusesAZeroPeriod()
+    {
+        var continuous = new TfBlockDeserializer.PatternGrid(0, 0, 0, 0, 0.02, []);
+        var dashed = new TfBlockDeserializer.PatternGrid(0, 0, 0, 0, 0.02, [0.1, 0.2]);
+        var zeroPeriod = new TfBlockDeserializer.PatternGrid(0, 0, 0, 0, 0.02, [0, 0]);
+
+        Assert.Empty(FillHatch.DraftingTiles([continuous], 0, 0, 0.1)!);
+        Assert.Single(FillHatch.DraftingTiles([continuous, dashed], 0, 0, 0.1)!);
+        Assert.Null(FillHatch.DraftingTiles([dashed, zeroPeriod], 0, 0, 0.1));
+        Assert.Null(FillHatch.DraftingTiles([dashed with { Angle = double.NaN }], 0, 0, 0.1));
+    }
+
     [Theory]
     [InlineData(-0.02, 0.1, true)]
     [InlineData(0.02, -0.1, false)]
     [InlineData(0.0, 0.1, false)]
-    public void DraftingTiles_UsesPaperLengthsAndRejectsInvalidDashes(double offset, double dash, bool valid)
+    public void DraftingTiles_UsesPaperLengthsAndRejectsInvalidGrids(double offset, double dash, bool valid)
     {
         var grid = new TfBlockDeserializer.PatternGrid(0, 0, 0, 0.01, offset, [dash, 0.2]);
         var tiles = FillHatch.DraftingTiles([grid], 15, 25, 0.1);

@@ -175,4 +175,39 @@ public class ElementBuilderGeometryTests
         Assert.Contains(clipped.Faces.SelectMany(face => face.OuterVertices!),
             point => BitConverter.DoubleToInt64Bits(point[2]) == BitConverter.DoubleToInt64Bits(1.25));
     }
+
+    private static ViewFacingLine ProjectedLine(double x) => new([x, 0, 0], [x + 1, 0, 0], [0, 0, 1], 7);
+
+    private static GeometryData SquareWithLines(params ViewFacingLine[] lines) => new()
+    {
+        Faces = [new GeoFace { OuterVertices = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]] }],
+        ViewFacingLines = lines.ToList(),
+    };
+
+    [Fact]
+    public void ClipGeometryToBounds_GivesTheResultItsOwnViewFacingLines()
+    {
+        var source = SquareWithLines(ProjectedLine(0));
+
+        var clipped = ElementBuilder.ClipGeometryToBounds(source, [-5, -5, -5, 5, 5, 5])!;
+        // Appending a symbol to the clipped geometry must not reach back into the source it was cut from.
+        ElementBuilder.AppendGeometry(clipped, SquareWithLines(ProjectedLine(10)));
+
+        Assert.NotSame(source.ViewFacingLines, clipped.ViewFacingLines);
+        Assert.Equal(2, clipped.ViewFacingLines!.Count);
+        Assert.Single(source.ViewFacingLines!);
+    }
+
+    [Fact]
+    public void BuildGeometryData_GivesTheResultItsOwnViewFacingLines()
+    {
+        var grep = new GRepData { BoundingBox = [0, 0, 0, 1, 1, 0], ViewFacingLines = [ProjectedLine(0)] };
+
+        var built = ElementBuilder.BuildGeometryData(grep)!;
+        ElementBuilder.AppendGeometry(built, SquareWithLines(ProjectedLine(10)));
+
+        Assert.NotSame(grep.ViewFacingLines, built.ViewFacingLines);
+        Assert.Equal(2, built.ViewFacingLines!.Count);
+        Assert.Single(grep.ViewFacingLines);
+    }
 }

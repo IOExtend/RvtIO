@@ -308,6 +308,34 @@ public class PdfWriterTests
     }
 
     [Fact]
+    public void DashedLineFill_WritesItsTileAsAnObjectThePageResourcesAndTheCrossReferenceReach()
+    {
+        var pdf = new PdfDocument();
+        var page = pdf.AddPage(PdfPageSize.A4);
+        List<(double X, double Y)> polygon = [(0, 0), (50, 0), (50, 50), (0, 50)];
+        page.FillWithLinePattern([polygon], new PdfLinePattern(3, 0, 0, 0, 0.2, -1, [2, 3]));
+        page.FillWithLinePattern([polygon], new PdfLinePattern(3, 0, 0, 0, 0.2));
+
+        var objects = PdfObjects.Write(pdf);
+
+        string pageObject = objects[objects.IdOf("/Type /Page /Parent")];
+        // The dashed tile is the first pattern and the plain line the second: the page names each object the table holds.
+        string dashed = objects[objects.Reference(pageObject, "/P0 ")];
+        string plain = objects[objects.Reference(pageObject, "/P1 ")];
+        Assert.StartsWith("<< /Type /Pattern /PatternType 1 /PaintType 1 /TilingType 2 /BBox [", dashed);
+        Assert.Contains("/XStep 14.173228346 /YStep 8.503937008 /Matrix [1 0 -0.333333333 1 0 0]", dashed);
+        Assert.StartsWith("<< /Type /Pattern /PatternType 1 /PaintType 1 /TilingType 2 /BBox [", plain);
+        Assert.DoesNotContain("/XStep 14.173228346", plain);
+        foreach (string tile in new[] { dashed, plain })
+        {
+            // The declared length is the tile stream that follows.
+            int length = int.Parse(System.Text.RegularExpressions.Regex.Match(tile, @"/Length (\d+)").Groups[1].Value);
+            int start = tile.IndexOf("stream\n", StringComparison.Ordinal) + "stream\n".Length;
+            Assert.Equal(length, tile.IndexOf("endstream\n", StringComparison.Ordinal) - start);
+        }
+    }
+
+    [Fact]
     public void Save_WritesACrossReferenceThatPointsAtEveryObject()
     {
         var document = new PdfDocument();

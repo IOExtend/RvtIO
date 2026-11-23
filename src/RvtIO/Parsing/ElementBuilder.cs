@@ -222,7 +222,7 @@ internal static partial class ElementBuilder
         t[11] + point[0] * t[6] + point[1] * t[7] + point[2] * t[8],
     ];
 
-    private static void ApplyPlanFixtureGraphics(IReadOnlyList<Element> elements, ParsingState state)
+    internal static void ApplyPlanFixtureGraphics(IReadOnlyList<Element> elements, ParsingState state)
     {
         foreach (var element in elements)
         {
@@ -7009,7 +7009,7 @@ internal static partial class ElementBuilder
     }
 
     /// <param name="instanceOrder">The order key of the GInstance node the source geometry is the symbol of: the source's nodes then sort at that node's place among the nodes of the target (Revit walks a GInstance's symbol where the GInstance stands); null keeps the keys of the source as they are.</param>
-    private static void AppendGeometry(GeometryData target, GeometryData source, long? instanceOrder = null)
+    internal static void AppendGeometry(GeometryData target, GeometryData source, long? instanceOrder = null)
     {
         int faceOffset = target.Faces.Count;
         int edgeOffset = target.Edges?.Count ?? 0;

@@ -6,7 +6,7 @@ namespace RvtIO.Parsing;
 
 internal static partial class ElementBuilder
 {
-    private static Dictionary<int, IReadOnlyDictionary<string, uint>> BuildViewRoomColors(RevitFileInfo info,
+    internal static Dictionary<int, IReadOnlyDictionary<string, uint>> BuildViewRoomColors(RevitFileInfo info,
         ParsingState state)
     {
         var result = new Dictionary<int, IReadOnlyDictionary<string, uint>>();
