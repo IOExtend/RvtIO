@@ -57,6 +57,7 @@ public static class RvtSceneReader
             SystemFamilyNameLocale = "ENU",
             SeparateFacesWithDistinctOpenings = true,
             Diagnostics = readDiagnostics,
+            Progress = options?.ReadProgress,
         });
         return Map(document, ElementMeshes.Extract(document, MeshOptions(options)), key, ReadDiagnostics(readDiagnostics));
     }

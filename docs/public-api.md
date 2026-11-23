@@ -12,11 +12,18 @@ projects through `InternalsVisibleTo`.
 | `RvtFileReader` | Lower level read (`Read`) that returns the `RevitFileInfo` behind a document. |
 | `RvtReaderOptions` | Options of a read, including `DiagnosticOutput`, `ResolveCurrentCopies` (keeps only the current copy of an element that several partition streams hold; default true, set it to false to decode every copy), `RaiseLimits` and `Diagnostics`. `RevitLocalizationDirectory` is `[Obsolete]` and ignored: the texts are built in. |
 | `RvtReadDiagnostics`, `StreamRecord`, `ReaderLimitHit` | What a read collects when `RvtReaderOptions.Diagnostics` is set: the partition and metadata streams read (stored and inflated byte sizes and member decode counts) and the streams cut by a limit. |
+| `RvtReadProgress` | File-reading updates delivered through `RvtReaderOptions.Progress`. |
 | `ExportReport`, `SkipLog`, `GeometryQualityClass`, `ElementGeometryQuality` | The machine-readable report of a run (`ToJson`), the per-element geometry quality classification and totals, and the elements an export left out; see [the export report](export-report.md). |
 | `RvtExitCodes`, `RvtInputException`, `RvtLimitException`, `RvtContainerCheck` | The exit codes 0 to 4 and 6 of the command line tool (code 5 is returned by `downgrade --check` and `save-as` when refused), the exceptions `RvtFileReader.Read` throws for a file it cannot read, and the check that raises them. |
 | `FilteredElementCollector` | Query over the elements of a document (`OfCategory`, `WhereElementIsNotElementType`, `Where`, ...). |
 | `BuildingStoreyCatalog`, `BuildingStorey` | `RvtDocument.GetBuildingStoreyCatalog()` lists native project building storeys in order of elevation and Revit ID. Each storey carries its ID, name and resolved elevation in internal feet. `GetStoreyId(elementId)` uses the current IFC storey rules and returns null for an unknown element or one assigned to the building itself. Obtain a new catalog after editing levels. |
 | `GridAxis` | `RvtDocument.GetGridAxes()` lists decoded project axes in Revit ID order. A circular or multi-segment axis has ordered analytic segments. `GridAxis.Tessellate(maxErrorFeet)` returns path points in internal feet. |
+
+An observer receives updates synchronously on the reading thread. The phases are `metadata`, `partitions`,
+`class-schema`, `element-records`, `element-blocks`, `parameter-stream`, `recover-geometry`,
+`element-properties`, `build-model`, `finalize-model` and `complete`. A file can skip phases it does not need.
+`Completed` and `Total` count partition streams, block scan passes or decoded stream bytes in their respective phases.
+A zero total means the reader has no work count for that update. Counts describe units within one phase.
 
 ## Model
 

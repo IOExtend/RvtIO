@@ -8,6 +8,10 @@ public sealed class RvtSceneOptions
     /// directory (with the extension) when a path is read; a document passed as it is has no file name and needs this key.</summary>
     public string? ModelKey { get; set; }
 
+    /// <summary>Receives file-read progress for <see cref="RvtSceneReader.Read(string, RvtSceneOptions?)"/>.
+    /// Applies when the adapter opens the file.</summary>
+    public IProgress<RvtReadProgress>? ReadProgress { get; set; }
+
     /// <summary>Includes straight model lines and reinforcement described by its centre lines.</summary>
     public bool IncludeModelLinesAndReinforcement { get; set; }
 

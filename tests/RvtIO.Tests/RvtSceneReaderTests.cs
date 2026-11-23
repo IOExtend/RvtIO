@@ -576,15 +576,40 @@ public class RvtSceneReaderTests
     private static readonly string[] MemberCodes = ["failed-members", "recovered-members", "unverified-members"];
 
     /// <summary>The scene of a synthetic project file read from disk; <paramref name="extraPartition"/> is a second partition stream.</summary>
-    private static RvtSceneResult ReadSyntheticFile(byte[]? extraPartition = null)
+    private static RvtSceneResult ReadSyntheticFile(byte[]? extraPartition = null, RvtSceneOptions? options = null)
     {
         string path = Path.Combine(Path.GetTempPath(), "rvtio-scene-" + Guid.NewGuid().ToString("N") + ".rvt");
         try
         {
             CliExitCodeTests.WriteSyntheticRvt(path, extraPartition);
-            return RvtSceneReader.Read(path);
+            return RvtSceneReader.Read(path, options);
         }
         finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void PathReaderForwardsProgressAndCountsWithoutChangingScene()
+    {
+        byte[] extraPartition = [1, 2, 3];
+        var progress = new ReadProgressLog();
+        var baseline = ReadSyntheticFile(extraPartition, new RvtSceneOptions { ModelKey = "model" });
+        var result = ReadSyntheticFile(extraPartition, new RvtSceneOptions { ModelKey = "model", ReadProgress = progress });
+
+        Assert.Equal("metadata", progress.Updates[0].Phase);
+        Assert.Equal(new RvtReadProgress("complete", 1, 1), progress.Updates[^1]);
+        Assert.Equal([0L, 1L, 2L], progress.Updates.Where(update => update.Phase == "partitions").Select(update => update.Completed));
+        Assert.All(progress.Updates.Where(update => update.Phase == "partitions"), update => Assert.Equal(2, update.Total));
+        var blocks = progress.Updates.Where(update => update.Phase == "element-blocks").ToArray();
+        Assert.Equal(Enumerable.Range(0, blocks.Length).Select(index => (long)index), blocks.Select(update => update.Completed));
+        Assert.Equal(blocks[^1].Total, blocks[^1].Completed);
+        Assert.Equal(baseline.Diagnostics, result.Diagnostics);
+        Assert.Equal(SceneJson.Write(baseline.Document), SceneJson.Write(result.Document));
+    }
+
+    private sealed class ReadProgressLog : IProgress<RvtReadProgress>
+    {
+        public List<RvtReadProgress> Updates { get; } = [];
+        public void Report(RvtReadProgress value) => Updates.Add(value);
     }
 
     [Fact]

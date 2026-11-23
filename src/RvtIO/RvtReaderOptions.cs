@@ -48,6 +48,10 @@ public class RvtReaderOptions
     /// <summary>Collects the streams read, how much of each decoded, and the limits that cut a stream. Null to collect nothing.</summary>
     public RvtReadDiagnostics? Diagnostics { get; set; }
 
+    /// <summary>Receives ordered phase and work-count updates from <see cref="RvtFileReader.Read"/>.
+    /// The reader calls <see cref="IProgress{T}.Report"/> on the reading thread.</summary>
+    public IProgress<RvtReadProgress>? Progress { get; set; }
+
     /// <summary>Write diagnostic/progress messages to this TextWriter. Null for silent operation.</summary>
     public TextWriter? DiagnosticOutput { get; set; }
 }

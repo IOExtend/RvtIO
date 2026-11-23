@@ -160,6 +160,18 @@ public class ElementHeaderCategoryTests
         TfStreamWalker.Walk([chunk], new HashSet<uint> { 41 }, (_, _, _, _, _) => { }, (_, _, id) => seen.Add(id));
         Assert.DoesNotContain(40u, seen);
     }
+
+    [Fact]
+    public void Walk_ReportsByteOffsetsWithinASegment()
+    {
+        var junk = new byte[2 * (1 << 20) + 32];
+        var updates = new List<(long Completed, long Total)>();
+        TfStreamWalker.Walk([junk], [], (_, _, _, _, _) => { },
+            progress: (completed, total) => updates.Add((completed, total)));
+
+        Assert.Equal([0L, 1L << 20, 2L << 20, junk.LongLength], updates.Select(update => update.Completed));
+        Assert.All(updates, update => Assert.Equal(junk.LongLength, update.Total));
+    }
 }
 
 /// <summary>Test_2022.rvt against the header category of the current profile, one element per (class, category) pair; the vectors are the ones below.</summary>

@@ -30,6 +30,9 @@ Only `Read(path)` reports the diagnostics of the read (`read-cut`, `failed-membe
 `unverified-members`), as only it opens the file; if you open the document yourself, read them from the
 `RvtReaderOptions.Diagnostics` you opened it with.
 
+Set `RvtSceneOptions.ReadProgress` to observe the reader phases and work counts during `Read(path)`.
+The final reader update marks completion of the file read. Mesh extraction and scene mapping follow.
+
 Set `RvtSceneOptions.IncludeModelLinesAndReinforcement` to include straight model lines as line primitives and reinforcement with decoded bar paths as triangles. The native RVT-to-NWC tool enables this option.
 
 `RvtSceneResult` holds the `Document`, the `Diagnostics` and counts: elements, elements with geometry, elements by
