@@ -37,12 +37,12 @@ internal static partial class GRepParserV2
     /// <summary>Class "Geometry" (a GBRep): one stored solid.</summary>
     internal const ushort SolidClass = 2092;
 
-    private sealed record InstanceRec(
+    internal sealed record InstanceRec(
         int SymbolElemId, double[] Transform, int OwnerQueueIndex);
 
     internal sealed record SheetImagePlacement(int SymbolId, double X, double Y, double ScaleX, double ScaleY);
 
-    private sealed class Cur
+    internal sealed class Cur
     {
         public byte[] D = [];
         public int Pos, End;
@@ -519,7 +519,7 @@ internal static partial class GRepParserV2
         }
     }
 
-    private sealed class SpaceEdgeLoopRec
+    internal sealed class SpaceEdgeLoopRec
     {
         public uint Face, Next, Prev;
         public byte Open;
@@ -1934,7 +1934,7 @@ internal static partial class GRepParserV2
         (c.PlanCurveCandidates ??= []).Add((filter, handle, BitConverter.ToUInt32(c.D, c.Pos + 12), filled, style));
     }
 
-    private static List<DoorPlanSymbol>? ReadDoorPlanSymbols(Cur c)
+    internal static List<DoorPlanSymbol>? ReadDoorPlanSymbols(Cur c)
     {
         if (c.PlanCurveCandidates == null) return null;
         var symbols = new List<DoorPlanSymbol>();
@@ -2154,7 +2154,7 @@ internal static partial class GRepParserV2
             && Math.Abs(curve.X[0] * curve.Y[0] + curve.X[1] * curve.Y[1]) <= 1e-9;
     }
 
-    private static List<ViewFacingLine>? ReadViewFacingLines(Cur c)
+    internal static List<ViewFacingLine>? ReadViewFacingLines(Cur c)
     {
         if (c.ViewLineCandidates == null) return null;
         // shortcut: require matching opposite elevation filters until asymmetric direction modes are decoded.

@@ -181,9 +181,11 @@ public class ElevationPrinterTests
     [InlineData(false, 100, "east", false, true)]
     [InlineData(true, 100, "east", false, true, true)]
     [InlineData(true, 100, "east", false, true, false, true)]
+    [InlineData(true, 100, "east", false, true, false, false, true)]
+    [InlineData(true, 100, "east", true, true, false, false, true)]
     public void Collect_ProjectsThinRoundRailWithItsVerifiedPlacedFaces(bool matchingFaces, int scale,
         string direction = "section", bool inclined = false, bool surfacePatterns = false, bool occluded = false,
-        bool rotate = false)
+        bool rotate = false, bool rotateAboutZ = false)
     {
         const double radius = 1d / 192;
         double rise = inclined ? 0.25 : 0;
@@ -192,8 +194,16 @@ public class ElevationPrinterTests
         var view = SectionView(1, [10, 0, 2]);
         Add(view, BuiltInParameter.VIEW_SCALE, StorageType.Integer, scale);
         var symbol = new Element { Id = 3, NativeRecordClass = 492, Geometry = new GeometryData() };
-        double c = rotate ? 0.8 : 1, s = rotate ? 0.6 : 0;
-        double[] transform = [1, 0, 0, 0, c, -s, 0, s, c, 0, 0, 0];
+        double c = rotate || rotateAboutZ ? 0.8 : 1, s = rotate || rotateAboutZ ? 0.6 : 0;
+        // The rows are the placement matrix; the origin is non-zero when the rail turns about Z so a dropped or
+        // transposed origin and a transposed matrix each move the printed endpoints.
+        double[] transform = rotateAboutZ ? [c, -s, 0, s, c, 0, 0, 0, 1, 0.5, 0.25, 0.75] : [1, 0, 0, 0, c, -s, 0, s, c, 0, 0, 0];
+        double[] Place(double[] point) =>
+        [
+            transform[9] + transform[0] * point[0] + transform[1] * point[1] + transform[2] * point[2],
+            transform[10] + transform[3] * point[0] + transform[4] * point[1] + transform[5] * point[2],
+            transform[11] + transform[6] * point[0] + transform[7] * point[1] + transform[8] * point[2],
+        ];
         var rail = new Element
         {
             Id = 2, CategoryId = (int)BuiltInCategory.OST_StairsRailing, SerializedBaseRailingSymbolId = symbol.Id,
@@ -220,13 +230,14 @@ public class ElevationPrinterTests
             rail.Geometry.Faces.Add(new GeoFace
             {
                 MeshMarker = !matchingFaces && facet == 0 ? 0 : face,
-                OuterVertices = ring.Select(point => new[] { point[0], c * point[1] - s * point[2], s * point[1] + c * point[2] }).ToList(),
+                OuterVertices = ring.Select(Place).ToList(),
                 Normal = [1, 0, 0],
             });
         }
 
         bool elevation = direction == "east";
-        double wallDepth = occluded ? 9.5 : 8;
+        // A rail turned about Z crosses the plane the usual wall stands in, so that wall is moved behind the whole rail.
+        double wallDepth = occluded ? 9.5 : rotateAboutZ ? -2 : 8;
         var wall = QuadWall(4, [[wallDepth, -1, 0], [wallDepth, 12, 0], [wallDepth, 12, 7], [wallDepth, -1, 7]],
             [1, 0, 0]);
         var document = elevation ? Document(rail, symbol, wall) : Document(rail, symbol);
@@ -243,8 +254,11 @@ public class ElevationPrinterTests
             else
             {
                 var side = Assert.Single(tubes);
-                Assert.Equal((s * run + c * rise) / (c * run - s * rise),
-                    (side.Y2 - side.Y1) / (side.X2 - side.X1), 8);
+                double[] start = Place([9, 0, 2]), end = Place([9, 11 * run, 2 + 11 * rise]);
+                Assert.Equal(start[1] * FeetToMillimetres, side.X1, 6);
+                Assert.Equal(start[2] * FeetToMillimetres, side.Y1, 6);
+                Assert.Equal(end[1] * FeetToMillimetres, side.X2, 6);
+                Assert.Equal(end[2] * FeetToMillimetres, side.Y2, 6);
             }
             return;
         }
@@ -273,8 +287,11 @@ public class ElevationPrinterTests
     [InlineData(100, true, false, true, true)]
     [InlineData(100, true, false, true, false, true)]
     [InlineData(100, true, false, true, false, true, true)]
+    [InlineData(100, true, false, false, false, false, false, true)]
+    [InlineData(100, true, false, true, false, false, false, true)]
     public void Collect_ProjectsAVerifiedRoundShaftWithItsSurfacePattern(int scale, bool matchingPlacement,
-        bool backingWall, bool genericModel, bool missingTangent, bool foregroundWall = false, bool opening = false)
+        bool backingWall, bool genericModel, bool missingTangent, bool foregroundWall = false, bool opening = false,
+        bool placed = false)
     {
         var view = SectionView(900, [0, 0, 0]);
         Add(view, BuiltInParameter.VIEW_SCALE, StorageType.Integer, scale);
@@ -286,17 +303,25 @@ public class ElevationPrinterTests
         {
             Id = 902, NativeRootClassName = "FamilySymbol", Geometry = new GeometryData { BrepSolids = [solid] },
         };
+        // A placed shaft has its cylinder off the symbol origin and turns about Z, so its centre needs the whole placement.
+        double c = placed ? 0.8 : 1, s = placed ? 0.6 : 0;
+        double[] axisOrigin = placed ? [0.5, 1, 0] : [0, 0, 0];
+        double[] transform = [c, -s, 0, s, c, 0, 0, 0, 1, -4, placed ? 0.5 : 0, 0];
+        double[] Place(double[] point) =>
+            [transform[9] + c * point[0] - s * point[1], transform[10] + s * point[0] + c * point[1], point[2]];
+        double centreAcross = Place(axisOrigin)[1];
         var column = new Element
         {
             Id = 903, CategoryId = (int)(genericModel ? BuiltInCategory.OST_GenericModel : BuiltInCategory.OST_StructuralColumns),
             Geometry = new GeometryData
             {
-                Instances = [new() { SymbolId = symbol.Id, Transform = [1, 0, 0, 0, 1, 0, 0, 0, 1, -4, 0, 0] }],
+                Instances = [new() { SymbolId = symbol.Id, Transform = transform }],
                 BrepSolids = [solid],
             },
         };
         double half = Math.Sqrt(0.5);
-        double[][] bottom = [[half, half, 0], [-half, half, 0], [-half, -half, 0], [half, -half, 0]];
+        double[][] bottom = [[axisOrigin[0] + half, axisOrigin[1] + half, 0], [axisOrigin[0] - half, axisOrigin[1] + half, 0],
+            [axisOrigin[0] - half, axisOrigin[1] - half, 0], [axisOrigin[0] + half, axisOrigin[1] - half, 0]];
         var top = bottom.Select(point => new[] { point[0], point[1], 4d }).ToArray();
         AddFace([.. bottom], [0, 0, -1], side: false);
         AddFace([.. top], [0, 0, 1], side: false);
@@ -328,15 +353,15 @@ public class ElevationPrinterTests
         if (matchingPlacement && !missingTangent)
         {
             var face = Assert.Single(content.Faces, face => content.Hatch!.DashedFaces.ContainsKey(face.Points));
-            Assert.Equal(-FeetToMillimetres, face.Points.Min(point => point.X), 6);
-            Assert.Equal(FeetToMillimetres, face.Points.Max(point => point.X), 6);
+            Assert.Equal((centreAcross - 1) * FeetToMillimetres, face.Points.Min(point => point.X), 6);
+            Assert.Equal((centreAcross + 1) * FeetToMillimetres, face.Points.Max(point => point.X), 6);
             Assert.Same(grid, Assert.Single(Assert.Single(content.Hatch!.DashedFaces).Value));
             if (genericModel)
             {
                 var outline = content.Edges.Where(edge => edge.CategoryId == column.CategoryId
                     && Math.Abs(edge.X1 - edge.X2) < 1e-6).ToList();
-                Assert.Contains(outline, edge => Math.Abs(edge.X1 + FeetToMillimetres) < 1e-6);
-                Assert.Contains(outline, edge => Math.Abs(edge.X1 - FeetToMillimetres) < 1e-6);
+                Assert.Contains(outline, edge => Math.Abs(edge.X1 - (centreAcross - 1) * FeetToMillimetres) < 1e-6);
+                Assert.Contains(outline, edge => Math.Abs(edge.X1 - (centreAcross + 1) * FeetToMillimetres) < 1e-6);
                 if (foregroundWall)
                 {
                     Assert.Equal(opening ? 4 : 2, outline.Count);
@@ -380,12 +405,12 @@ public class ElevationPrinterTests
             symbol.Geometry!.Faces.Add(new GeoFace
             {
                 OuterVertices = ring, Normal = normal, PlaneSurface = !side, CurvedSurface = side, SourceFace = handle,
-                AnalyticCylinderOrigin = side ? [0, 0, 0] : null, AnalyticCylinderAxis = side ? [0, 0, 1] : null,
+                AnalyticCylinderOrigin = side ? axisOrigin : null, AnalyticCylinderAxis = side ? [0, 0, 1] : null,
                 AnalyticCylinderRadius = side ? 1 : 0, RenderStyleId = material.Id,
             });
             column.Geometry!.Faces.Add(new GeoFace
             {
-                OuterVertices = ring.Select(point => new[] { point[0] - 4, point[1], point[2] }).ToList(),
+                OuterVertices = ring.Select(Place).ToList(),
                 Normal = normal, PlaneSurface = !side, RenderStyleId = material.Id,
             });
         }
