@@ -24,11 +24,11 @@ public static class RvtContainerCheck
         try { file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { throw new RvtInputException("cannot-open", $"'{info.Name}' cannot be opened ({ex.GetType().Name}); the file may be in use or not readable.", ex); }
-        using var _ = file;
-        using var root = OpenVerified(file, info.Name, surfaceStreamFailures: false);
+        using var opened = file;
+        using var root = OpenVerified(file, info.Name, out _, surfaceStreamFailures: false);
     }
 
-    internal static RootStorage OpenVerified(Stream stream, string name, bool surfaceStreamFailures = true)
+    internal static RootStorage OpenVerified(Stream stream, string name, out ReadOnlyStreamView view, bool surfaceStreamFailures = true)
     {
         ArgumentNullException.ThrowIfNull(stream);
         if (!stream.CanRead || !stream.CanSeek)
@@ -40,7 +40,7 @@ public static class RvtContainerCheck
         // OpenMcdf trims a writable stream when it closes the root, so it gets a read-only view: the caller's stream is neither
         // changed nor closed, whatever its access. A failure of the stream itself is not damage of the file and is thrown as it was
         // (when asked to: the file path keeps reporting it as an input error).
-        var view = new ReadOnlyStreamView(stream);
+        view = new ReadOnlyStreamView(stream);
         RootStorage root;
         try { root = RootStorage.Open(view, StorageModeFlags.LeaveOpen); }
         catch (Exception ex) when (ex is not OutOfMemoryException)

@@ -54,8 +54,11 @@ public partial class RvtFileReader
     /// partitions contains a source element ID above the range of document-local keys.</exception>
     public RevitFileInfo ReadStream(Stream stream)
     {
-        using var root = RvtContainerCheck.OpenVerified(stream, "Revit input stream");
-        return ReadCore(root);
+        using var root = RvtContainerCheck.OpenVerified(stream, "Revit input stream", out var view);
+        var info = ReadCore(root);
+        // The decoders absorb a read that fails and go on with less data; such a result is not returned.
+        view.ThrowStreamFailure();
+        return info;
     }
 
     private RevitFileInfo ReadCore(RootStorage root)

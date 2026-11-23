@@ -14,9 +14,11 @@ internal sealed class ReadOnlyStreamView(Stream inner) : Stream
     /// failure: it returns what it has, and that is damage of the file.</summary>
     public void ThrowStreamFailure() => _failure?.Throw();
 
+    // An invalid argument is not a failure of the stream either: a damaged file can name a position that a stream such as a memory
+    // buffer cannot take, and a file stream takes it and ends early, which is damage of the file in both cases.
     private void Record(Exception exception)
     {
-        if (exception is not EndOfStreamException) _failure ??= ExceptionDispatchInfo.Capture(exception);
+        if (exception is not (EndOfStreamException or ArgumentException)) _failure ??= ExceptionDispatchInfo.Capture(exception);
     }
 
     public override bool CanRead => true;

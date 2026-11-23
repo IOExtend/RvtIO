@@ -73,9 +73,10 @@ public sealed class StreamInputTests
     public static TheoryData<string, long, string> EntryPointsAndStreamFailures()
     {
         var data = new TheoryData<string, long, string>();
-        // 100 bytes in, the header is not read yet; the others fail while the streams of the file are read.
+        // 100 bytes in, the header is not read yet; the next two fail while the container is checked. A negative limit is that many
+        // bytes before the end of a whole read: the check is long done and the decoders are reading.
         foreach (string entry in Entries)
-            foreach (long limit in new long[] { 100, 20_000, 45_000 })
+            foreach (long limit in new long[] { 100, 20_000, 45_000, -10 })
                 foreach (string failure in new[] { "io", "canceled", "disposed" }) data.Add(entry, limit, failure);
         return data;
     }
@@ -132,6 +133,10 @@ public sealed class StreamInputTests
     private sealed class FailingStream(Stream inner, long limit, Exception failure) : Stream
     {
         private long _served;
+        private int _failures;
+        public long Served => _served;
+        /// <summary>Fails with a new exception every time after the first, so the one that is thrown shows which one was kept.</summary>
+        public bool VaryingFailures { get; init; }
         public override bool CanRead => true;
         public override bool CanSeek => true;
         public override bool CanWrite => false;
@@ -140,7 +145,7 @@ public sealed class StreamInputTests
         public override void Flush() { }
         public override int Read(byte[] buffer, int offset, int count)
         {
-            if (_served >= limit) throw failure;
+            if (_served >= limit) throw ++_failures == 1 || !VaryingFailures ? failure : new IOException("failure " + _failures);
             int read = inner.Read(buffer, offset, count);
             _served += read;
             return read;
@@ -305,14 +310,57 @@ public sealed class StreamInputTests
     [MemberData(nameof(EntryPointsAndStreamFailures))]
     public void AFailureOfTheStreamIsThrownAsItWas(string entry, long limit, string kind)
     {
+        byte[] bytes = SyntheticRvt();
+        if (limit < 0)
+        {
+            using var whole = new FailingStream(new MemoryStream(bytes, writable: false), long.MaxValue, new IOException());
+            RvtDocument.OpenStream(whole);
+            limit += whole.Served;
+        }
         var failure = Failure(kind);
-        using var stream = new FailingStream(new MemoryStream(SyntheticRvt(), writable: false), limit, failure);
+        using var stream = new FailingStream(new MemoryStream(bytes, writable: false), limit, failure);
 
         var thrown = Assert.ThrowsAny<Exception>(() => Read(entry, stream));
 
         Assert.Same(failure, thrown);
         // The stack is the one of the stream that failed.
         Assert.Contains(nameof(FailingStream), thrown.StackTrace);
+    }
+
+    // The decoders absorb a read that fails and may read again; the first failure is the cause, the later ones are its consequence.
+    [Theory]
+    [MemberData(nameof(EntryPoints))]
+    public void TheFirstFailureOfTheStreamIsTheOneThrown(string entry)
+    {
+        byte[] bytes = SyntheticRvt();
+        using var whole = new FailingStream(new MemoryStream(bytes, writable: false), long.MaxValue, new IOException());
+        RvtDocument.OpenStream(whole);
+        var first = new IOException("first failure");
+        using var stream = new FailingStream(new MemoryStream(bytes, writable: false), whole.Served - 10, first) { VaryingFailures = true };
+
+        var thrown = Assert.Throws<IOException>(() => Read(entry, stream));
+
+        Assert.Same(first, thrown);
+    }
+
+    // A damaged container can name a position that a buffer cannot take (a sector number beyond what one array holds). It is damage of
+    // the file for every kind of stream, as a file stream takes the position and ends early; it is not a failure of the stream.
+    [Theory]
+    [MemberData(nameof(EntryPointsAndWritableStreams))]
+    public void APositionBeyondWhatTheStreamCanHoldIsDamageOfTheFile(string entry, string kind)
+    {
+        // The first directory sector and the first mini FAT sector of the header, and an entry of the first FAT sector.
+        foreach (int offset in new[] { 48, 60, 516 })
+        {
+            byte[] damaged = SyntheticRvt();
+            BitConverter.GetBytes(0x7FFFFFFFu).CopyTo(damaged, offset);
+            using var subject = Subject.Create(kind, damaged);
+
+            var error = Assert.Throws<RvtInputException>(() => Read(entry, subject.Stream));
+
+            Assert.Equal(PathKind(damaged), error.Kind);
+            Assert.Equal(damaged, subject.Snapshot());
+        }
     }
 
     [Theory]
@@ -389,10 +437,30 @@ public sealed class StreamInputTests
         var failure = new IOException("disk error");
         using var stream = new FailingStream(new MemoryStream(SyntheticRvt(), writable: false), 20_000, failure);
 
-        var error = Assert.Throws<RvtInputException>(() => RvtContainerCheck.OpenVerified(stream, "file.rvt", surfaceStreamFailures: false));
+        var error = Assert.Throws<RvtInputException>(() => RvtContainerCheck.OpenVerified(stream, "file.rvt", out _, surfaceStreamFailures: false));
 
         Assert.Equal("truncated-or-damaged", error.Kind);
         Assert.Same(failure, error.InnerException);
+    }
+
+    // The path read keeps its contract: a read that fails is an input error, as it was before streams could be read.
+    [SkippableFact]
+    public void ThePathCheckReportsAFailingFileReadAsAnInputError()
+    {
+        if (!OperatingSystem.IsWindows()) throw new SkipException("A byte-range lock blocks reads of other handles on Windows only.");
+        string path = Path.Combine(Path.GetTempPath(), "rvtio-stream-lock-" + Guid.NewGuid().ToString("N") + ".rvt");
+        try
+        {
+            File.WriteAllBytes(path, SyntheticRvt());
+            using var holder = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+            holder.Lock(20_000, 4096);
+
+            var error = Assert.Throws<RvtInputException>(() => RvtContainerCheck.Verify(path));
+
+            Assert.IsAssignableFrom<IOException>(error.InnerException);
+            holder.Unlock(20_000, 4096);
+        }
+        finally { File.Delete(path); }
     }
 
     [Fact]
