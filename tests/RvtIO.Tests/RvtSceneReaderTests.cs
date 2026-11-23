@@ -608,6 +608,61 @@ public class RvtSceneReaderTests
         Assert.Equal(SceneJson.Write(baseline.Document), SceneJson.Write(result.Document));
     }
 
+    [Fact]
+    public void StreamReadPreservesSceneDiagnosticsAndLeavesInputOpen()
+    {
+        string path = Path.Combine(Path.GetTempPath(), "rvtio-stream-" + Guid.NewGuid().ToString("N") + ".rvt");
+        try
+        {
+            CliExitCodeTests.WriteSyntheticRvt(path, [1, 2, 3]);
+            var options = new RvtSceneOptions { ModelKey = "model" };
+            var fromPath = RvtSceneReader.Read(path, options);
+
+            using var stream = File.OpenRead(path);
+            stream.Position = stream.Length;
+            var fromStream = RvtSceneReader.ReadStream(stream, options);
+
+            Assert.Equal(SceneJson.Write(fromPath.Document), SceneJson.Write(fromStream.Document));
+            Assert.Equal(fromPath.Diagnostics, fromStream.Diagnostics);
+            stream.Position = 0;
+            Assert.Equal(0xD0, stream.ReadByte());
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void StreamReadForwardsProgressInTheOrderOfAPathRead()
+    {
+        string path = Path.Combine(Path.GetTempPath(), "rvtio-stream-progress-" + Guid.NewGuid().ToString("N") + ".rvt");
+        try
+        {
+            CliExitCodeTests.WriteSyntheticRvt(path, [1, 2, 3]);
+            var fromPath = new ReadProgressLog();
+            RvtSceneReader.Read(path, new RvtSceneOptions { ModelKey = "model", ReadProgress = fromPath });
+
+            var fromStream = new ReadProgressLog();
+            using var stream = File.OpenRead(path);
+            RvtSceneReader.ReadStream(stream, new RvtSceneOptions { ModelKey = "model", ReadProgress = fromStream });
+
+            Assert.Equal(fromPath.Updates, fromStream.Updates);
+            Assert.Equal("metadata", fromStream.Updates[0].Phase);
+            ReadProgressTests.AssertWellFormed(fromStream.Updates, ReadProgressTests.ProjectPhases);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void InvalidCompoundStreamKeepsItsTypedErrorAndRemainsOpen()
+    {
+        using var stream = new MemoryStream([1, 2, 3]);
+        var exception = Assert.Throws<RvtInputException>(() =>
+            RvtSceneReader.ReadStream(stream, new RvtSceneOptions { ModelKey = "model" }));
+
+        Assert.Equal("not-a-compound-file", exception.Kind);
+        stream.Position = 0;
+        Assert.Equal(1, stream.ReadByte());
+    }
+
     private sealed class ReadProgressLog : IProgress<RvtReadProgress>
     {
         public List<RvtReadProgress> Updates { get; } = [];

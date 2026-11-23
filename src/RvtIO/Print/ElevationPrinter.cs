@@ -105,7 +105,9 @@ public static class ElevationPrinter
             ViewVerticalDirection: { Length: 3 } vert, ViewHorizontalDirection: { Length: 3 } horiz })
         {
             (H, V, D) = (horiz, vert, dir);
-            planeOrigin = origin;
+            // Face vertices and the detail window use model millimetres.
+            planeOrigin = [origin[0] * FeetToMillimetres, origin[1] * FeetToMillimetres,
+                origin[2] * FeetToMillimetres];
             // A section is cut at its plane: only what stands behind it is drawn.
             cut = direction == "section";
         }
