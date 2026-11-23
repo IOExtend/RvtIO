@@ -240,6 +240,61 @@ public class FramedElementTypesTests
         Assert.Equal(30, fixture.Apply(element, recoverUnanchoredTypes: keepCopies, anchored: anchored));
     }
 
+    [Theory]
+    [InlineData("SWall", "BasicWallType", 20L, 4)]
+    [InlineData("SWall", "NewCurtainWallType", 20L, 4)]
+    [InlineData("FamilyInstance", "SysPanelFamSym", 2147483668L, 8)]
+    [InlineData("DBViewSection", "DBViewType", 20L, 4)]
+    public void KeepCopiesUsesTheRoutedTypeWithoutReplacingOtherFields(string kind, string target, long type, int width)
+    {
+        var fixture = new Fixture(width);
+        void WriteOccurrence(BinaryWriter writer, long storedType)
+        {
+            fixture.Id(writer, storedType);
+            if (kind == "DBViewSection") fixture.Id(writer, -1);
+        }
+
+        fixture.Add(kind, 10, w => WriteOccurrence(w, 30), partition: 0);
+        fixture.Add(kind, 10, w => WriteOccurrence(w, type), partition: 1);
+        fixture.Add(target, type);
+        var element = new Element { Id = 10, TypeId = 30, Name = "Historical copy", HostId = 40 };
+
+        Assert.Equal(type, fixture.Apply(element, wasRouted: true, recoverUnanchoredTypes: true, anchored: true));
+        Assert.Equal("Historical copy", element.Name);
+        Assert.Equal(40, element.HostId);
+    }
+
+    [Theory]
+    [InlineData("ordinary mode")]
+    [InlineData("no route")]
+    [InlineData("missing current partition")]
+    [InlineData("duplicate current partition")]
+    [InlineData("wrong owner")]
+    [InlineData("different root")]
+    [InlineData("missing type")]
+    [InlineData("different target class")]
+    [InlineData("unsupported target copy")]
+    [InlineData("unrelated old type")]
+    public void RoutedTypeRequiresExactCopiesAStoredOldTypeAndARealTarget(string reason)
+    {
+        var fixture = new Fixture();
+        fixture.Add("SWall", 10, w => fixture.Id(w, 30), partition: 0);
+        if (reason == "different root") fixture.Add("Other", 10, partition: 1);
+        else fixture.Add("SWall", 10, w => fixture.Id(w, 20),
+            storedOwner: reason == "wrong owner" ? 11 : null, partition: reason == "missing current partition" ? 2 : 1);
+        if (reason == "duplicate current partition")
+            fixture.Add("SWall", 10, w => fixture.Id(w, 20), partition: 1);
+        if (reason != "missing type")
+            fixture.Add(reason == "different target class" ? "Other" : "BasicWallType", 20);
+        if (reason == "unsupported target copy") fixture.Add("Other", 20);
+        fixture.Add("BasicWallType", 30);
+
+        int oldType = reason == "unrelated old type" ? 40 : 30;
+        var element = new Element { Id = 10, TypeId = oldType };
+        Assert.Equal(oldType, fixture.Apply(element, wasRouted: reason != "no route",
+            recoverUnanchoredTypes: reason != "ordinary mode", anchored: true));
+    }
+
     private sealed class Fixture
     {
         private readonly SchemaDocument _schema = new();
@@ -304,6 +359,7 @@ public class FramedElementTypesTests
             Class("TextNoteAttributes", element);
             Class("SWall", Class("VWall", element, Ref("m_WallAttributesId")));
             Class("BasicWallType", element);
+            Class("NewCurtainWallType", element);
             Class("Other", element);
         }
 
