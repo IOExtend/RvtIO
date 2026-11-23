@@ -8,6 +8,10 @@ API between minor releases.
 
 ### Added
 
+- Report progress while reading a Revit file: `RvtReadProgress` (phase, completed and total units),
+  `RvtReaderOptions.Progress` and `RvtSceneOptions.ReadProgress` (for `RvtSceneReader.Read(path)`). The reader calls
+  `IProgress<RvtReadProgress>.Report` synchronously on the reading thread, in phase order; see
+  [the public API](docs/public-api.md) for the phases.
 - Read a document, a file model or a scene from a readable, seekable stream with `RvtDocument.OpenStream`,
   `RvtFileReader.ReadStream` and `RvtSceneReader.ReadStream`. The stream is read from its beginning whatever its
   position and is only read: it is never written to, shortened or closed, also when it is writable. Errors are the

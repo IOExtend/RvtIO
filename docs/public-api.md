@@ -10,13 +10,37 @@ projects through `InternalsVisibleTo`.
 |---|---|
 | `RvtDocument` | Opens a file (`Open`) or a readable, seekable stream (`OpenStream`), saves a verified lossless copy (`SaveAs`), and gives the elements, project information, file metadata and category lookups. A document opened from a stream has no `SourcePath`: `SaveAs` throws `InvalidOperationException`, and printing cannot read the images it takes from the file (the title block logo and the picture of a rendering view). |
 | `RvtFileReader` | Lower level read that returns the `RevitFileInfo` behind a document. `Read` takes a path and `ReadStream` reads from the beginning of a readable, seekable stream, whatever its position. The stream is only read: it is never written to, shortened or closed, also when it is writable. A failure of the stream itself is thrown as the stream threw it. |
-| `RvtReaderOptions` | Options of a read, including `DiagnosticOutput`, `ResolveCurrentCopies` (keeps only the current copy of an element that several partition streams hold; default true, set it to false to decode every copy), `RaiseLimits` and `Diagnostics`. `RevitLocalizationDirectory` is `[Obsolete]` and ignored: the texts are built in. |
+| `RvtReaderOptions` | Options of a read, including `DiagnosticOutput`, `Progress` (see below), `ResolveCurrentCopies` (keeps only the current copy of an element that several partition streams hold; default true, set it to false to decode every copy), `RaiseLimits` and `Diagnostics`. `RevitLocalizationDirectory` is `[Obsolete]` and ignored: the texts are built in. |
 | `RvtReadDiagnostics`, `StreamRecord`, `ReaderLimitHit` | What a read collects when `RvtReaderOptions.Diagnostics` is set: the partition and metadata streams read (stored and inflated byte sizes and member decode counts) and the streams cut by a limit. |
+| `RvtReadProgress` | File-reading updates delivered through `RvtReaderOptions.Progress`. |
 | `ExportReport`, `SkipLog`, `GeometryQualityClass`, `ElementGeometryQuality` | The machine-readable report of a run (`ToJson`), the per-element geometry quality classification and totals, and the elements an export left out; see [the export report](export-report.md). |
 | `RvtExitCodes`, `RvtInputException`, `RvtLimitException`, `RvtContainerCheck` | The exit codes 0 to 4 and 6 of the command line tool (code 5 is returned by `downgrade --check` and `save-as` when refused), the exceptions `RvtFileReader.Read` and `ReadStream` throw for input they cannot read (`ReadStream` also throws `ArgumentNullException` and `ArgumentException` for a missing, unreadable or non-seekable stream), and the check that raises them. |
 | `FilteredElementCollector` | Query over the elements of a document (`OfCategory`, `WhereElementIsNotElementType`, `Where`, ...). |
 | `BuildingStoreyCatalog`, `BuildingStorey` | `RvtDocument.GetBuildingStoreyCatalog()` lists native project building storeys in order of elevation and Revit ID. Each storey carries its ID, name and resolved elevation in internal feet. `GetStoreyId(elementId)` uses the current IFC storey rules and returns null for an unknown element or one assigned to the building itself. Obtain a new catalog after editing levels. |
 | `GridAxis` | `RvtDocument.GetGridAxes()` lists decoded project axes in Revit ID order. A circular or multi-segment axis has ordered analytic segments. `GridAxis.Tessellate(maxErrorFeet)` returns path points in internal feet. |
+
+`RvtReaderOptions.Progress` observes one `RvtFileReader.Read` or `ReadStream`. The reader calls `IProgress<RvtReadProgress>.Report`
+synchronously on the thread that calls `Read` or `ReadStream`, one call at a time and in phase order, and does not catch an exception the
+observer throws: it ends the read and reaches the caller as it was thrown, so an observer can cancel by throwing.
+The standard `Progress<T>` does not give these guarantees: it posts each update to the `SynchronizationContext` it captured
+when it was created, or to the thread pool when there is none, so its handler can run after `Read` or `ReadStream` has returned and, on the
+thread pool, out of order. Implement `IProgress<RvtReadProgress>` to receive the updates in order on the reading thread.
+
+The phases are `metadata`, `partitions`, `class-schema`, `wide-model`, `r22-layout`, `element-records`, `element-blocks`,
+`parameter-stream`, `recover-geometry`, `element-properties`, `build-model`, `finalize-model` and `complete`, and a read
+reports them in this order and never returns to an earlier phase. A file can skip phases it does not need:
+`r22-layout` appears only when the file's own class schema is rewritten into the Revit 2022 layout (`R22Layout`), and
+`wide-model` (no counts) only when `PreserveWideLayout` also parses the model of the wide layout first.
+`class-schema` covers reading the file's own class schema, its element table records and the episode table;
+`r22-layout` is the rewrite that follows, which can take as long as the phases around it.
+`Completed` and `Total` count partition streams (`partitions`), the streams the rewrite reads (`r22-layout`), block scan
+passes (`element-blocks`) or decoded stream bytes (`parameter-stream`). `Completed` does not decrease within a phase.
+A zero total means the reader has no work count for that update. Counts describe units within one phase. `complete`
+(1 of 1) is the last update of a read.
+
+`CompactJsonExporter.Export` passes `Progress` to its first read only. A file of a wide layout is then read a second time
+for solid quantities; that read reports the single update `quantities` after the first read's `complete`, and the JSON
+writing that follows reports nothing.
 
 ## Model
 
