@@ -325,6 +325,29 @@ public class WideElementRecordsTests
         static byte[] Paged(byte[] bytes) => RvtIO.Writing.PageCodec.EncodePadded(RvtIO.Writing.GzipMember.Write(bytes));
     }
 
+    /// <summary>A wide-layout project of a wall, a family symbol and an instance of it: the reader takes the Revit 2022 layout path with
+    /// <see cref="RvtReaderOptions.R22Layout"/>. The file holds no geometry, but its model is not empty.</summary>
+    internal static void WriteWideProject(string path)
+    {
+        const long instanceId = 2147483648L, typeId = 0x20_0000_0000_0009L;
+        var (schemaBytes, ids) = BuildSchema(model: true);
+        var schema = FileSchema.Parse(schemaBytes)!;
+        ushort Tag(string name) => (ushort)schema.ByName(name)!.Id;
+        ElementCensusTests.Rec Header(long id, long category) => new((ulong)id,
+            [.. BitConverter.GetBytes(Tag("ElementHeader")), .. BitConverter.GetBytes(0u), .. BitConverter.GetBytes(category)]);
+        ElementCensusTests.Rec Body(long owner, string name, params long[] references) => new((ulong)owner,
+            [.. BitConverter.GetBytes(Tag(name)), .. BitConverter.GetBytes(owner), .. references.SelectMany(BitConverter.GetBytes)]);
+        var part = ElementCensusTests.Partition(Tag, 8, (false, [
+            [Header(9, -2000011), Header(instanceId, -2000151), Header(typeId, -2000151)],
+            [Body(9, "Wall"), Body(instanceId, "FamilyInstance", typeId, 9), Body(typeId, "FamilySymbol")], []]));
+        static byte[] Paged(byte[] bytes) => RvtIO.Writing.PageCodec.EncodePadded(RvtIO.Writing.GzipMember.Write(bytes));
+        CoverageCensusTests.WriteFile(path,
+            ("BasicFileInfo", RvtWriterTests.BuildBasicFileInfoBytes(2027)),
+            ("Formats/Latest", Paged(schemaBytes)),
+            ("Global/ElemTable", Paged(ElemTable(ids, (9, 0, 9, -1), (instanceId, 0, instanceId, 9), (typeId, 0, typeId, -1)))),
+            ("Partitions/0", part));
+    }
+
     [Theory]
     [InlineData("Rebar", "RebarBarType", 7)]
     [InlineData("RebarInSystem", "RebarBarType", 7)]

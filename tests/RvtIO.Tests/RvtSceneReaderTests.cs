@@ -602,7 +602,9 @@ public class RvtSceneReaderTests
         var blocks = progress.Updates.Where(update => update.Phase == "element-blocks").ToArray();
         Assert.Equal(Enumerable.Range(0, blocks.Length).Select(index => (long)index), blocks.Select(update => update.Completed));
         Assert.Equal(blocks[^1].Total, blocks[^1].Completed);
+        ReadProgressTests.AssertWellFormed(progress.Updates, ReadProgressTests.ProjectPhases);
         Assert.Equal(baseline.Diagnostics, result.Diagnostics);
+        // The synthetic file has no drawable element, so its scene is empty; ReadProgressTests compares the model and a real scene.
         Assert.Equal(SceneJson.Write(baseline.Document), SceneJson.Write(result.Document));
     }
 

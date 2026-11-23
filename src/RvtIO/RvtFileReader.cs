@@ -91,6 +91,8 @@ public partial class RvtFileReader
         var episodeTable = ReadEpisodeTable(root, diag, wideSchema);
         if (wideSchema != null && _options.R22Layout && _options.PreserveWideLayout)
         {
+            // Parsed without progress: its phases would repeat in the model read below.
+            progress?.Report(new("wide-model"));
             var (wideInfo, wideState) = ParseModel(root, chunks, framedStreams, partitionStreams.Sum(s => s.Count),
                 r22View: false, partitionStreams, framedStreams, wideSchema, elemTable, elemWorksets, fileMetadata,
                 projectInfo, transmissionData, episodeTable, elemRecHistories, elemRecOwners, tfSchemas, ownPartitionWallParts,
@@ -103,7 +105,7 @@ public partial class RvtFileReader
         IReadOnlyList<PartitionFraming.Framed?> readFrames = framedStreams;
         int partitionChunkCount = partitionStreams.Sum(s => s.Count);
         if (wideSchema != null && _options.R22Layout
-            && RewriteToR22Layout(root, wideSchema, chunks, partitionStreams, framedStreams, diag, ids) is { } r22)
+            && RewriteToR22Layout(root, wideSchema, chunks, partitionStreams, framedStreams, diag, ids, progress) is { } r22)
         {
             (chunks, partitionChunkCount, var r22Frames) = r22;
             readFrames = r22Frames;
