@@ -29,7 +29,7 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
     /// <summary>A numeric built-in value row stored in both types and the active copy, with the units element and the PartAtom entry
     /// that go with it; the fixture holds exactly one display option, the one of this value.</summary>
     private sealed record BuiltInNumber(int Id, string Element, string? DisplayName, string Type, string Unit, double A, double B,
-        string Spec, string UnitId, double Accuracy, Func<double, string> Text)
+        string Spec, string UnitId, double Accuracy, Func<double, string> Text, bool Custom = false)
     {
         internal static readonly BuiltInNumber Cost = new(CostId, "Cost", null, "Currency", "$", 12.5, 17.25,
             "autodesk.spec.measurable:currency-2.0.0", "autodesk.unit.unit:currency-1.0.0", 0.01,
@@ -37,6 +37,8 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
         internal static readonly BuiltInNumber Elevation = new(ElevationId, "Default_Elevation", "Default Elevation", "Length", "mm",
             150 * MillimetreToFeet, 450 * MillimetreToFeet, "autodesk.spec.aec:length-2.0.0", "autodesk.unit.unit:millimeters-1.0.1", 1,
             value => Math.Round(value / MillimetreToFeet, 0, MidpointRounding.AwayFromZero).ToString("F0", CultureInfo.InvariantCulture));
+        /// <summary>The fixture's own type parameter with a Length spec instead of the Text one, shown in millimetres.</summary>
+        internal static readonly BuiltInNumber CustomLength = Elevation with { Id = ParameterId, Element = "Proof", DisplayName = null, Custom = true };
     }
 
     private static readonly Guid SharedGuid = new("50b3ce53-fa73-47a1-ae3e-75035a1f17dd");
@@ -653,6 +655,39 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
     }
 
     [Theory]
+    [InlineData("A", "300 mm", 300 * MillimetreToFeet, 450 * MillimetreToFeet)]
+    [InlineData("B", "2.5 m", 150 * MillimetreToFeet, 2.5 * (1 / 0.3048))]
+    public void WritesACustomLengthTypeParameterAndItsFormattedPartAtomEntry(string type, string value, double aFeet, double bFeet)
+    {
+        var length = BuiltInNumber.CustomLength;
+        string source = CreateSource(number: length);
+        byte[] hash = SHA256.HashData(File.ReadAllBytes(source));
+        RvtWriter.SetFamilyParameter(source, Output, type, ParameterId, value);
+
+        using var root = RootStorage.OpenRead(Output);
+        Assert.Equal(PartitionStreamEditorTests.TaggedBody(FamilyClass, FamilyBody("Original B", "Original A", "Original B",
+            number: (ParameterId, aFeet, bFeet))), ReadFamilyBody(root, 2022));
+        var entries = NumberEntries(root, "Proof");
+        Assert.Equal([length.Text(aFeet), length.Text(bFeet)], entries.Select(e => e.Value));
+        Assert.All(entries, e => Assert.Equal("mm", (string?)e.Attribute("units")));
+        Assert.All(entries, e => Assert.Equal("Length", (string?)e.Attribute("typeOfParameter")));
+        Assert.Equal(hash, SHA256.HashData(File.ReadAllBytes(source)));
+    }
+
+    [Theory]
+    [InlineData("300")]
+    [InlineData("300 furlongs")]
+    [InlineData("300 m2")]
+    [InlineData(null)]
+    public void RefusesACustomLengthWithoutAKnownLengthUnitAndItsReset(string? value)
+    {
+        string source = CreateSource(number: BuiltInNumber.CustomLength);
+        var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetFamilyParameters(source, Output, [new("A", ParameterId, value)]));
+        Assert.Equal(value is null ? "unsupported-parameter-clear" : "invalid-parameter-value", error.Kind);
+        Assert.False(File.Exists(Output));
+    }
+
+    [Theory]
     [InlineData("300")]
     [InlineData("300 furlongs")]
     public void RefusesADefaultElevationWithoutAKnownLengthUnit(string value)
@@ -846,7 +881,7 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
                 ((ulong)Id(ParameterId, wide), shared ? (ushort)35 : (ushort)29, Pack(w =>
                 {
                     WriteId(w, ParameterId, wide);
-                    Pointer(w, currencyInstance ? (ushort)51 : customImage.HasValue ? (ushort)50 : nested.HasValue ? (ushort)48 : (ushort)27);
+                    Pointer(w, currencyInstance || number?.Custom == true ? (ushort)51 : customImage.HasValue ? (ushort)50 : nested.HasValue ? (ushort)48 : (ushort)27);
                     if (shared)
                     {
                         w.Write(0); w.Write(SharedGuid.ToByteArray());
@@ -860,6 +895,8 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
                         WriteId(w, (int)BuiltInCategory.OST_GenericModel, wide);
                     if (currencyInstance)
                         WriteCurrencySpec(w);
+                    else if (number?.Custom == true)
+                        WriteSpec(w, UnitType.UT_Length, number.Spec);
                 })),
             };
             if (number is not null)
@@ -923,12 +960,14 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
             Part("A", staleMetadata ? "Stale" : "Original A"), Part("B", "Original B")))).Save(atom);
         return file;
 
-        void WriteCurrencySpec(BinaryWriter writer)
+        void WriteCurrencySpec(BinaryWriter writer) => WriteSpec(writer, UnitType.UT_Currency, "autodesk.spec.measurable:currency-2.0.0");
+
+        void WriteSpec(BinaryWriter writer, UnitType legacy, string spec)
         {
             if (release == 2020)
-                writer.Write((int)UnitType.UT_Currency);
+                writer.Write((int)legacy);
             else
-                Text(writer, "autodesk.spec.measurable:currency-2.0.0");
+                Text(writer, spec);
             writer.Write(1);
             writer.Write(false);
         }
@@ -937,7 +976,7 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
         {
             var node = new XElement(partAtom + "part", new XElement(ns + "title", type));
             int reference = type == "A" ? nested?.A ?? -1 : nested?.B ?? -1;
-            if (!currencyInstance && type != blankType && (nested is null || !nested.Value.Instance && reference != -1))
+            if (!currencyInstance && number?.Custom != true && type != blankType && (nested is null || !nested.Value.Instance && reference != -1))
             {
                 if (nested.HasValue && !(staleMetadata && type == "A"))
                     value = reference == NestedTypeA ? "Nested : Small" : "Nested : Large";
@@ -958,7 +997,7 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
                     staleMetadata && type == "A" ? "Stale" : comment));
             if (number is not null)
             {
-                var entry = new XElement(ns + number.Element, new XAttribute("type", "system"), new XAttribute("typeOfParameter", number.Type),
+                var entry = new XElement(ns + number.Element, new XAttribute("type", number.Custom ? "custom" : "system"), new XAttribute("typeOfParameter", number.Type),
                     new XAttribute("units", number.Unit), number.Text(type == "A" ? number.A : number.B));
                 if (number.DisplayName is not null)
                     entry.SetAttributeValue("displayName", number.DisplayName);
@@ -1008,9 +1047,10 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
     private static void Store(BinaryWriter w, string value, bool reporting, bool wide, string? comments, int? image, bool formula,
         int? nestedReference = null, bool instance = false, bool currencyInstance = false, (int Id, double Value)? builtInNumber = null)
     {
-        w.Write(1 + (comments is null ? 0 : 1) + (image is null ? 0 : 1) + (formula ? 1 : 0) + (builtInNumber is null ? 0 : 1));
-        double number = currencyInstance ? double.Parse(value, CultureInfo.InvariantCulture) : 0;
-        Row(ParameterId, nestedReference.HasValue || currencyInstance ? "" : value, reporting, nestedReference ?? -1,
+        bool customNumber = builtInNumber?.Id == ParameterId;
+        w.Write(1 + (comments is null ? 0 : 1) + (image is null ? 0 : 1) + (formula ? 1 : 0) + (builtInNumber is null || customNumber ? 0 : 1));
+        double number = currencyInstance ? double.Parse(value, CultureInfo.InvariantCulture) : customNumber ? builtInNumber!.Value.Value : 0;
+        Row(ParameterId, nestedReference.HasValue || currencyInstance || customNumber ? "" : value, reporting, nestedReference ?? -1,
             isInstance: instance || currencyInstance, number: number);
         if (comments is not null)
             Row(TypeComments, comments, false);
@@ -1018,7 +1058,7 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
             Row(TypeImage, "", false, id);
         if (formula)
             Row(FormulaResultId, currencyInstance ? "" : value, false, expression: 47, isInstance: currencyInstance, number: number);
-        if (builtInNumber is { } built)
+        if (builtInNumber is { } built && !customNumber)
             Row(built.Id, "", false, number: built.Value);
 
         void Row(int id, string text, bool isReporting, int reference = -1, ushort expression = 0, bool isInstance = false, double number = 0)
