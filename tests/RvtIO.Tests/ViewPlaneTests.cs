@@ -49,14 +49,14 @@ public class ViewPlaneTests
         Assert.Equal([0, -1, 0], plane.Horiz);
     }
 
-    private static Element SectionView(int id)
+    private static Element SectionView(int id, double[] origin)
     {
         return new Element
         {
             Id = id,
             CategoryId = (int)BuiltInCategory.OST_Views,
             NativeRootClassName = "DBViewSection",
-            ViewOrigin = [0, 0, 0],
+            ViewOrigin = origin,
             ViewDirection = [1, 0, 0],
             ViewVerticalDirection = [0, 0, 1],
             ViewHorizontalDirection = [0, -1, 0],
@@ -81,22 +81,28 @@ public class ViewPlaneTests
         };
     }
 
-    [Fact]
-    public void Collect_SectionIsCutAtItsPlane()
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(12.5, false)]
+    [InlineData(-7.75, false)]
+    [InlineData(12.5, true)]
+    public void Collect_SectionUsesTheSavedPlaneInModelUnits(double cutX, bool windowed)
     {
-        // The plane is at x = 0 looking along +x: the wall at x = -2 stands between the viewer and the plane and is cut
-        // away; the wall at x = 2 stands behind it and is drawn.
+        var view = SectionView(900, [cutX, 2, 1.5]);
         var document = RvtDocument.FromInfo(new RevitFileInfo
         {
-            Elements = { SectionView(900), WallWithFace(100, -2), WallWithFace(200, 2) },
+            Elements = { view, WallWithFace(100, cutX - 2), WallWithFace(200, cutX + 2) },
         });
 
-        var content = ElevationPrinter.Collect(document, "section", planeView: document.GetElement(900));
+        var content = ElevationPrinter.Collect(document, "section", planeView: view,
+            window: windowed ? (4 * FeetToMillimetres, 3 * FeetToMillimetres) : null);
 
         Assert.NotNull(content);
-        Assert.Single(content!.Faces);
-        // The wall at x = 2 ft is drawn; it spans y from 0 to 4 ft, and the horizontal axis is -y.
-        Assert.Equal(-4 * FeetToMillimetres, content!.MinX, 3);
-        Assert.Equal(0, content.MaxX, 3);
+        var face = Assert.Single(content!.Faces);
+        Assert.Equal((cutX + 2) * FeetToMillimetres, face.Depth, 3);
+        Assert.Equal(-4 * FeetToMillimetres, face.Points.Min(point => point.X), 3);
+        Assert.Equal(0, face.Points.Max(point => point.X), 3);
+        Assert.Equal(0, face.Points.Min(point => point.Y), 3);
+        Assert.Equal(3 * FeetToMillimetres, face.Points.Max(point => point.Y), 3);
     }
 }

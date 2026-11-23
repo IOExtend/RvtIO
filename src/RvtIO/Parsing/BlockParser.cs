@@ -13,24 +13,58 @@ internal static class BlockParser
     /// <summary>A GRep block collected for decoding after the walk of one or several chunks.</summary>
     internal readonly record struct PendingGRep(byte[] Chunk, uint Eid, int Start, uint Size, bool IsFamilyCut);
 
-    /// <summary>Decodes the collected GRep blocks in parallel and applies them in collection order (the merge
-    /// rules depend on arrival order).</summary>
+    /// <summary>Decodes the collected GRep blocks and applies them in collection order (the merge rules depend on
+    /// arrival order).</summary>
     internal static void ApplyPendingGReps(ParsingState state, List<PendingGRep> pending)
     {
         if (pending.Count == 0) return;
-        var decoded = new Internal.GRepData?[pending.Count];
-        Parallel.For(0, decoded.Length, new ParallelOptions(), index =>
-            decoded[index] = GRepParserV2.Parse(pending[index].Chunk, pending[index].Start, pending[index].Size));
-        for (int index = 0; index < decoded.Length; index++)
-        {
-            var job = pending[index];
-            if (job.IsFamilyCut)
+        DecodeGRepBlocksInOrder(pending.Count,
+            index =>
             {
-                if (!state.FamilyCutGreps.ContainsKey(job.Eid)
-                    && decoded[index] is { } familyCut && IsAuthoredFamilyComplexCutter(familyCut))
-                    state.FamilyCutGreps[job.Eid] = familyCut;
-            }
-            else ApplyGRepBlock(state, job.Eid, decoded[index]);
+                var job = pending[index];
+                return GRepParserV2.Parse(job.Chunk, job.Start, job.Size);
+            },
+            (index, geometry) => ApplyPendingGRep(state, pending[index], geometry));
+    }
+
+    /// <summary>Applies one decoded block of a pass: a family cutter is kept when it is the first authored one of its
+    /// element, any other block is merged into the element's geometry.</summary>
+    internal static void ApplyPendingGRep(ParsingState state, PendingGRep job, GRepData? geometry)
+    {
+        if (job.IsFamilyCut)
+        {
+            if (!state.FamilyCutGreps.ContainsKey(job.Eid)
+                && geometry is { } familyCut && IsAuthoredFamilyComplexCutter(familyCut))
+                state.FamilyCutGreps[job.Eid] = familyCut;
+        }
+        else ApplyGRepBlock(state, job.Eid, geometry);
+    }
+
+    /// <summary>Decodes <paramref name="count"/> blocks and applies each result on the calling thread in index order.
+    /// A browser decodes and applies one block at a time; elsewhere the blocks are decoded in parallel.</summary>
+    internal static void DecodeGRepBlocksInOrder(int count, Func<int, GRepData?> decode, Action<int, GRepData?> apply) =>
+        DecodeGRepBlocksInOrder(count, decode, apply, OperatingSystem.IsBrowser());
+
+    /// <summary>The seam of the overload above: <paramref name="sequential"/> selects the one-block-at-a-time path of a
+    /// browser.</summary>
+    internal static void DecodeGRepBlocksInOrder(
+        int count, Func<int, GRepData?> decode, Action<int, GRepData?> apply, bool sequential)
+    {
+        if (sequential)
+        {
+            // A browser has a bounded WebAssembly heap: release each unused result before decoding the next block.
+            for (int index = 0; index < count; index++)
+                apply(index, decode(index));
+            return;
+        }
+
+        // One Parallel.For over the whole pass: decoding in bounded batches left the other cores idle behind the slowest
+        // block of each batch, and holding results back saves little here because most applied results stay in the state.
+        var decoded = new GRepData?[count];
+        Parallel.For(0, count, index => decoded[index] = decode(index));
+        for (int index = 0; index < count; index++)
+        {
+            apply(index, decoded[index]);
             decoded[index] = null;
         }
     }

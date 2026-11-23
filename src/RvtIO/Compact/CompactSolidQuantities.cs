@@ -31,9 +31,11 @@ internal sealed class CompactSolidQuantities
         return result;
     }
 
-    /// <summary>Reads the file in the Revit 2022 layout.</summary>
+    /// <summary>Reads the file in the Revit 2022 layout. This second read reports no phases of its own: the single update
+    /// <c>quantities</c> to <see cref="RvtReaderOptions.Progress"/> marks it, because the first read has already reported <c>complete</c>.</summary>
     internal static CompactSolidQuantities Read(string path, RvtReaderOptions options, Func<int, bool>? wantsSolids)
     {
+        options.Progress?.Report(new("quantities"));
         var reader = new RvtFileReader(new RvtReaderOptions
         {
             SystemFamilyNameLocale = "ENU",

@@ -38,12 +38,40 @@ public partial class RvtFileReader
     public RevitFileInfo Read(string rvtPath)
     {
         RvtContainerCheck.Verify(rvtPath);
+        using var root = RootStorage.OpenRead(rvtPath);
+        return ReadCore(root);
+    }
+
+    /// <summary>Reads a Revit compound file from the beginning of a readable, seekable stream, whatever its position.
+    /// The stream is only read: it is never written to, shortened or closed, also when it is writable, and its position may change.</summary>
+    /// <remarks>A failure of the stream itself, such as an <see cref="IOException"/>, a cancellation or a stream closed while it is read,
+    /// is thrown as the stream threw it; it is not reported as a file that is cut or damaged. A stream that ends early is.
+    /// The result carries no file path: a document made from it with <see cref="RvtDocument.FromInfo"/> has no
+    /// <see cref="RvtDocument.SourcePath"/>, so <see cref="RvtDocument.SaveAs"/> throws <see cref="InvalidOperationException"/> for it
+    /// and printing cannot read the images it takes from the file.</remarks>
+    /// <param name="stream">The Revit file, which the caller keeps.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="stream"/> is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="stream"/> is not readable or not seekable, or is closed.</exception>
+    /// <exception cref="RvtInputException">The stream is empty, is not a compound file, or is cut or damaged.</exception>
+    /// <exception cref="RvtLimitException">A stream is longer than one array can hold, or a file with no project
+    /// partitions contains a source element ID above the range of document-local keys.</exception>
+    public RevitFileInfo ReadStream(Stream stream)
+    {
+        using var root = RvtContainerCheck.OpenVerified(stream, "Revit input stream", out var view);
+        var info = ReadCore(root);
+        // The decoders absorb a read that fails and go on with less data; such a result is not returned.
+        view.ThrowStreamFailure();
+        return info;
+    }
+
+    private RevitFileInfo ReadCore(RootStorage root)
+    {
+        var progress = _options.Progress;
+        progress?.Report(new("metadata"));
         var diag = _options.DiagnosticOutput;
         using var diagnosticScope = DiagnosticSink.Use(diag);
         var sw = System.Diagnostics.Stopwatch.StartNew();
         void LogPhase(string name) { diag?.WriteLine($"[{sw.Elapsed.TotalSeconds:F1}s] {name}"); }
-
-        using var root = RootStorage.OpenRead(rvtPath);
 
         var elemTable = ElemTableReader.Read(root, out var elemWorksets, out _, out bool elemTableIsExact, out var ids,
             allowWideIds: root.TryOpenStorage("Partitions", out _),
@@ -65,7 +93,7 @@ public partial class RvtFileReader
 
         Dictionary<string, TfClassRegistry.TfClassDef>? tfSchemas = null;
         LogPhase("Decompressing partitions...");
-        var chunks = DecompressPartitions(root, diag, out var ownPartitionWallParts, out var partitionStreams, out var framedStreams, out bool staleCopiesRemoved, out var routing, collectFamilyStorage: true);
+        var chunks = DecompressPartitions(root, diag, out var ownPartitionWallParts, out var partitionStreams, out var framedStreams, out bool staleCopiesRemoved, out var routing, collectFamilyStorage: true, progress);
         var fmtChunks = DecompressStorage(root, "Formats", diag);
         if (fmtChunks.Count > 0)
         {
@@ -82,12 +110,15 @@ public partial class RvtFileReader
         var globalChunks = DecompressStorage(root, "Global", diag);
         if (globalChunks.Count > 0) chunks.AddRange(globalChunks);
 
+        progress?.Report(new("class-schema"));
         // Episode GUID table: nested stream Global/History (there is no top-level "History" storage).
         var (elemRecHistories, elemRecOwners, wideSchema) = ReadElemRecs(root, ids);
         LogRelease(root, fileMetadata, wideSchema, diag);
         var episodeTable = ReadEpisodeTable(root, diag, wideSchema);
         if (wideSchema != null && _options.R22Layout && _options.PreserveWideLayout)
         {
+            // Parsed without progress: its phases would repeat in the model read below.
+            progress?.Report(new("wide-model"));
             var (wideInfo, wideState) = ParseModel(root, chunks, framedStreams, partitionStreams.Sum(s => s.Count),
                 r22View: false, partitionStreams, framedStreams, wideSchema, elemTable, elemWorksets, fileMetadata,
                 projectInfo, transmissionData, episodeTable, elemRecHistories, elemRecOwners, tfSchemas, ownPartitionWallParts,
@@ -100,7 +131,7 @@ public partial class RvtFileReader
         IReadOnlyList<PartitionFraming.Framed?> readFrames = framedStreams;
         int partitionChunkCount = partitionStreams.Sum(s => s.Count);
         if (wideSchema != null && _options.R22Layout
-            && RewriteToR22Layout(root, wideSchema, chunks, partitionStreams, framedStreams, diag, ids) is { } r22)
+            && RewriteToR22Layout(root, wideSchema, chunks, partitionStreams, framedStreams, diag, ids, progress) is { } r22)
         {
             (chunks, partitionChunkCount, var r22Frames) = r22;
             readFrames = r22Frames;
@@ -112,9 +143,10 @@ public partial class RvtFileReader
         var (rvtInfo, state) = ParseModel(root, chunks, readFrames, partitionChunkCount,
             r22View, partitionStreams, framedStreams, wideSchema, elemTable, elemWorksets, fileMetadata,
             projectInfo, transmissionData, episodeTable, elemRecHistories, elemRecOwners, tfSchemas, ownPartitionWallParts,
-            staleCopiesRemoved, routing, elemTableIsExact, previewBase64, previewMime, diag, LogPhase, ids);
+            staleCopiesRemoved, routing, elemTableIsExact, previewBase64, previewMime, diag, LogPhase, ids, progress);
         ExtensibleStorageReader.Apply(root, rvtInfo, framedStreams);
         LastParsingState = state;
+        progress?.Report(new("complete", 1, 1));
         return rvtInfo;
     }
 
@@ -144,7 +176,8 @@ public partial class RvtFileReader
         string? previewMime,
         TextWriter? diag,
         Action<string> LogPhase,
-        ElementIdMap? ids)
+        ElementIdMap? ids,
+        IProgress<RvtReadProgress>? progress = null)
     {
         if (ids != null && !r22View)
         {
@@ -175,23 +208,26 @@ public partial class RvtFileReader
             IncrementRoutedPartitions = LocalPartitionRoutes(routing.Current, ids),
             PartitionChunkCount = partitionChunkCount,
         };
+        progress?.Report(new("element-records"));
         ReadWideElementIndex(root, state, partitionStreams, framedStreams, wideSchema, diag);
         ReadRebarBars(root, state, partitionStreams, framedStreams, wideSchema);
         ClassifyAndParseRecords(chunks, state, diag);
         LogPhase("Records parsed");
 
-        ParseBlocks(state, diag);
+        ParseBlocks(state, diag, progress);
         LogPhase("Blocks parsed");
 
         // Continuous-stream anchored walk: blocks cross chunk boundaries, so this sees many more blocks than the
         // per-chunk walk. Extracts native parameter stores and re-runs the key block-driven signals at full coverage.
-        RunTfStreamWalk(state);
+        progress?.Report(new("parameter-stream"));
+        RunTfStreamWalk(state, progress);
         if (state.WideSchema == null) ReadOwnDocumentUnits(root, state, diag);
         if (wideSchema == null && state.ElemClassIdx.Values.Any(id => id is 2108 or 2111))
             ReadNarrowGridAxes(root, state, diag);
         LogPhase("Tf stream walked");
         diag?.WriteLine($"Grid datums: {state.GridDatums.Count}");
 
+        progress?.Report(new("element-properties"));
         // Scan all chunks for element name strings in parallel. Store each result at its
         // source chunk index so task completion order cannot change first-match name resolution.
         var partialResults = new Dictionary<uint, List<string>>?[chunks.Count];
@@ -669,6 +705,7 @@ public partial class RvtFileReader
             if (cdrMapped > 0) diag?.WriteLine($"  0x0725 family to ParamElem pairing: {cdrMapped} names");
         }
 
+        progress?.Report(new("build-model"));
         LogPhase("Building output");
         var rvtInfo = new RevitFileInfo
         {
@@ -777,6 +814,7 @@ public partial class RvtFileReader
             rvtInfo.CurvedGridAxes = axes.Paths;
             rvtInfo.GridChainMemberIds = axes.Members;
         }
+        progress?.Report(new("finalize-model"));
         LogPhase("Post-processed");
         ElementBuilder.ApplyValidatedStairComponentTypeNames(rvtInfo.Elements, state);
         ElementBuilder.ApplyValidatedCorniceTypeNames(rvtInfo.Elements, state);
@@ -1308,7 +1346,7 @@ public partial class RvtFileReader
         out List<IReadOnlyList<byte[]>> partitionStreams, out List<PartitionFraming.Framed?> framedStreams,
         out bool staleCopiesRemoved,
         out (IReadOnlyDictionary<ulong, int>? Current, IReadOnlyDictionary<ulong, int>? UnroutedTypePartitions) routes,
-        bool collectFamilyStorage = false)
+        bool collectFamilyStorage = false, IProgress<RvtReadProgress>? progress = null)
     {
         staleCopiesRemoved = false;
         var partStor = root.OpenStorage("Partitions");
@@ -1317,6 +1355,7 @@ public partial class RvtFileReader
             .OrderByDescending(e => e.Length)
             .ToList();
         if (partEntries.Count == 0) throw new InvalidOperationException("No stream found in Partitions storage");
+        progress?.Report(new("partitions", 0, partEntries.Count));
 
         var decompressor = new ChunkDecompressor();
         var allChunks = new List<byte[]>();
@@ -1380,6 +1419,7 @@ public partial class RvtFileReader
             allChunks.AddRange(chunks);
             partitionStreams.Add(chunks);
             framedStreams.Add(framed);
+            progress?.Report(new("partitions", partitionStreams.Count, partEntries.Count));
         }
 
         diag?.WriteLine($"Total chunks: {allChunks.Count} decompressed");
@@ -2505,7 +2545,7 @@ public partial class RvtFileReader
     /// <summary>Continuous-stream anchored block walk (see TfStreamWalker): native param
     /// stores + full-coverage re-run of block-driven signals (curve owners, node owners,
     /// registry categories, sketch/detail curves).</summary>
-    internal static void RunTfStreamWalk(ParsingState state)
+    internal static void RunTfStreamWalk(ParsingState state, IProgress<RvtReadProgress>? progress = null)
     {
         // The walk reads 4-byte ids and Revit 2022 class numbers; a 64-bit-id file is decoded by WideElementRecords.
         if (state.WideSchema != null && !state.R22View) return;
@@ -2682,8 +2722,10 @@ public partial class RvtFileReader
             }
             // Deliberately NOT expanded here: CurveBlockOwners (uncategorized owners were mislabeled OST_Lines),
             // AnalyticalNodeOwners, registry category assignment.
-        }, (seg, recordStart, eid) => ElementHeaderCategory.Record(state, seg, recordStart, eid));
+        }, (seg, recordStart, eid) => ElementHeaderCategory.Record(state, seg, recordStart, eid),
+            progress is null ? null : (completed, total) => progress.Report(new("parameter-stream", completed, total)));
 
+        progress?.Report(new("recover-geometry"));
         if (unanchoredTypeRoots != null)
         {
             RecoverFramedScheduleTypes(state, unanchoredTypeRoots);
@@ -2796,32 +2838,41 @@ public partial class RvtFileReader
         ParsingState state, List<(byte[] Segment, int Start, uint Size, uint Eid)> jobs)
     {
         if (jobs.Count == 0) return 0;
-        var decoded = new GRepData?[jobs.Count];
         bool slowDiag = Environment.GetEnvironmentVariable("RVTIO_GREP_SLOW") is { Length: > 0 };
-        Parallel.For(0, jobs.Count, index =>
-        {
-            var clock = System.Diagnostics.Stopwatch.StartNew();
-            decoded[index] = GRepParserV2.Parse(jobs[index].Segment, jobs[index].Start, jobs[index].Size);
-            if (slowDiag && (clock.ElapsedMilliseconds > 2000 || decoded[index]?.Faces.Count > 100000))
-                DiagnosticSink.WriteLine($"slow GRep eid={jobs[index].Eid} ms={clock.ElapsedMilliseconds} faces={decoded[index]?.Faces.Count}");
-        });
         int stored = 0;
-        for (int index = 0; index < jobs.Count; index++)
-        {
-            if (decoded[index] is { } geometry && !state.GrepBlocks.ContainsKey(jobs[index].Eid))
+        BlockParser.DecodeGRepBlocksInOrder(jobs.Count,
+            index =>
             {
-                state.GrepBlocks[jobs[index].Eid] = geometry;
-                stored++;
-            }
-            decoded[index] = null;
-        }
+                var job = jobs[index];
+                var clock = slowDiag ? System.Diagnostics.Stopwatch.StartNew() : null;
+                var geometry = GRepParserV2.Parse(job.Segment, job.Start, job.Size);
+                if (clock != null && (clock.ElapsedMilliseconds > 2000 || geometry?.Faces.Count > 100000))
+                    DiagnosticSink.WriteLine($"slow GRep eid={job.Eid} ms={clock.ElapsedMilliseconds} faces={geometry?.Faces.Count}");
+                return geometry;
+            },
+            (index, geometry) =>
+            {
+                if (StoreFirstDecodableGRep(state, jobs[index].Eid, geometry)) stored++;
+            });
         return stored;
     }
 
-    internal static void ParseBlocks(ParsingState state, TextWriter? diag)
+    /// <summary>Stores a decoded block for an element that has none yet; the first decodable block of an element wins.</summary>
+    internal static bool StoreFirstDecodableGRep(ParsingState state, uint eid, GRepData? geometry) =>
+        geometry != null && state.GrepBlocks.TryAdd(eid, geometry);
+
+    internal static void ParseBlocks(ParsingState state, TextWriter? diag, IProgress<RvtReadProgress>? progress = null)
     {
+        const int passCount = 8;
+        int completedPasses = 0;
+        progress?.Report(new("element-blocks", 0, passCount));
         var lap = System.Diagnostics.Stopwatch.StartNew();
-        void Lap(string name) { diag?.WriteLine($"Timing: {name} {lap.Elapsed.TotalSeconds:F1}s"); lap.Restart(); }
+        void Lap(string name)
+        {
+            diag?.WriteLine($"Timing: {name} {lap.Elapsed.TotalSeconds:F1}s");
+            lap.Restart();
+            progress?.Report(new("element-blocks", ++completedPasses, passCount));
+        }
         // Expand known IDs with discovered record IDs
         foreach (var eid in state.Records.Keys)
             state.AllKnownIds.Add(eid);

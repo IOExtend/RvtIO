@@ -8,6 +8,15 @@ API between minor releases.
 
 ### Added
 
+- Report progress while reading a Revit file: `RvtReadProgress` (phase, completed and total units),
+  `RvtReaderOptions.Progress` and `RvtSceneOptions.ReadProgress` (for `RvtSceneReader.Read(path)`). The reader calls
+  `IProgress<RvtReadProgress>.Report` synchronously on the reading thread, in phase order; see
+  [the public API](docs/public-api.md) for the phases.
+- Read a document, a file model or a scene from a readable, seekable stream with `RvtDocument.OpenStream`,
+  `RvtFileReader.ReadStream` and `RvtSceneReader.ReadStream`. The stream is read from its beginning whatever its
+  position and is only read: it is never written to, shortened or closed, also when it is writable. Errors are the
+  `RvtInputException` kinds of a path read, and a failure of the stream itself is thrown as it was. A document opened from
+  a stream has no `SourcePath`, so `SaveAs` throws and printing leaves out the images it takes from the file.
 - IFC export supports explicit centimetres (`cm`) and inches (`in`) in the CLI and API, with the corresponding square
   and cubic units in both profiles. Default IFC output and JSON units are unchanged. Centimetre areas and volumes are
   written in cm² and cm³ under the `CENTI` prefix on `SQUARE_METRE` and `CUBIC_METRE`; a reader that applies the prefix
@@ -16,6 +25,7 @@ API between minor releases.
 ### Fixed
 
 - Avoid overflow when triangulating trimmed faces with 46,341 or more vertices after bridging.
+- Use the saved section plane in model millimetres to clip PDF geometry and place detail windows.
 
 ## [0.6.3] - 2026-11-20
 

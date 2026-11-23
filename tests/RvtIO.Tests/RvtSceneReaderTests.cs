@@ -576,15 +576,97 @@ public class RvtSceneReaderTests
     private static readonly string[] MemberCodes = ["failed-members", "recovered-members", "unverified-members"];
 
     /// <summary>The scene of a synthetic project file read from disk; <paramref name="extraPartition"/> is a second partition stream.</summary>
-    private static RvtSceneResult ReadSyntheticFile(byte[]? extraPartition = null)
+    private static RvtSceneResult ReadSyntheticFile(byte[]? extraPartition = null, RvtSceneOptions? options = null)
     {
         string path = Path.Combine(Path.GetTempPath(), "rvtio-scene-" + Guid.NewGuid().ToString("N") + ".rvt");
         try
         {
             CliExitCodeTests.WriteSyntheticRvt(path, extraPartition);
-            return RvtSceneReader.Read(path);
+            return RvtSceneReader.Read(path, options);
         }
         finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void PathReaderForwardsProgressAndCountsWithoutChangingScene()
+    {
+        byte[] extraPartition = [1, 2, 3];
+        var progress = new ReadProgressLog();
+        var baseline = ReadSyntheticFile(extraPartition, new RvtSceneOptions { ModelKey = "model" });
+        var result = ReadSyntheticFile(extraPartition, new RvtSceneOptions { ModelKey = "model", ReadProgress = progress });
+
+        Assert.Equal("metadata", progress.Updates[0].Phase);
+        Assert.Equal(new RvtReadProgress("complete", 1, 1), progress.Updates[^1]);
+        Assert.Equal([0L, 1L, 2L], progress.Updates.Where(update => update.Phase == "partitions").Select(update => update.Completed));
+        Assert.All(progress.Updates.Where(update => update.Phase == "partitions"), update => Assert.Equal(2, update.Total));
+        var blocks = progress.Updates.Where(update => update.Phase == "element-blocks").ToArray();
+        Assert.Equal(Enumerable.Range(0, blocks.Length).Select(index => (long)index), blocks.Select(update => update.Completed));
+        Assert.Equal(blocks[^1].Total, blocks[^1].Completed);
+        ReadProgressTests.AssertWellFormed(progress.Updates, ReadProgressTests.ProjectPhases);
+        Assert.Equal(baseline.Diagnostics, result.Diagnostics);
+        // The synthetic file has no drawable element, so its scene is empty; ReadProgressTests compares the model and a real scene.
+        Assert.Equal(SceneJson.Write(baseline.Document), SceneJson.Write(result.Document));
+    }
+
+    [Fact]
+    public void StreamReadPreservesSceneDiagnosticsAndLeavesInputOpen()
+    {
+        string path = Path.Combine(Path.GetTempPath(), "rvtio-stream-" + Guid.NewGuid().ToString("N") + ".rvt");
+        try
+        {
+            CliExitCodeTests.WriteSyntheticRvt(path, [1, 2, 3]);
+            var options = new RvtSceneOptions { ModelKey = "model" };
+            var fromPath = RvtSceneReader.Read(path, options);
+
+            using var stream = File.OpenRead(path);
+            stream.Position = stream.Length;
+            var fromStream = RvtSceneReader.ReadStream(stream, options);
+
+            Assert.Equal(SceneJson.Write(fromPath.Document), SceneJson.Write(fromStream.Document));
+            Assert.Equal(fromPath.Diagnostics, fromStream.Diagnostics);
+            stream.Position = 0;
+            Assert.Equal(0xD0, stream.ReadByte());
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void StreamReadForwardsProgressInTheOrderOfAPathRead()
+    {
+        string path = Path.Combine(Path.GetTempPath(), "rvtio-stream-progress-" + Guid.NewGuid().ToString("N") + ".rvt");
+        try
+        {
+            CliExitCodeTests.WriteSyntheticRvt(path, [1, 2, 3]);
+            var fromPath = new ReadProgressLog();
+            RvtSceneReader.Read(path, new RvtSceneOptions { ModelKey = "model", ReadProgress = fromPath });
+
+            var fromStream = new ReadProgressLog();
+            using var stream = File.OpenRead(path);
+            RvtSceneReader.ReadStream(stream, new RvtSceneOptions { ModelKey = "model", ReadProgress = fromStream });
+
+            Assert.Equal(fromPath.Updates, fromStream.Updates);
+            Assert.Equal("metadata", fromStream.Updates[0].Phase);
+            ReadProgressTests.AssertWellFormed(fromStream.Updates, ReadProgressTests.ProjectPhases);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void InvalidCompoundStreamKeepsItsTypedErrorAndRemainsOpen()
+    {
+        using var stream = new MemoryStream([1, 2, 3]);
+        var exception = Assert.Throws<RvtInputException>(() =>
+            RvtSceneReader.ReadStream(stream, new RvtSceneOptions { ModelKey = "model" }));
+
+        Assert.Equal("not-a-compound-file", exception.Kind);
+        stream.Position = 0;
+        Assert.Equal(1, stream.ReadByte());
+    }
+
+    private sealed class ReadProgressLog : IProgress<RvtReadProgress>
+    {
+        public List<RvtReadProgress> Updates { get; } = [];
+        public void Report(RvtReadProgress value) => Updates.Add(value);
     }
 
     [Fact]
