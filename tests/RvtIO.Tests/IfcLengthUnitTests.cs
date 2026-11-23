@@ -1178,6 +1178,8 @@ public class IfcLengthUnitChoiceOptionTests
             IfcUnitFamily.Inch => 0.0254,
             _ => throw new ArgumentOutOfRangeException(nameof(family)),
         };
+        // Centimetres read as (0.01 m)^2 and (0.01 m)^3 for the CENTI prefix on SQUARE_METRE and CUBIC_METRE. That is the exporter's own
+        // assumption, repeated here, so these checks cannot tell whether another IFC reader applies the prefix the same way.
         double areaToSqMetres = family is IfcUnitFamily.Millimetre or IfcUnitFamily.Metre ? 1.0 : lengthToMetres * lengthToMetres;
         double volumeToCuMetres = family is IfcUnitFamily.Millimetre or IfcUnitFamily.Metre ? 1.0 : areaToSqMetres * lengthToMetres;
 

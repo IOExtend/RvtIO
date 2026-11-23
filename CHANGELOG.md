@@ -9,7 +9,9 @@ API between minor releases.
 ### Added
 
 - IFC export supports explicit centimetres (`cm`) and inches (`in`) in the CLI and API, with the corresponding square
-  and cubic units in both profiles. Default IFC output and JSON units are unchanged.
+  and cubic units in both profiles. Default IFC output and JSON units are unchanged. Centimetre areas and volumes are
+  written in cm² and cm³ under the `CENTI` prefix on `SQUARE_METRE` and `CUBIC_METRE`; how other IFC readers apply that
+  prefix has not been verified.
 
 ### Fixed
 

@@ -36,7 +36,8 @@ internal static partial class Program
                                             current profile, every phase for the legacy profile (IFC only)
           --ifc-room-phase <last|all|id>    rooms to export: the last phase, every phase or one native phase id (IFC only)
           --ifc-length-unit <mm|cm|m|in|ft> length unit family written to the IFC file: millimetres, centimetres, metres, inches or feet.
-                                            Without an override, the existing project-unit mapping applies (legacy: mm; IFC only).
+                                            Default: the unit stored in the project for the current profile (mm, m or ft; mm for any other
+                                            unit), mm for the legacy profile (IFC only)
           --ifc-timestamp <timestamp>       UTC timestamp for the STEP FILE_NAME header (ISO-8601 or Unix epoch seconds; IFC only)
           --revit-localization <dir>        deprecated, ignored: the system family names are built in
           --r22-layout                      read the Revit 2022 layout for a JSON export too (an IFC export does it by default)
