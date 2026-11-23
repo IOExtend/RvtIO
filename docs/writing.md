@@ -272,7 +272,8 @@ format symbols when they appear in the displayed value. Use `ft`, `in`, `ft2`, a
 Family metadata follows the document's decimal point or comma. The verified grouping options use commas, dots,
 spaces, or apostrophes, with groups of three digits or with two-digit groups to the left of the final three digits.
 Unitless Number values use the document's decimal separator without digit grouping. Numeric edit requests still use
-a decimal point and omit grouping separators.
+a decimal point and omit grouping separators. A Number value whose shortest round-trip text needs exponent notation
+(for example `1E-05`) is refused, because how Revit writes it into the family metadata has not been verified.
 For materials, `PartAtom` uses the name of the material read from the same document.
 [Autodesk Units and FormatOptions guide](https://help.autodesk.com/cloudhelp/2024/ENU/Revit-API/files/Revit_API_Developers_Guide/Introduction/Application_and_Document/Revit_API_Revit_API_Developers_Guide_Introduction_Application_and_Document_Units_html.html)
 

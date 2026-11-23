@@ -23,6 +23,22 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
     private const int NestedFamilyId = 80, NestedTypeA = 81, NestedTypeB = 82;
     private sealed record FamilyShape(BuiltInCategory Category, int? DimensionDriver = null, bool HasUnnamedType = false,
         string? UnnamedComment = null, bool Formula = false, bool CurrencyInstance = false);
+    private const int UnitsId = 90, CostId = (int)BuiltInParameter.ALL_MODEL_COST, ElevationId = (int)BuiltInParameter.FAMILY_FREEINST_DEFAULT_ELEVATION;
+    private const double MillimetreToFeet = 0.001 / 0.3048;
+
+    /// <summary>A numeric built-in value row stored in both types and the active copy, with the units element and the PartAtom entry
+    /// that go with it; the fixture holds exactly one display option, the one of this value.</summary>
+    private sealed record BuiltInNumber(int Id, string Element, string? DisplayName, string Type, string Unit, double A, double B,
+        string Spec, string UnitId, double Accuracy, Func<double, string> Text)
+    {
+        internal static readonly BuiltInNumber Cost = new(CostId, "Cost", null, "Currency", "$", 12.5, 17.25,
+            "autodesk.spec.measurable:currency-2.0.0", "autodesk.unit.unit:currency-1.0.0", 0.01,
+            value => value.ToString("F2", CultureInfo.InvariantCulture));
+        internal static readonly BuiltInNumber Elevation = new(ElevationId, "Default_Elevation", "Default Elevation", "Length", "mm",
+            150 * MillimetreToFeet, 450 * MillimetreToFeet, "autodesk.spec.aec:length-2.0.0", "autodesk.unit.unit:millimeters-1.0.1", 1,
+            value => Math.Round(value / MillimetreToFeet, 0, MidpointRounding.AwayFromZero).ToString("F0", CultureInfo.InvariantCulture));
+    }
+
     private static readonly Guid SharedGuid = new("50b3ce53-fa73-47a1-ae3e-75035a1f17dd");
     private static readonly Guid CreationEpisode = new("f569346e-bacd-43d6-a834-80eaa8fa035f");
     private static PartitionFraming.Tags Tags(int release) => release switch
@@ -468,6 +484,75 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
         Assert.Equal(PartitionStreamEditorTests.TaggedBody(FamilyClass, FamilyBody(b, a, b, wide: release >= 2024)), ReadFamilyBody(root, release));
     }
 
+    private static XElement[] ReadParts(RootStorage root)
+    {
+        using var atom = root.OpenStream("PartAtom");
+        return XDocument.Load(atom).Descendants(XName.Get("part", "urn:schemas-autodesk-com:partatom")).ToArray();
+    }
+
+    [Theory]
+    [InlineData("Height", "A", "New A")]
+    [InlineData("Glass", "B", "Новое значение")]
+    public void ReplacesPartAtomEntriesThatRevitWritesWithoutDisplayName(string caption, string type, string value)
+    {
+        string source = CreateSource(caption: caption, plainName: true);
+        RvtWriter.SetFamilyParameter(source, Output, type, ParameterId, value);
+
+        using var root = RootStorage.OpenRead(Output);
+        string a = type == "A" ? value : "Original A", b = type == "B" ? value : "Original B";
+        foreach (var part in ReadParts(root))
+        {
+            var entry = Assert.Single(part.Elements(), e => e.Name.LocalName == caption);
+            Assert.Null(entry.Attribute("displayName"));
+            Assert.Equal(part.Elements().First().Value == "A" ? a : b, entry.Value);
+        }
+        Assert.Equal(PartitionStreamEditorTests.TaggedBody(FamilyClass, FamilyBody(type == "B" ? value : "Original B", a, b)),
+            ReadFamilyBody(root, 2022));
+    }
+
+    [Fact]
+    public void ClearsAPartAtomEntryThatRevitWritesWithoutDisplayName()
+    {
+        string source = CreateSource(caption: "Height", plainName: true);
+        RvtWriter.SetFamilyParameter(source, Output, "A", ParameterId, "");
+
+        using var root = RootStorage.OpenRead(Output);
+        var parts = ReadParts(root);
+        Assert.Single(parts[0].Elements());
+        Assert.Equal("Original B", Assert.Single(parts[1].Elements(), e => e.Name.LocalName == "Height").Value);
+        Assert.Equal(PartitionStreamEditorTests.TaggedBody(FamilyClass, FamilyBody("Original B", "", "Original B")), ReadFamilyBody(root, 2022));
+    }
+
+    [Fact]
+    public void FirstValueLeavesThePlainEntryOfTheOtherTypeUntouched()
+    {
+        string source = CreateSource(caption: "Height", plainName: true, blankType: "B");
+        RvtWriter.SetFamilyParameter(source, Output, "B", ParameterId, "First");
+
+        using var root = RootStorage.OpenRead(Output);
+        var parts = ReadParts(root);
+        var original = Assert.Single(parts[0].Elements(), e => e.Name.LocalName == "Height");
+        Assert.Null(original.Attribute("displayName"));
+        Assert.Equal("Original A", original.Value);
+        Assert.Equal("First", Assert.Single(parts[1].Elements(), e => e.Name.LocalName == "Height").Value);
+    }
+
+    [Fact]
+    public void ReplacesAFamilyTypeReferenceEntryThatRevitWritesWithoutDisplayName()
+    {
+        string source = CreateSource(caption: "Glass", plainName: true, nested: (NestedTypeA, NestedTypeA, false));
+        RvtWriter.SetFamilyParameter(source, Output, "B", ParameterId, NestedTypeB.ToString());
+
+        using var root = RootStorage.OpenRead(Output);
+        var parts = ReadParts(root);
+        Assert.Equal("Nested : Small", Assert.Single(parts[0].Elements(), e => e.Name.LocalName == "Glass").Value);
+        var replaced = Assert.Single(parts[1].Elements(), e => e.Name.LocalName == "Glass");
+        Assert.Null(replaced.Attribute("displayName"));
+        Assert.Equal("Nested : Large", replaced.Value);
+        Assert.Equal(PartitionStreamEditorTests.TaggedBody(FamilyClass, FamilyBody("", "", "",
+            nested: (NestedTypeA, NestedTypeB, false))), ReadFamilyBody(root, 2022));
+    }
+
     [Fact]
     public void RefusesAFirstSharedValueWhenTheGuidsDisagree()
     {
@@ -484,6 +569,97 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
         string source = CreateSource(release: 2023, shared: true, blankType: "B", forgeId: forgeId);
         var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetFamilyParameter(source, Output, "B", ParameterId, "First"));
         Assert.Equal("unverified-parameter-storage", error.Kind);
+        Assert.False(File.Exists(Output));
+    }
+
+    private static XElement[] NumberEntries(RootStorage root, string element)
+    {
+        using var atom = root.OpenStream("PartAtom");
+        return XDocument.Load(atom).Descendants(XName.Get(element, "http://www.w3.org/2005/Atom")).ToArray();
+    }
+
+    [Fact]
+    public void WritesABuiltInCostAndItsFormattedPartAtomEntry()
+    {
+        var cost = BuiltInNumber.Cost;
+        string source = CreateSource(number: cost);
+        byte[] hash = SHA256.HashData(File.ReadAllBytes(source));
+        RvtWriter.SetFamilyParameter(source, Output, "A", CostId, "20");
+
+        using var root = RootStorage.OpenRead(Output);
+        Assert.Equal(PartitionStreamEditorTests.TaggedBody(FamilyClass, FamilyBody("Original B", "Original A", "Original B", number: (CostId, 20, cost.B))),
+            ReadFamilyBody(root, 2022));
+        var entries = NumberEntries(root, "Cost");
+        Assert.Equal(["20.00", "17.25"], entries.Select(e => e.Value));
+        Assert.All(entries, e => Assert.Equal("$", (string?)e.Attribute("units")));
+        Assert.Equal(hash, SHA256.HashData(File.ReadAllBytes(source)));
+    }
+
+    [Fact]
+    public void WritesABuiltInCostToTheActiveTypeAndItsCurrentValue()
+    {
+        var cost = BuiltInNumber.Cost;
+        string source = CreateSource(number: cost);
+        RvtWriter.SetFamilyParameter(source, Output, "B", CostId, "-3.5");
+
+        using var root = RootStorage.OpenRead(Output);
+        Assert.Equal(PartitionStreamEditorTests.TaggedBody(FamilyClass, FamilyBody("Original B", "Original A", "Original B", number: (CostId, cost.A, -3.5))),
+            ReadFamilyBody(root, 2022));
+        Assert.Equal(["12.50", "-3.50"], NumberEntries(root, "Cost").Select(e => e.Value));
+    }
+
+    [Theory]
+    [InlineData("A", "12.5000000000001")]
+    [InlineData("B", "17.25000000000001")]
+    public void RefusesABuiltInCostChangeThatRevitMaySuppress(string type, string value)
+    {
+        string source = CreateSource(number: BuiltInNumber.Cost);
+        byte[] hash = SHA256.HashData(File.ReadAllBytes(source));
+        var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetFamilyParameter(source, Output, type, CostId, value));
+        Assert.Equal("unverified-parameter-storage", error.Kind);
+        Assert.Contains("comparison tolerance", error.Message);
+        Assert.False(File.Exists(Output));
+        Assert.Equal(hash, SHA256.HashData(File.ReadAllBytes(source)));
+    }
+
+    [Fact]
+    public void KeepsABuiltInCostThatAlreadyHasTheRequestedValue()
+    {
+        string source = CreateSource(number: BuiltInNumber.Cost);
+        RvtWriter.SetFamilyParameter(source, Output, "A", CostId, "12.5");
+
+        using var root = RootStorage.OpenRead(Output);
+        Assert.Equal(PartitionStreamEditorTests.TaggedBody(FamilyClass, FamilyBody("Original B", "Original A", "Original B",
+            number: (CostId, BuiltInNumber.Cost.A, BuiltInNumber.Cost.B))), ReadFamilyBody(root, 2022));
+        Assert.Equal(["12.50", "17.25"], NumberEntries(root, "Cost").Select(e => e.Value));
+    }
+
+    [Theory]
+    [InlineData("A", "300 mm", 300, 450)]
+    [InlineData("B", "25 mm", 150, 25)]
+    public void WritesADefaultElevationAndItsFormattedPartAtomEntry(string type, string value, double a, double b)
+    {
+        var elevation = BuiltInNumber.Elevation;
+        string source = CreateSource(number: elevation);
+        RvtWriter.SetFamilyParameter(source, Output, type, ElevationId, value);
+
+        using var root = RootStorage.OpenRead(Output);
+        Assert.Equal(PartitionStreamEditorTests.TaggedBody(FamilyClass, FamilyBody("Original B", "Original A", "Original B",
+            number: (ElevationId, a * MillimetreToFeet, b * MillimetreToFeet))), ReadFamilyBody(root, 2022));
+        var entries = NumberEntries(root, "Default_Elevation");
+        Assert.Equal([elevation.Text(a * MillimetreToFeet), elevation.Text(b * MillimetreToFeet)], entries.Select(e => e.Value));
+        Assert.All(entries, e => Assert.Equal("mm", (string?)e.Attribute("units")));
+        Assert.All(entries, e => Assert.Equal("Default Elevation", (string?)e.Attribute("displayName")));
+    }
+
+    [Theory]
+    [InlineData("300")]
+    [InlineData("300 furlongs")]
+    public void RefusesADefaultElevationWithoutAKnownLengthUnit(string value)
+    {
+        string source = CreateSource(number: BuiltInNumber.Elevation);
+        var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetFamilyParameter(source, Output, "A", ElevationId, value));
+        Assert.Equal("invalid-parameter-value", error.Kind);
         Assert.False(File.Exists(Output));
     }
 
@@ -520,7 +696,7 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
         int release = 2022, bool shared = false, string? blankType = null, string caption = "Proof", bool visible = true,
         string? forgeId = null, (string A, string B)? comments = null, bool importedImage = false, bool imageHolderMismatch = false,
         FamilyShape? shape = null, (int A, int B, bool Instance)? nested = null, bool staleMetadataGuid = false,
-        (int A, int B)? customImage = null)
+        (int A, int B)? customImage = null, bool plainName = false, BuiltInNumber? number = null)
     {
         var references = customImage is { } values ? (values.A, values.B, false) : nested;
         importedImage |= customImage.HasValue;
@@ -556,7 +732,10 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
         schema.Top(new("ParamDefString", new Back(26), 1, [], [])); // 27
         schema.Top(new("ParamElem", new Back(18), 1, [PointerField("m_pParamDef")], [])); // 28
         schema.Top(new("ParamElemFamily", new Back(28), 1, [new("m_instanceParam", 1)], [])); // 29
-        Add("ADocument", Reference("m_ownerFamilyId", 14), Reference("m_ownerFamilyContainingGroupId", 14)); // 30
+        List<Fld> documentFields = [Reference("m_ownerFamilyId", 14), Reference("m_ownerFamilyContainingGroupId", 14)];
+        if (number is not null)
+            documentFields.AddRange([PointerField("m_pSchemaStorage"), PointerField("m_pUnitsTracking")]);
+        Add("ADocument", documentFields.ToArray()); // 30
         Add("ParamIdPair", Reference("m_famParamId", 14)); // 31
         schema.Top(new("ExtrusionElem", new Back(18), 1, [Reference("m_driver", 31)], [])); // 32
         Add("GUIDvalue", new Fld("m_guid", 9)); // 33
@@ -585,7 +764,23 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
         schema.Top(new("ParamDefImageSymbolBrowseEdit", new Back(26), 1, [], [])); // 50
         schema.Top(new("ParamDefValue", new Back(26), 1,
             [release == 2020 ? new("m_unitType", 4) : new("m_specTypeId", 8), new("m_restriction", 4), new("m_boundless", 1)], [])); // 51
-        for (int i = 52; i < tags.ContentKey; i++)
+        int fillers = 52;
+        if (number is not null)
+        {
+            // The units element of the modern layout: one display option per spec, each a pair of the spec and its format options.
+            Add("ESSchemaStorage"); // 52
+            Add("UnitsTracking", Reference("m_unitsElemId", 14)); // 53
+            Add("ForgeTypeId", new Fld("m_typeId", 8)); // 54
+            Add("FormatOptions", Reference("m_symbolTypeId", 54), Reference("m_unitTypeId", 54), new("m_accuracy", 7), new("m_roundingMethod", 4),
+                new("m_bSuppressLeadingZeros", 1), new("m_bSuppressSpaces", 1), new("m_bSuppressTrailingZeros", 1), new("m_bUseDefault", 1),
+                new("m_bUseGrouping", 1), new("m_bUsePlusPrefix", 1)); // 55
+            Add("std::pair< ForgeTypeId, FormatOptions >", Reference("first", 54), Reference("second", 55)); // 56
+            Add("AUnits", Reference("m_formatOptionsMap", 56, 0x50), new("m_universalUnitSystem", 4), new("m_decimalSymbol", 4),
+                new("m_digitGroupingSymbol", 4), new("m_digitGroupingAmount", 4)); // 57
+            schema.Top(new("UnitsElem", new Back(18), 1, [Reference("m_units", 57)], [])); // 58
+            fillers = 59;
+        }
+        for (int i = fillers; i < tags.ContentKey; i++)
             Add("Filler" + i);
         foreach (string marker in new[] { "ContentKey", "ContentMarker", "SegmentMarker", "SegmentCheckback", "SignatureMarker" })
             Add(marker);
@@ -598,7 +793,15 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
             formats.Write(PagedStreamCodec.Encode([], schema.Build()));
         var global = root.CreateStorage("Global");
         using (var header = global.CreateStream("Latest"))
-            header.Write(PagedStreamCodec.Encode(new byte[8], Pack(w => { w.Write((ushort)30); WriteId(w, OwnerId, wide); WriteId(w, -1, wide); })));
+            header.Write(PagedStreamCodec.Encode(new byte[8], Pack(w =>
+            {
+                w.Write((ushort)30); WriteId(w, OwnerId, wide); WriteId(w, -1, wide);
+                if (number is not null)
+                {
+                    Pointer(w, 52); Pointer(w, 53); // the schema storage (empty) and the units tracking object that names the units element
+                    WriteId(w, UnitsId, wide);
+                }
+            })));
         using (var table = global.CreateStream("ElemTable"))
         {
             var ids = new List<int> { OwnerId, ParameterId };
@@ -610,6 +813,8 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
                 ids.Add(FormulaResultId);
             if (nested.HasValue)
                 ids.AddRange([NestedFamilyId, NestedTypeA, NestedTypeB]);
+            if (number is not null)
+                ids.Add(UnitsId);
             byte[] bytes = Pack(w =>
             {
                 w.Write((ushort)17); w.Write(ids.Count);
@@ -636,7 +841,8 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
             string b = currencyInstance ? "0" : blankType == "B" ? "" : "Original B";
             var records = new List<(ulong, ushort, byte[])>
             {
-                ((ulong)Id(OwnerId, wide), FamilyClass, FamilyBody(b, a, b, reporting, wide, comments, shape: shape, nested: references)),
+                ((ulong)Id(OwnerId, wide), FamilyClass, FamilyBody(b, a, b, reporting, wide, comments, shape: shape, nested: references,
+                    number: number is null ? null : (number.Id, number.A, number.B))),
                 ((ulong)Id(ParameterId, wide), shared ? (ushort)35 : (ushort)29, Pack(w =>
                 {
                     WriteId(w, ParameterId, wide);
@@ -656,6 +862,15 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
                         WriteCurrencySpec(w);
                 })),
             };
+            if (number is not null)
+                records.Add(((ulong)Id(UnitsId, wide), 58, Pack(w =>
+                {
+                    WriteId(w, UnitsId, wide);
+                    w.Write(1); Text(w, number.Spec);                  // the one display option: its spec,
+                    Text(w, ""); Text(w, number.UnitId);               // no symbol, the unit
+                    w.Write(number.Accuracy); w.Write(0); w.Write(new byte[6]);
+                    w.Write(1); w.Write(0); w.Write(0); w.Write(0);   // metric, decimal point, grouping (unused)
+                })));
             if (nested.HasValue)
             {
                 records.Add(((ulong)Id(NestedFamilyId, wide), FamilyClass, Pack(w =>
@@ -728,7 +943,8 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
                     value = reference == NestedTypeA ? "Nested : Small" : "Nested : Large";
                 if (customImage is { } image && !(staleMetadata && type == "A"))
                     value = ImageText(type == "A" ? image.A : image.B);
-                var parameter = new XElement(ns + "Proof", new XAttribute("displayName", caption),
+                // Revit omits displayName when the element name already equals the caption.
+                var parameter = new XElement(ns + (plainName ? caption : "Proof"), plainName ? null : new XAttribute("displayName", caption),
                     new XAttribute("type", shared ? "shared" : "custom"),
                     new XAttribute("typeOfParameter", customImage.HasValue ? "Image" : nested.HasValue ? "Family type: Generic Models" : "Text"), value);
                 if (shared)
@@ -740,6 +956,14 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
                 node.Add(new XElement(ns + "Type_Comments", new XAttribute("displayName", "Type Comments"),
                     new XAttribute("type", "system"), new XAttribute("typeOfParameter", "Text"),
                     staleMetadata && type == "A" ? "Stale" : comment));
+            if (number is not null)
+            {
+                var entry = new XElement(ns + number.Element, new XAttribute("type", "system"), new XAttribute("typeOfParameter", number.Type),
+                    new XAttribute("units", number.Unit), number.Text(type == "A" ? number.A : number.B));
+                if (number.DisplayName is not null)
+                    entry.SetAttributeValue("displayName", number.DisplayName);
+                node.Add(entry);
+            }
             if (shape?.Formula == true && !currencyInstance)
                 node.Add(new XElement(ns + "Calculated", new XAttribute("displayName", "Calculated"),
                     new XAttribute("type", "custom"), new XAttribute("typeOfParameter", "Text"), value));
@@ -749,13 +973,13 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
 
     private static byte[] FamilyBody(string active, string a, string b, bool reporting = false, bool wide = false,
         (string A, string B)? comments = null, (int A, int B)? images = null, FamilyShape? shape = null,
-        (int A, int B, bool Instance)? nested = null) => Pack(w =>
+        (int A, int B, bool Instance)? nested = null, (int Id, double A, double B)? number = null) => Pack(w =>
     {
         WriteId(w, OwnerId, wide); Pointer(w, 20); Pointer(w, 22); w.Write(false); w.Write(false);
         WriteId(w, (int)(shape?.Category ?? BuiltInCategory.OST_GenericModel), wide); w.Write(false); Text(w, "Host"); Pointer(w, 46);
         bool formula = shape?.Formula == true;
         bool currencyInstance = shape?.CurrencyInstance == true;
-        Store(w, active, reporting, wide, comments?.B, images?.B, formula, nested?.B, nested?.Instance ?? false, currencyInstance);
+        Store(w, active, reporting, wide, comments?.B, images?.B, formula, nested?.B, nested?.Instance ?? false, currencyInstance, number is { } n0 ? (n0.Id, n0.B) : null);
         if (shape?.HasUnnamedType == true)
         {
             w.Write(2); w.Write(3);
@@ -765,8 +989,8 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
         {
             w.Write(1); w.Write(2);
         }
-        Text(w, "A"); Store(w, a, reporting, wide, comments?.A, images?.A, formula, nested?.A, nested?.Instance ?? false, currencyInstance);
-        Text(w, "B"); Store(w, b, reporting, wide, comments?.B, images?.B, formula, nested?.B, nested?.Instance ?? false, currencyInstance);
+        Text(w, "A"); Store(w, a, reporting, wide, comments?.A, images?.A, formula, nested?.A, nested?.Instance ?? false, currencyInstance, number is { } nA ? (nA.Id, nA.A) : null);
+        Text(w, "B"); Store(w, b, reporting, wide, comments?.B, images?.B, formula, nested?.B, nested?.Instance ?? false, currencyInstance, number is { } nB ? (nB.Id, nB.B) : null);
         if (shape?.DimensionDriver is int driver)
         {
             w.Write(1); WriteId(w, -1, wide); w.Write(0);
@@ -782,9 +1006,9 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
     });
 
     private static void Store(BinaryWriter w, string value, bool reporting, bool wide, string? comments, int? image, bool formula,
-        int? nestedReference = null, bool instance = false, bool currencyInstance = false)
+        int? nestedReference = null, bool instance = false, bool currencyInstance = false, (int Id, double Value)? builtInNumber = null)
     {
-        w.Write(1 + (comments is null ? 0 : 1) + (image is null ? 0 : 1) + (formula ? 1 : 0));
+        w.Write(1 + (comments is null ? 0 : 1) + (image is null ? 0 : 1) + (formula ? 1 : 0) + (builtInNumber is null ? 0 : 1));
         double number = currencyInstance ? double.Parse(value, CultureInfo.InvariantCulture) : 0;
         Row(ParameterId, nestedReference.HasValue || currencyInstance ? "" : value, reporting, nestedReference ?? -1,
             isInstance: instance || currencyInstance, number: number);
@@ -794,6 +1018,8 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
             Row(TypeImage, "", false, id);
         if (formula)
             Row(FormulaResultId, currencyInstance ? "" : value, false, expression: 47, isInstance: currencyInstance, number: number);
+        if (builtInNumber is { } built)
+            Row(built.Id, "", false, number: built.Value);
 
         void Row(int id, string text, bool isReporting, int reference = -1, ushort expression = 0, bool isInstance = false, double number = 0)
         {

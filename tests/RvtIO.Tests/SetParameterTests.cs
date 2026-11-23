@@ -861,6 +861,29 @@ public sealed class SetParameterTests : IDisposable
         Assert.Equal(BuiltInBody(parameter, value), ReadBody(root));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RefusesACostChangeThatRevitMaySuppress(bool loadedFamily)
+    {
+        const string suppressed = "17.25000000001";
+        var identity = new StoredIdentity(BuiltInParameter.ALL_MODEL_COST, "17.25");
+        string source = loadedFamily
+            ? CreateSource(family: new FamilyFixture(Category: BuiltInCategory.OST_GenericModel, OnlyPrimary: true, Identity: identity))
+            : CreateSource(builtIn: BuiltInParameter.ALL_MODEL_COST, builtInValue: "17.25");
+        byte[] hash = SHA256.HashData(File.ReadAllBytes(source));
+        var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetParameters(source, Output,
+            [new(ProjectId, (int)BuiltInParameter.ALL_MODEL_COST, suppressed)]));
+        Assert.Equal("unverified-parameter-storage", error.Kind);
+        Assert.Contains("comparison tolerance", error.Message);
+        Assert.False(File.Exists(Output));
+        Assert.Equal(hash, SHA256.HashData(File.ReadAllBytes(source)));
+
+        // A visible change is still accepted.
+        RvtWriter.SetParameters(source, Output, [new(ProjectId, (int)BuiltInParameter.ALL_MODEL_COST, "17.26")]);
+        Assert.True(File.Exists(Output));
+    }
+
     [Fact]
     public void RejectsAWholeMarkBatchForAnInapplicableOwner()
     {

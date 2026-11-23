@@ -346,7 +346,7 @@ internal static class ParameterWriter
                 projectReference, localElementReference)
             : edit.Parameter switch
             {
-                BuiltInParameter.ALL_MODEL_COST => (StorageType.Double, EncodeCost(edit.Value!), (UnitType?)null),
+                BuiltInParameter.ALL_MODEL_COST => (StorageType.Double, EncodeCost(edit.Value!), (UnitType?)UnitType.UT_Currency),
                 _ when image => (StorageType.ElementId, UserParameterWriter.EncodeElementId(imageId, idWidth), null),
                 _ => (StorageType.String, EncodeText(edit.Value!), null),
             };

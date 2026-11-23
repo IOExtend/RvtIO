@@ -55,6 +55,79 @@ public sealed class ParameterMeasurementTests
     public void DegreesAreConvertedToTheValueStoredByRevit(string input, double expected) =>
         Assert.Equal(expected, ParameterMeasurement.Parse(UnitType.UT_Angle, input));
 
+    // Expected feet (or square or cubic feet) from the definition of the foot as 0.3048 m, computed outside the code under test.
+    [Theory]
+    [InlineData(UnitType.UT_Length, "1 mm", 0.0032808398950131233)]
+    [InlineData(UnitType.UT_Length, "2.5 cm", 0.08202099737532809)]
+    [InlineData(UnitType.UT_Length, "1 m", 3.2808398950131235)]
+    [InlineData(UnitType.UT_Length, "-3 m", -9.84251968503937)]
+    [InlineData(UnitType.UT_Length, "1 ft", 1)]
+    [InlineData(UnitType.UT_Length, "  2.5\tmm ", 0.008202099737532808)]
+    [InlineData(UnitType.UT_Area, "1 m2", 10.763910416709722)]
+    [InlineData(UnitType.UT_Area, "4 m²", 43.05564166683889)]
+    [InlineData(UnitType.UT_Area, "3 ft2", 3)]
+    [InlineData(UnitType.UT_Area, "3 ft²", 3)]
+    [InlineData(UnitType.UT_Volume, "1 m3", 35.31466672148859)]
+    [InlineData(UnitType.UT_Volume, "0.5 m³", 17.657333360744296)]
+    [InlineData(UnitType.UT_Volume, "2 ft3", 2)]
+    [InlineData(UnitType.UT_Volume, "2 ft³", 2)]
+    [InlineData(UnitType.UT_Angle, "0.5 rad", 0.5)]
+    [InlineData(UnitType.UT_Angle, "-2 rad", -2)]
+    [InlineData(UnitType.UT_Angle, "90 deg", 1.5707963267948966)]
+    [InlineData(UnitType.UT_Angle, "90 °", 1.5707963267948966)]
+    [InlineData(UnitType.UT_Currency, "12.5", 12.5)]
+    [InlineData(UnitType.UT_Currency, "-0.25", -0.25)]
+    [InlineData(UnitType.UT_Number, "1e3", 1000)]
+    [InlineData(UnitType.UT_Number, " 7 ", 7)]
+    public void UnitsAreConvertedToTheInternalValueRevitStores(UnitType spec, string input, double expected)
+    {
+        double? parsed = ParameterMeasurement.Parse(spec, input);
+        Assert.NotNull(parsed);
+        Assert.Equal(expected, parsed.Value, Math.Abs(expected) * 1e-12);
+    }
+
+    [Theory]
+    [InlineData(UnitType.UT_Length, "")]
+    [InlineData(UnitType.UT_Length, "5")]
+    [InlineData(UnitType.UT_Length, "5 furlongs")]
+    [InlineData(UnitType.UT_Length, "5 m2")]
+    [InlineData(UnitType.UT_Length, "abc m")]
+    [InlineData(UnitType.UT_Length, "NaN m")]
+    [InlineData(UnitType.UT_Length, "1e400 m")]
+    [InlineData(UnitType.UT_Length, "1e308 m")]
+    [InlineData(UnitType.UT_Area, "5 m")]
+    [InlineData(UnitType.UT_Volume, "5 ft2")]
+    [InlineData(UnitType.UT_Angle, "5 mm")]
+    [InlineData(UnitType.UT_Currency, "12.5 $")]
+    [InlineData(UnitType.UT_Currency, "1e400")]
+    [InlineData(UnitType.UT_Number, "12,5")]
+    [InlineData(UnitType.UT_Number, "NaN")]
+    public void RefusesAValueWithoutAKnownUnitOrOutsideTheDoubleRange(UnitType spec, string input) =>
+        Assert.Null(ParameterMeasurement.Parse(spec, input));
+
+    [Theory]
+    [InlineData(1E-05)]
+    [InlineData(-2.5E-07)]
+    [InlineData(1.5E+21)]
+    [InlineData(1E+30)]
+    public void RefusesNumbersWhoseMetadataTextNeedsAnExponent(double value)
+    {
+        Assert.Null(ParameterMeasurement.PlainNumber(value, System.Globalization.NumberFormatInfo.InvariantInfo));
+        var layout = DisplayUnits(UnitType.UT_Number, "", DisplayUnitType.DUT_GENERAL, "", UnitSymbolType.UST_NONE, legacy: false);
+        Assert.Null(ParameterMeasurement.Display(UnitType.UT_Number, Walker, layout, 1, value));
+    }
+
+    [Theory]
+    [InlineData(0.0001, "0.0001")]
+    [InlineData(123456789012345d, "123456789012345")]
+    [InlineData(-12.5, "-12.5")]
+    public void WritesNumbersThatNeedNoExponentAsTheirShortestRoundTripText(double value, string expected)
+    {
+        Assert.Equal(expected, ParameterMeasurement.PlainNumber(value, System.Globalization.NumberFormatInfo.InvariantInfo));
+        var layout = DisplayUnits(UnitType.UT_Number, "", DisplayUnitType.DUT_GENERAL, "", UnitSymbolType.UST_NONE, legacy: false);
+        Assert.Equal(expected, ParameterMeasurement.Display(UnitType.UT_Number, Walker, layout, 1, value)?.After);
+    }
+
     [Theory]
     [InlineData(1, 0, 1, "12.345.678,63", "0,00")]
     [InlineData(1, 2, 1, "12 345 678,63", "0,00")]

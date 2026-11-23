@@ -347,7 +347,7 @@ internal static class StandaloneFamilyParameterWriter
             {
                 display = ParameterMeasurement.Display(measured, walker, displayUnits, original.Real, BinaryPrimitives.ReadDoubleLittleEndian(replacement));
                 if (display is null && measured == UnitType.UT_Number)
-                    throw Unverified("The family decimal separator for the Number parameter could not be verified.");
+                    throw Unverified("The family display format for the Number parameter could not be verified.");
             }
             (string? Type, string? Before, string? After) referenceNames = default;
             if (storage == StorageType.ElementId)
@@ -422,6 +422,9 @@ internal static class StandaloneFamilyParameterWriter
             }
             else
                 encoded = storageType == StorageType.Double ? EncodeCost(newText) : EncodeText(newText);
+            // Same refusal as the project and loaded-family Cost edits: Revit may suppress a change this small.
+            if (field.Quantity == UnitType.UT_Currency && old is { } storedCost)
+                ParameterFormulaEvaluator.VerifyStableChange(storedCost.Real, BinaryPrimitives.ReadDoubleLittleEndian(encoded));
             var format = field.Quantity is UnitType quantity && WideDocument.Read(latest, schema) is { } document
                 && units.TryGetValue(document.UnitsElemId, out var displayUnits)
                 ? ParameterMeasurement.Display(quantity, walker, displayUnits, old?.Real ?? 0,
@@ -736,7 +739,8 @@ internal static class StandaloneFamilyParameterWriter
                 break;
             case (StorageType.Double, "Number") when display is null:
                 matchesValue = double.TryParse(before, NumberStyles.Float, CultureInfo.InvariantCulture, out double number) && number == original.Real;
-                after = BinaryPrimitives.ReadDoubleLittleEndian(replacement).ToString("R", CultureInfo.InvariantCulture);
+                after = ParameterMeasurement.PlainNumber(BinaryPrimitives.ReadDoubleLittleEndian(replacement), NumberFormatInfo.InvariantInfo)
+                    ?? throw Unverified("The family metadata text of this Number value has not been verified.");
                 break;
             case (StorageType.Double, string type) when display is { } formatted && type == formatted.Type:
                 matchesValue = formatted.Matches(before);
@@ -762,10 +766,13 @@ internal static class StandaloneFamilyParameterWriter
         return true;
     }
 
+    // Revit writes displayName only when the element name differs from the caption, so a single-word caption
+    // such as Height has no attribute and is identified by its element name.
     private static bool MatchesPartAtomParameter(XElement entry, string caption, Guid? sharedGuid) =>
         sharedGuid is Guid guid
             ? (string?)entry.Attribute("type") == "shared" && Guid.TryParse((string?)entry.Attribute("id"), out var id) && id == guid
-            : (string?)entry.Attribute("type") == "custom" && (string?)entry.Attribute("displayName") == caption;
+            : (string?)entry.Attribute("type") == "custom"
+                && ((string?)entry.Attribute("displayName") ?? (entry.Name.Namespace == Atom ? entry.Name.LocalName : null)) == caption;
 
     private static XElement CreatePartAtomEntry(string caption, Guid? sharedGuid, string type, string value)
     {

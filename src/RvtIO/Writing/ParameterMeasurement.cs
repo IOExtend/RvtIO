@@ -100,6 +100,14 @@ internal static class ParameterMeasurement
         double.TryParse(text, NumberStyles.Float, format ?? NumberFormatInfo.InvariantInfo, out double value) && double.IsFinite(value)
             ? value : null;
 
+    /// <summary>The shortest text that reads back as the number, or null when that text is in exponent notation: how Revit writes such
+    /// a value into the family metadata has not been verified.</summary>
+    internal static string? PlainNumber(double value, NumberFormatInfo format)
+    {
+        string text = value.ToString("R", format);
+        return text.Contains('E') ? null : text;
+    }
+
     internal readonly record struct DisplayValue(string Type, string? Unit, string Symbol, double Before, string After,
         NumberFormatInfo Format, string? AlternateUnit = null, string? GroupedBefore = null)
     {
@@ -125,7 +133,7 @@ internal static class ParameterMeasurement
         if (format is null || !double.IsFinite(before) || !double.IsFinite(after))
             return null;
         if (spec == UnitType.UT_Number)
-            return new("Number", null, "", before, after.ToString("R", format), format);
+            return PlainNumber(after, format) is { } plain ? new("Number", null, "", before, plain, format) : null;
         Unit? unit;
         double accuracy;
         string symbol;

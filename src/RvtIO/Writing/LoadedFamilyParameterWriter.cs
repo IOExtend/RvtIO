@@ -477,6 +477,10 @@ internal static class LoadedFamilyParameterWriter
         var originalValue = target.Body.AsSpan(original.Offset, original.Length);
         if (driven is { } expected && !originalValue.SequenceEqual(expected.Previous))
             throw ParameterWriter.Unverified("The controlled family identity value disagrees with the saved global value.");
+        // Cost is the only numeric identity field; a global assignment was already checked on the global's own change.
+        if (storage == StorageType.Double && driven is null)
+            ParameterFormulaEvaluator.VerifyStableChange(BinaryPrimitives.ReadDoubleLittleEndian(originalValue),
+                BinaryPrimitives.ReadDoubleLittleEndian(replacement));
         ReplaceNamedValue(target, original);
         foreach (var (id, symbol) in symbols)
         {
