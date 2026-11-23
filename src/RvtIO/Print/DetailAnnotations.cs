@@ -264,8 +264,10 @@ internal static class DetailAnnotations
             page.DrawPolyline(Circle(cx, cy, headRadius, 0, 360, 24), headPen, true, 1);
             page.DrawLine(cx - headRadius, cy, cx + headRadius, cy, headPen);
             string detail = viewport.LookupParameter(BuiltInParameter.VIEWPORT_DETAIL_NUMBER)?.Value as string ?? "";
-            page.DrawText(detail, cx, cy + 1, 12 * PointsToMillimetres, PdfTextAlignment.Center);
-            page.DrawText(number, cx, cy - 4, 8 * PointsToMillimetres, PdfTextAlignment.Center);
+            if (page.Owner.Font != null || detail.All(c => c is >= ' ' and <= '~'))
+                page.DrawText(detail, cx, cy + 1, 12 * PointsToMillimetres, PdfTextAlignment.Center);
+            if (page.Owner.Font != null || number.All(c => c is >= ' ' and <= '~'))
+                page.DrawText(number, cx, cy - 4, 8 * PointsToMillimetres, PdfTextAlignment.Center);
 
             void Arc(double x, double y, int angle) =>
                 page.DrawPolyline(Circle(x, y, r, angle, 90, 5), boundaryPen);

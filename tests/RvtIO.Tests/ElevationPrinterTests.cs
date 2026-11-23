@@ -180,8 +180,10 @@ public class ElevationPrinterTests
     [InlineData(true, 100, "east", true, true, true)]
     [InlineData(false, 100, "east", false, true)]
     [InlineData(true, 100, "east", false, true, true)]
+    [InlineData(true, 100, "east", false, true, false, true)]
     public void Collect_ProjectsThinRoundRailWithItsVerifiedPlacedFaces(bool matchingFaces, int scale,
-        string direction = "section", bool inclined = false, bool surfacePatterns = false, bool occluded = false)
+        string direction = "section", bool inclined = false, bool surfacePatterns = false, bool occluded = false,
+        bool rotate = false)
     {
         const double radius = 1d / 192;
         double rise = inclined ? 0.25 : 0;
@@ -190,12 +192,14 @@ public class ElevationPrinterTests
         var view = SectionView(1, [10, 0, 2]);
         Add(view, BuiltInParameter.VIEW_SCALE, StorageType.Integer, scale);
         var symbol = new Element { Id = 3, NativeRecordClass = 492, Geometry = new GeometryData() };
+        double c = rotate ? 0.8 : 1, s = rotate ? 0.6 : 0;
+        double[] transform = [1, 0, 0, 0, c, -s, 0, s, c, 0, 0, 0];
         var rail = new Element
         {
             Id = 2, CategoryId = (int)BuiltInCategory.OST_StairsRailing, SerializedBaseRailingSymbolId = symbol.Id,
             Geometry = new GeometryData
             {
-                Instances = [new GeoInstance { SymbolId = symbol.Id, Transform = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0] }],
+                Instances = [new GeoInstance { SymbolId = symbol.Id, Transform = transform }],
             },
         };
         for (int facet = 0; facet < 32; facet++)
@@ -215,7 +219,9 @@ public class ElevationPrinterTests
             });
             rail.Geometry.Faces.Add(new GeoFace
             {
-                MeshMarker = !matchingFaces && facet == 0 ? 0 : face, OuterVertices = ring, Normal = [1, 0, 0],
+                MeshMarker = !matchingFaces && facet == 0 ? 0 : face,
+                OuterVertices = ring.Select(point => new[] { point[0], c * point[1] - s * point[2], s * point[1] + c * point[2] }).ToList(),
+                Normal = [1, 0, 0],
             });
         }
 
@@ -231,13 +237,14 @@ public class ElevationPrinterTests
             Assert.NotNull(content);
             Assert.Single(content.Faces);
             var tubes = content.Edges.Where(edge => edge.CategoryId == rail.CategoryId
-                && Math.Abs(edge.X2 - edge.X1) > 3000).ToList();
+                && Math.Abs(edge.X2 - edge.X1) > 2500).ToList();
             if (!matchingFaces || !surfacePatterns || occluded)
                 Assert.Empty(tubes);
             else
             {
                 var side = Assert.Single(tubes);
-                Assert.Equal(rise / run, (side.Y2 - side.Y1) / (side.X2 - side.X1), 8);
+                Assert.Equal((s * run + c * rise) / (c * run - s * rise),
+                    (side.Y2 - side.Y1) / (side.X2 - side.X1), 8);
             }
             return;
         }
@@ -3564,7 +3571,7 @@ public class ElevationPrinterTests
         if (agree) Assert.Equal(203 * FeetToMillimetres, lines[0].HeadX, 6);
     }
 
-    [Theory]
+    [SkippableTheory]
     [InlineData(false)]
     [InlineData(true)]
     public void DrawNativeDatums_UsesSavedLevelLabelStyleAndMaskHeight(bool opaque)

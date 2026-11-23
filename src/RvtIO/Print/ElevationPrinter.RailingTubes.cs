@@ -40,7 +40,7 @@ public static partial class ElevationPrinter
                 var patches = new List<GeoFace>();
                 foreach (var face in cylinder)
                 {
-                    var expected = face.OuterVertices!.Select(point => PlaceProjectionPoint(point, transform)).ToArray();
+                    var expected = face.OuterVertices!.Select(point => ElementBuilder.TransformGeometryPoint(point, transform)).ToArray();
                     var match = placed[(face.SourceFace, Key(expected[0]))].FirstOrDefault(candidate =>
                         candidate.OuterVertices!.Count == expected.Length
                         && candidate.OuterVertices.Zip(expected).All(pair => Key(pair.First) == Key(pair.Second)));
@@ -54,13 +54,13 @@ public static partial class ElevationPrinter
                     var (x, y, z) = cylinder.Key.Axis;
                     double[] axis =
                     [
-                        x * transform[0] + y * transform[3] + z * transform[6],
-                        x * transform[1] + y * transform[4] + z * transform[7],
-                        x * transform[2] + y * transform[5] + z * transform[8],
+                        x * transform[0] + y * transform[1] + z * transform[2],
+                        x * transform[3] + y * transform[4] + z * transform[5],
+                        x * transform[6] + y * transform[7] + z * transform[8],
                     ];
                     if (Math.Abs(Project(axis, horizontal, 1)) <= 1e-9) continue;
                     var centre = cylinder.Key.Centre;
-                    var placedCentre = PlaceProjectionPoint([centre.X, centre.Y, centre.Z], transform);
+                    var placedCentre = ElementBuilder.TransformGeometryPoint([centre.X, centre.Y, centre.Z], transform);
                     var vertices = patches.SelectMany(patch => patch.OuterVertices!);
                     double axisLengthSquared = Project(axis, axis, 1);
                     double centreAlong = Project(placedCentre, axis, 1);
@@ -101,13 +101,6 @@ public static partial class ElevationPrinter
         static (double X, double Y, double Z) Key(double[] point) => (point[0], point[1], point[2]);
     }
 
-    private static double[] PlaceProjectionPoint(double[] p, double[] t) =>
-    [
-        t[9]  + p[0] * t[0] + p[1] * t[3] + p[2] * t[6],
-        t[10] + p[0] * t[1] + p[1] * t[4] + p[2] * t[7],
-        t[11] + p[0] * t[2] + p[1] * t[5] + p[2] * t[8],
-    ];
-
     private static IEnumerable<(GeoFace Shaft, GeoFace[] Facets)> ProjectRoundShafts(RvtDocument document,
         GeometryData geometry, double[] horizontal, double[] vertical, double[] view, double[] origin, bool column)
     {
@@ -132,10 +125,10 @@ public static partial class ElevationPrinter
                 || facets.Any(face => (face.RenderStyleId ?? face.NestedRenderStyleId) != material)
                 || !native.Zip(facets).All(pair => pair.First.OuterVertices is { Count: >= 3 } source
                     && pair.Second.OuterVertices is { } placed && source.Count == placed.Count
-                    && source.Zip(placed).All(points => PlaceProjectionPoint(points.First, transform).Zip(points.Second)
+                    && source.Zip(placed).All(points => ElementBuilder.TransformGeometryPoint(points.First, transform).Zip(points.Second)
                         .All(coordinate => Math.Abs(coordinate.First - coordinate.Second) < 1e-6)))) continue;
 
-            var centre = PlaceProjectionPoint(axisOrigin, transform);
+            var centre = ElementBuilder.TransformGeometryPoint(axisOrigin, transform);
             if ((Project(centre, view, 1) - radius) * FeetToMillimetres <= Project(origin, view, 1)) continue;
             double bottom = facets.Min(face => face.OuterVertices!.Min(point => point[2]));
             double top = facets.Max(face => face.OuterVertices!.Max(point => point[2]));

@@ -12,11 +12,15 @@ public static partial class PlanPrinter
             || document.RawData.PlanOpeningTags?.GetValueOrDefault(view) is not { Count: > 0 } tags
             || document.RawData.PlanOpeningTagStyles is not { Count: > 0 } styles) return false;
 
+        var hidden = document.RawData.ViewHiddenElements?.GetValueOrDefault(view);
+        var hiddenCategories = document.RawData.ViewHiddenCategories?.GetValueOrDefault(view);
         bool drawn = false;
         foreach (var tag in tags)
         {
             var element = document.GetElement(tag.ElementId);
-            if (element == null || !styles.TryGetValue(tag.SymbolId, out var style)) continue;
+            if (element == null || hidden?.Contains(element.Id) == true
+                || element.CategoryId is int category && hiddenCategories?.Contains(category) == true
+                || !styles.TryGetValue(tag.SymbolId, out var style)) continue;
             var label = style.Label;
             var owner = label.ParamId == (int)BuiltInParameter.ALL_MODEL_TYPE_MARK
                 ? document.GetElement(element.TypeId) : element;

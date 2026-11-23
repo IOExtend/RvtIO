@@ -380,13 +380,17 @@ public static partial class PlanPrinter
         var windowGaps = new List<(int HostId, double From, double To)>();
         var doorGaps = new List<(int HostId, double From, double To)>();
         List<(DoorPlanSymbol Symbol, double[] Transform)>? doorSymbols = null;
-        var hiddenOpenings = viewId is int openingView ? document.RawData.ViewHiddenElements?.GetValueOrDefault(openingView) : null;
+        var hiddenElements = viewId is int openingView ? document.RawData.ViewHiddenElements?.GetValueOrDefault(openingView) : null;
+        var hiddenCategories = viewId is int categoryView ? document.RawData.ViewHiddenCategories?.GetValueOrDefault(categoryView) : null;
+        bool IsHidden(Element element) => hiddenElements?.Contains(element.Id) == true
+            || element.CategoryId is int category && hiddenCategories?.Contains(category) == true;
         var tags = new List<(double MidX, double MidY, double Nx, double Ny, string Text, bool IsWindow)>();
         foreach (var insert in document.Elements)
         {
-            if (insert.CategoryId is not ((int)BuiltInCategory.OST_Doors or (int)BuiltInCategory.OST_Windows)) continue;
+            if (insert.CategoryId is not ((int)BuiltInCategory.OST_Doors or (int)BuiltInCategory.OST_Windows)
+                || IsHidden(insert)) continue;
             bool savedDoor = false;
-            if (cutHeight is double height && hiddenOpenings?.Contains(insert.Id) != true
+            if (cutHeight is double height
                 && insert.SerializedHostId is int planHost && wallById.ContainsKey(planHost)
                 && insert.OwnDoorPlanSymbols is { } display
                 && SelectDoorPlanSymbol(display.Symbols, display.Transform, height, insert.BoundingBox) is { } symbol)
@@ -537,11 +541,11 @@ public static partial class PlanPrinter
         var openingLoops = new List<List<(double X, double Y)>>();
         foreach (var insert in document.Elements)
         {
-            if (insert.CategoryId is not ((int)BuiltInCategory.OST_Doors or (int)BuiltInCategory.OST_Windows)) continue;
+            if (insert.CategoryId is not ((int)BuiltInCategory.OST_Doors or (int)BuiltInCategory.OST_Windows)
+                || IsHidden(insert)) continue;
             if (insert.OwnSingleFamilyCutout is not { } cutout || cutout.Transform is not { Length: 12 } matrix) continue;
             // A roof opening projects a separate plan outline. Wall loops are used for the jambs.
             bool roofOpening = document.GetElement(cutout.HostId)?.CategoryId == (int)BuiltInCategory.OST_Roofs;
-            if (roofOpening && hiddenOpenings?.Contains(insert.Id) == true) continue;
             var points = new List<(double X, double Y)>(cutout.Loop.Vertices.Count);
             double low = double.PositiveInfinity, high = double.NegativeInfinity;
             foreach (var vertex in cutout.Loop.Vertices)
@@ -584,16 +588,15 @@ public static partial class PlanPrinter
         int? planDetail = viewId is int detailView
             ? document.GetElement(detailView)?.LookupParameter(BuiltInParameter.VIEW_DETAIL_LEVEL)?.Value as int?
             : null;
-        var hiddenFurniture = viewId is int hiddenView ? document.RawData.ViewHiddenElements?.GetValueOrDefault(hiddenView) : null;
         var savedStairs = new HashSet<int>();
         var savedTopRails = new HashSet<int>();
         var stairTopRails = opaqueFurniture && planRange != null
             ? (from rail in document.Elements
                where rail is { CategoryId: (int)BuiltInCategory.OST_RailingTopRail, RootClassName: "TopRail",
                    SerializedOwningElementId: > 0, Geometry.Faces.Count: > 0 }
-                   && hiddenFurniture?.Contains(rail.Id) != true
+                   && !IsHidden(rail)
                let owner = rail.SerializedOwningElementId.GetValueOrDefault()
-               where hiddenFurniture?.Contains(owner) != true
+               where hiddenElements?.Contains(owner) != true
                let host = document.GetElement(owner)?.SerializedRailingStairHostId ?? 0
                where host > 0
                select (Host: host, Rail: rail)).ToLookup(item => item.Host, item => item.Rail)
@@ -607,11 +610,12 @@ public static partial class PlanPrinter
                 || element is { CategoryId: (int)BuiltInCategory.OST_GenericModel, RootClassName: "FamilyInstance",
                     BoundingBox: { Length: 6 } box } && planRange is { } range
                     && double.IsFinite(box[5]) && box[5] < range.Cut;
-            if (!projectedFamily && element.CategoryId is not ((int)BuiltInCategory.OST_Stairs or (int)BuiltInCategory.OST_StairsRailing))
+            if (IsHidden(element)
+                || !projectedFamily && element.CategoryId is not ((int)BuiltInCategory.OST_Stairs or (int)BuiltInCategory.OST_StairsRailing))
                 continue;
             if (element.PlacedPlanFixtureGraphics is { } fixture && element.Geometry is not { Faces.Count: > 0 })
             {
-                if (hiddenFurniture?.Contains(element.Id) == true || !FurnitureInView(element, levelId, planRange))
+                if (!FurnitureInView(element, levelId, planRange))
                     continue;
                 foreach (var line in fixture.Lines)
                     (fixtureLines ??= []).Add((line.Start[0] * FeetToMillimetres, line.Start[1] * FeetToMillimetres,
@@ -627,7 +631,7 @@ public static partial class PlanPrinter
             }
             if (element.CategoryId == (int)BuiltInCategory.OST_Stairs
                 && opaqueFurniture && viewId is int planView && planRange is { } stairRange
-                && OnLevel(element, levelId) && hiddenFurniture?.Contains(element.Id) != true
+                && OnLevel(element, levelId)
                 && CollectSavedStair(document, element, planView, levelId, stairRange, stairTopRails?[element.Id] ?? [],
                     savedTopRails, furnitureFill, ref fixtureLines))
             {
@@ -637,7 +641,7 @@ public static partial class PlanPrinter
             if (element.Geometry is not { Faces.Count: > 0 } geometry) continue;
             if (projectedFamily)
             {
-                if (hiddenFurniture?.Contains(element.Id) == true || element.RootClassName == "FamilySymbol"
+                if (element.RootClassName == "FamilySymbol"
                     || !FurnitureInView(element, levelId, planRange))
                     continue;
                 if (opaqueFurniture && planRange != null && planDetail == 2

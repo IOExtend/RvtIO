@@ -46,8 +46,8 @@ public static partial class PlanPrinter
                 || localCut < vertices.Min(p => p[2]) || localCut > vertices.Max(p => p[2]))
                 continue;
 
-            double x = (transform[9] + origin[0] * transform[0] + origin[1] * transform[3]) * FeetToMillimetres;
-            double y = (transform[10] + origin[0] * transform[1] + origin[1] * transform[4]) * FeetToMillimetres;
+            var centre = ElementBuilder.TransformGeometryPoint(origin, transform);
+            double x = centre[0] * FeetToMillimetres, y = centre[1] * FeetToMillimetres;
             double radius = face.AnalyticCylinderRadius * FeetToMillimetres;
             // Require the placed cut to agree with the analytic surface within the ring's join resolution.
             if (ring.All(p => Math.Abs(Math.Sqrt((p.X - x) * (p.X - x) + (p.Y - y) * (p.Y - y)) - radius) <= 0.1))

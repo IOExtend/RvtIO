@@ -683,7 +683,7 @@ come from the RVT family and view. The annotation crop uses the saved paper offs
 - **The table grids of the title block family**: the linework, fixed texts and labels of the symbol are drawn, and the
   per-sheet schedule instances (revision tables, planting schedule, How-do-I table) print from their decoded view
   blocks; the symbol-embedded schedule template itself (the cached revision grid with GINFO_NOT_PRINTED) is left out.
-- **Property annotations and setbacks**: bearings, distances and setback lines remain outside the supported property graphics.
+- **Setbacks**: setback lines remain outside the supported property graphics. Supported property segment tags print their saved bearings and distances.
 - **Analysis shading**: the generated analysis viewport uses graphics colours, graphics transparency, approximate
   dome shading and shadows from opaque model geometry. The supplied rendered image preserves Revit's rendering
   of appearance assets and full lighting.
@@ -705,7 +705,7 @@ come from the RVT family and view. The annotation crop uses the saved paper offs
 
 1. Decode the crop region of a rotated view and of a crop region switched off with live bounds, and the annotation crop that keeps titles and labels outside the model crop. Decode the record that places a viewport the file puts off the page. Decode the view-specific section extents, including the jogged Building Section and the short Level 2 stub.
 2. Extend schedule evaluation to grouping, additional filters and computed fields.
-3. Decode the property lines' bearing and distance labels, setbacks, spot elevations, and the file's own tag positions with leaders.
+3. Decode setbacks, spot elevations, and property tag leaders.
 4. Extend datum support to left and dual level heads and additional head families. Resolve overlapping stair and detail viewports from their layout records. Recover the remaining footing and grade geometry and investigate residual interior edges and stair railing pieces.
 5. Widen the same printing to the releases the reader supports in its own schema.
 ## Comparison with the reference export

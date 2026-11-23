@@ -130,7 +130,7 @@ public static partial class PlanPrinter
         foreach (var ring in cuts.Values.SelectMany(cut => cut.Rings))
         {
             var fill = clip is { } frame
-                ? ElevationPrinter.ClipToWindow(ring, frame.X0, frame.Y0, frame.X1, frame.Y1) : ring;
+                ? ElevationPrinter.ClipToWindow(ring, frame.X0, frame.X1, frame.Y0, frame.Y1) : ring;
             if (fill.Count >= 3)
                 page.DrawPolyline(fill.Select(p => (toX(p.X), toY(p.Y))).ToList(), 0, true, 1);
         }

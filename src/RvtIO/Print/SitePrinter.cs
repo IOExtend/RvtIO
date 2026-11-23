@@ -209,7 +209,7 @@ public static partial class SitePrinter
         var propertyLines = new List<List<(double X, double Y)>>();
         foreach (var element in document.Elements)
         {
-            if (element.SitePropertyCurve is not { Count: >= 2 } curve) continue;
+            if (!IsPlaced(element) || element.SitePropertyCurve is not { Count: >= 2 } curve) continue;
             var line = curve.Select(p => (X: p.X * FeetToMillimetres, Y: p.Y * FeetToMillimetres)).ToList();
             propertyLines.Add(line);
             foreach (var point in line) Grow(point.X, point.Y);

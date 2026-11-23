@@ -14,7 +14,7 @@ namespace RvtIO.Tests;
 /// paper chosen for the drawing, and the errors of a level with nothing to draw.</summary>
 public class PlanPrinterTests
 {
-    [Theory]
+    [SkippableTheory]
     [InlineData("en-US", "10 m²")]
     [InlineData("ru-RU", "10 м²")]
     public void DrawContent_LocalizesTheFallbackRoomAreaUnit(string cultureName, string expected)
@@ -293,9 +293,11 @@ public class PlanPrinterTests
         content.Gaps[wall.Id] = [(3.5 * 304.8, 6.5 * 304.8)];
         var pdf = new PdfDocument();
         PdfPage section = pdf.AddPage(PdfPageSize.A1.Landscape);
-        PlanPrinter.DrawContent(section, content, 100, 20, 20, document: document, planViewId: 30);
+        PlanPrinter.DrawContent(section, content, 100, 20, 20, document: document, planViewId: 30,
+            clipRect: (0, -100, 4000, 400));
         Assert.Contains(Line(0, 4), section.Content);
         Assert.Contains(Line(7, 12), section.Content);
+        Assert.Equal(2, section.Content.Split('\n').Count(line => line.EndsWith("h f", StringComparison.Ordinal)));
 
         ranges[30] = ([7], [10]);
         PdfPage above = pdf.AddPage(PdfPageSize.A1.Landscape);
@@ -429,11 +431,12 @@ public class PlanPrinterTests
     [InlineData(BuiltInCategory.OST_Furniture, -4, false, 4, true)]
     [InlineData(BuiltInCategory.OST_Furniture, 500, false, 4, false)]
     [InlineData(BuiltInCategory.OST_Furniture, -4, true, 4, false)]
+    [InlineData(BuiltInCategory.OST_Furniture, -4, false, 4, false, true)]
     [InlineData(BuiltInCategory.OST_GenericModel, -4, false, 4, true)]
     [InlineData(BuiltInCategory.OST_GenericModel, -4, false, -1.5, false)]
     [InlineData(BuiltInCategory.OST_GenericModel, -4, true, 4, false)]
     public void CollectLevel_FurnitureFollowsTheSavedViewRangeAndHiddenElements(
-        BuiltInCategory category, int bottom, bool hidden, double cut, bool expected)
+        BuiltInCategory category, int bottom, bool hidden, double cut, bool expected, bool categoryHidden = false)
     {
         const int view = 700, fixture = 800;
         var table = new Element
@@ -460,6 +463,7 @@ public class PlanPrinterTests
             PlanViewRanges = new Dictionary<int, (double[], int[])> { [view] = ([cut, 8, 0, 0, 0], [500, 500, bottom, bottom, -1]) },
             OpaquePlanViews = new HashSet<int> { view },
             ViewHiddenElements = new Dictionary<int, HashSet<int>> { [view] = hidden ? [fixture] : [] },
+            ViewHiddenCategories = new Dictionary<int, HashSet<int>> { [view] = categoryHidden ? [(int)category] : [] },
         });
 
         var content = PlanPrinter.CollectLevel(document, 500, view);
@@ -1131,7 +1135,8 @@ public class PlanPrinterTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void CollectLevel_CutsTheColumnAtThePlanHeightAndUsesOnlySavedCylinders(bool analytic)
+    [InlineData(true, true)]
+    public void CollectLevel_CutsTheColumnAtThePlanHeightAndUsesOnlySavedCylinders(bool analytic, bool rotate = false)
     {
         var column = Column(20, 10, 8, 18, 12, 22);
         column.CategoryId = (int)BuiltInCategory.OST_StructuralColumns;
@@ -1151,10 +1156,13 @@ public class PlanPrinterTests
         if (analytic)
         {
             column.Geometry.Instances = [new GeoInstance
-                { SymbolId = symbol.Id, Transform = [1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 20, 0] }];
+            {
+                SymbolId = symbol.Id,
+                Transform = rotate ? [0, -1, 0, 1, 0, 0, 0, 0, 1, 10, 18, 0] : [1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 20, 0],
+            }];
             symbol.Geometry.Faces.Add(new GeoFace
             {
-                AnalyticCylinderOrigin = [0, 0, 0],
+                AnalyticCylinderOrigin = [rotate ? 2 : 0, 0, 0],
                 AnalyticCylinderAxis = [0, 0, 1],
                 AnalyticCylinderRadius = Math.Sqrt(2),
                 OuterVertices = [[-1, -1, 0], [1, -1, 0], [1, -1, 8], [-1, -1, 8]],
@@ -1323,6 +1331,38 @@ public class PlanPrinterTests
             PlanPrinter.CollectLevel(document, 1, savedView ? viewId : null));
 
         Assert.Equal(expected, content.OpeningLoops.Count > 0);
+    }
+
+    [Theory]
+    [InlineData(BuiltInCategory.OST_Doors, false, false, true)]
+    [InlineData(BuiltInCategory.OST_Doors, true, false, false)]
+    [InlineData(BuiltInCategory.OST_Windows, false, false, true)]
+    [InlineData(BuiltInCategory.OST_Windows, false, true, false)]
+    public void CollectLevel_OnlyDrawsVisibleHostedOpeningGraphics(
+        BuiltInCategory category, bool hidden, bool categoryHidden, bool visible)
+    {
+        const int viewId = 30, hostId = 100, openingId = 200;
+        var opening = new Element
+        {
+            Id = openingId, CategoryId = (int)category,
+            OwnSingleFamilyCutout = (300, hostId, [1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 0, 0],
+                new FamilyCutLoopData([[0, 0, 0], [2, 0, 0], [2, 0, 4], [0, 0, 4]], [0, 1, 0], 0)),
+        };
+        Add(opening, BuiltInParameter.ALL_MODEL_MARK, StorageType.String, "1");
+        var document = RvtDocument.FromInfo(new RevitFileInfo
+        {
+            Elements = [Level(1, "First", 0), Wall(hostId, 1, 0, 0, 10, 0), opening],
+            ViewHiddenElements = new Dictionary<int, HashSet<int>> { [viewId] = hidden ? [openingId] : [] },
+            ViewHiddenCategories = new Dictionary<int, HashSet<int>> { [viewId] = categoryHidden ? [(int)category] : [] },
+        });
+
+        var plan = Assert.IsType<PlanPrinter.PlanContent>(PlanPrinter.CollectLevel(document, 1, viewId));
+
+        Assert.Equal(visible, plan.Gaps.ContainsKey(hostId));
+        Assert.Equal(visible, plan.OpeningLoops.Count > 0);
+        Assert.Equal(visible, plan.Tags.Count > 0);
+        Assert.Equal(visible && category == BuiltInCategory.OST_Doors, plan.DoorGaps.Count > 0);
+        Assert.Equal(visible && category == BuiltInCategory.OST_Windows, plan.WindowGaps.Count > 0);
     }
 
     [Fact]

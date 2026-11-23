@@ -62,6 +62,19 @@ public class PrintCommandTests
     }
 
     [Fact]
+    public void MissingViewportImage_ReportsInputError()
+    {
+        var error = new StringWriter();
+        string path = TestFiles.Scratch("missing-render.jpg");
+
+        int exit = Run(error, "model.rvt", "out.pdf", "--all-sheets",
+            "--viewport-image", "199", "20", "30", "40", "50", path);
+
+        Assert.Equal(RvtExitCodes.InputError, exit);
+        Assert.Contains($"Cannot read viewport image {path}", error.ToString());
+    }
+
+    [Fact]
     public void WhereWithoutValue_IsUsageError()
     {
         var error = new StringWriter();

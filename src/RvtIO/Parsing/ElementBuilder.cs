@@ -625,7 +625,7 @@ internal static partial class ElementBuilder
             Solids = source.Solids,
             MeshNodes = source.MeshNodes,
             UntriangulatedFaces = source.UntriangulatedFaces,
-            ViewFacingLines = source.ViewFacingLines,
+            ViewFacingLines = source.ViewFacingLines?.ToList(),
         };
         var oldToNew = new Dictionary<int, int>();
         var clippedFaces = new HashSet<int>();
@@ -742,7 +742,7 @@ internal static partial class ElementBuilder
             }).ToList(),
             MeshNodes = grep.MeshNodes,
             UntriangulatedFaces = grep.UntriangulatedFaces,
-            ViewFacingLines = grep.ViewFacingLines,
+            ViewFacingLines = grep.ViewFacingLines?.ToList(),
             NodeMeasures = grep.NodeMeasures,
             Transform = grep.Transform,
             Instances = grep.Instances.Count > 0

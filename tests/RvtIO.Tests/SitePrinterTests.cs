@@ -55,6 +55,30 @@ public class SitePrinterTests
         return plant;
     }
 
+    [Theory]
+    [InlineData(false, false, false, true)]
+    [InlineData(true, false, false, false)]
+    [InlineData(false, true, false, false)]
+    [InlineData(false, false, true, false)]
+    public void Collect_UsesOnlyPlacedVisiblePropertyLines(bool hidden, bool categoryHidden, bool unplaced, bool visible)
+    {
+        const int view = 10, category = (int)BuiltInCategory.OST_SiteProperty;
+        var property = new Element { Id = 20, CategoryId = category, SitePropertyCurve = [(0, 0), (5, 0)] };
+        if (unplaced) property.SerializedUnplacedOwnerId = 30;
+        var doc = RvtDocument.FromInfo(new RevitFileInfo
+        {
+            Elements = [property],
+            ViewHiddenElements = new Dictionary<int, HashSet<int>> { [view] = hidden ? [property.Id] : [] },
+            ViewHiddenCategories = new Dictionary<int, HashSet<int>> { [view] = categoryHidden ? [category] : [] },
+        });
+
+        var site = SitePrinter.Collect(doc, view);
+        if (visible)
+            Assert.Single(site!.PropertyLines!);
+        else
+            Assert.Null(site);
+    }
+
     [Fact]
     public void Collect_ProjectsTheTopographyAndThePlanting()
     {

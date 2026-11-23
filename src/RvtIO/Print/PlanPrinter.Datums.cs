@@ -85,7 +85,8 @@ public static partial class PlanPrinter
                 }
                 double cx = anchor.X + side * dx * grid.Radius, cy = anchor.Y + side * dy * grid.Radius;
                 page.DrawPolyline(ElevationPrinter.DatumCircle(cx, cy, grid.Radius, 25), 0.1, true);
-                page.DrawText(grid.Name, cx, cy - 2.17, 18 * ptToMm, PdfTextAlignment.Center);
+                if (page.Owner.Font != null || grid.Name.All(c => c is >= ' ' and <= '~'))
+                    page.DrawText(grid.Name, cx, cy - 2.17, 18 * ptToMm, PdfTextAlignment.Center);
                 return endOfLine;
             }
         }

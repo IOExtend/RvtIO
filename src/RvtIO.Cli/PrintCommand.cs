@@ -113,6 +113,37 @@ internal static class PrintCommand
             return RvtExitCodes.Usage;
         }
 
+        var composeOptions = new SheetComposeOptions { PaperSize = paper };
+        if (imageFiles.Count > 0)
+        {
+            var images = new Dictionary<int, SheetViewportImage>();
+            foreach (var (id, input) in imageFiles)
+            {
+                if (ExportReport.SameFile(outputPath!, input.Path))
+                    return Usage(error, "The PDF output path is a viewport image input.");
+                try
+                {
+                    using var stream = File.OpenRead(input.Path);
+                    if (stream.Length is < 4 or > 64 * 1024 * 1024)
+                        return Usage(error, $"Viewport image {id} must be a JPEG no larger than 64 MiB.");
+                    var bytes = new byte[(int)stream.Length];
+                    stream.ReadExactly(bytes);
+                    images.Add(id, new SheetViewportImage(new PdfJpegImage(bytes),
+                        input.X, input.Y, input.Width, input.Height));
+                }
+                catch (ArgumentException exception)
+                {
+                    return Usage(error, $"Invalid viewport image {id}: {exception.Message}");
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    error.WriteLine($"Cannot read viewport image {input.Path}: {exception.Message}");
+                    return RvtExitCodes.InputError;
+                }
+            }
+            composeOptions.ViewportImages = images;
+        }
+
         RvtDocument document;
         try
         {
@@ -211,24 +242,6 @@ internal static class PrintCommand
         try
         {
             PdfDocument pdf;
-            var composeOptions = new SheetComposeOptions { PaperSize = paper };
-            if (imageFiles.Count > 0)
-            {
-                var images = new Dictionary<int, SheetViewportImage>();
-                foreach (var (id, input) in imageFiles)
-                {
-                    if (ExportReport.SameFile(outputPath!, input.Path))
-                        return Usage(error, "The PDF output path is a viewport image input.");
-                    using var stream = File.OpenRead(input.Path);
-                    if (stream.Length is < 4 or > 64 * 1024 * 1024)
-                        return Usage(error, $"Viewport image {id} must be a JPEG no larger than 64 MiB.");
-                    var bytes = new byte[(int)stream.Length];
-                    stream.ReadExactly(bytes);
-                    images.Add(id, new SheetViewportImage(new PdfJpegImage(bytes),
-                        input.X, input.Y, input.Width, input.Height));
-                }
-                composeOptions.ViewportImages = images;
-            }
             if (allSheets)
             {
                 IReadOnlyList<ComposedSheet> toCompose = ListedComposed();

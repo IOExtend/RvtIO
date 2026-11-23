@@ -546,7 +546,7 @@ public class SheetComposerTests
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public void Render_UsesSavedViewportTitleAndRuleVisibility()
     {
         if (PdfFonts.TryFind(out _) == null) throw new SkipException("An embedded PDF font is required.");
@@ -605,6 +605,31 @@ public class SheetComposerTests
     }
 
     [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void Render_RejectsInvalidViewportImages(int invalid)
+    {
+        var document = Document(Sheet(100, "A101", "Site"),
+            Viewport(200, 100, 300, 50, 60), View(300, "Analysis", 0));
+        var valid = new SheetViewportImage(new PdfRasterImage(1, 1, [20, 40, 60]), 20, 30, 40, 50);
+        var image = invalid switch
+        {
+            0 => null!,
+            1 => valid with { Image = null! },
+            2 => valid with { X = double.NaN },
+            _ => valid with { Height = 0 },
+        };
+        var options = new SheetComposeOptions
+        {
+            ViewportImages = new Dictionary<int, SheetViewportImage> { [200] = image },
+        };
+
+        Assert.Throws<ArgumentException>(() => SheetComposer.Render(document, 100, options));
+    }
+
+    [SkippableTheory]
     [InlineData("en-US", 2, 0)]
     [InlineData("ru-RU", 1, 1)]
     public void Render_LocalizesEvaluatedScheduleBooleansAndKeepsLiteralText(string culture, int englishCopies, int russianCopies)

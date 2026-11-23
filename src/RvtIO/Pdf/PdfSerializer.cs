@@ -17,6 +17,19 @@ internal static class PdfSerializer
     private const int FirstPageWithFont = 9;
     private const int FirstPageWithoutFont = 4;
 
+    private static string EncodeName(string value)
+    {
+        var name = new StringBuilder();
+        foreach (byte b in Encoding.UTF8.GetBytes(value))
+        {
+            if (b is >= 33 and <= 126 && !"#%()/<>[]{}".Contains((char)b))
+                name.Append((char)b);
+            else
+                name.Append('#').Append(b.ToString("X2", CultureInfo.InvariantCulture));
+        }
+        return name.ToString();
+    }
+
     internal static void Write(Stream stream, PdfDocument document)
     {
         IReadOnlyList<PdfPage> pages = document.Pages;
@@ -78,9 +91,10 @@ internal static class PdfSerializer
 
         void WriteFont(PdfTrueTypeFont font, HashSet<char> characters, int id)
         {
+            string name = EncodeName(font.Name);
             double scale = 1000.0 / font.UnitsPerEm;
             BeginObject(id);
-            Raw($"<< /Type /Font /Subtype /Type0 /BaseFont /{font.Name} /Encoding /Identity-H "
+            Raw($"<< /Type /Font /Subtype /Type0 /BaseFont /{name} /Encoding /Identity-H "
                 + $"/DescendantFonts [ {(id + 1)} 0 R ] /ToUnicode {(id + 4)} 0 R >>\n");
             EndObject();
 
@@ -93,13 +107,13 @@ internal static class PdfSerializer
                       .Append(Number(font.AdvanceOf(glyph) * scale)).Append(" ] ");
             }
             BeginObject((id + 1));
-            Raw($"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /{font.Name} "
+            Raw($"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /{name} "
                 + "/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> "
                 + $"/FontDescriptor {(id + 2)} 0 R /CIDToGIDMap /Identity /DW 1000 /W [ {widths.ToString().TrimEnd()} ] >>\n");
             EndObject();
 
             BeginObject((id + 2));
-            Raw($"<< /Type /FontDescriptor /FontName /{font.Name} /Flags 32 "
+            Raw($"<< /Type /FontDescriptor /FontName /{name} /Flags 32 "
                 + $"/FontBBox [ {Number(font.XMin * scale)} {Number(font.YMin * scale)} "
                 + $"{Number(font.XMax * scale)} {Number(font.YMax * scale)} ] /ItalicAngle 0 "
                 + $"/Ascent {Number(font.Ascent * scale)} /Descent {Number(font.Descent * scale)} "

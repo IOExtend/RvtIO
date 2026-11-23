@@ -23,6 +23,44 @@ public class FillPatternTests
         Assert.Equal(new[] { 0.5, 1.5 }, grid.Segments);
     }
 
+    [Theory]
+    [InlineData(1.0, 1.0, true)]
+    [InlineData(0.0, 1.0, false)]
+    [InlineData(1.0, 0.0, false)]
+    public void ProjectModelGrid_RequiresTwoIndependentProjectedAxes(double xScale, double yScale, bool valid)
+    {
+        var doc = RvtDocument.FromInfo(new RevitFileInfo());
+        var face = new GeoFace { ModelPattern = new(8, [5, 1, 2], [1, 0, 0], [0, 0, 1]) };
+        doc.RawData.FillPatterns = new Dictionary<int, (string, IReadOnlyList<TfBlockDeserializer.PatternGrid>)>
+        {
+            [8] = ("Lines", [new(0, 2, 3, 0, 4, [], Target: 1, Orientation: 0)]),
+        };
+
+        var grid = FillHatch.ProjectModelGrid(doc, face, p => (p[0] * xScale, p[2] * yScale));
+
+        Assert.Equal(valid ? new FillHatch.ModelGrid(7, 5, 0, 4) : null, grid);
+    }
+
+    [Theory]
+    [InlineData(-0.02, 0.1, true)]
+    [InlineData(0.02, -0.1, false)]
+    [InlineData(0.0, 0.1, false)]
+    public void DraftingTiles_UsesPaperLengthsAndRejectsInvalidDashes(double offset, double dash, bool valid)
+    {
+        var grid = new TfBlockDeserializer.PatternGrid(0, 0, 0, 0.01, offset, [dash, 0.2]);
+        var tiles = FillHatch.DraftingTiles([grid], 15, 25, 0.1);
+        if (!valid)
+        {
+            Assert.Null(tiles);
+            return;
+        }
+
+        var tile = Assert.Single(tiles!);
+        Assert.Equal(0.02 * 304.8, tile.Spacing, 8);
+        Assert.Equal(-0.01 * 304.8, tile.Shift, 8);
+        Assert.Equal((15d, 25d), (tile.X, tile.Y));
+    }
+
     [Fact]
     public void Strokes_UnionOverlappingAndTouchingRegionsWithoutBridgingGaps()
     {

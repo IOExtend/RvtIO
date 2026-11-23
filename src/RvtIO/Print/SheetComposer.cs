@@ -115,7 +115,7 @@ public static partial class SheetComposer
             {
                 var viewport = document.GetElement(id);
                 if (viewport?.OwnerViewId is not int owner || !selected.Contains(owner) || viewport.ViewportViewId == null
-                    || raster.Image == null || !double.IsFinite(raster.X) || !double.IsFinite(raster.Y)
+                    || raster?.Image == null || !double.IsFinite(raster.X) || !double.IsFinite(raster.Y)
                     || !double.IsFinite(raster.Width) || !double.IsFinite(raster.Height)
                     || raster.Width <= 0 || raster.Height <= 0)
                     throw new ArgumentException($"Invalid render or bounds for viewport {id} on the selected sheets.", nameof(options));
@@ -706,7 +706,7 @@ public static partial class SheetComposer
             // sheet annotation the reference prints, even though the study itself is an image.
             if (options.DrawViewLabels && pdf.Font != null
                 && (!placed || frameHeight > 0 || rendered || IsAnalysisView(view))
-                && !DrawViewportTitle(page2, document, element, view, name, scale, originX, originY))
+                && !DrawViewportTitle(page2, document, element, view, name, effectiveScale, originX, originY))
             {
                 // The view title as Revit draws it: a circled detail number, the view name beside it, the scale below
                 // and the extension line under the title. The file stores the line's origin on the sheet and its

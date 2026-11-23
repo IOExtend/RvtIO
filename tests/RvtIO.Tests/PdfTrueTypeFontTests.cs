@@ -76,6 +76,22 @@ public class PdfTrueTypeFontTests
         Assert.Contains($"<{bold.GlyphOf('?'):X4}> <003F>", pdf);
     }
 
+    [SkippableFact]
+    public void Document_EscapesEmbeddedFontNamesInAllFontDictionaries()
+    {
+        var font = new PdfTrueTypeFont(Font().File_, "Arial Bold/#é");
+        var document = new PdfDocument { Font = font };
+        document.AddPage(PdfPageSize.A4).DrawText("A", 10, 10);
+        using var stream = new MemoryStream();
+        document.Save(stream);
+
+        string pdf = Encoding.ASCII.GetString(stream.ToArray());
+        const string name = "/Arial#20Bold#2F#23#C3#A9";
+        Assert.Contains($"/Subtype /Type0 /BaseFont {name} /Encoding", pdf);
+        Assert.Contains($"/Subtype /CIDFontType2 /BaseFont {name} /CIDSystemInfo", pdf);
+        Assert.Contains($"/Type /FontDescriptor /FontName {name} /Flags", pdf);
+    }
+
     [Fact]
     public void Document_WithoutAFont_StillUsesHelvetica()
     {
