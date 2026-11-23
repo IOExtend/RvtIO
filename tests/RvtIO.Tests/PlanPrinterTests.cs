@@ -1592,8 +1592,10 @@ public class PlanPrinterTests
         return opening;
     }
 
-    // A saved tag of the view's own, or none, over a wall with a door D1 and a window W1; counts the texts drawn.
-    private static int OpeningTagTexts(bool savedDoorTag, bool doorsHidden, bool windowTagged = false)
+    // A saved tag of the view's own, or none, over a wall with a door D1 and a window W1; counts the texts drawn. The door
+    // is hidden through its category or through its own id.
+    private static int OpeningTagTexts(bool savedDoorTag, bool doorsHidden, bool windowTagged = false,
+        bool doorHiddenById = false)
     {
         const int viewId = 30;
         var tags = new List<RevitFileInfo.PlanOpeningTag>();
@@ -1606,6 +1608,7 @@ public class PlanPrinterTests
                 MarkedOpening(201, BuiltInCategory.OST_Windows, 5, 7, "W1")],
             ViewHiddenCategories = new Dictionary<int, HashSet<int>>
                 { [viewId] = doorsHidden ? [(int)BuiltInCategory.OST_Doors] : [] },
+            ViewHiddenElements = doorHiddenById ? new Dictionary<int, HashSet<int>> { [viewId] = [200] } : null,
             PlanOpeningTags = tags.Count == 0 ? null : new Dictionary<int, List<RevitFileInfo.PlanOpeningTag>> { [viewId] = tags },
             PlanOpeningTagStyles = new Dictionary<int, RevitFileInfo.PlanOpeningTagStyle>
             {
@@ -1638,6 +1641,13 @@ public class PlanPrinterTests
         Assert.Equal(0, OpeningTagTexts(savedDoorTag: true, doorsHidden: true));
         // Only the window's saved tag remains.
         Assert.Equal(1, OpeningTagTexts(savedDoorTag: true, doorsHidden: true, windowTagged: true));
+    }
+
+    [SkippableFact]
+    public void DrawContent_HidingTheTaggedDoorByItsIdDropsItsTagLikeHidingItsCategory()
+    {
+        Assert.Equal(0, OpeningTagTexts(savedDoorTag: true, doorsHidden: false, doorHiddenById: true));
+        Assert.Equal(1, OpeningTagTexts(savedDoorTag: true, doorsHidden: false, windowTagged: true, doorHiddenById: true));
     }
 
     [Theory]

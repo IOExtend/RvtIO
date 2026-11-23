@@ -105,10 +105,12 @@ The width and height use the same units. The API is `SheetComposeOptions.Viewpor
 replaces the generated model image. The analysis viewport title comes from the RVT in both cases.
 
 The option may repeat for different viewports. It needs `--sheet` or `--all-sheets`, and it is refused with
-`--all-views` and the listing options. The ID must be unique, the width and height positive, and the coordinates finite
-numbers. The file must be a JPEG of at most 64 MiB, and the viewport must be on one of the printed sheets. These
-problems exit with code 1 and a message that names the viewport, before any page is composed. A file that cannot be
-read exits with code 2 and `Cannot read viewport image <path>`. The PDF output path must not be one of the images.
+`--all-views` and the listing options. The ID must be unique, the width and height positive, the coordinates finite
+numbers and the path not blank; a violation exits with code 1 and the usage text after a message about the option's
+arguments. The file must be a JPEG of at most 64 MiB, and the viewport must be on one of the printed sheets; a violation
+exits with code 1 and a message that names the viewport by its ID. All of these are reported before any page is
+composed. A file that cannot be read exits with code 2 and `Cannot read viewport image <path>`. The PDF output path
+must not be one of the images.
 
 ## Rendering views
 

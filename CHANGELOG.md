@@ -220,9 +220,10 @@ API between minor releases.
 
 - Use `--viewport-image ID X Y WIDTH HEIGHT JPEG` when printing sheets to include native rendered graphics for a
   specific viewport, including the solar study. Bounds are measured in sheet millimetres. The option needs `--sheet` or
-  `--all-sheets`. An image that cannot be read exits with code 2; a blank path, a file that is not a JPEG, a viewport
-  that is not on the printed sheets and bounds that cannot be drawn exit with code 1 and a message that names the
-  viewport. `SheetComposer.RenderSheets` throws `ArgumentException` for the same invalid `ViewportImages` entries.
+  `--all-sheets`. An image that cannot be read exits with code 2; a repeated ID, a blank path and bounds that cannot be
+  drawn exit with code 1 and the usage text, and a file that is not a JPEG, a file over 64 MiB and a viewport that is
+  not on the printed sheets exit with code 1 and a message that names the viewport by its ID.
+  `SheetComposer.RenderSheets` throws `ArgumentException` for the same invalid `ViewportImages` entries.
 
 - CLI and API: `rvtio sheets` lists sheet parameters and filters sheets by them, ported from rvt-prt's `list --params/--where` (Unreleased after 0.1.0). `SheetRecord.Parameters` carries the text and whole-number project/shared parameters of each sheet as display strings (numbers with units stay out until their units are read); Yes/No parameters (`Appears In Sheet List` and project/shared parameters of Yes/No kind, named in `SheetRecord.YesNoParameters`) read as `Yes`/`No`. `rvtio sheets --where NAME=VALUE` (also `!=` and `~` for contains, `*`/`?` wildcards, repeatable, case-insensitive) keeps only matching sheets; on a Yes/No parameter `true/false/1/0` mean `Yes`/`No`, every other field compares literally. A misspelt name or an empty match exits with code 1. `--params` lists each kept sheet's parameters on standard error, `--csv` writes them as CSV, `--json` keeps the default JSON. New API: `SheetFilter.TryParse/Matches`, `SheetCatalog.FromFiltered`, `SheetFilter.AvailableNames`. New tests: `SheetFilterTests`.
 
