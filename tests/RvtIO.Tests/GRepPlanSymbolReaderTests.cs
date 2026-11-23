@@ -6,8 +6,9 @@ namespace RvtIO.Tests;
 
 /// <summary>GRepParserV2.ReadViewFacingLines and ReadDoorPlanSymbols read the node queue the walker leaves behind: the root
 /// filters, the conditions that gate them and the curves they hold. The tests lay that queue out by hand and check what each
-/// reader keeps and what it drops, so a changed condition check fails here and not only on a sample.</summary>
-public class GRepPlanSymbolReaderTests
+/// reader keeps and what it drops, so a changed condition check fails here and not only on a sample. The readers of the plan
+/// fixture drawing share the same node queue and are tested in GRepPlanFixtureReaderTests.cs.</summary>
+public partial class GRepPlanSymbolReaderTests
 {
     private const uint Hidden = 0x20;
 
@@ -67,12 +68,13 @@ public class GRepPlanSymbolReaderTests
         }
 
         /// <summary>A GLine or GArc the plan symbol reader may pick up; the curve is stored by the handle of its node.</summary>
-        public int PlanCurve(int filter, GRepParserV2.ArcRec curve, uint flags = 0, bool filled = false, bool stored = true)
+        public int PlanCurve(int filter, GRepParserV2.ArcRec curve, uint flags = 0, bool filled = false, bool stored = true,
+            int style = 3)
         {
             int index = Node(curve.R == 0 ? (ushort)1736 : (ushort)1974, filter, "m_subNodes");
             uint curveHandle = (uint)Cur.Queue[index].V;
             if (stored) Cur.Curves[curveHandle] = curve;
-            (Cur.PlanCurveCandidates ??= []).Add((filter, curveHandle, flags, filled, 3));
+            (Cur.PlanCurveCandidates ??= []).Add((filter, curveHandle, flags, filled, style));
             return index;
         }
     }

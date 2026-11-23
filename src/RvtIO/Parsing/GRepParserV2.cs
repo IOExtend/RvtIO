@@ -2001,7 +2001,7 @@ internal static partial class GRepParserV2
         return false;
     }
 
-    private static PlanFixtureGraphics? ReadPlanFixtureGraphics(Cur c)
+    internal static PlanFixtureGraphics? ReadPlanFixtureGraphics(Cur c)
     {
         var lines = new List<StyledModelLine>();
         foreach (var group in (c.PlanCurveCandidates ?? []).GroupBy(candidate => candidate.Filter))
@@ -2031,7 +2031,7 @@ internal static partial class GRepParserV2
             : new(lines, lines.Count == 0 ? [] : ReadPlanFixtureMasks(c), mediumProjection, coarseProjection);
     }
 
-    private static PlanFixtureProjection? ReadTopFixtureProjection(Cur c, int detailLevel)
+    internal static PlanFixtureProjection? ReadTopFixtureProjection(Cur c, int detailLevel)
     {
         if (c.PlanMaskCandidates == null && c.PlanCurveCandidates == null) return null;
         var lines = new List<StyledModelLine>();
@@ -2114,7 +2114,7 @@ internal static partial class GRepParserV2
         return lines.Count == 0 ? null : new(lines, masks);
     }
 
-    private static List<List<double[]>> ReadPlanFixtureMasks(Cur c)
+    internal static List<List<double[]>> ReadPlanFixtureMasks(Cur c)
     {
         var masks = new List<List<double[]>>();
         if (c.PlanMaskCandidates == null) return masks;
