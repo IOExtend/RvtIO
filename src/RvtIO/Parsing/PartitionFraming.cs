@@ -271,11 +271,8 @@ internal static class PartitionFraming
             int tails = 0;
             for (long offset = PagedGzipStream.PageDataLength; offset < raw.Length; offset += PagedGzipStream.PageStride)
             {
-                long remaining = raw.Length - offset;
                 // A complete tail at the very end is allowed to have a different tag, as in RemoveTails.
-                Require(remaining == PagedGzipStream.SegmentLength ||
-                    (remaining > PagedGzipStream.SegmentLength && raw[(int)offset] == 0
-                        && (raw[(int)offset + 1] & 0x0F) == 0), "page-framing");
+                Require(raw.Length - offset == PagedGzipStream.SegmentLength || PagedGzipStream.HoldsSegment(raw, offset), "page-framing");
                 tails++;
             }
             return raw.Length - tails * PagedGzipStream.SegmentLength;
