@@ -674,17 +674,20 @@ public class IfcLengthUnitChoiceOptionTests
         {
             string rvt = Path.Combine(dir, "synthetic.rvt");
             IfcDeterminismTests.WriteSyntheticRvt(rvt);
-            string ifc = Path.Combine(dir, "model.ifc");
-            string compact = Path.Combine(dir, "compact.json");
-            string full = Path.Combine(dir, "full.json");
-            string[] args = [rvt, "--ifc", ifc, "--compact-json", compact, "--full-json", full];
-            Assert.Equal(RvtExitCodes.Success, RunCli(args).ExitCode);
-            byte[] compactDefault = File.ReadAllBytes(compact), fullDefault = File.ReadAllBytes(full);
+            // each run writes into its own folder: a run that wrote nothing cannot be mistaken for the unchanged default
+            string Output(string run, string name) => Path.Combine(dir, run, name);
+            string[] Args(string run, params string[] extra) =>
+                [rvt, "--ifc", Output(run, "model.ifc"), "--compact-json", Output(run, "compact.json"), "--full-json", Output(run, "full.json"), .. extra];
+            Directory.CreateDirectory(Path.Combine(dir, "default"));
+            Directory.CreateDirectory(Path.Combine(dir, "unit"));
+            Assert.Equal(RvtExitCodes.Success, RunCli(Args("default")).ExitCode);
+            Assert.Equal(RvtExitCodes.Success, RunCli(Args("unit", "--ifc-length-unit", unit)).ExitCode);
 
-            Assert.Equal(RvtExitCodes.Success, RunCli([.. args, "--ifc-length-unit", unit]).ExitCode);
-
-            Assert.Equal(compactDefault, File.ReadAllBytes(compact));
-            Assert.Equal(fullDefault, File.ReadAllBytes(full));
+            foreach (string name in new[] { "model.ifc", "compact.json", "full.json" })
+                Assert.True(File.Exists(Output("unit", name)), $"The run with the unit option wrote no {name}.");
+            Assert.Contains(unit == "cm" ? ".CENTI.,.METRE." : "'INCH'", File.ReadAllText(Output("unit", "model.ifc")));
+            Assert.Equal(File.ReadAllBytes(Output("default", "compact.json")), File.ReadAllBytes(Output("unit", "compact.json")));
+            Assert.Equal(File.ReadAllBytes(Output("default", "full.json")), File.ReadAllBytes(Output("unit", "full.json")));
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
