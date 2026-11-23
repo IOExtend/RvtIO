@@ -328,6 +328,31 @@ public class PartitionFramingFuzzTests
         Assert.True(allocated < 256 * 1024, $"Walk allocated {allocated} bytes for a stream of {raw.Length}.");
     }
 
+    private static long WalkAllocation(byte[] raw)
+    {
+        Assert.Equal((true, null, 3), Frame(raw)); // the first walk also loads types
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        Frame(raw);
+        return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
+    [Fact]
+    public void Walk_CopiesAGzipMemberOnlyWhenAPageTailRunsThroughIt()
+    {
+        // Three members of 20 KB, all inside the first page: nothing is copied but the inflated bytes (measured: 258 KB; a copy of
+        // each member before it is inflated adds 60 KB).
+        byte[] inPage = WithTails(CoverageCensusTests.Partition(
+            CoverageCensusTests.Block(false, CoverageCensusTests.R(1001, RandomBytes(20_000, 42)))));
+        Assert.True(inPage.Length < PagedGzipStream.PageDataLength);
+        long allocated = WalkAllocation(inPage);
+        Assert.True(allocated < 290_000, $"Walk allocated {allocated} bytes for members that lie inside a page.");
+
+        // Three members of two pages: each is joined once, from the two sides of the tails (measured: 818 KB; a second copy of
+        // each member adds 390 KB).
+        allocated = WalkAllocation(WithTails(LargePayload()));
+        Assert.True(allocated < 1_000_000, $"Walk allocated {allocated} bytes for members that a page tail runs through.");
+    }
+
     [SkippableFact]
     public void MutatedAndTruncatedStreamsAreRejectedWithoutAnException()
     {
