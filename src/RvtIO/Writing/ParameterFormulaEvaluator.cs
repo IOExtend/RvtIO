@@ -219,6 +219,8 @@ internal static class ParameterFormulaEvaluator
 
     private static bool AsBoolean(Value value) => value.Kind == ValueKind.Boolean ? value.Number != 0 : throw Unsupported();
 
+    // The callers compare these results bit for bit with the values Revit stored. A transcendental result whose last bit differs
+    // between the .NET math library and Revit's makes that comparison fail, so the edit is refused and never written wrong.
     private static Value? CalculateFunction(Function function, Value argument)
     {
         double number = argument.Number;
@@ -247,6 +249,8 @@ internal static class ParameterFormulaEvaluator
         return result is { } calculated ? Finite(calculated) : null;
     }
 
+    // Assumption, not verified against Revit: a negative argument rounds like the stored integer results do (an exact half goes
+    // toward positive infinity), and roundup and rounddown are the ceiling and the floor, not rounding away from or toward zero.
     internal static double Round(double value)
     {
         double floor = Math.Floor(value);
@@ -313,7 +317,7 @@ internal static class ParameterFormulaEvaluator
     private static Value Finite(Value value)
     {
         if (!double.IsFinite(value.Number))
-            throw new RvtWriteRefusedException("invalid-parameter-value", "The global assignment does not produce finite formula values.");
+            throw new RvtWriteRefusedException("invalid-parameter-value", "The formula does not produce finite values.");
         return value;
     }
 

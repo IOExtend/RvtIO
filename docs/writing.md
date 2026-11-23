@@ -49,7 +49,7 @@ readable project record for the element and a verified source for the parameter 
 | Straight wall, room, or top-level loaded Generic Model, Door, Window, or Furniture instance | `ALL_MODEL_IMAGE` (Image). |
 | Basic wall type | `ALL_MODEL_TYPE_IMAGE` (Type Image). |
 | Basic wall type, primary or directly linked derived family symbol | `ALL_MODEL_TYPE_MARK` (Type Mark). Pass the ID of the type or symbol whose value you want to write. |
-| Basic wall type or verified loaded family type | `ALL_MODEL_TYPE_COMMENTS`, `ALL_MODEL_DESCRIPTION`, `ALL_MODEL_MANUFACTURER`, `ALL_MODEL_MODEL`, `ALL_MODEL_URL`, and `ALL_MODEL_COST`. Cost takes a finite invariant number with no currency symbol. |
+| Basic wall type or verified loaded family type | `ALL_MODEL_TYPE_COMMENTS`, `ALL_MODEL_DESCRIPTION`, `ALL_MODEL_MANUFACTURER`, `ALL_MODEL_MODEL`, `ALL_MODEL_URL`, and `ALL_MODEL_COST`. Cost takes a finite invariant number with no currency symbol; a change that Revit can suppress within its numeric comparison tolerance is refused. |
 | Basic wall type or primary Door symbol without derived copies | `FIRE_RATING` (also named `DOOR_FIRE_RATING`, the same parameter ID). |
 | Straight wall (`SWall`), basic wall type (`BasicWallType`), room (`RoomElem`) | Project and shared parameters of supported types with a verified definition and a matching instance or type binding. |
 | Straight wall, basic wall type, room, or loaded family instance or type | **Family Type** parameters supplied by a verified project binding. Assign a matching nested type reference, a verified material ID, or `"-1"`. Shared definitions also accept the verified local element and active primary type references described below. A shared definition with `HideWhenNoValue` supports clearing. |
@@ -122,6 +122,10 @@ branches as permitted by the formula type. Only the selected branch of `if` is e
 the writer evaluates the second operand only when the first operand does not determine the answer. Unitless formulas
 support `round`, `roundup`, and `rounddown`. Integer results use Revit's nearest-integer rounding, with exact
 halves rounded toward the greater integer. Recalculation uses the stored integer result in downstream formulas.
+The rule for a negative argument of `round`, `roundup`, and `rounddown` has not been compared with Revit. The writer
+assumes that `round` takes an exact half toward positive infinity and that `roundup` and `rounddown` are the ceiling
+and the floor, so `roundup(-2.2)` gives `-2` and `rounddown(-2.2)` gives `-3`. Treat results of negative arguments as
+unverified.
 Global formulas treat Currency and Number as scalar numbers. Results retain their original parameter type for
 associations. Revit accepted `CurrencyInput + 2` in the tested formulas and rejected
 `CurrencyInput + 2 $`.
@@ -212,6 +216,9 @@ or relative local resource layout introduced for image links in Revit 2021. [Aut
 
 When writing to another directory, RvtIO checks the saved path of root project image links. It refuses a write
 if a relative image path would resolve to a different file, or if the link's path layout cannot be verified.
+This check belongs to every write that changes the directory, not only to parameter edits: `SaveAs` and `Rewrite`
+refuse such a project with `relative-reference-relocation` too. An imported image and a write into the directory of
+the source are not checked.
 
 ```sh
 rvtio set-parameter project.rvt project.edited.rvt 42000 43000 "300 mm"
@@ -295,7 +302,8 @@ references from dimension labels, constraint expressions, family formulas, and e
 On first assignment the other named types receive the Revit default, empty text or zero. If a door or window
 also contains an unnamed type, Revit copies each assigned identity value to it. The command targets the named
 type. Assign an empty string to write empty built-in text. Cost takes a finite invariant number and requires
-the default two-decimal currency format with `$` in the family metadata.
+the default two-decimal currency format with `$` in the family metadata. A Cost change within Revit's numeric
+comparison tolerance is refused.
 
 In Generic Model families, `FAMILY_FREEINST_DEFAULT_ELEVATION` takes a length with an explicit unit. The type table must contain the parameter
 and the family must use a verified decimal length format for the matching `PartAtom` value.
@@ -341,7 +349,8 @@ For example, an RVT assignment is `{"elementId":42000,"parameterId":43000,"value
 An RFA reset is `{"typeName":"900 x 2100","parameterId":12345,"value":null}`.
 
 Pass a string to assign a value using the same formats and write checks as single edits. To clear or reset,
-pass an explicit JSON or C# `null`.
+pass an explicit JSON or C# `null`. `SetParameter` and `SetFamilyParameter` take no `null` value and throw
+`ArgumentNullException`; clear through a batch.
 
 | File | Effect of `null` |
 | --- | --- |

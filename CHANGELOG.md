@@ -11,11 +11,16 @@ API between minor releases.
 - Update verified Number and Slope parameters through existing associations between the two specs, including
   the release-specific rules for Number parameters bound in the project.
 
-- Edit verified project and family parameters in local Revit 2020вЂ“2027 files without Revit. The API and CLI support single assignments and atomic batches, including supported clears, measured values, references, and verified family and global formulas. See the [writing guide](docs/writing.md).
+- Edit verified project and family parameters in local Revit 2020–2027 files without Revit. The API and CLI support single assignments and atomic batches, including supported clears, measured values, references, and verified family and global formulas. See the [writing guide](docs/writing.md).
+
+### Changed
+
+- `SaveAs` and `Rewrite` to another directory also check the saved paths of the linked images of a project, as they already did for linked models and point clouds. They refuse with `relative-reference-relocation` when a relative image path would resolve to a different file or the layout of a link cannot be verified. See the [writing guide](docs/writing.md).
 
 ### Fixed
 
 - Avoid overflow when triangulating trimmed faces with 46,341 or more vertices after bridging.
+- Read `Global` and `Formats` streams whose last page has exactly the length of a full page and holds no segment marker at the segment position.
 
 ## [0.6.3] - 2026-11-20
 
