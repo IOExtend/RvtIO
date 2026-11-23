@@ -2796,25 +2796,23 @@ public partial class RvtFileReader
         ParsingState state, List<(byte[] Segment, int Start, uint Size, uint Eid)> jobs)
     {
         if (jobs.Count == 0) return 0;
-        var decoded = new GRepData?[jobs.Count];
         bool slowDiag = Environment.GetEnvironmentVariable("RVTIO_GREP_SLOW") is { Length: > 0 };
-        Parallel.For(0, jobs.Count, index =>
-        {
-            var clock = System.Diagnostics.Stopwatch.StartNew();
-            decoded[index] = GRepParserV2.Parse(jobs[index].Segment, jobs[index].Start, jobs[index].Size);
-            if (slowDiag && (clock.ElapsedMilliseconds > 2000 || decoded[index]?.Faces.Count > 100000))
-                DiagnosticSink.WriteLine($"slow GRep eid={jobs[index].Eid} ms={clock.ElapsedMilliseconds} faces={decoded[index]?.Faces.Count}");
-        });
         int stored = 0;
-        for (int index = 0; index < jobs.Count; index++)
-        {
-            if (decoded[index] is { } geometry && !state.GrepBlocks.ContainsKey(jobs[index].Eid))
+        BlockParser.DecodeGRepBlocksInOrder(jobs.Count,
+            index =>
             {
-                state.GrepBlocks[jobs[index].Eid] = geometry;
-                stored++;
-            }
-            decoded[index] = null;
-        }
+                var job = jobs[index];
+                var clock = slowDiag ? System.Diagnostics.Stopwatch.StartNew() : null;
+                var geometry = GRepParserV2.Parse(job.Segment, job.Start, job.Size);
+                if (clock != null && (clock.ElapsedMilliseconds > 2000 || geometry?.Faces.Count > 100000))
+                    DiagnosticSink.WriteLine($"slow GRep eid={job.Eid} ms={clock.ElapsedMilliseconds} faces={geometry?.Faces.Count}");
+                return geometry;
+            },
+            (index, geometry) =>
+            {
+                if (geometry != null && state.GrepBlocks.TryAdd(jobs[index].Eid, geometry))
+                    stored++;
+            });
         return stored;
     }
 

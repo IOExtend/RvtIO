@@ -7,6 +7,31 @@ namespace RvtIO.Tests;
 public class GRepParserV2Tests
 {
     [Fact]
+    public void DecodeGRepBlocks_KeepsUnappliedResultsBoundedAndAppliesInOrder()
+    {
+        const int count = 300;
+        var blocks = Enumerable.Range(0, count).Select(i => i % 3 == 0 ? null : new GRepData()).ToArray();
+        var applied = new List<int>();
+        int pending = 0;
+
+        BlockParser.DecodeGRepBlocksInOrder(count,
+            index =>
+            {
+                Assert.InRange(Interlocked.Increment(ref pending), 1, 128);
+                return blocks[index];
+            },
+            (index, geometry) =>
+            {
+                Assert.Same(blocks[index], geometry);
+                applied.Add(index);
+                Interlocked.Decrement(ref pending);
+            });
+
+        Assert.Equal(0, pending);
+        Assert.Equal(Enumerable.Range(0, count), applied);
+    }
+
+    [Fact]
     public void ThinSamples_KeepsShortListsAndThinsLongOnesKeepingTheEndsAndKnots()
     {
         var short1 = new List<double> { 0, 1, 2 };

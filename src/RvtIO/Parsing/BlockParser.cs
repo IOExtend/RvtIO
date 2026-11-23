@@ -18,20 +18,48 @@ internal static class BlockParser
     internal static void ApplyPendingGReps(ParsingState state, List<PendingGRep> pending)
     {
         if (pending.Count == 0) return;
-        var decoded = new Internal.GRepData?[pending.Count];
-        Parallel.For(0, decoded.Length, new ParallelOptions(), index =>
-            decoded[index] = GRepParserV2.Parse(pending[index].Chunk, pending[index].Start, pending[index].Size));
-        for (int index = 0; index < decoded.Length; index++)
-        {
-            var job = pending[index];
-            if (job.IsFamilyCut)
+        DecodeGRepBlocksInOrder(pending.Count,
+            index =>
             {
-                if (!state.FamilyCutGreps.ContainsKey(job.Eid)
-                    && decoded[index] is { } familyCut && IsAuthoredFamilyComplexCutter(familyCut))
-                    state.FamilyCutGreps[job.Eid] = familyCut;
+                var job = pending[index];
+                return GRepParserV2.Parse(job.Chunk, job.Start, job.Size);
+            },
+            (index, geometry) =>
+            {
+                var job = pending[index];
+                if (job.IsFamilyCut)
+                {
+                    if (!state.FamilyCutGreps.ContainsKey(job.Eid)
+                        && geometry is { } familyCut && IsAuthoredFamilyComplexCutter(familyCut))
+                        state.FamilyCutGreps[job.Eid] = familyCut;
+                }
+                else ApplyGRepBlock(state, job.Eid, geometry);
+            });
+    }
+
+    internal static void DecodeGRepBlocksInOrder(int count, Func<int, GRepData?> decode, Action<int, GRepData?> apply)
+    {
+        if (OperatingSystem.IsBrowser())
+        {
+            // A browser has a bounded WebAssembly heap. Release each unused result before decoding the next block.
+            for (int index = 0; index < count; index++)
+                apply(index, decode(index));
+            return;
+        }
+
+        // A batch keeps parallel decoding without retaining the results of the entire parse pass.
+        const int batchSize = 128;
+        var decoded = new GRepData?[Math.Min(batchSize, count)];
+        for (int index = 0; index < count;)
+        {
+            int start = index;
+            int batchCount = Math.Min(batchSize, count - start);
+            Parallel.For(0, batchCount, offset => decoded[offset] = decode(start + offset));
+            for (int offset = 0; offset < batchCount; offset++, index++)
+            {
+                apply(index, decoded[offset]);
+                decoded[offset] = null;
             }
-            else ApplyGRepBlock(state, job.Eid, decoded[index]);
-            decoded[index] = null;
         }
     }
 
