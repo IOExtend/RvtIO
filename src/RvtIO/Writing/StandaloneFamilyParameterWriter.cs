@@ -341,10 +341,14 @@ internal static class StandaloneFamilyParameterWriter
                     ReferencePartAtomName(original.Integer), nestedReferenceName);
                 return;
             }
-            ParameterMeasurement.DisplayValue? display = definition.Mode == 0 && quantity is UnitType measured && measured != UnitType.UT_Number
-                && WideDocument.Read(latest, schema) is { } document && units.TryGetValue(document.UnitsElemId, out var displayUnits)
-                ? ParameterMeasurement.Display(measured, walker, displayUnits, original.Real, BinaryPrimitives.ReadDoubleLittleEndian(replacement))
-                : null;
+            ParameterMeasurement.DisplayValue? display = null;
+            if (definition.Mode == 0 && quantity is UnitType measured && WideDocument.Read(latest, schema) is { } document
+                && units.TryGetValue(document.UnitsElemId, out var displayUnits))
+            {
+                display = ParameterMeasurement.Display(measured, walker, displayUnits, original.Real, BinaryPrimitives.ReadDoubleLittleEndian(replacement));
+                if (display is null && measured == UnitType.UT_Number)
+                    throw Unverified("The family decimal separator for the Number parameter could not be verified.");
+            }
             (string? Type, string? Before, string? After) referenceNames = default;
             if (storage == StorageType.ElementId)
             {
@@ -433,7 +437,7 @@ internal static class StandaloneFamilyParameterWriter
             var (defaultBytes, defaultText) = storageType switch
             {
                 StorageType.ElementId => (EncodeElementId(-1, idWidth), NoneName),
-                StorageType.Double => (new byte[sizeof(double)], "0.00"),
+                StorageType.Double => (new byte[sizeof(double)], format!.Value.CurrencyZero),
                 _ => (new byte[sizeof(uint)], ""),
             };
             byte[]? partAtom = EditBuiltInPartAtom(root, pending, field, allTypes, target, unnamedType, first, oldText, newText, defaultText, format);

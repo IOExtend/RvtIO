@@ -8,9 +8,11 @@ internal static class ParameterMeasurement
 {
     private const double MetresPerFoot = 0.3048;
     private const double InternalFeetPerInch = 0.08333333333333334; // Revit's stored conversion differs from 1.0 / 12.
+    private const double RadiansPerDegree = 3.14159265358979 / 180; // The Revit API uses this precision for degree assignments.
     private const string SpecPrefix = "autodesk.spec.aec:";
     private const string UnitPrefix = "autodesk.unit.unit:";
     private const string SymbolPrefix = "autodesk.unit.symbol:";
+    private static readonly NumberFormatInfo DecimalComma = NumberFormatInfo.ReadOnly(new() { NumberDecimalSeparator = "," });
     internal const string LegacyFormats = WideBlockWalker.AllItemsKeyPrefix + "legacy-unit-options";
     private sealed record Unit(UnitType Spec, string Input, string Forge, DisplayUnitType? Legacy, string Atom, double ToInternal,
         string? AlternateAtom = null);
@@ -37,7 +39,7 @@ internal static class ParameterMeasurement
         new(UnitType.UT_Area, "ft2", "squareFeet", DisplayUnitType.DUT_SQUARE_FEET, "SF", 1, "ft²"),
         new(UnitType.UT_Volume, "m3", "cubicMeters", DisplayUnitType.DUT_CUBIC_METERS, "m³", 1 / (MetresPerFoot * MetresPerFoot * MetresPerFoot)),
         new(UnitType.UT_Volume, "ft3", "cubicFeet", DisplayUnitType.DUT_CUBIC_FEET, "CF", 1, "ft³"),
-        new(UnitType.UT_Angle, "deg", "degrees", DisplayUnitType.DUT_DECIMAL_DEGREES, "°", Math.PI / 180),
+        new(UnitType.UT_Angle, "deg", "degrees", DisplayUnitType.DUT_DECIMAL_DEGREES, "°", RadiansPerDegree),
         new(UnitType.UT_Angle, "rad", "radians", null, "rad", 1),
         new(UnitType.UT_Currency, "", "currency", DisplayUnitType.DUT_CURRENCY, "$", 1),
         new(UnitType.UT_Mass, "kg", "kilograms", DisplayUnitType.DUT_KILOGRAMS_MASS, "kg", 1),
@@ -94,27 +96,40 @@ internal static class ParameterMeasurement
         return double.IsFinite(value) ? value : null;
     }
 
-    private static double? ReadNumber(ReadOnlySpan<char> text) =>
-        double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double value) && double.IsFinite(value) ? value : null;
+    private static double? ReadNumber(ReadOnlySpan<char> text, NumberFormatInfo? format = null) =>
+        double.TryParse(text, NumberStyles.Float, format ?? NumberFormatInfo.InvariantInfo, out double value) && double.IsFinite(value)
+            ? value : null;
 
-    internal readonly record struct DisplayValue(string Type, string Unit, string Symbol, double Before, string After,
-        string? AlternateUnit = null)
+    internal readonly record struct DisplayValue(string Type, string? Unit, string Symbol, double Before, string After,
+        NumberFormatInfo Format, string? AlternateUnit = null, string? GroupedBefore = null)
     {
-        internal bool MatchesUnit(string? unit) => unit is not null && (unit == Unit || unit == AlternateUnit);
+        internal bool MatchesUnit(string? unit) => unit == Unit || (AlternateUnit is not null && unit == AlternateUnit);
 
-        internal bool Matches(string text) => text.EndsWith(Symbol, StringComparison.Ordinal)
-            && ReadNumber(text.AsSpan(0, text.Length - Symbol.Length)) == Before;
+        internal bool Matches(string text) => GroupedBefore is not null ? text == GroupedBefore
+            : text.EndsWith(Symbol, StringComparison.Ordinal) && ReadNumber(text.AsSpan(0, text.Length - Symbol.Length), Format) == Before;
+
+        internal string CurrencyZero => 0d.ToString("F2", Format) + Symbol;
     }
 
     internal static DisplayValue? Display(UnitType spec, WideBlockWalker walker, WideBlockWalker.Walk units, double before, double after)
     {
         var records = units.Records.Select(r => (Class: walker.Class(r.ClassId)!.Name, r.Values)).ToArray();
-        if (records.Where(r => r.Class == "AUnits").ToArray() is not [var aUnits]
-            || aUnits.Values.GetValueOrDefault("m_decimalSymbol") is not 0L)
+        if (records.Where(r => r.Class == "AUnits").ToArray() is not [var aUnits])
             return null;
+        var format = aUnits.Values.GetValueOrDefault("m_decimalSymbol") switch
+        {
+            0L => NumberFormatInfo.InvariantInfo,
+            1L => DecimalComma,
+            _ => null,
+        };
+        if (format is null || !double.IsFinite(before) || !double.IsFinite(after))
+            return null;
+        if (spec == UnitType.UT_Number)
+            return new("Number", null, "", before, after.ToString("R", format), format);
         Unit? unit;
         double accuracy;
         string symbol;
+        bool grouping;
         bool suppressZeros;
         bool suppressSpaces;
         var additional = AdditionalSpecs.SingleOrDefault(entry => entry.Unit == spec);
@@ -123,11 +138,12 @@ internal static class ParameterMeasurement
             string specName = additional?.Forge ?? (spec == UnitType.UT_Currency ? "autodesk.spec.measurable:currency"
                 : SpecPrefix + spec.ToString()[3..].ToLowerInvariant());
             if (modern.Options.Where(o => UnitSchemaEvaluator.DisplayNameKey(o.Spec) == specName).ToArray() is not [var option]
-                || option.UseDefault != 0 || option.RoundingMethod != 0 || option.UseGrouping != 0 || option.UsePlusPrefix != 0)
+                || option.UseDefault != 0 || option.RoundingMethod != 0 || option.UsePlusPrefix != 0)
                 return null;
             unit = Units.SingleOrDefault(u => u.Spec == spec && UnitPrefix + u.Forge == UnitSchemaEvaluator.DisplayNameKey(option.Unit));
             accuracy = option.Accuracy;
             symbol = UnitSchemaEvaluator.DisplayNameKey(option.Symbol);
+            grouping = option.UseGrouping != 0;
             suppressZeros = option.SuppressLeadingZeros != 0 || option.SuppressTrailingZeros != 0;
             suppressSpaces = option.SuppressSpaces != 0;
         }
@@ -141,7 +157,8 @@ internal static class ParameterMeasurement
                 return null;
             if (option.GetValueOrDefault("m_accuracy") is not double precision || option.GetValueOrDefault("m_displayUnits") is not long display
                 || option.GetValueOrDefault("m_unitSymbol") is not long legacySymbol
-                || new[] { "m_bUseDefault", "m_roundingMethod", "m_bUseGrouping", "m_bUsePlusPrefix" }.Any(f => option.GetValueOrDefault(f) is not 0L))
+                || option.GetValueOrDefault("m_bUseGrouping") is not (0L or 1L) ||
+                new[] { "m_bUseDefault", "m_roundingMethod", "m_bUsePlusPrefix" }.Any(f => option.GetValueOrDefault(f) is not 0L))
                 return null;
             unit = Units.SingleOrDefault(u => u.Spec == spec && u.Legacy == (DisplayUnitType)display);
             accuracy = precision;
@@ -155,6 +172,7 @@ internal static class ParameterMeasurement
                 (int)UnitSymbolType.UST_CF => SymbolPrefix + "cf",
                 _ => "unsupported",
             };
+            grouping = option.GetValueOrDefault("m_bUseGrouping") is 1L;
             suppressZeros = option.GetValueOrDefault("m_bSuppressLeadingZeros") is not 0L ||
                 option.GetValueOrDefault("m_bSuppressTrailingZeros") is not 0L;
             suppressSpaces = option.GetValueOrDefault("m_bSuppressSpaces") is not 0L;
@@ -175,6 +193,12 @@ internal static class ParameterMeasurement
             return null;
         if (spec == UnitType.UT_Currency && accuracy != 0.01)
             return null;
+        if (grouping)
+        {
+            format = GroupedFormat(aUnits.Values, format);
+            if (format is null)
+                return null;
+        }
         int digits = 0;
         while (digits <= 8 && accuracy != Math.Pow(10, -digits))
             digits++;
@@ -184,9 +208,28 @@ internal static class ParameterMeasurement
         double oldValue = Round(before), newValue = Round(after);
         if (!double.IsFinite(oldValue) || !double.IsFinite(newValue))
             return null;
-        if ((spec == UnitType.UT_Currency || unit.AlternateAtom is not null) && newValue == 0)
-            newValue = 0; // Revit writes 0.00 for amounts rounded to zero on either side.
-        return new(additional?.Atom ?? spec.ToString()[3..], unit.Atom, suffix, oldValue,
-            newValue.ToString($"F{digits}", CultureInfo.InvariantCulture) + suffix, symbol == "" ? unit.AlternateAtom : null);
+        string pattern = $"{(grouping ? 'N' : 'F')}{digits}";
+        bool normalizeZero = grouping || format == DecimalComma || spec == UnitType.UT_Currency || unit.AlternateAtom is not null;
+        string Render(double value) => (normalizeZero && value == 0 ? 0 : value).ToString(pattern, format) + suffix;
+        return new(additional?.Atom ?? spec.ToString()[3..], unit.Atom, suffix, oldValue, Render(newValue), format,
+            symbol == "" ? unit.AlternateAtom : null, grouping ? Render(oldValue) : null);
+    }
+
+    private static NumberFormatInfo? GroupedFormat(Dictionary<string, object?> units, NumberFormatInfo format)
+    {
+        string? separator = units.GetValueOrDefault("m_digitGroupingSymbol") switch
+        {
+            0L => ".", 1L => ",", 2L => " ", 3L => "'", _ => null,
+        };
+        int[]? sizes = units.GetValueOrDefault("m_digitGroupingAmount") switch
+        {
+            0L => [3, 2], 1L => [3], _ => null,
+        };
+        if (separator is null || sizes is null || separator == format.NumberDecimalSeparator)
+            return null;
+        var grouped = (NumberFormatInfo)format.Clone();
+        grouped.NumberGroupSeparator = separator;
+        grouped.NumberGroupSizes = sizes;
+        return grouped;
     }
 }
