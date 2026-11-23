@@ -81,6 +81,15 @@ public sealed class StreamInputTests
         return data;
     }
 
+    public static TheoryData<string, string, string> EntryPointsAndMemberFailures()
+    {
+        var data = new TheoryData<string, string, string>();
+        foreach (string entry in Entries)
+            foreach (string member in new[] { "seek", "position", "length" })
+                foreach (string failure in new[] { "io", "disposed" }) data.Add(entry, member, failure);
+        return data;
+    }
+
     /// <summary>A writable stream over the bytes, of the kinds callers pass: a fixed-size buffer (which refuses to be shortened), a
     /// growing buffer, and a file opened for reading and writing.</summary>
     private sealed class Subject : IDisposable
@@ -151,6 +160,29 @@ public sealed class StreamInputTests
             return read;
         }
         public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    /// <summary>A seekable, read-only stream whose Seek, Position setter or Length (the member named) throws once, at the
+    /// <c>failAt</c>-th call, and works otherwise: a stream that is closed or broken fails first in one of these, not in Read, and
+    /// a decoder that absorbs the failure goes on with less data.</summary>
+    private sealed class MemberFailingStream(Stream inner, string member, int failAt, Exception failure) : Stream
+    {
+        private int _calls;
+        public int Calls => _calls;
+        private void Enter(string name)
+        {
+            if (name == member && ++_calls == failAt) throw failure;
+        }
+        public override bool CanRead => true;
+        public override bool CanSeek => true;
+        public override bool CanWrite => false;
+        public override long Length { get { Enter("length"); return inner.Length; } }
+        public override long Position { get => inner.Position; set { Enter("position"); inner.Position = value; } }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+        public override long Seek(long offset, SeekOrigin origin) { Enter("seek"); return inner.Seek(offset, origin); }
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
@@ -325,6 +357,32 @@ public sealed class StreamInputTests
         Assert.Same(failure, thrown);
         // The stack is the one of the stream that failed.
         Assert.Contains(nameof(FailingStream), thrown.StackTrace);
+    }
+
+    // A closed stream fails in Seek, Position or Length before it fails in Read. One failed call is absorbed by the reader, which goes
+    // on with less data, so the result would be a file with fewer elements and no error unless the view recorded the failure.
+    [Theory]
+    [MemberData(nameof(EntryPointsAndMemberFailures))]
+    public void AFailureInSeekPositionOrLengthIsThrownAsItWas(string entry, string member, string kind)
+    {
+        byte[] bytes = SyntheticRvt();
+        using var counting = new MemberFailingStream(new MemoryStream(bytes, writable: false), member, int.MaxValue, new IOException());
+        Read(entry, counting);
+        int calls = counting.Calls;
+        // The first Length call is made on the caller's stream, before the view exists; the later ones go through the view.
+        Assert.True(calls >= 2, $"a whole read makes {calls} call(s) of {member}");
+
+        // The first and second call, the last, and calls spread over the read between them.
+        foreach (int failAt in Enumerable.Range(0, 9).Select(i => 1 + (int)((long)i * (calls - 1) / 8)).Distinct())
+        {
+            var failure = Failure(kind);
+            using var stream = new MemberFailingStream(new MemoryStream(bytes, writable: false), member, failAt, failure);
+
+            var thrown = Assert.ThrowsAny<Exception>(() => Read(entry, stream));
+
+            Assert.True(ReferenceEquals(failure, thrown), $"{member} call {failAt} of {calls}: {thrown.GetType().Name} {thrown.Message}");
+            Assert.Contains(nameof(MemberFailingStream), thrown.StackTrace);
+        }
     }
 
     // The decoders absorb a read that fails and may read again; the first failure is the cause, the later ones are its consequence.
