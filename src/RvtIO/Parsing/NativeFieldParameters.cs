@@ -369,7 +369,10 @@ internal static class NativeFieldParameters
         new(-1006630, StorageType.Integer, "3703:m_showArrowheadToCutMark", ["3703"], null), // Show Arrowhead to Cut Mark
         new(-1006625, StorageType.Double, "3703:m_distanceToCutMark", ["3703"], null), // Distance to Cut Mark
         new(-1006623, StorageType.ElementId, "3703:m_arrowheadTypeId", ["3703"], null), // Arrowhead Type
+        new(-1006621, StorageType.Double, "974:m_cutMarkSymbolSize", ["974"], null), // Cut Mark Symbol Size
         new(-1006620, StorageType.Integer, "974:m_cutLineType", ["974"], null), // Cut Line Type
+        new(-1006619, StorageType.Double, "974:m_rotationAngle", ["974"], null), // Cut Line Angle
+        new(-1006618, StorageType.Double, "974:m_extensionDistanceToBoundary", ["974"], null), // Cut Line Extension
         new(-1006616, StorageType.Integer, "974:m_cutMarkSymbol", ["974"], null), // Cut Mark Symbol
         new(-1006525, StorageType.String, "174:m_prefix", ["174/-2000150", "174/None"], null), // Dimension Prefix
         new(-1006523, StorageType.Integer, "174:m_interiorTickMarkDisplay", ["174/-2000150", "174/None"], null), // Interior Tick Mark Display

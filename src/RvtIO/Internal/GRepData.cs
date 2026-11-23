@@ -1,5 +1,14 @@
 namespace RvtIO.Internal;
 
+internal sealed record DoorPlanSymbol((double Lo, double Hi)? CutRange,
+    IReadOnlyList<RvtIO.Parsing.GRepParserV2.ArcRec> Curves);
+
+internal sealed record StyledModelLine(double[] Start, double[] End, int StyleId);
+internal sealed record PlanFixtureGraphics(List<StyledModelLine> Lines, List<List<double[]>> Masks,
+    PlanFixtureProjection? MediumProjection = null, PlanFixtureProjection? CoarseProjection = null);
+
+internal sealed record PlanFixtureProjection(List<StyledModelLine> Lines, List<List<double[]>> Masks);
+
 internal record GRepData
 {
     public int GStyleElemId { get; set; }
@@ -65,6 +74,10 @@ internal record GRepData
     /// symbols contain many independent mapped children; retaining only one loses solids.</summary>
     public List<GRepInstance> Instances { get; set; } = new();
 
+    /// <summary>Authored projection strokes with view filters, in the representation's own frame.</summary>
+    public List<ViewFacingLine>? ViewFacingLines { get; set; }
+    public IReadOnlyList<DoorPlanSymbol>? DoorPlanSymbols { get; set; }
+
     /// <summary>For a FamilySymbol complex cutter, the authored dummy-host closure plane
     /// in family-local coordinates. Replacing the symmetric dummy-host slab delimited by
     /// this plane with the real host slab preserves every authored reveal/protrusion.</summary>
@@ -108,10 +121,18 @@ internal record GRepInstance
     public long NodeOrder { get; set; }
 }
 
+internal sealed record ModelFacePattern(int PatternId, double[] Origin, double[] U, double[] V);
+
+internal sealed record ViewFacingLine(double[] Start, double[] End, double[] Axis, int StyleId,
+    (int Comparison, int Level)? DetailCondition = null);
+
 internal record GRepFace
 {
+    public bool ExcludedFromTopPlan { get; init; }
+
     /// <summary>GFace.m_renderStyleId: the material element of the face; absent when not read.</summary>
     public int? RenderStyleId { get; init; }
+    public ModelFacePattern? ModelPattern { get; init; }
 
     public double[] Envelope { get; set; } = Array.Empty<double>();
     public bool Orient { get; set; }
@@ -160,6 +181,7 @@ internal record GRepFace
 
     /// <summary>True for a tessellated patch of a non-planar surface (cylinder, cone, revolution, ruled, Hermite).</summary>
     public bool CurvedSurface { get; init; }
+    public bool PolygonMesh { get; init; }
 
     /// <summary>The face lies on a plane surface of the file (GSurface class Plane). When every face of a closed shell lies
     /// on a plane, all its edges are straight lines and the shell is a polyhedron whose volume is exact.

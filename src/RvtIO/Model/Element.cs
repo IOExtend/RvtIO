@@ -307,6 +307,26 @@ namespace RvtIO.Model
         [JsonIgnore]
         public ViewCropFrame? ViewCrop { get; set; }
 
+        internal ViewModelBounds? OrthographicModelBounds { get; set; }
+        internal ViewSolarStudy? SolarStudy { get; set; }
+
+        internal bool? ViewAnnotationCropActive { get; set; }
+
+        // Annotation crop offsets are in paper feet, relative to the model crop.
+        internal (double Left, double Right, double Top, double Bottom)? ViewAnnotationCrop { get; set; }
+
+        internal (int ParentId, double[] Head)? SectionCallout { get; set; }
+
+        internal (double Width, double Scale, bool Mirrored)? DetailInsulation { get; set; }
+        internal Parsing.TfBlockDeserializer.BreakLineProfile? DetailBreak { get; set; }
+        internal (double Width, double Height)? ImagePaperSize { get; set; }
+        internal int? ImageHolderId { get; set; }
+        internal (double X, double Y)? RoomLegendOrigin { get; set; }
+        internal (double Width, double Height)? ColorLegendSwatch { get; set; }
+        internal (double Width, double Height)? ImageInstanceScale { get; set; }
+        internal IReadOnlyList<(double X, double Y)>? SitePropertyCurve { get; set; }
+        internal (double X, double Y)? SitePropertyArcCenter { get; set; }
+
         /// <summary>Exact BaseRailing.m_baseRailingSymbolId stored by this occurrence.</summary>
         [JsonIgnore]
         internal int? SerializedBaseRailingSymbolId { get; set; }
@@ -326,6 +346,8 @@ namespace RvtIO.Model
         /// only a unique, non-inplace family with no nested instances is admitted.</summary>
         [JsonIgnore]
         internal (int SymbolId, int HostId, double[] Transform, FamilyCutLoopData Loop)? OwnSingleFamilyCutout { get; set; }
+        internal (IReadOnlyList<RvtIO.Internal.DoorPlanSymbol> Symbols, double[] Transform)? OwnDoorPlanSymbols { get; set; }
+        internal RvtIO.Internal.PlanFixtureGraphics? PlacedPlanFixtureGraphics { get; set; }
 
         /// <summary>Own phase-4 cutout instance IDs in source order, not inferred inverse hosts.</summary>
         [JsonIgnore]
@@ -497,6 +519,10 @@ namespace RvtIO.Model
         /// is the integer percent 97); null when the block did not give it.</summary>
         [JsonIgnore]
         internal double? SerializedMaterialTransparency { get; set; }
+
+        /// <summary>Whether the material uses the appearance asset in place of its stored shading colour.</summary>
+        [JsonIgnore]
+        internal bool? SerializedMaterialUsesRenderAppearance { get; set; }
 
         /// <summary>The lowest and highest elevation (feet) at which a Grid is shown in plan views
         /// (the V envelope of its DatumPlane surface).</summary>

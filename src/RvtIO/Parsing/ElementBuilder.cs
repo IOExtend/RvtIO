@@ -215,12 +215,38 @@ internal static partial class ElementBuilder
         return geometry;
     }
 
-    private static double[] TransformGeometryPoint(double[] point, double[] t) =>
+    internal static double[] TransformGeometryPoint(double[] point, double[] t) =>
     [
         t[9] + point[0] * t[0] + point[1] * t[1] + point[2] * t[2],
         t[10] + point[0] * t[3] + point[1] * t[4] + point[2] * t[5],
         t[11] + point[0] * t[6] + point[1] * t[7] + point[2] * t[8],
     ];
+
+    private static void ApplyPlanFixtureGraphics(IReadOnlyList<Element> elements, ParsingState state)
+    {
+        foreach (var element in elements)
+        {
+            bool siteEquipment = element.CategoryId is (int)BuiltIns.BuiltInCategory.OST_ElectricalEquipment or (int)BuiltIns.BuiltInCategory.OST_Site;
+            if (!siteEquipment && element.CategoryId is not ((int)BuiltIns.BuiltInCategory.OST_PlumbingFixtures or (int)BuiltIns.BuiltInCategory.OST_Furniture)
+                || element.ValidatedOriginalFamilySymbolId is not int symbolId
+                || state.GrepBlocks.GetValueOrDefault((uint)element.Id)?.Instances is not [var placement]
+                || placement.SymbolElemId != symbolId
+                || !IsRigidPlacement(placement.Transform) || Math.Abs(placement.Transform[8] - 1) > 1e-9
+                || !state.PlanFixtureGraphicsBySymbol.TryGetValue((uint)symbolId, out var source)
+                || element.Geometry is { Faces.Count: > 0 } && source.MediumProjection == null && (!siteEquipment || source.CoarseProjection == null))
+                continue;
+
+            double[] Place(double[] point) => TransformGeometryPoint(point, placement.Transform);
+            element.PlacedPlanFixtureGraphics = new(
+                source.Lines.Select(line => line with { Start = Place(line.Start), End = Place(line.End) }).ToList(),
+                source.Masks.Select(ring => ring.Select(Place).ToList()).ToList(),
+                PlaceProjection(source.MediumProjection), siteEquipment ? PlaceProjection(source.CoarseProjection) : null);
+
+            PlanFixtureProjection? PlaceProjection(PlanFixtureProjection? projection) => projection == null ? null : new(
+                projection.Lines.Select(line => line with { Start = Place(line.Start), End = Place(line.End) }).ToList(),
+                projection.Masks.Select(ring => ring.Select(Place).ToList()).ToList());
+        }
+    }
 
     /// <param name="placedBox">Set to true when this symbol or a nested one is replaced by its tight box.</param>
     /// <param name="unresolvedNested">Set to true when a symbol nested in this one, at any depth, placed nothing.</param>
@@ -402,7 +428,7 @@ internal static partial class ElementBuilder
     /// Apply a GInstance placement (rows: basisX, basisY, basisZ, origin - 12 doubles) to a
     /// symbol's geometry, producing world-space faces for the instance.
     /// </summary>
-    private static GeometryData? TransformGeometry(GeometryData sym, double[] t)
+    internal static GeometryData? TransformGeometry(GeometryData sym, double[] t)
     {
         if (t.Length < 12) return null;
         double[] Map(double[] p)
@@ -415,7 +441,20 @@ internal static partial class ElementBuilder
                 t[11] + x * t[6] + y * t[7] + z * t[8],
             };
         }
+        double[] MapAxis(double[] axis) =>
+        [
+            axis[0] * t[0] + axis[1] * t[1] + axis[2] * t[2],
+            axis[0] * t[3] + axis[1] * t[4] + axis[2] * t[5],
+            axis[0] * t[6] + axis[1] * t[7] + axis[2] * t[8],
+        ];
         var outGeo = new GeometryData { Faces = new List<GeoFace>() };
+        bool rigid = IsRigidPlacement(t);
+        bool preservesVertical = rigid && Math.Abs(Math.Abs(t[8]) - 1) < 1e-9;
+        if (rigid && sym.ViewFacingLines is { Count: > 0 } viewLines)
+            outGeo.ViewFacingLines = viewLines.Select(line => line with
+            {
+                Start = Map(line.Start), End = Map(line.End), Axis = MapAxis(line.Axis),
+            }).ToList();
         var faceMap = new Dictionary<int, int>();
         double minx = double.MaxValue, miny = double.MaxValue, minz = double.MaxValue;
         double maxx = double.MinValue, maxy = double.MinValue, maxz = double.MinValue;
@@ -451,12 +490,18 @@ internal static partial class ElementBuilder
                 Origin = verts[0],
                 Area = f.Area,
                 PlaneSurface = f.PlaneSurface,
+                ExcludedFromTopPlan = preservesVertical && f.ExcludedFromTopPlan,
+                ModelPattern = f.ModelPattern is { } pattern
+                    ? new ModelFacePattern(pattern.PatternId, Map(pattern.Origin), MapAxis(pattern.U), MapAxis(pattern.V))
+                    : null,
+                PolygonMesh = f.PolygonMesh,
                 NestedRenderStyleId = f.NestedRenderStyleId ?? f.RenderStyleId,
                 GeometryNode = f.GeometryNode,
                 NodeOrder = f.NodeOrder,
                 GeometryStyle = f.GeometryStyle,
                 MeshMarker = f.SourceFace != 0 ? f.SourceFace : f.MeshMarker,
-                QuadratureArea = IsRigidPlacement(t) ? f.QuadratureArea : null,
+                MeshArcs = rigid ? f.MeshArcs?.Select(arc => arc.Transformed(Map, MapAxis, 1) with { Edge = arc.Edge }).ToArray() : null,
+                QuadratureArea = rigid ? f.QuadratureArea : null,
             });
             faceMap[sourceFaceIndex] = targetFaceIndex;
         }
@@ -471,12 +516,12 @@ internal static partial class ElementBuilder
         // the Revit face meshes of the nodes are made in the frame of the symbol and placed
         // with the transform of the instance (a rotation or a mirror image; a scaled instance keeps
         // the polygons)
-        if (sym.MeshNodes is { Count: > 0 } && !IsRigidPlacement(t) && Environment.GetEnvironmentVariable("RVTIO_MESH_LOG") == "1")
+        if (sym.MeshNodes is { Count: > 0 } && !rigid && Environment.GetEnvironmentVariable("RVTIO_MESH_LOG") == "1")
             DiagnosticSink.WriteLine($"[meshmesh] {sym.MeshNodes.Count} nodes not placed: the transform is scaled ({string.Join(",", t.Select(v => v.ToString("G4")))})");
-        if (sym.MeshNodes is { Count: > 0 } && IsRigidPlacement(t))
+        if (sym.MeshNodes is { Count: > 0 } && rigid)
             outGeo.MeshNodes = sym.MeshNodes.Select(node => node with { Placement = node.Placement == null ? (double[])t.Clone() : ComposeTransforms(t, node.Placement) }).ToList();
         // area and volume are the same in a rigidly placed frame; a scaled one has none
-        if (sym.NodeMeasures is { Count: > 0 } && IsRigidPlacement(t)) outGeo.NodeMeasures = sym.NodeMeasures;
+        if (sym.NodeMeasures is { Count: > 0 } && rigid) outGeo.NodeMeasures = sym.NodeMeasures;
         if (sym.BrepSolids is { Count: > 0 })
         {
             outGeo.BrepSolids = new();
@@ -580,6 +625,7 @@ internal static partial class ElementBuilder
             Solids = source.Solids,
             MeshNodes = source.MeshNodes,
             UntriangulatedFaces = source.UntriangulatedFaces,
+            ViewFacingLines = source.ViewFacingLines,
         };
         var oldToNew = new Dictionary<int, int>();
         var clippedFaces = new HashSet<int>();
@@ -610,6 +656,10 @@ internal static partial class ElementBuilder
                     ring.Select(point => (double[])point.Clone()).ToList()).ToList(),
                 Area = face.Area,
                 PlaneSurface = face.PlaneSurface,
+                MeshArcs = faceChanged ? null : face.MeshArcs,
+                ExcludedFromTopPlan = face.ExcludedFromTopPlan,
+                ModelPattern = face.ModelPattern,
+                PolygonMesh = face.PolygonMesh,
                 NestedRenderStyleId = face.NestedRenderStyleId ?? face.RenderStyleId,
                 GeometryNode = face.GeometryNode,
                 NodeOrder = face.NodeOrder,
@@ -692,6 +742,7 @@ internal static partial class ElementBuilder
             }).ToList(),
             MeshNodes = grep.MeshNodes,
             UntriangulatedFaces = grep.UntriangulatedFaces,
+            ViewFacingLines = grep.ViewFacingLines,
             NodeMeasures = grep.NodeMeasures,
             Transform = grep.Transform,
             Instances = grep.Instances.Count > 0
@@ -788,12 +839,15 @@ internal static partial class ElementBuilder
                     QuadratureArea = fp.QuadratureArea,
                     CurvedSurface = fp.CurvedSurface,
                     PlaneSurface = fp.PlaneSurface,
+                    ExcludedFromTopPlan = fp.ExcludedFromTopPlan,
+                    PolygonMesh = fp.PolygonMesh,
                     PlaneXAxis = fp.PlaneX,
                     PlaneYAxis = fp.PlaneY,
                     SourceFace = fp.SourceFace,
                     FirstSourceLoop = fp.FirstSourceLoop,
                     SourceLoops = fp.SourceLoops,
                     RenderStyleId = fp.RenderStyleId,
+                    ModelPattern = fp.ModelPattern,
                     GeometryNode = fp.GeometryNode,
                     NodeOrder = fp.NodeOrder,
                     GeometryStyle = fp.GeometryStyle,
@@ -830,6 +884,7 @@ internal static partial class ElementBuilder
                 YVector = fp.YVector,
                 Normal = normal,
                 Envelope = fp.Envelope,
+                ExcludedFromTopPlan = fp.ExcludedFromTopPlan,
                 RenderStyleId = fp.RenderStyleId,
                 GeometryNode = fp.GeometryNode,
                 NodeOrder = fp.NodeOrder,
@@ -2505,6 +2560,9 @@ internal static partial class ElementBuilder
             // in ExtractMaterialAppearance.
             Add(-1002551, "MATERIAL_PARAM_TRANSPARENCY", StorageType.Integer, Math.Max(0, m.Transparency));
             if (m.TransparencyFraction >= 0) e.SerializedMaterialTransparency = m.TransparencyFraction;
+            if (state.NativeParams.GetValueOrDefault(eid)?.Fields.TryGetValue("2479:m_bUseRenderAppearance", out int useRender) == true
+                && useRender is 0 or 1)
+                e.SerializedMaterialUsesRenderAppearance = useRender == 1;
             // Smoothness: decoded value when the integer-percent guard passed and non-zero, else
             // the Revit default 50 ( materials in the export are 50).
             Add(-1002553, "MATERIAL_PARAM_SMOOTHNESS", StorageType.Integer, m.Smoothness > 0 ? m.Smoothness : 50);
@@ -2950,7 +3008,7 @@ internal static partial class ElementBuilder
         if (state == null || state.ViewCropBlocks.Count == 0) return;
         var views = new Dictionary<int, Element>(info.Elements.Count);
         foreach (var e in info.Elements) views[e.Id] = e;
-        foreach (var (_, crop) in state.ViewCropBlocks)
+        foreach (var (viewerId, crop) in state.ViewCropBlocks)
         {
             // The stored viewed id is kept only when it names a real view: a wrong read offset degrades to no crop.
             if (!views.TryGetValue(crop.RawViewId, out var view) || view.ViewCrop != null) continue;
@@ -2963,6 +3021,61 @@ internal static partial class ElementBuilder
                 crop.Origin[0], crop.Origin[1], crop.Origin[2],
                 crop.Basis[0], crop.Basis[1], crop.Basis[2],
                 x0, y0, x1, y1, active);
+            if (view.RootClassName == "DBView3d"
+                && state.NativeParams.TryGetValue(viewerId, out var camera)
+                && camera.Fields.GetValueOrDefault("621:m_projMethodType") == 1
+                && camera.Fields.GetValueOrDefault("4122:m_modelClipBoxId") is > 0 and int boxId
+                && state.NativeParams.TryGetValue((uint)boxId, out var box)
+                && box.Fields.GetValueOrDefault("2505:m_viewer3dId") == viewerId)
+                view.OrthographicModelBounds = box.ModelClipBox;
+            if (view.OrthographicModelBounds != null
+                && state.NativeParams.TryGetValue((uint)view.Id, out var display)
+                && display.Fields.GetValueOrDefault("4106:m_sunAndShadowSettingsId") is > 0 and int studyId
+                && state.NativeParams.TryGetValue((uint)studyId, out var study)
+                && study.Fields.GetValueOrDefault("m_ownerDBViewId") == view.Id
+                && study.Fields.GetValueOrDefault("3878:m_type") == 2
+                && study.Fields.GetValueOrDefault("3878:m_bGroundPlane") == 1
+                && study.Fields.GetValueOrDefault("3878:m_sunriseToSunset", -1) == 0
+                && study.Fields.GetValueOrDefault("3878:m_sunPathSize") is >= 100 and <= 500 and int size
+                && study.Fields.GetValueOrDefault("3878:m_idLevel") is > 0 and int level
+                && study.SunStudyOutline is { } outline)
+            {
+                int annotation = study.Fields.GetValueOrDefault("3878:m_idAnnotation");
+                if (!views.TryGetValue(annotation, out var sunAnnotation)
+                    || sunAnnotation.RootClassName != "SunAnnotationElem" || sunAnnotation.OwnerViewId != view.Id)
+                    annotation = 0;
+                int shadowIntensity = display.Fields.GetValueOrDefault("4107:m_lighting") == 1
+                    && display.Fields.GetValueOrDefault("4110:m_castShadows") == 1
+                    && display.Fields.GetValueOrDefault("4106:m_shadowIntensity") is > 0 and <= 100 and int intensity
+                    ? intensity : 0;
+                view.SolarStudy = new(outline, size, level, annotation,
+                    unchecked((uint)study.Fields.GetValueOrDefault("3878:m_startDateTime")),
+                    unchecked((uint)study.Fields.GetValueOrDefault("3878:m_endDateTime")),
+                    study.Fields.GetValueOrDefault("3878:m_eSunStudyTimeInterval", -1),
+                    study.DoubleFields.GetValueOrDefault("3878:m_activeFrame"), shadowIntensity,
+                    display.Fields.GetValueOrDefault("4108:m_bShowSurfacePatterns") == 1,
+                    display.Fields.GetValueOrDefault("4108:m_edges") == 1);
+            }
+            if (state.NativeParams.TryGetValue(viewerId, out var viewer)
+                && viewer.Fields.TryGetValue("621:m_bAnnotationCropActive", out int annotationActive)
+                && annotationActive is 0 or 1)
+            {
+                view.ViewAnnotationCropActive = annotationActive == 1;
+                if (annotationActive == 1
+                    && viewer.DoubleFields.TryGetValue("334:m_leftRightTopBottomOffsets@0", out double left)
+                    && viewer.DoubleFields.TryGetValue("334:m_leftRightTopBottomOffsets@1", out double right)
+                    && viewer.DoubleFields.TryGetValue("334:m_leftRightTopBottomOffsets@2", out double top)
+                    && viewer.DoubleFields.TryGetValue("334:m_leftRightTopBottomOffsets@3", out double bottom)
+                    && left is >= 0 and < 100 && right is >= 0 and < 100
+                    && top is >= 0 and < 100 && bottom is >= 0 and < 100)
+                    view.ViewAnnotationCrop = (left, right, top, bottom);
+            }
+            if (state.SectionViews.TryGetValue(viewerId, out var section))
+            {
+                view.ViewAnnotationCrop ??= section.Viewdata?.AnnotationCrop;
+                if (section.Viewdata is { CalloutHead: { } head } data)
+                    view.SectionCallout = (data.ParentViewId, head);
+            }
         }
     }
 
@@ -3193,6 +3306,36 @@ internal static partial class ElementBuilder
             if (!state.NativeParams.TryGetValue((uint)e.Id, out var np)) continue;
             if (np.Fields.TryGetValue("3471:m_bIsLocationless", out int locationless))
                 e.SerializedRoomIsLocationless = locationless != 0;
+            e.DetailBreak = np.DetailBreak;
+            e.SitePropertyCurve = np.SitePropertyCurve;
+            e.SitePropertyArcCenter = np.SitePropertyArcCenter;
+            if (np.DoubleFields.TryGetValue("2202:m_widthInFeet", out double imageWidth)
+                && np.DoubleFields.TryGetValue("2202:m_heightInFeet", out double imageHeight)
+                && imageWidth is > 0 and < 100 && imageHeight is > 0 and < 100)
+                e.ImagePaperSize = (imageWidth, imageHeight);
+            if (np.Fields.TryGetValue("2202:m_idImageHolder", out int imageHolderId) && imageHolderId > 0)
+                e.ImageHolderId = imageHolderId;
+            if (np.DoubleFields.TryGetValue("2197:m_dWidthScale", out double imageWidthScale)
+                && np.DoubleFields.TryGetValue("2197:m_dHeightScale", out double imageHeightScale)
+                && imageWidthScale is > 0 and < 100 && imageHeightScale is > 0 and < 100)
+                e.ImageInstanceScale = (imageWidthScale, imageHeightScale);
+            if (np.Fields.TryGetValue("689:m_idSchemeCategory", out int legendCategory)
+                && legendCategory == (int)RvtIO.BuiltIns.BuiltInCategory.OST_Rooms
+                && np.DoubleFields.TryGetValue("689:m_origin@0", out double legendX)
+                && np.DoubleFields.TryGetValue("689:m_origin@1", out double legendY)
+                && double.IsFinite(legendX) && double.IsFinite(legendY))
+                e.RoomLegendOrigin = (legendX, legendY);
+            if (np.DoubleFields.TryGetValue("697:m_swatchWidth", out double swatchWidth)
+                && np.DoubleFields.TryGetValue("697:m_swatchHeight", out double swatchHeight)
+                && swatchWidth is > 0 and < 1 && swatchHeight is > 0 and < 1)
+                e.ColorLegendSwatch = (swatchWidth, swatchHeight);
+            if (e.CategoryId == (int)RvtIO.BuiltIns.BuiltInCategory.OST_InsulationLines
+                && np.DoubleFields.TryGetValue("2239:m_width", out double insulationWidth)
+                && np.DoubleFields.TryGetValue("2239:m_scale", out double insulationScale)
+                && np.Fields.TryGetValue("2239:m_mirrored", out int mirrored)
+                && insulationWidth is > 0 and < 100 && insulationScale is > 0 and < 100
+                && mirrored is 0 or 1)
+                e.DetailInsulation = (insulationWidth, insulationScale, mirrored == 1);
             if (np.StringFields.TryGetValue("388:m_areaElemName", out string? areaSchemeName)
                 && np.StringFields.TryGetValue("388:m_areaElemDescription", out string? areaSchemeDescription))
                 e.SerializedAreaScheme = (areaSchemeName, areaSchemeDescription);
@@ -5813,25 +5956,50 @@ internal static partial class ElementBuilder
         rvtInfo.TitleBlockTexts = state?.TitleBlockTexts
             .Where(pair => pair.Value is { BlockCount: 1, Texts: not null })
             .ToDictionary(pair => (int)pair.Key,
-                pair => (IReadOnlyList<(double Ox, double Oy, double Height, double Width, int Flags, double Bx, double By, byte[] Rtf)>)pair.Value.Texts!
-                    .Select(text => (text.Ox, text.Oy, text.Height, text.Width, text.Flags, text.Bx, text.By, text.Rtf)).ToList());
+                pair => (IReadOnlyList<TfBlockDeserializer.TitleBlockText>)pair.Value.Texts!);
         rvtInfo.TitleBlockLabels = state?.TitleBlockLabels
             .Where(pair => pair.Value is { BlockCount: 1, Labels: not null })
             .ToDictionary(pair => (int)pair.Key,
-                pair => (IReadOnlyList<(double Ox, double Oy, double Height, double Width, int Flags, double Bx, double By, int ParamId, string Prefix, string Suffix)>)pair.Value.Labels!
-                    .Select(label => (label.Ox, label.Oy, label.Height, label.Width, label.Flags, label.Bx, label.By, label.ParamId, label.Prefix, label.Suffix)).ToList());
+                pair => (IReadOnlyList<TfBlockDeserializer.TitleBlockLabel>)pair.Value.Labels!);
+        if (state != null && rvtInfo.TitleBlockLabels is { } titleLabels)
+        {
+            var capHeights = new Dictionary<int, double>();
+            var opaqueStyles = new HashSet<int>();
+            var arialStyles = new HashSet<int>();
+            foreach (int attributesId in titleLabels.Values.SelectMany(labels => labels).Select(label => label.AttrId).Distinct())
+            {
+                if (attributesId <= 0 || !state.NativeParams.TryGetValue((uint)attributesId, out var attributes)
+                    || attributes.Fields.GetValueOrDefault("625:m_fontId") is not (> 0 and var fontId)
+                    || !state.NativeParams.TryGetValue((uint)fontId, out var font)
+                    || font.DoubleFields.GetValueOrDefault("1923:m_size") is not (> 0 and < 1 and var height))
+                    continue;
+                capHeights.Add(attributesId, height);
+                if (attributes.Fields.GetValueOrDefault("625:m_background", -1) == 0)
+                    opaqueStyles.Add(attributesId);
+                if (attributes.Fields.GetValueOrDefault("625:m_bBold") == 0
+                    && attributes.Fields.GetValueOrDefault("625:m_bItalic") == 0
+                    && font.StringFields.GetValueOrDefault("1923:m_name")?.Equals("Arial", StringComparison.OrdinalIgnoreCase) == true)
+                    arialStyles.Add(attributesId);
+            }
+            rvtInfo.TitleBlockCapHeightsFeet = capHeights;
+            rvtInfo.OpaqueSymbolLabelStyles = opaqueStyles;
+            rvtInfo.RegularArialSymbolLabelStyles = arialStyles;
+            rvtInfo.PlanElevationMarks = ReadPlanElevationMarks(state);
+            rvtInfo.SectionMarkerSymbols = state.NativeParams
+                .Where(pair => state.ElemClassIdx.GetValueOrDefault(pair.Key) == 3546
+                    && pair.Value.Fields.GetValueOrDefault("3546:m_sectionHeadFamilyTagId") > 0
+                    && pair.Value.Fields.GetValueOrDefault("3546:m_sectionTailFamilyTagId") > 0)
+                .ToDictionary(pair => (int)pair.Key,
+                    pair => (pair.Value.Fields["3546:m_sectionHeadFamilyTagId"],
+                        pair.Value.Fields["3546:m_sectionTailFamilyTagId"]));
+        }
         rvtInfo.ScheduleInstances = state?.ScheduleInstances
             .Where(pair => pair.Value is { BlockCount: 1, Placement: not null })
             .ToDictionary(pair => (int)pair.Key,
                 pair => (pair.Value.Placement!.ScheduleId, pair.Value.Placement!.Ox, pair.Value.Placement!.Oy));
         rvtInfo.ScheduleTables = state?.ScheduleTables
             .Where(pair => pair.Value is { BlockCount: 1, Table: not null })
-            .ToDictionary(pair => (int)pair.Key,
-                pair => (pair.Value.Table!.Columns, pair.Value.Table!.CategoryId, pair.Value.Table!.ShowTitle,
-                    pair.Value.Table!.ShowHeaders, pair.Value.Table!.ShowGridLines, pair.Value.Table!.ShowOutline,
-                    pair.Value.Table!.GridStyleId, pair.Value.Table!.OutlineStyleId,
-                    pair.Value.Table!.TitleHeightFt, pair.Value.Table!.TitleBands, pair.Value.Table!.BodySections,
-                    pair.Value.Table!.FixedHeightFt));
+            .ToDictionary(pair => (int)pair.Key, pair => ResolveRevisionTextTypes(state, pair.Value.Table!));
         rvtInfo.ScheduleSheetRevisions = state?.SheetRevisions
             .Where(pair => pair.Value is { BlockCount: 1, RevisionIds: not null })
             .ToDictionary(pair => (int)pair.Key,
@@ -5841,14 +6009,99 @@ internal static partial class ElementBuilder
             .ToDictionary(pair => (int)pair.Key,
                 pair => (pair.Value.Viewdata!.ParentViewId, pair.Value.Viewdata!.CoarserScale,
                     (IReadOnlyList<double[]>?)pair.Value.Viewdata!.FrontCut));
+        rvtInfo.SectionTraceOrigins = state?.SectionViews
+            .Where(pair => pair.Value is { BlockCount: 1, Viewdata.TraceOrigin: not null })
+            .ToDictionary(pair => (int)pair.Key, pair => pair.Value.Viewdata!.TraceOrigin!.Value);
+        rvtInfo.SiteCutGraphics = state is { SiteCutGraphicsCount: 1 } ? state.SiteCutGraphics : null;
+        rvtInfo.PropertyBearingFormat = state is { PropertyBearingFormatCount: 1 } ? state.PropertyBearingFormat : null;
+        rvtInfo.DatumExtents = state?.DatumExtents
+            .Where(p => p.Value.BlockCount == 1).ToDictionary(p => p.Key, p => p.Value.Extents);
+        rvtInfo.DatumHeads = state?.DatumHeads.Where(p => p.Value != null).ToDictionary(p => p.Key, p => p.Value!);
         rvtInfo.MaterialPatterns = state?.MaterialPatterns
             .Where(pair => pair.Value is { SurfacePatternId: not -1 } or { CutPatternId: not -1 })
             .ToDictionary(pair => (int)pair.Key,
-                pair => (pair.Value.CutPatternId, pair.Value.SurfacePatternId));
+                pair => (pair.Value.CutPatternId, pair.Value.SurfacePatternId, pair.Value.SurfacePatternColor));
         rvtInfo.FillPatterns = state?.FillPatterns
             .Where(pair => pair.Value is { Name: not null, Grids: not null })
             .ToDictionary(pair => (int)pair.Key,
                 pair => (pair.Value.Name!, (IReadOnlyList<TfBlockDeserializer.PatternGrid>)pair.Value.Grids!));
+        if (state != null)
+        {
+            rvtInfo.ViewRoomColors = BuildViewRoomColors(rvtInfo, state);
+            ReadPlanDimensions(rvtInfo, state);
+            rvtInfo.PlanNotes = ReadPlanNotes(state);
+            rvtInfo.PlanStairPaths = ReadPlanStairPaths(state);
+            rvtInfo.SiteContours = state.NativeParams.Where(entry => entry.Value.SiteContours != null)
+                .ToDictionary(entry => (int)entry.Key, entry => entry.Value.SiteContours!);
+            rvtInfo.SiteContourLabels = BuildSiteContourLabels(state);
+            rvtInfo.ViewHiddenElements = state.NativeParams.Where(entry => entry.Value.ViewHiddenElements != null)
+                .ToDictionary(entry => (int)entry.Key, entry => entry.Value.ViewHiddenElements!);
+            rvtInfo.ViewHiddenCategories = state.NativeParams.Where(entry => entry.Value.ViewHiddenCategories != null)
+                .ToDictionary(entry => (int)entry.Key, entry => entry.Value.ViewHiddenCategories!);
+            var opaqueViews = state.NativeParams.Where(entry =>
+                    entry.Value.Fields.GetValueOrDefault("4107:m_hlr") == 1
+                    && entry.Value.Fields.GetValueOrDefault("4108:m_surfaces") == 2
+                    && entry.Value.Fields.GetValueOrDefault("4108:m_transparency", -1) == 0)
+                .ToArray();
+            rvtInfo.OpaquePlanViews = opaqueViews.Select(entry => (int)entry.Key).ToHashSet();
+            var skyGradients = new Dictionary<int, (int Sky, int Horizon, int? Ground)>();
+            foreach (var (view, display) in opaqueViews)
+                if (display.Fields.GetValueOrDefault("4103:m_type") == 257
+                    && display.Fields.GetValueOrDefault("4103:m_skyColor", -1) is >= 0 and <= 0xffffff and int sky
+                    && display.Fields.GetValueOrDefault("4103:m_backgroundColor", -1) is >= 0 and <= 0xffffff and int horizon)
+                    skyGradients.Add((int)view, (sky, horizon,
+                        display.Fields.GetValueOrDefault("4103:m_groundColor", -1) is >= 0 and <= 0xffffff and int ground
+                            ? ground : null));
+            rvtInfo.ViewSkyGradients = skyGradients;
+            var groundShadows = new Dictionary<int, (double Azimuth, double Altitude, int GroundLevel, int Intensity)>();
+            foreach (var (view, display) in opaqueViews)
+            {
+                if (display.Fields.GetValueOrDefault("4110:m_castShadows") != 1
+                    || display.Fields.GetValueOrDefault("4106:m_shadowIntensity", -1) is not (>= 0 and <= 100 and int intensity)
+                    || display.Fields.GetValueOrDefault("4106:m_sunAndShadowSettingsId") is not (> 0 and int id)
+                    || !state.NativeParams.TryGetValue((uint)id, out var light)
+                    // Lighting study with an authored ground plane and light angles relative to the view.
+                    || light.Fields.GetValueOrDefault("3878:m_type") != 3
+                    || light.Fields.GetValueOrDefault("3878:m_bGroundPlane") != 1
+                    || light.Fields.GetValueOrDefault("3878:m_bRelativeToView") != 1
+                    || light.Fields.GetValueOrDefault("3878:m_idLevel") is not (> 0 and int level)
+                    || !light.DoubleFields.TryGetValue("3878:m_dAzimuth", out double azimuth)
+                    || !(azimuth >= 0 && azimuth <= 2 * Math.PI)
+                    || !light.DoubleFields.TryGetValue("3878:m_dAltitude", out double altitude)
+                    || !(altitude > 0 && altitude <= Math.PI / 2)) continue;
+                groundShadows.Add((int)view, (azimuth, altitude, level, intensity));
+            }
+            rvtInfo.ViewGroundShadows = groundShadows;
+            var stillSunDates = new Dictionary<int, uint>();
+            foreach (var (view, display) in opaqueViews)
+                if (display.Fields.GetValueOrDefault("4110:m_ambientShadows") == 1
+                    && display.Fields.GetValueOrDefault("4110:m_castShadows", -1) == 0
+                    && display.Fields.GetValueOrDefault("4106:m_sunAndShadowSettingsId") is > 0 and int id
+                    && state.NativeParams.TryGetValue((uint)id, out var light)
+                    && light.Fields.GetValueOrDefault("3878:m_type", -1) == 0
+                    && light.Fields.TryGetValue("3878:m_startDateTime", out int time))
+                    stillSunDates.Add((int)view, unchecked((uint)time));
+            rvtInfo.ViewStillSunDates = stillSunDates;
+            rvtInfo.ViewAmbientLight = opaqueViews.Where(entry =>
+                    entry.Value.Fields.GetValueOrDefault("4110:m_ambientShadows") == 1
+                    && entry.Value.Fields.GetValueOrDefault("4106:m_ambientLightIntensity", -1) is >= 0 and <= 100)
+                .ToDictionary(entry => (int)entry.Key,
+                    entry => entry.Value.Fields["4106:m_ambientLightIntensity"] / 100.0);
+            rvtInfo.ViewAmbientFractions = opaqueViews.Where(entry =>
+                    entry.Value.Fields.GetValueOrDefault("4110:m_ambientShadows") == 1
+                    && entry.Value.Fields.GetValueOrDefault("4106:m_ambientLightIntensity", -1) is > 0 and <= 100
+                    && entry.Value.Fields.GetValueOrDefault("4106:m_sunlightIntensity", -1) is >= 0 and <= 100)
+                .ToDictionary(entry => (int)entry.Key,
+                    entry => (double)entry.Value.Fields["4106:m_ambientLightIntensity"]
+                        / (entry.Value.Fields["4106:m_ambientLightIntensity"] + entry.Value.Fields["4106:m_sunlightIntensity"]));
+            rvtInfo.OpaqueViewsWithSurfacePatterns = opaqueViews.Where(entry =>
+                    entry.Value.Fields.GetValueOrDefault("4108:m_bShowSurfacePatterns", -1) == 1)
+                .Select(entry => (int)entry.Key).ToHashSet();
+            rvtInfo.UnshadedHiddenLineViews = opaqueViews.Where(entry =>
+                    entry.Value.Fields.GetValueOrDefault("4110:m_ambientShadows", -1) == 0
+                    && entry.Value.Fields.GetValueOrDefault("4110:m_castShadows", -1) == 0)
+                .Select(entry => (int)entry.Key).ToHashSet();
+        }
         rvtInfo.PlanViewRanges = state?.PlanViewRanges
             .Where(pair => pair.Value is { Offsets: not null, LevelIds: not null })
             .ToDictionary(pair => (int)pair.Key,
@@ -6551,6 +6804,7 @@ internal static partial class ElementBuilder
             ApplySerializedSystemTypeIdentity(rvtInfo.Elements, state);
             ApplyValidatedOriginalFamilySymbols(rvtInfo.Elements, state);
             ApplyOwnFamilyCutoutInputs(rvtInfo.Elements, state);
+            ApplyPlanFixtureGraphics(rvtInfo.Elements, state);
             ApplySolidTrimmedAxis(rvtInfo.Elements);
             ApplyValidatedCeilingCanonicalTypes(rvtInfo.Elements, state);
             ApplySerializedStairData(
@@ -6636,6 +6890,7 @@ internal static partial class ElementBuilder
         ApplyColumnAttachments(rvtInfo);
         ApplyMovesWithGrids(rvtInfo);
         ApplyEditedByCategoryRules(rvtInfo, state);
+        if (state != null) rvtInfo.EvaluatedScheduleRows = EvaluateScheduleRows(rvtInfo, state);
         ApplyCapturedCurveStyles(rvtInfo, state);
         // Reference precedence needs the final decoded instance/type parameter sets.
         if (state != null)
@@ -6759,6 +7014,8 @@ internal static partial class ElementBuilder
         int faceOffset = target.Faces.Count;
         int edgeOffset = target.Edges?.Count ?? 0;
         target.UntriangulatedFaces += source.UntriangulatedFaces;
+        if (source.ViewFacingLines is { Count: > 0 } viewLines)
+            (target.ViewFacingLines ??= []).AddRange(viewLines);
         // Geometry node ids are unique within one GeometryData: the appended nodes follow the
         // existing ones. (a negative id marks a node that Revit does not take, see
         // GRepParserV2).
@@ -6810,6 +7067,9 @@ internal static partial class ElementBuilder
                 QuadratureArea = face.QuadratureArea,
                 CurvedSurface = face.CurvedSurface,
                 PlaneSurface = face.PlaneSurface,
+                ExcludedFromTopPlan = face.ExcludedFromTopPlan,
+                ModelPattern = face.ModelPattern,
+                PolygonMesh = face.PolygonMesh,
                 PlaneXAxis = face.PlaneXAxis,
                 PlaneYAxis = face.PlaneYAxis,
                 SourceFace = face.SourceFace,

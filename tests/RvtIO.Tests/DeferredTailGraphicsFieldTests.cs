@@ -48,6 +48,27 @@ public class DeferredTailGraphicsFieldTests
         Assert.DoesNotContain(CellKey, result.Fields.Keys);
     }
 
+    [Theory]
+    [InlineData(1, true)]
+    [InlineData(2, false)]
+    public void SectionView_ReadsTheCategoryFilterSeparatelyFromHiddenElements(int categoryCount, bool complete)
+    {
+        const int hiddenCategory = -2003400;
+        byte[] payload = Concat(
+            new byte[17 * sizeof(int) + 3], // Element fields.
+            new byte[5 * sizeof(int)], Words(1, 71), new byte[3 * sizeof(int)], // DBView through hidden elements.
+            Words(1, 44), Tag(2190), // m_oaDrawFilters.
+            new byte[13 * sizeof(int) + 13 * sizeof(double) + 15 * sizeof(int) + 4],
+            Words(0, 0), // DBViewSection fields.
+            new byte[5], Words(0, categoryCount, hiddenCategory));
+
+        var view = ReadBlock(1016, payload)!;
+
+        Assert.Equal(71, Assert.Single(view.ViewHiddenElements!));
+        if (complete) Assert.Equal(hiddenCategory, Assert.Single(view.ViewHiddenCategories!));
+        else Assert.Null(view.ViewHiddenCategories);
+    }
+
     [Fact]
     public void AlternateHostGeomRefIsThirtyThreeInlineBytes()
     {

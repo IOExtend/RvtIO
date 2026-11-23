@@ -1,4 +1,6 @@
 using RvtIO.Model;
+using RvtIO.Parsing;
+using RvtIO.Pdf;
 using RvtIO.Print;
 using Xunit;
 
@@ -9,6 +11,21 @@ namespace RvtIO.Tests;
 /// with the model Revisions() rows, header and grid always drawn (rvt-prt schedules.py + tables.py).</summary>
 public class ScheduleTableTests
 {
+    [SkippableFact]
+    public void ScheduleTextSize_UsesCapHeightAndRejectsUnsupportedStyles()
+    {
+        var font = PdfFonts.TryFind(out _) ?? throw new SkipException("No TrueType font was found on this machine.");
+        if (font.CapHeight <= 0) throw new SkipException("The available font does not declare its cap height.");
+        double pixels = 16 * 96d / 72 * font.CapHeight / font.UnitsPerEm;
+
+        var centered = new TfBlockDeserializer.ScheduleTextStyle(pixels, 1, 4);
+        Assert.Equal(16 * 25.4 / 72, SheetComposer.ScheduleTextSize(font, centered)!.Value, 6);
+        Assert.Equal(16 * 25.4 / 72, SheetComposer.ScheduleTextSize(font, centered with { VerticalAlignment = 8 })!.Value, 6);
+        Assert.Null(SheetComposer.ScheduleTextSize(font, centered with { VerticalAlignment = 0 }));
+        Assert.Null(SheetComposer.ScheduleTextSize(font, centered with { CapHeightPixels = double.NaN }));
+        Assert.Null(SheetComposer.ScheduleTextSize(null, centered));
+    }
+
     [Fact]
     public void SampleFile_DecodesScheduleInstancesAtTheirOrigins()
     {
@@ -58,6 +75,18 @@ public class ScheduleTableTests
         Assert.Equal(0.07894, revision.Columns[2].WidthFt, 4);
         // The fixed height the empty body grid pads to (ScheduleSegmentRec, 21 rows at 16.30 pt).
         Assert.Equal(0.4340, revision.FixedHeightFt, 4);
+        var caps = Assert.IsType<(double Header, double Body)>(revision.RevisionCapHeightsFt);
+        Assert.Equal(5, caps.Header * 304.8, 8);
+        Assert.Equal(3, caps.Body * 304.8, 8);
+        Assert.Equal(0, revision.TitleHeightFt);
+        Assert.Empty(revision.TitleBands);
+        var revisionHeader = Assert.Single(revision.BodySections);
+        Assert.Equal(["No.", "Description", "Date"], revisionHeader.Header);
+        Assert.All(revisionHeader.HeaderStyles!, style =>
+        {
+            Assert.Equal(5 * 96 / 25.4, style.CapHeightPixels, 8);
+            Assert.Equal(new TfBlockDeserializer.ScheduleTextStyle(0, 1, 8, "Arial", 1), style with { CapHeightPixels = 0 });
+        });
 
         // The How-do-I table: Level / Topic / What view / Reviewed? with title, headers, grid and outline.
         Assert.True(tables.ContainsKey(970087), "How-do-I table 970087 did not decode.");
@@ -69,9 +98,13 @@ public class ScheduleTableTests
         // The title area: the 0.0234 ft title row and the merged long-text band of the next two stored
         // rows (0.041 ft each); the body section holds the header and 41 body rows.
         Assert.Equal(0.0234, howdoi.TitleHeightFt, 4);
+        Assert.Equal(new TfBlockDeserializer.ScheduleTextStyle(12, 1, 4, "Arial", 1), howdoi.TitleStyle);
         var band = Assert.Single(howdoi.TitleBands);
         Assert.Equal(0.0820, band.HeightFt, 4);
         Assert.Contains("To learn more", band.Text);
+        Assert.Equal(4 * 96 / 25.4, band.Style.CapHeightPixels, 8);
+        Assert.Equal(0, band.Style.HorizontalAlignment);
+        Assert.Equal(4, band.Style.VerticalAlignment);
         var body = Assert.Single(howdoi.BodySections);
         Assert.Equal(["Level", "Topic", "What view", "Reviewed?"], body.Header);
         Assert.Equal(41, body.BodyRows);
@@ -85,9 +118,15 @@ public class ScheduleTableTests
         // The stored title height (0.0347 ft = 30 pt) and the body section with its header, one leading
         // empty row and 8 body rows in total (the empty row plus the 7 type rows with their counts).
         Assert.Equal(0.0347, planting.TitleHeightFt, 4);
+        Assert.Equal(5 * 96 / 25.4, planting.TitleStyle.CapHeightPixels, 8);
         Assert.Empty(planting.TitleBands);
         var plantingBody = Assert.Single(planting.BodySections);
         Assert.Equal(["Type Mark", "Common Name", "Count"], plantingBody.Header);
+        Assert.NotNull(plantingBody.HeaderStyles);
+        Assert.Equal(3, plantingBody.HeaderStyles.Count);
+        Assert.All(plantingBody.HeaderStyles, style =>
+            Assert.Equal(new TfBlockDeserializer.ScheduleTextStyle(12, 1, 8, "Arial", 1), style));
+        Assert.Equal([0, 0, 0], plantingBody.BodyAlignment);
         Assert.Equal(1, plantingBody.LeadingEmpty);
         Assert.Equal(8, plantingBody.BodyRows);
     }

@@ -25,6 +25,44 @@ public class SectionMarkDedupeTests
         SectionViewerId = viewer,
     };
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SectionMarks_ExtendsBothEndsAlongTheirOwnLegsOutsideAnUncroppedAnnotationView(bool annotationCrop)
+    {
+        const int plan = 200, viewer = 300;
+        var document = RvtDocument.FromInfo(new RevitFileInfo
+        {
+            Elements =
+            {
+                new Element
+                {
+                    Id = plan, ViewAnnotationCropActive = annotationCrop,
+                    ViewCrop = new(0, 0, 0, [1, 0, 0], [0, 1, 0], [0, 0, 1], -30, -30, 30, 30, true),
+                },
+                SectionView(100, "Jogged Section", [10, 0, 6], viewer),
+            },
+            SectionViews = new Dictionary<int, (int, double, IReadOnlyList<double[]>?)>
+            {
+                [viewer] = (-1, 0.01, [[10, 6, 0], [10, 0, 0], [14, 0, 0], [14, -5, 0]]),
+            },
+            SectionTraceOrigins = new Dictionary<int, (double, double)> { [viewer] = (10, 8) },
+            DatumExtents = new Dictionary<int, TfBlockDeserializer.ViewDatumExtents>
+            {
+                [plan] = new(plan, [0, 0, -1], [],
+                    new Dictionary<int, TfBlockDeserializer.SectionTraceExtent> { [viewer] = new(-4, 24, 3) }),
+            },
+        });
+
+        var mark = Assert.Single(ElevationPrinter.SectionMarks(document, plan, 100));
+
+        Assert.Equal(!annotationCrop, mark.UsesPlanExtent);
+        Assert.Equal(new[] { 10.0, 10, 14, 14 }.Select(feet => feet * 304.8), mark.Points.Select(p => p.X));
+        double[] expectedY = annotationCrop ? [6, 0, 0, -5] : [12, 0, 0, -16];
+        for (int i = 0; i < expectedY.Length; i++)
+            Assert.Equal(expectedY[i] * 304.8, mark.Points[i].Y, 8);
+    }
+
     [Fact]
     public void SectionMarks_DrawsOneMarkForOnePlane()
     {

@@ -749,6 +749,8 @@ public partial class RvtFileReader
 
         LogPhase("Block-only elements built");
         ElementBuilder.PostProcess(rvtInfo, state, diag);
+        ReadFamilyAnnotations(rvtInfo, state, readFrames);
+        ReadCircularAnnotations(rvtInfo, state, readFrames);
         LogPhase("Post-processed");
         ElementBuilder.ApplyValidatedStairComponentTypeNames(rvtInfo.Elements, state);
         ElementBuilder.ApplyValidatedCorniceTypeNames(rvtInfo.Elements, state);
@@ -840,6 +842,7 @@ public partial class RvtFileReader
             rvtInfo.SharedTransformIsActiveLocation = true;
             rvtInfo.SiteLatitudeRadians = projectLocation.Latitude;
             rvtInfo.SiteLongitudeRadians = projectLocation.Longitude;
+            rvtInfo.SiteTimeZoneHours = projectLocation.TimeZoneHours;
             rvtInfo.SiteElevationFeet = projectLocation.ElevationFeet;
             rvtInfo.SitePlaceName = projectLocation.PlaceName;
         }
@@ -1272,16 +1275,20 @@ public partial class RvtFileReader
     {
         var segments = new List<byte[]>();
         var items = new List<PartitionFraming.ProjectItem>();
+        var familyAnnotations = new List<(string Key, PartitionFraming.ProjectItem Item)>();
         framed = null;
         framingFailure = "the class table names no framing classes or the id width is not known";
         if (framing is var (tags, idWidth) && PartitionFraming.Walk(raw, tags, idWidth, r =>
             {
                 if (r.Block == 0 && r.Owner != (idWidth == 8 ? ulong.MaxValue : uint.MaxValue))
                     items.Add(new(r.Channel, r.Owner, r.Offset, r.Item.Length));
+                else if (r.Block != 0 && r.Channel == 102 && idWidth == 4 && r.Body.Length >= 2
+                    && BitConverter.ToUInt16(r.Body.Span) is 838 or 1860 or 1862 or 2050 or 3927)
+                    familyAnnotations.Add((r.Key, new(r.Channel, r.Owner, r.Offset, r.Item.Length)));
             }, out framingFailure, out _, null, segments))
         {
             stats = (segments.Count, segments.Count, 0, 0, 0);
-            framed = new PartitionFraming.Framed(segments, items, idWidth);
+            framed = new PartitionFraming.Framed(segments, items, idWidth) { FamilyAnnotationItems = familyAnnotations };
             return segments;
         }
         var chunks = decompressor.DecompressAll(raw);
@@ -1848,11 +1855,12 @@ public partial class RvtFileReader
             ? (old.BlockCount + 1, null)
             : (1, name);
         int cutPatternId = -1, surfacePatternId = -1;
+        int? surfacePatternColor = null;
         bool patterns = framed && TfBlockDeserializer.TryExtractMaterialPatterns(
-            data, start, size, classId, out cutPatternId, out surfacePatternId);
+            data, start, size, classId, out cutPatternId, out surfacePatternId, out surfacePatternColor);
         state.MaterialPatterns[owner] = state.MaterialPatterns.TryGetValue(owner, out var oldPatterns)
-            ? (oldPatterns.BlockCount + 1, oldPatterns.CutPatternId, oldPatterns.SurfacePatternId)
-            : (1, patterns ? cutPatternId : -1, patterns ? surfacePatternId : -1);
+            ? (oldPatterns.BlockCount + 1, oldPatterns.CutPatternId, oldPatterns.SurfacePatternId, oldPatterns.SurfacePatternColor)
+            : (1, patterns ? cutPatternId : -1, patterns ? surfacePatternId : -1, surfacePatternColor);
     }
 
     internal static void RecordFillPattern(
@@ -2318,6 +2326,9 @@ public partial class RvtFileReader
                     && site.DoubleFields.TryGetValue("m_dLongitude", out double longitude))
                 {
                     state.GeoSites[owner] = (latitude, longitude);
+                    if (site.DoubleFields.TryGetValue("m_dTimeZone", out double timeZone) && timeZone is >= -14 and <= 14)
+                        state.GeoSiteTimeZones[owner] = timeZone;
+                    else state.GeoSiteTimeZones.Remove(owner);
                     if (site.StringFields.TryGetValue("m_placeName", out string? placeName))
                         state.GeoSitePlaceNames[owner] = placeName;
                     else state.GeoSitePlaceNames.Remove(owner);
@@ -2532,8 +2543,29 @@ public partial class RvtFileReader
             RecordSystemOccurrenceTypeId(state, seg, bs, ds, cls, eid);
             RecordWallJoinedToTop(state, seg, bs, ds, cls, eid);
             RecordWallEndJoins(state, seg, bs, ds, cls, eid);
+            if (cls == 4007)
+            {
+                if (TfBlockDeserializer.ExtractSiteCutGraphics(seg, bs, ds, cls, out var bearing) is { } siteCut)
+                {
+                    state.SiteCutGraphics = siteCut;
+                    state.SiteCutGraphicsCount++;
+                }
+                if (bearing is { } format)
+                {
+                    state.PropertyBearingFormat = format;
+                    state.PropertyBearingFormatCount++;
+                }
+            }
             RecordMaterialName(state, seg, bs, ds, cls, eid);
             RecordFillPattern(state, seg, bs, ds, cls, eid);
+            if (cls == 1471 && TfBlockDeserializer.ExtractViewDatumExtents(seg, bs, ds, cls) is { } datumExtents)
+            {
+                var previous = state.DatumExtents.GetValueOrDefault(datumExtents.ViewId);
+                state.DatumExtents[datumExtents.ViewId] = (previous.BlockCount + 1, datumExtents);
+            }
+            if (cls is 2109 or 2301)
+                state.DatumHeads[(int)eid] = state.DatumHeads.ContainsKey((int)eid)
+                    ? null : TfBlockDeserializer.ExtractDatumHead(seg, bs, ds, cls);
             RecordPlanViewRange(state, seg, bs, ds, cls, eid);
             RecordGraphicsStyle(state, seg, bs, ds, cls, eid);
             RecordPenWidthTable(state, seg, bs, ds, cls, eid);
@@ -2733,17 +2765,21 @@ public partial class RvtFileReader
     {
         if (jobs.Count == 0) return 0;
         var decoded = new GRepData?[jobs.Count];
+        var planFixtures = new PlanFixtureGraphics?[jobs.Count];
         bool slowDiag = Environment.GetEnvironmentVariable("RVTIO_GREP_SLOW") is { Length: > 0 };
         Parallel.For(0, jobs.Count, index =>
         {
             var clock = System.Diagnostics.Stopwatch.StartNew();
-            decoded[index] = GRepParserV2.Parse(jobs[index].Segment, jobs[index].Start, jobs[index].Size);
+            decoded[index] = GRepParserV2.Parse(jobs[index].Segment, jobs[index].Start, jobs[index].Size,
+                collectPlanFixtures: graphics => planFixtures[index] = graphics);
             if (slowDiag && (clock.ElapsedMilliseconds > 2000 || decoded[index]?.Faces.Count > 100000))
                 DiagnosticSink.WriteLine($"slow GRep eid={jobs[index].Eid} ms={clock.ElapsedMilliseconds} faces={decoded[index]?.Faces.Count}");
         });
         int stored = 0;
         for (int index = 0; index < jobs.Count; index++)
         {
+            if (planFixtures[index] is { } graphics)
+                state.PlanFixtureGraphicsBySymbol.TryAdd(jobs[index].Eid, graphics);
             if (decoded[index] is { } geometry && !state.GrepBlocks.ContainsKey(jobs[index].Eid))
             {
                 state.GrepBlocks[jobs[index].Eid] = geometry;
@@ -3334,7 +3370,8 @@ public partial class RvtFileReader
     /// <see cref="RevitFileInfo.SharedTransform"/> layout), the GeoSite coordinates and the project base point's
     /// shared elevation (feet).</summary>
     internal sealed record ActiveProjectLocation(
-        double[] SharedTransform, double? Latitude, double? Longitude, double ElevationFeet, string? PlaceName = null);
+        double[] SharedTransform, double? Latitude, double? Longitude, double ElevationFeet, string? PlaceName = null,
+        double? TimeZoneHours = null);
 
     /// <summary>Resolve the active project location exactly: ActiveGeoLocationTrackingElement names the active
     /// GeoLocation, whose Trf holds the angle to true north and the origin, and whose symbol is the GeoSite with
@@ -3387,16 +3424,19 @@ public partial class RvtFileReader
             state.Records.TryGetValue(kv.Key, out var record) && record.CategoryId == -2001271);
         double elevation = projectBasePoint.Value.Internal is { Length: >= 3 } pInternal ? pInternal[2] + tz : 0;
         double? latitude = null, longitude = null;
+        double? timeZoneHours = null;
         string? placeName = null;
         if (symbolId > 0 && state.GeoSites.TryGetValue((uint)symbolId, out var site)
             && site.Latitude is >= -Math.PI / 2 and <= Math.PI / 2 && site.Longitude is >= -Math.PI and <= Math.PI)
         {
             (latitude, longitude) = site;
+            if (state.GeoSiteTimeZones.TryGetValue((uint)symbolId, out double timeZone)) timeZoneHours = timeZone;
             placeName = state.GeoSitePlaceNames.GetValueOrDefault((uint)symbolId);
         }
         diag?.WriteLine($"Active project location: angle={Math.Atan2(s, c) * 180 / Math.PI:F4}deg "
             + $"translation=({tx:R},{ty:R},{tz:R}) ft, lat/lon={latitude?.ToString("R") ?? "?"}/{longitude?.ToString("R") ?? "?"}, elevation={elevation:R} ft, place={placeName ?? "?"}");
-        return new ActiveProjectLocation([c, s, 0, -s, c, 0, 0, 0, 1.0, tx, ty, tz], latitude, longitude, elevation, placeName);
+        return new ActiveProjectLocation([c, s, 0, -s, c, 0, 0, 0, 1.0, tx, ty, tz], latitude, longitude, elevation,
+            placeName, timeZoneHours);
     }
 
     private static void ResolveParameterUnits(RevitFileInfo rvtInfo, ParsingState state)

@@ -11,6 +11,7 @@ internal static partial class ElementBuilder
         foreach (var element in elements)
         {
             element.OwnSingleFamilyCutout = null;
+            element.OwnDoorPlanSymbols = null;
             element.OwnWallCutoutInstanceIds = null;
             element.OwnWallCutoutSteps = null;
             element.OwnWallAxisLine = null;
@@ -43,8 +44,13 @@ internal static partial class ElementBuilder
                     HostId: > 0, InsertOrientation: 0 } source }
                 || source.HostId != element.SerializedHostId
                 || source.SymbolId != symbolId || !IsUniqueRoot(symbolId, 1829)
-                || !counts.TryGetValue(symbolId, out int symbolCount) || symbolCount != 1
-                || !state.OwnFamilyCutSymbols.TryGetValue((uint)symbolId, out var computed)
+                || !counts.TryGetValue(symbolId, out int symbolCount) || symbolCount != 1) continue;
+
+            if (element.CategoryId == (int)RvtIO.BuiltIns.BuiltInCategory.OST_Doors
+                && state.GrepBlocks.GetValueOrDefault((uint)symbolId)?.DoorPlanSymbols is { Count: > 0 } planSymbols)
+                element.OwnDoorPlanSymbols = (planSymbols, source.Transform);
+
+            if (!state.OwnFamilyCutSymbols.TryGetValue((uint)symbolId, out var computed)
                 || computed is not { BlockCount: 1, Symbol: { Active: true }, Loops.Count: 1 }
                 || !state.FamilyInstanceSymbolIds.TryGetValue((uint)element.Id, out var type)
                 || type is not { BlockCount: 1, TypeId: > 0 } || !IsUniqueRoot(type.TypeId.Value, 1829)

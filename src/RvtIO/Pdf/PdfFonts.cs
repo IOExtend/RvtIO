@@ -19,10 +19,22 @@ public static class PdfFonts
     /// <summary>Loads the first font file of <see cref="Candidates"/> that exists and parses.</summary>
     /// <param name="path">The file that was used, or null when none exists.</param>
     /// <returns>The font, or null when no candidate is a TrueType font this reader supports.</returns>
-    public static PdfTrueTypeFont? TryFind(out string? path)
+    public static PdfTrueTypeFont? TryFind(out string? path) => TryFind(Candidates, out path);
+
+    internal static PdfTrueTypeFont? TryFindBold() => TryFind(
+        [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+            @"C:\Windows\Fonts\arialbd.ttf",
+            @"C:\Windows\Fonts\segoeuib.ttf",
+            @"C:\Windows\Fonts\tahomabd.ttf"
+        ], out _);
+
+    private static PdfTrueTypeFont? TryFind(IReadOnlyList<string> candidates, out string? path)
     {
         path = null;
-        foreach (string candidate in Candidates)
+        foreach (string candidate in candidates)
         {
             if (!File.Exists(candidate)) continue;
             try

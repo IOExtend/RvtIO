@@ -1,5 +1,6 @@
 using RvtIO.BuiltIns;
 using RvtIO.Model;
+using RvtIO.Parsing;
 using RvtIO.Print;
 using Xunit;
 
@@ -7,6 +8,78 @@ namespace RvtIO.Tests;
 
 public class FillPatternTests
 {
+    [Fact]
+    public void ProjectDashedModelGrids_PreservesDashesAndOffsetsInAReflectedView()
+    {
+        var doc = RvtDocument.FromInfo(new RevitFileInfo());
+        var face = new GeoFace { ModelPattern = new(8, [5, 1, 2], [1, 0, 0], [0, 0, 1]) };
+        doc.RawData.FillPatterns = new Dictionary<int, (string, IReadOnlyList<TfBlockDeserializer.PatternGrid>)>
+        {
+            [8] = ("Glass", [new(0, 1, 2, 3, 4, [0.25, 0.75], Target: 1, Orientation: 0)]),
+        };
+
+        var grid = Assert.Single(FillHatch.ProjectDashedModelGrids(doc, face, p => (2 * p[0] + p[2], -3 * p[2]))!);
+        Assert.Equal((16d, -12d, 0d, 12d, -10d), (grid.X, grid.Y, grid.Angle, grid.Spacing, grid.Shift));
+        Assert.Equal(new[] { 0.5, 1.5 }, grid.Segments);
+    }
+
+    [Fact]
+    public void Strokes_UnionOverlappingAndTouchingRegionsWithoutBridgingGaps()
+    {
+        IReadOnlyList<(double X, double Y)>[] polygons =
+        [
+            [(0, -1), (4, -1), (4, 1), (0, 1)],
+            [(3, -1), (8, -1), (8, 1), (3, 1)],
+            [(8, -1), (12, -1), (12, 1), (8, 1)],
+            [(15, -1), (17, -1), (17, 1), (15, 1)],
+        ];
+        var grid = new TfBlockDeserializer.PatternGrid(0, 0, 0, 0, 10 / 304.8, [5 / 304.8, 2 / 304.8]);
+
+        var strokes = FillHatch.Strokes(polygons, [grid], 0, 0).ToArray();
+
+        Assert.Equal(3, strokes.Length);
+        Assert.Equal((0d, 0d, 5d, 0d), strokes[0]);
+        Assert.Equal((7d, 0d, 12d, 0d), strokes[1]);
+        Assert.Equal((15d, 0d, 17d, 0d), strokes[2]);
+    }
+
+    [Theory]
+    [InlineData(-1, 202, -12.5, true)]
+    [InlineData(303, 202, -12.5, false)]
+    [InlineData(-1, -1, -12.5, false)]
+    [InlineData(-1, 202, double.NaN, false)]
+    public void TrueNorth_ReadsOnlyProjectSiteGraphics(int family, int material, double depth, bool expected)
+    {
+        const ushort classId = 4007;
+        const uint size = 101;
+        const int owner = 101;
+        byte[] block = new byte[16 + size];
+        using var writer = new BinaryWriter(new MemoryStream(block));
+        writer.Write(owner);
+        writer.Seek(8, SeekOrigin.Begin);
+        writer.Write(size);
+        writer.Write(classId);
+        // Synthetic TrueNorth root with empty cells and parameter stores.
+        writer.Seek(16 + 0x22, SeekOrigin.Begin);
+        writer.Write(owner);
+        writer.Write(-1); // associated level
+        writer.Write(family);
+        writer.Seek(16 + 0x3e, SeekOrigin.Begin);
+        writer.Write(-4); // design option
+        writer.Seek(16 + 0x4d, SeekOrigin.Begin);
+        writer.Write(depth);
+        writer.Write(material);
+        writer.Write(1); // quadrant bearing
+        writer.Write(1); // degrees, minutes and seconds
+        writer.Seek(block.Length - sizeof(uint), SeekOrigin.Begin);
+        writer.Write(size);
+
+        var result = TfBlockDeserializer.ExtractSiteCutGraphics(block, 0, size, classId, out var bearing);
+
+        Assert.Equal(expected ? (depth, material) : ((double, int)?)null, result);
+        Assert.Equal(family == -1 ? (1, 1) : ((int, int)?)null, bearing);
+    }
+
     [Fact]
     public void SampleFile_DecodesMaterialSurfacePatternAndItsGrids()
     {

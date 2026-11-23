@@ -5,22 +5,23 @@ using RvtIO.Pdf;
 namespace RvtIO.Print;
 
 /// <summary>
-/// Prints a site plan: the topography of the model (the edges of its faces seen from above) and the planting of the
-/// site (a circle with four spokes at each plant). A site view is not the plan of a level, so it is drawn from the site
-/// entities rather than from walls and rooms.
+/// Prints the site terrain, property boundaries and symbols for placed planting and entourage.
 /// </summary>
-public static class SitePrinter
+public static partial class SitePrinter
 {
     private const double FeetToMillimetres = 304.8;
 
-    /// <summary>The projected site: the topography outlines, the plants and the extents they span, in millimetres.
-    /// Each plant carries its schedule key: the type mark (T1, T2, ...) for its tag, empty when unknown.</summary>
+    internal sealed record SitePlant(double X, double Y, double Radius, string Type, string Mark, bool Rpc = false);
+
+    /// <summary>The projected site: the topography outlines, the plants and the extents they span, in millimetres.</summary>
     internal sealed record SiteContent(
         List<List<(double X, double Y)>> Topography,
         List<(double X1, double Y1, double X2, double Y2, double Z)> Contours,
-        List<(double X, double Y, double Radius, string Type, string Mark)> Plants,
+        List<SitePlant> Plants,
         List<List<(double X, double Y)>> Entourage,
-        double MinX, double MinY, double MaxX, double MaxY);
+        double MinX, double MinY, double MaxX, double MaxY,
+        IReadOnlyList<List<(double X, double Y)>>? PropertyLines = null,
+        IReadOnlySet<double>? NativePrimaryLevels = null);
 
     /// <summary>The same site seen in a rotated view: every point is projected on the view's own axes
     /// (<paramref name="right"/> across the sheet, <paramref name="up"/> up the sheet), so a site plan whose crop
@@ -41,10 +42,12 @@ public static class SitePrinter
         var plants = site.Plants.Select(plant =>
         {
             var centre = Map(plant.X, plant.Y);
-            return (centre.X, centre.Y, plant.Radius, plant.Type, plant.Mark);
+            return plant with { X = centre.X, Y = centre.Y };
         }).ToList();
         var entourage = site.Entourage
             .Select(polygon => polygon.Select(point => Map(point.X, point.Y)).ToList()).ToList();
+        var propertyLines = site.PropertyLines?
+            .Select(line => line.Select(point => Map(point.X, point.Y)).ToList()).ToList();
         double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
         void Grow(double x, double y)
         {
@@ -57,14 +60,23 @@ public static class SitePrinter
         foreach (var plant in plants) Grow(plant.X, plant.Y);
         foreach (var polygon in entourage)
             foreach (var point in polygon) Grow(point.X, point.Y);
+        if (propertyLines != null)
+            foreach (var line in propertyLines)
+                foreach (var point in line) Grow(point.X, point.Y);
         if (minX > maxX) return site;
-        return new SiteContent(topography, contours, plants, entourage, minX, minY, maxX, maxY);
+        return new SiteContent(topography, contours, plants, entourage, minX, minY, maxX, maxY,
+            propertyLines, site.NativePrimaryLevels);
     }
 
-    /// <summary>Projects the topography and the planting of the document on the plan. Null when the model has neither.
+    /// <summary>Projects the topography, planting and property boundaries of the document on the plan.
     /// </summary>
-    internal static SiteContent? Collect(RvtDocument document)
+    internal static SiteContent? Collect(RvtDocument document, int? viewId = null)
     {
+        var hidden = viewId is int view ? document.RawData.ViewHiddenElements?.GetValueOrDefault(view) : null;
+        var hiddenCategories = viewId is int categoryView
+            ? document.RawData.ViewHiddenCategories?.GetValueOrDefault(categoryView) : null;
+        var contours = new List<(double X1, double Y1, double X2, double Y2, double Z)>();
+        HashSet<double>? nativePrimaryLevels = null;
         var topography = new List<List<(double X, double Y)>>();
         var topography3 = new List<List<double[]>>();
         double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
@@ -76,7 +88,30 @@ public static class SitePrinter
 
         foreach (var element in document.Elements)
         {
-            if (element.CategoryId != (int)BuiltInCategory.OST_Topography) continue;
+            if (element.CategoryId != (int)BuiltInCategory.OST_Topography || !IsPlaced(element)) continue;
+            bool hasContours = document.RawData.SiteContours?.TryGetValue(element.Id, out _) == true;
+            if (hasContours)
+            {
+                nativePrimaryLevels ??= [];
+                foreach (var contour in document.RawData.SiteContours![element.Id])
+                {
+                    double level = contour.Elevation * FeetToMillimetres;
+                    if (contour.Primary) nativePrimaryLevels.Add(level);
+                    foreach (var line in contour.Lines)
+                    {
+                        for (int i = 1; i < line.Count; i++)
+                        {
+                            var a = line[i - 1];
+                            var b = line[i];
+                            if (a == b) continue;
+                            contours.Add((a.X * FeetToMillimetres, a.Y * FeetToMillimetres,
+                                b.X * FeetToMillimetres, b.Y * FeetToMillimetres, level));
+                            Grow(a.X * FeetToMillimetres, a.Y * FeetToMillimetres);
+                            Grow(b.X * FeetToMillimetres, b.Y * FeetToMillimetres);
+                        }
+                    }
+                }
+            }
             if (element.Geometry is not { Faces.Count: > 0 } geometry) continue;
             foreach (var face in geometry.Faces)
             {
@@ -92,32 +127,32 @@ public static class SitePrinter
                     Grow(x, y);
                 }
                 topography.Add(polygon);
-                topography3.Add(corners);
+                if (!hasContours) topography3.Add(corners);
                 if (topography.Count >= 20000) break;
             }
         }
 
-        var plants = new List<(double X, double Y, double Radius, string Type, string Mark)>();
+        var plants = new List<SitePlant>();
         foreach (var element in document.Elements)
         {
-            if (element.CategoryId != (int)BuiltInCategory.OST_Planting) continue;
+            if (element.CategoryId != (int)BuiltInCategory.OST_Planting || !IsPlaced(element)) continue;
             double[]? box = element.BoundingBox ?? element.Geometry?.BoundingBox;
             if (box is not { Length: 6 } || box[3] <= box[0] || box[4] <= box[1]) continue;
-            double x = (box[0] + box[3]) / 2 * FeetToMillimetres;
-            double y = (box[1] + box[4]) / 2 * FeetToMillimetres;
-            double radius = Math.Min(box[3] - box[0], box[4] - box[1]) / 2 * FeetToMillimetres;
+            double x = (element.InstanceOriginXY?.X ?? (box[0] + box[3]) / 2) * FeetToMillimetres;
+            double y = (element.InstanceOriginXY?.Y ?? (box[1] + box[4]) / 2) * FeetToMillimetres;
+            double? rpcRadius = RpcPlanRadius(document, element);
+            double radius = rpcRadius ?? Math.Min(box[3] - box[0], box[4] - box[1]) / 2 * FeetToMillimetres;
             if (radius <= 0) continue;
-            plants.Add((x, y, radius, element.Name ?? "", PlantingTypeOf(document, element).Mark));
+            plants.Add(new(x, y, radius, element.Name ?? "", PlantingTypeOf(document, element).Mark, rpcRadius.HasValue));
             Grow(x - radius, y - radius);
             Grow(x + radius, y + radius);
         }
 
-        // The cars and the people of the site (the entourage) print as their outlines seen from above, as the
-        // reference site plan shows a car on the drive.
+        // Visible entourage uses the placed instance bounds for its plan outline.
         var entourage = new List<List<(double X, double Y)>>();
         foreach (var element in document.Elements)
         {
-            if (element.CategoryId != (int)BuiltInCategory.OST_Entourage) continue;
+            if (element.CategoryId != (int)BuiltInCategory.OST_Entourage || !IsPlaced(element)) continue;
             double[]? box = element.BoundingBox ?? element.Geometry?.BoundingBox;
             if (box is not { Length: 6 }) continue;
             double x0 = box[0] * FeetToMillimetres, y0 = box[1] * FeetToMillimetres;
@@ -145,7 +180,6 @@ public static class SitePrinter
 
         // The contours of the terrain: the mesh is sliced at every half metre (a metre on a high site) and each slice
         // is drawn as the lines a site plan prints, the way the reference shows the fall of the ground.
-        var contours = new List<(double X1, double Y1, double X2, double Y2, double Z)>();
         if (topography3.Count > 0)
         {
             double zMin = topography3.Min(corners => corners.Min(corner => corner[2]));
@@ -172,8 +206,21 @@ public static class SitePrinter
             }
         }
 
-        if (topography.Count == 0 && plants.Count == 0) return null;
-        return new SiteContent(topography, contours, plants, entourage, minX, minY, maxX, maxY);
+        var propertyLines = new List<List<(double X, double Y)>>();
+        foreach (var element in document.Elements)
+        {
+            if (element.SitePropertyCurve is not { Count: >= 2 } curve) continue;
+            var line = curve.Select(p => (X: p.X * FeetToMillimetres, Y: p.Y * FeetToMillimetres)).ToList();
+            propertyLines.Add(line);
+            foreach (var point in line) Grow(point.X, point.Y);
+        }
+        if (topography.Count == 0 && contours.Count == 0 && plants.Count == 0 && propertyLines.Count == 0) return null;
+        return new SiteContent(topography, contours, plants, entourage, minX, minY, maxX, maxY,
+            propertyLines, nativePrimaryLevels);
+
+        bool IsPlaced(Element element) => !element.IsDiscovered && element.SerializedUnplacedOwnerId is not > 0
+            && element.NativeIsSymbol != true && !element.RootClassIs("FamilySymbol") && hidden?.Contains(element.Id) != true
+            && (element.CategoryId is not int category || hiddenCategories?.Contains(category) != true);
     }
 
     /// <summary>The schedule key of a planting instance: the type mark (its ALL_MODEL_TYPE_MARK) and the
@@ -191,18 +238,29 @@ public static class SitePrinter
     }
 
     /// <summary>Draws the site with (MinX, MinY) at (originX, originY), one model unit per 1/scale.</summary>
-    internal static void DrawContent(PdfPage page, SiteContent content, double scale, double originX, double originY)
+    internal static void DrawContent(PdfPage page, SiteContent content, double scale, double originX, double originY,
+        RvtDocument? document = null, bool opaqueGround = false, SiteGraphics? graphics = null, bool drawFallbackTags = true,
+        bool drawFallbackNorth = true, int? viewId = null, ViewCropFrame? basis = null)
     {
         double ToX(double x) => (x - content.MinX) / scale + originX;
         double ToY(double y) => (y - content.MinY) / scale + originY;
-        // A light green wash under the site; only the outer edge of the terrain mesh is inked, so the triangulation does
-        // not cover the plan.
+        (double Width, PdfColor Color)? ProjectionPen(BuiltInCategory category)
+        {
+            if (document?.RawData.PenWidthTable is not { } table
+                || !PenWidths.TryGetStyle(document, (int)category, false, out int pen, out int rgb)
+                || rgb < 0 || rgb > 0xFFFFFF
+                || !PenWidths.TryPenWidth(table, pen, (int)Math.Round(scale), out double width)) return null;
+            return (width, new PdfColor((rgb & 255) / 255d, ((rgb >> 8) & 255) / 255d, (rgb >> 16) / 255d));
+        }
+
+        // Only the outer edge of the terrain mesh is inked, so the triangulation does not cover the plan.
+        PdfColor ground = opaqueGround ? new PdfColor(1, 1, 1) : new PdfColor(0.92, 0.95, 0.9);
         var edges = new Dictionary<string, int>(StringComparer.Ordinal);
         var edgeLines = new Dictionary<string, ((double X, double Y) A, (double X, double Y) B)>(StringComparer.Ordinal);
         foreach (var polygon in content.Topography)
         {
             var points = polygon.Select(point => (ToX(point.X), ToY(point.Y))).ToList();
-            page.DrawPolyline(points, 0, true, new PdfColor(0.92, 0.95, 0.9));
+            page.DrawPolyline(points, 0, true, ground);
             for (int i = 0; i < points.Count; i++)
             {
                 var a = points[i];
@@ -221,17 +279,68 @@ public static class SitePrinter
             if (count != 1 || !edgeLines.TryGetValue(key, out var line)) continue;
             page.DrawLine(line.A.Item1, line.A.Item2, line.B.Item1, line.B.Item2, 0.15, 0.45);
         }
-        // The contours of the terrain go over the wash, under the planting; every fifth one is an index contour drawn
-        // heavier, the way a site plan reads the fall of the ground.
-        var contourLevels = content.Contours.Select(contour => contour.Z).Distinct().OrderBy(level => level).ToList();
+        if (graphics is { GroundShadows.Count: > 0 })
+            page.FillPolygonUnion(graphics.GroundShadows.Select(ring => ring.Select(p => (ToX(p.X), ToY(p.Y))).ToList()),
+                graphics.ShadowGray);
+
+        var primary = content.NativePrimaryLevels == null ? null : ProjectionPen(BuiltInCategory.OST_TopographyContours);
+        var secondary = content.NativePrimaryLevels == null ? null : ProjectionPen(BuiltInCategory.OST_SecondaryTopographyContours);
+        var contourLevels = content.NativePrimaryLevels == null
+            ? content.Contours.Select(contour => contour.Z).Distinct().OrderBy(level => level).ToList() : null;
+        var contourLabels = ContourLabels(page, document, viewId, basis, ToX, ToY);
         foreach (var (x1, y1, x2, y2, level) in content.Contours)
         {
-            bool index = contourLevels.IndexOf(level) % 5 == 0;
-            page.DrawLine(ToX(x1), ToY(y1), ToX(x2), ToY(y2), index ? 0.16 : 0.07, index ? 0.5 : 0.62);
+            bool index = content.NativePrimaryLevels?.Contains(level) ?? contourLevels!.IndexOf(level) % 5 == 0;
+            var pen = index ? primary : secondary;
+            double ax = ToX(x1), ay = ToY(y1), bx = ToX(x2), by = ToY(y2);
+            foreach (var (start, end) in ContourSpans(ax, ay, bx, by, level, contourLabels))
+            {
+                double sx = ax + start * (bx - ax), sy = ay + start * (by - ay);
+                double ex = ax + end * (bx - ax), ey = ay + end * (by - ay);
+                if (pen is { } style) page.DrawLine(sx, sy, ex, ey, style.Width, style.Color);
+                else page.DrawLine(sx, sy, ex, ey, index ? 0.16 : 0.07, index ? 0.5 : 0.62);
+            }
         }
-        foreach (var (x, y, radius, _, _) in content.Plants)
+        if (graphics is { Equipment: not null } && document != null)
+            DrawEquipment(page, document, graphics, basis, scale, ToX, ToY);
+        foreach (var label in contourLabels)
+            page.DrawTextRotated(label.Text, label.X + label.Sine * label.Baseline,
+                label.Y - label.Cosine * label.Baseline, label.Height, label.Angle * 180 / Math.PI,
+                PdfTextAlignment.Center);
+        if (content.PropertyLines is { Count: > 0 } properties)
         {
-            double pageX = ToX(x), pageY = ToY(y), r = radius / scale;
+            double pen = 0.18;
+            int category = (int)BuiltInCategory.OST_SiteProperty;
+            if (document != null && PenWidths.TryGetWidth(document, category, false, (int)Math.Round(scale), out double width))
+                pen = width;
+            double[]? dashes = document != null && LinePatterns.TryGetDashes(document, category, out double[] pattern)
+                ? pattern : null;
+            foreach (var line in properties)
+            {
+                var points = line.Select(p => (X: ToX(p.X), Y: ToY(p.Y))).ToList();
+                if (dashes == null)
+                {
+                    page.DrawPolyline(points, pen);
+                    continue;
+                }
+                double length = 0;
+                for (int i = 1; i < points.Count; i++)
+                {
+                    double dx = points[i].X - points[i - 1].X, dy = points[i].Y - points[i - 1].Y;
+                    length += Math.Sqrt(dx * dx + dy * dy);
+                }
+                page.DrawRoundDashedPolyline(points, pen, LinePatterns.FitEndpointDashes(length * (72 / 25.4), dashes));
+            }
+        }
+        var plantingPen = ProjectionPen(BuiltInCategory.OST_Planting) ?? (0.1, new PdfColor(0, 0, 0));
+        foreach (var plant in content.Plants)
+        {
+            double pageX = ToX(plant.X), pageY = ToY(plant.Y), r = plant.Radius / scale;
+            if (plant.Rpc)
+            {
+                DrawRpcPlant(page, pageX, pageY, r, basis, plantingPen.Item1, plantingPen.Item2);
+                continue;
+            }
             var circle = new List<(double X, double Y)>(24);
             for (int i = 0; i < 24; i++)
             {
@@ -251,7 +360,7 @@ public static class SitePrinter
         var types = content.Plants.Where(plant => plant.Type.Length > 0).Select(plant => plant.Type)
             .Distinct().OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToList();
         var tagged = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        if (page.Owner.Font != null)
+        if (drawFallbackTags && page.Owner.Font != null)
         {
             foreach (var plant in content.Plants)
             {
@@ -269,6 +378,7 @@ public static class SitePrinter
             }
         }
 
+        if (!drawFallbackNorth) return;
         // The north arrow at the lower right of the site.
         double boxRight = (content.MaxX - content.MinX) / scale + originX;
         double boxBottom = originY;

@@ -40,6 +40,8 @@ internal static partial class GRepParserV2
     private sealed record InstanceRec(
         int SymbolElemId, double[] Transform, int OwnerQueueIndex);
 
+    internal sealed record SheetImagePlacement(int SymbolId, double X, double Y, double ScaleX, double ScaleY);
+
     private sealed class Cur
     {
         public byte[] D = [];
@@ -50,6 +52,7 @@ internal static partial class GRepParserV2
         public bool NativeWallBody;
         public bool IncludeNonVisible;
         public bool SawDetailCondition; // a node was judged below a detail-level condition
+        public List<SheetImagePlacement>? SheetImages;
         public int BlockStart, BlockEnd; // this block's payload bounds (plane scan)
         public int LastEdgeEnd; // pos after the last decoded Edge
         public List<(ushort Cls, int V)> Queue = new();
@@ -58,6 +61,7 @@ internal static partial class GRepParserV2
         public int FaceCount; // faces seen (schema-walked)
         public List<uint> FaceOrder = new(); // face handle (queue v) in processing order
         public Dictionary<uint, int> FaceRenderStyle = new(); // GFace.m_renderStyleId (the face material) by face handle
+        public Dictionary<uint, (int Id, double U, double V, double Du, double Dv)>? FacePatternPlacers;
         public Dictionary<uint, uint> FaceFlagsV9 = new(); // GFace.m_faceFlags_v9 by face handle
         public List<ushort> SurfClasses = new(); // surface classId per face, in queue order
         public List<EdgeRec> Edges = new();
@@ -107,7 +111,7 @@ internal static partial class GRepParserV2
         public Dictionary<uint, SurfaceRec> HarvestSurf = new();
 
         // Exact deferred-pointer graph. QueueLinks is also needed by production geometry ownership;
-        // QueueChildren retains only m_oConditions outside targeted diagnostics.
+        // QueueChildren keeps condition links and direct root-filter contents outside diagnostics.
         public int CurrentObjectHandle;
         public ushort CurrentObjectClass;
         public int CurrentQueueIndex = -1;
@@ -118,6 +122,9 @@ internal static partial class GRepParserV2
         public Dictionary<int, Dictionary<string, List<double>>> QueueDoubles = new();
         public Dictionary<int, Dictionary<string, List<byte>>> QueueBytes = new();
         public Dictionary<int, (int Tag, int Control, int Category, uint Flags)> ObjectGInfo = new();
+        public List<(int Index, int Tag, int StyleId, ArcRec Line)>? ViewLineCandidates;
+        public List<(int Filter, uint Handle, uint Flags, bool Filled, int StyleId)>? PlanCurveCandidates;
+        public List<(int FaceIndex, uint Handle)>? PlanMaskCandidates;
 
         public EdgeRec? CapEdge; // non-null while walking an Edge
         public bool ExactPlanarSpaceBoundary;
@@ -790,9 +797,10 @@ internal static partial class GRepParserV2
     /// holds detail-level alternatives that differ (<see cref="GRepData.Coarse"/>).
     /// </summary>
     /// <param name="nativeWallBody">Use native Low edge sampling only after confirming a unique own wall root and GRep.</param>
-    public static GRepData? Parse(byte[] d, int blockStart, uint dataSize, bool nativeWallBody = false)
+    public static GRepData? Parse(byte[] d, int blockStart, uint dataSize, bool nativeWallBody = false,
+        Action<PlanFixtureGraphics>? collectPlanFixtures = null)
     {
-        var fine = ParseCore(d, blockStart, dataSize, nativeWallBody);
+        var fine = ParseCore(d, blockStart, dataSize, nativeWallBody, collectPlanFixtures: collectPlanFixtures);
         if (fine is not { HasDetailLevelAlternatives: true }) return fine;
         try
         {
@@ -828,7 +836,18 @@ internal static partial class GRepParserV2
         && fine.Instances.Zip(coarse.Instances).All(pair => pair.First.SymbolElemId == pair.Second.SymbolElemId
             && pair.First.Transform.SequenceEqual(pair.Second.Transform));
 
-    private static GRepData? ParseCore(byte[] d, int blockStart, uint dataSize, bool nativeWallBody, bool includeNonVisible = false)
+    internal static IReadOnlyList<SheetImagePlacement> ReadSheetImages(byte[] block)
+    {
+        if (block.Length < 20) return [];
+        uint size = BitConverter.ToUInt32(block, 8);
+        if (size != block.Length - 16 || BitConverter.ToUInt32(block, block.Length - 4) != size) return [];
+        var images = new List<SheetImagePlacement>();
+        ParseCore(block, 0, size, false, sheetImages: images);
+        return images;
+    }
+
+    private static GRepData? ParseCore(byte[] d, int blockStart, uint dataSize, bool nativeWallBody, bool includeNonVisible = false,
+        List<SheetImagePlacement>? sheetImages = null, Action<PlanFixtureGraphics>? collectPlanFixtures = null)
     {
         int payloadStart = blockStart + 14;
         int payloadEnd = (int)Math.Min((long)blockStart + 16 + dataSize, d.Length);
@@ -851,6 +870,7 @@ internal static partial class GRepParserV2
             RootClass = classId,
             CurrentObjectHandle = elementId,
             CurrentObjectClass = classId,
+            SheetImages = sheetImages,
         };
         if (targeted)
         {
@@ -858,17 +878,22 @@ internal static partial class GRepParserV2
             Array.Copy(d, blockStart, raw, 0, raw.Length);
             File.WriteAllBytes(Path.Combine(Path.GetTempPath(), $"grep_schema_{elementId}.bin"), raw);
         }
+        int resyncs = 0;
         try
         {
             foreach (var f in rootFields) ReadField(c, f, 0);
             if (dbg)
                 DiagnosticSink.WriteLine($"  V2 eid={elementId} root bbox=[{string.Join(',', c.RootBoundingBox ?? [])}] tight=[{string.Join(',', c.RootTightBoundingBox ?? [])}]");
-            int resyncs = 0;
             for (int qi = 0; qi < c.Queue.Count; qi++)
             {
                 int itemStart = c.Pos;
                 if (targeted) c.DebugItemStarts.Add(itemStart);
-                try { WalkQueueItem(c, qi); }
+                try
+                {
+                    WalkQueueItem(c, qi);
+                    if (resyncs == 0 && c.Queue[qi].Cls == 2014)
+                        CaptureFacePattern(c, qi, itemStart);
+                }
                 catch (DecodeStop)
                 {
                     if (dbg)
@@ -895,6 +920,7 @@ internal static partial class GRepParserV2
         }
         catch (DecodeStop) { if (dbg) DiagnosticSink.WriteLine($"  V2 stop at pos={c.Pos}/{c.End} faces={c.FaceCount} edges={c.Edges.Count} queue={c.Queue.Count}"); }
         catch (Exception ex) { if (dbg) DiagnosticSink.WriteLine($"  V2 exc {ex.GetType().Name}: {ex.Message} at pos={c.Pos} faces={c.FaceCount} edges={c.Edges.Count}"); }
+        if (sheetImages != null && c.Pos != c.End) sheetImages.Clear();
 
         // Grammar-first harvest of a large unwalked tail: post-gap objects belong to queue entries
         // whose parents were never walked (never enqueued) - the queue can't reach them, but the
@@ -1001,9 +1027,17 @@ internal static partial class GRepParserV2
                 }
             }
         }
+        if (collectPlanFixtures != null && c.Pos == c.End && resyncs == 0
+            && ReadPlanFixtureGraphics(c) is { } planGraphics)
+            collectPlanFixtures(planGraphics);
         var built = BuildGeometry(c);
         if (built != null)
         {
+            if (c.Pos == c.End)
+            {
+                built.ViewFacingLines = ReadViewFacingLines(c);
+                if (resyncs == 0) built.DoorPlanSymbols = ReadDoorPlanSymbols(c);
+            }
             built.QueueClassCounts = c.Queue.GroupBy(item => item.Cls).ToDictionary(group => group.Key, group => group.Count());
             built.HasDetailLevelAlternatives = c.SawDetailCondition;
             built.RootBoundingBox = ValidBox(c.RootBoundingBox) ? c.RootBoundingBox : null;
@@ -1241,6 +1275,74 @@ internal static partial class GRepParserV2
         return true;
     }
 
+    private static void ReadSheetImage(Cur c)
+    {
+        // ImageInfoScaled starts with the base/up vectors and the inline Trf basis and origin.
+        ReadOnlySpan<double> basis = [1, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1];
+        if (!c.CanRead(168)) return;
+        int start = c.Pos;
+        for (int i = 0; i < basis.Length; i++)
+            if (BitConverter.ToDouble(c.D, start + 8 * i) != basis[i]) return;
+        double x = BitConverter.ToDouble(c.D, start + 120);
+        double y = BitConverter.ToDouble(c.D, start + 128);
+        double z = BitConverter.ToDouble(c.D, start + 136);
+        int symbol = BitConverter.ToInt32(c.D, start + 144);
+        double sx = BitConverter.ToDouble(c.D, start + 152);
+        double sy = BitConverter.ToDouble(c.D, start + 160);
+        if (symbol > 0 && z == 0 && Math.Abs(x) < 100 && Math.Abs(y) < 100
+            && sx is > 0 and < 100 && sy is > 0 and < 100)
+            c.SheetImages!.Add(new SheetImagePlacement(symbol, x, y, sx, sy));
+    }
+
+    private static void CaptureFacePattern(Cur c, int qi, int start)
+    {
+        if (c.QueueLinks[qi] is not (>= 0 and var parent, "m_pGFilling")
+            || c.Queue[parent] is not (1589, var face)) return;
+        if (c.RootClass == 2007 && !c.IncludeNonVisible && c.Pos - start == 94)
+        {
+            var fill = c.D.AsSpan(start, 94);
+            // A blank pattern with the saved background-color token forms the mask of a 2D symbol.
+            if (BitConverter.ToInt32(fill[16..]) == face && BitConverter.ToUInt32(fill[78..]) == 0
+                && BitConverter.ToInt32(fill[82..]) == -1 && BitConverter.ToUInt32(fill[86..]) == 0x01000000u
+                && BitConverter.ToInt32(fill[90..]) == 34)
+                (c.PlanMaskCandidates ??= []).Add((parent, (uint)face));
+            return;
+        }
+        if (c.Pos - start != 96) return;
+
+        // GFilling: GInfo, face back-reference, FillPatternPlacer, FillPatternData pointer, id, color, flags.
+        var data = c.D.AsSpan(start, 96);
+        if (BitConverter.ToInt32(data[16..]) != face
+            || BitConverter.ToUInt32(data[78..]) != uint.MaxValue || BitConverter.ToUInt16(data[82..]) != 1850
+            || BitConverter.ToUInt32(data[88..]) != 0 || BitConverter.ToInt32(data[92..]) != 9)
+            return;
+        int id = BitConverter.ToInt32(data[84..]);
+        // shortcut: support black model placers with unit scales, extend when other layouts are verified.
+        if (id <= 0 || BitConverter.ToDouble(data[20..]) != 1 || BitConverter.ToDouble(data[60..]) != 1
+            || BitConverter.ToDouble(data[68..]) != 1 || data[76] != 0 || data[77] != 0) return;
+        double u = BitConverter.ToDouble(data[28..]), v = BitConverter.ToDouble(data[36..]);
+        double du = BitConverter.ToDouble(data[44..]), dv = BitConverter.ToDouble(data[52..]);
+        if (!IsFinite(u) || !IsFinite(v) || !IsFinite(du) || !IsFinite(dv)
+            || Math.Abs(du * du + dv * dv - 1) > 1e-9) return;
+        (c.FacePatternPlacers ??= new())[(uint)face] = (id, u, v, du, dv);
+    }
+
+    private static ModelFacePattern? PlacedFacePattern(Cur c, uint face)
+    {
+        if (c.FacePatternPlacers?.TryGetValue(face, out var placer) != true
+            || !c.DirectSurfaceByFace.TryGetValue(face, out var surface) || surface.Kind != SurfKind.Plane
+            || World(ToPlane(surface), placer.U, placer.V) is not { } origin) return null;
+
+        var u = new double[3];
+        var v = new double[3];
+        for (int axis = 0; axis < 3; axis++)
+        {
+            u[axis] = placer.Du * surface.X[axis] + placer.Dv * surface.Y[axis];
+            v[axis] = -placer.Dv * surface.X[axis] + placer.Du * surface.Y[axis];
+        }
+        return new ModelFacePattern(placer.Id, origin, u, v);
+    }
+
     private static void WalkQueueItem(Cur c, int qi)
     {
                 var (cls, v) = c.Queue[qi];
@@ -1249,6 +1351,9 @@ internal static partial class GRepParserV2
                 c.CurrentObjectClass = cls;
                 var qf = TfBlockDeserializer.SerializationFields(cls);
                 if (qf == null) throw Stop;
+                if (cls == 2197 && c.SheetImages != null && c.QueueLinks[qi] is (int parent, "m_imageInfo")
+                    && parent >= 0 && c.Queue[parent].Cls == 2022)
+                    ReadSheetImage(c);
                 // Blob-headed items: refresh the class's tag base (tag = base + ordinal).
                 if (qf.Count > 0 && qf[0].Name == "m_GInfo" && c.CanRead(16))
                 {
@@ -1426,6 +1531,7 @@ internal static partial class GRepParserV2
                         ar.Y[k] = BitConverter.ToDouble(c.D, c.Pos + 56 + 8 * k);
                         ar.C[k] = BitConverter.ToDouble(c.D, c.Pos + 88 + 8 * k);
                     }
+                    CapturePlanCutCurve(c, qi, (uint)v, c.D[c.Pos + 112] != 0);
                     c.Take(113);
                     if (IsFinite(ar.R) && IsFinite(ar.C[0]) && Math.Abs(ar.R) > 1e-9 && Math.Abs(ar.R) < 1e5)
                         c.Curves[(uint)v] = ar;
@@ -1448,6 +1554,7 @@ internal static partial class GRepParserV2
                         ellipse.X[k] = BitConverter.ToDouble(c.D, c.Pos + 56 + 8 * k);
                         ellipse.Y[k] = BitConverter.ToDouble(c.D, c.Pos + 80 + 8 * k);
                     }
+                    CapturePlanCutCurve(c, qi, (uint)v, false);
                     c.Take(120);
                     if (IsFinite(ellipse.R) && IsFinite(ellipse.RY)
                         && Math.Abs(ellipse.R) > 1e-9 && Math.Abs(ellipse.R) < 1e5
@@ -1480,6 +1587,16 @@ internal static partial class GRepParserV2
                         ln.C[k] = BitConverter.ToDouble(c.D, c.Pos + 32 + 8 * k);
                         ln.X[k] = BitConverter.ToDouble(c.D, c.Pos + 56 + 8 * k);
                     }
+                    if (c.RootClass == 2007 && !c.IncludeNonVisible
+                        && c.QueueLinks[qi] is (>= 0 and int parentIndex, "m_subNodes")
+                        && c.Queue[parentIndex].Cls == 2015 && c.QueueLinks[parentIndex].ParentQueueIndex < 0)
+                    {
+                        int style = BitConverter.ToInt32(c.D, c.Pos + 8);
+                        uint flags = BitConverter.ToUInt32(c.D, c.Pos + 12);
+                        if (style > 0 && !IsHiddenInstanceVariant(flags) && IsPhysicalBodySurface(flags))
+                            (c.ViewLineCandidates ??= []).Add((qi, BitConverter.ToInt32(c.D, c.Pos), style, ln));
+                    }
+                    CapturePlanCutCurve(c, qi, (uint)v, false);
                     c.Take(80);
                     if (IsFinite(ln.C[0]) && IsFinite(ln.X[0]))
                         c.Curves[(uint)v] = ln;
@@ -1806,6 +1923,292 @@ internal static partial class GRepParserV2
     /// hidden for the type the symbol belongs to.
     /// </summary>
     internal static bool IsHiddenInstanceVariant(uint nodeFlags) => (nodeFlags & 0xE0u) == 0xE0u;
+
+    private static void CapturePlanCutCurve(Cur c, int index, uint handle, bool filled)
+    {
+        if (c.RootClass != 2007 || c.IncludeNonVisible
+            || c.QueueLinks[index] is not (>= 0 and int filter, "m_subNodes")
+            || c.Queue[filter].Cls != 2015 || c.QueueLinks[filter] != (-1, "m_subNodes"))
+            return;
+        int style = BitConverter.ToInt32(c.D, c.Pos + 4) == 0 ? BitConverter.ToInt32(c.D, c.Pos + 8) : -1;
+        (c.PlanCurveCandidates ??= []).Add((filter, handle, BitConverter.ToUInt32(c.D, c.Pos + 12), filled, style));
+    }
+
+    private static List<DoorPlanSymbol>? ReadDoorPlanSymbols(Cur c)
+    {
+        if (c.PlanCurveCandidates == null) return null;
+        var symbols = new List<DoorPlanSymbol>();
+        foreach (var group in c.PlanCurveCandidates.GroupBy(candidate => candidate.Filter))
+        {
+            var conditions = c.QueueChildren.GetValueOrDefault(group.Key)?.Where(index =>
+                c.QueueLinks[index].Field == "m_oConditions").ToArray();
+            if (conditions is not [int condition] || c.Queue[condition].Cls is not (1995 or 1996)
+                || !IsTopPlanCondition(c, condition, out var values))
+                continue;
+            (double Lo, double Hi)? cutRange = null;
+            if (c.Queue[condition].Cls == 1995)
+            {
+                if (values.GetValueOrDefault("m_rangeLo") is not [double lo]
+                    || values.GetValueOrDefault("m_rangeHi") is not [double hi]
+                    || !IsFinite(lo) || !IsFinite(hi) || hi <= lo)
+                    continue;
+                cutRange = (lo, hi);
+            }
+            // shortcut: require a complete set of direct line and circular-arc children.
+            if (c.QueueChildren[group.Key].Count != group.Count() + 1
+                || !c.ObjectGInfo.TryGetValue(c.Queue[group.Key].V, out var filterInfo)
+                || (filterInfo.Flags & 0x20u) != 0)
+                continue;
+            var curves = new List<ArcRec>();
+            foreach (var item in group)
+            {
+                if (item.Filled || (item.Flags & 0x20u) != 0
+                    || !c.Curves.TryGetValue(item.Handle, out var curve) || curve.RY != 0 || !IsPlanCutCurve(curve))
+                    break;
+                curves.Add(curve);
+            }
+            if (curves.Count == group.Count() && curves.Any(curve => curve.R > 0)
+                && curves.Any(curve => curve.R == 0))
+                symbols.Add(new(cutRange, curves));
+        }
+        return symbols.Count == 0 ? null : symbols;
+    }
+
+    private static bool IsTopPlanCondition(Cur c, int condition,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Dictionary<string, List<double>>? values)
+    {
+        values = c.QueueDoubles.GetValueOrDefault(condition);
+        return c.QueueInts.GetValueOrDefault(condition)?.GetValueOrDefault("m_comp") == 6
+            && c.QueueBytes.GetValueOrDefault(condition)?.GetValueOrDefault("m_negateDirCondition") is [0]
+            && values?.GetValueOrDefault("m_dir") is [0, 0, 1];
+    }
+
+    private static bool ExcludesTopPlan(Cur c, int node)
+    {
+        while (node >= 0 && node < c.QueueLinks.Count && c.QueueLinks[node] is (>= 0 and int parent, "m_subNodes"))
+        {
+            if (c.Queue[parent].Cls == 2015
+                && c.QueueChildren.TryGetValue(parent, out var children)
+                && children.Any(child => c.QueueLinks[child].Field == "m_oConditions"
+                    && c.Queue[child].Cls == 1996
+                    && c.QueueInts.GetValueOrDefault(child)?.GetValueOrDefault("m_comp") == 8
+                    && c.QueueBytes.GetValueOrDefault(child)?.GetValueOrDefault("m_negateDirCondition") is [1]
+                    && c.QueueDoubles.GetValueOrDefault(child)?.GetValueOrDefault("m_dir") is [var x, var y, var z]
+                    && Math.Abs(x) < 1e-9 && Math.Abs(y) < 1e-9 && Math.Abs(Math.Abs(z) - 1) < 1e-9))
+                return true;
+            node = parent;
+        }
+        return false;
+    }
+
+    private static PlanFixtureGraphics? ReadPlanFixtureGraphics(Cur c)
+    {
+        var lines = new List<StyledModelLine>();
+        foreach (var group in (c.PlanCurveCandidates ?? []).GroupBy(candidate => candidate.Filter))
+        {
+            // The unconditional line branch is complete, including any tagged non-printing lines.
+            if (c.QueueChildren[group.Key].Count != group.Count()
+                || !c.ObjectGInfo.TryGetValue(c.Queue[group.Key].V, out var filterInfo)
+                || (filterInfo.Flags & 0x20u) != 0
+                || c.QueueChildren[group.Key].Any(index => c.QueueLinks[index].Field != "m_subNodes" || c.Queue[index].Cls != 1736))
+                continue;
+            var visible = group.Where(item => (item.Flags & 0x20u) == 0).ToArray();
+            var strokes = new List<StyledModelLine>();
+            foreach (var item in visible)
+            {
+                if (item.StyleId <= 0 || !c.Curves.TryGetValue(item.Handle, out var curve)
+                    || !IsPlanCutCurve(curve)) break;
+                var start = Enumerable.Range(0, 3).Select(i => curve.C[i] + curve.T0 * curve.X[i]).ToArray();
+                var end = Enumerable.Range(0, 3).Select(i => curve.C[i] + curve.T1 * curve.X[i]).ToArray();
+                if (!start.All(IsFinite) || !end.All(IsFinite) || start.SequenceEqual(end)) break;
+                strokes.Add(new(start, end, item.StyleId));
+            }
+            if (strokes.Count == visible.Length) lines.AddRange(strokes);
+        }
+        var mediumProjection = ReadTopFixtureProjection(c, 2);
+        var coarseProjection = ReadTopFixtureProjection(c, 1);
+        return lines.Count == 0 && mediumProjection == null && coarseProjection == null ? null
+            : new(lines, lines.Count == 0 ? [] : ReadPlanFixtureMasks(c), mediumProjection, coarseProjection);
+    }
+
+    private static PlanFixtureProjection? ReadTopFixtureProjection(Cur c, int detailLevel)
+    {
+        if (c.PlanMaskCandidates == null && c.PlanCurveCandidates == null) return null;
+        var lines = new List<StyledModelLine>();
+        var masks = new List<List<double[]>>();
+        var curvesByFilter = (c.PlanCurveCandidates ?? []).ToLookup(candidate => candidate.Filter);
+        Dictionary<uint, List<int>>? loopsByFace = null;
+        Dictionary<uint, EdgeRec?>? edges = null;
+        foreach (var (filter, children) in c.QueueChildren)
+        {
+            if (c.Queue[filter].Cls != 2015 || c.QueueLinks[filter] != (-1, "m_subNodes")
+                || !c.ObjectGInfo.TryGetValue(c.Queue[filter].V, out var filterInfo)
+                || (filterInfo.Flags & 0x20u) != 0)
+                continue;
+            var conditions = children.Where(index => c.QueueLinks[index].Field == "m_oConditions").ToArray();
+            if (!conditions.Any(index => c.Queue[index].Cls == 1996 && IsTopPlanCondition(c, index, out _)))
+                continue;
+            if (conditions.Length > 2) return null;
+            if (conditions.Length == 2)
+            {
+                var detailConditions = conditions.Where(index => c.Queue[index].Cls == 1999).ToArray();
+                if (detailConditions is not [int detail]
+                    || c.QueueInts.GetValueOrDefault(detail) is not { } values
+                    || values.GetValueOrDefault("m_param") != 3
+                    || !values.TryGetValue("m_comp", out int comparison) || comparison is < -1 or > 5
+                    || values.GetValueOrDefault("m_value") is not (>= 1 and <= 3 and var level))
+                    return null;
+                if (!CompareSerializedInteger(detailLevel, comparison, level)) continue;
+            }
+
+            var drawable = children.Where(index => c.QueueLinks[index].Field == "m_subNodes").ToArray();
+            var geometries = drawable.Where(index => c.Queue[index].Cls == 2092).ToArray();
+            if (drawable.Length != geometries.Length + curvesByFilter[filter].Count()) return null;
+            foreach (int geometry in geometries)
+            {
+                if (!c.ObjectGInfo.TryGetValue(c.Queue[geometry].V, out var geometryInfo)
+                    || (geometryInfo.Flags & 0x20u) != 0
+                    || c.PlanMaskCandidates?.Where(candidate => c.QueueLinks[candidate.FaceIndex] == (geometry, "m_pFaces"))
+                        .ToArray() is not [var candidate]
+                    || !c.ObjectGInfo.TryGetValue((int)candidate.Handle, out var faceInfo)
+                    || (faceInfo.Flags & (DisplaySurfaceBit | 0x20u)) != DisplaySurfaceBit
+                    || !c.DirectSurfaceByFace.TryGetValue(candidate.Handle, out var surface) || surface.Kind != SurfKind.Plane
+                    || Math.Abs(surface.X[2]) > 1e-9 || Math.Abs(surface.Y[2]) > 1e-9
+                    || !(loopsByFace ??= CompleteFaceLoops(c)).TryGetValue(candidate.Handle, out var loops))
+                    return null;
+                var segments = new List<(double[] A, double[] B)>();
+                var loopEdges = new HashSet<uint>();
+                if (TryOrderLoopRings(c, candidate.Handle, loops, edges ??= EdgesByHandle(c), ToPlane(surface), segments, loopEdges) is not { } rings)
+                    return null;
+                if (rings is [var mask]) masks.Add(mask);
+
+                var styles = loopEdges.Select(edge => c.ObjectGInfo.GetValueOrDefault((int)edge)).ToArray();
+                if (styles.Any(style => (style.Flags & 0x20u) == 0))
+                {
+                    if (styles.Select(style => style.Category).Distinct().ToArray() is not [> 0 and int styleId]
+                        || styles.Any(style => (style.Flags & 0x20u) != 0))
+                        return null;
+                    lines.AddRange(segments.Select(segment => new StyledModelLine(segment.A, segment.B, styleId)));
+                }
+            }
+
+            foreach (var item in curvesByFilter[filter])
+            {
+                if ((item.Flags & 0x20u) != 0) continue;
+                if (item.Filled || item.StyleId <= 0 || !c.Curves.TryGetValue(item.Handle, out var curve)
+                    || !IsPlanCutCurve(curve) || (curve.RY != 0 && (!IsFinite(curve.RY) || curve.RY < 0)))
+                    return null;
+                var parameters = curve.R == 0 ? [curve.T0, curve.T1]
+                    : RefineAngularSamples([curve.T0, curve.T1], Math.Max(curve.R, curve.RY));
+                var start = curve.Eval(parameters[0]);
+                if (!start.All(IsFinite)) return null;
+                foreach (double parameter in parameters.Skip(1))
+                {
+                    var end = curve.Eval(parameter);
+                    if (!end.All(IsFinite)) return null;
+                    if (!start.SequenceEqual(end)) lines.Add(new(start, end, item.StyleId));
+                    start = end;
+                }
+            }
+        }
+        return lines.Count == 0 ? null : new(lines, masks);
+    }
+
+    private static List<List<double[]>> ReadPlanFixtureMasks(Cur c)
+    {
+        var masks = new List<List<double[]>>();
+        if (c.PlanMaskCandidates == null) return masks;
+        var loopsByFace = CompleteFaceLoops(c);
+        var edges = EdgesByHandle(c);
+        foreach (var (faceIndex, face) in c.PlanMaskCandidates)
+        {
+            if (c.QueueLinks[faceIndex] is not (>= 0 and int geometry, "m_pFaces")
+                || c.Queue[geometry].Cls != 2092
+                || !c.ObjectGInfo.TryGetValue(c.Queue[geometry].V, out var geometryInfo)
+                || (geometryInfo.Flags & 0x20u) != 0
+                || c.QueueLinks[geometry] is not (>= 0 and int filter, "m_subNodes")
+                || c.Queue[filter].Cls != 2015 || c.QueueLinks[filter] != (-1, "m_subNodes")
+                || !c.ObjectGInfo.TryGetValue(c.Queue[filter].V, out var filterInfo) || (filterInfo.Flags & 0x20u) != 0
+                || c.QueueChildren.GetValueOrDefault(filter)?.Where(i => c.QueueLinks[i].Field == "m_oConditions").ToArray()
+                    is not [int condition] || c.Queue[condition].Cls != 1996 || !IsTopPlanCondition(c, condition, out _)
+                || !c.DirectSurfaceByFace.TryGetValue(face, out var surface) || surface.Kind != SurfKind.Plane
+                || Math.Abs(surface.X[2]) > 1e-9 || Math.Abs(surface.Y[2]) > 1e-9
+                || loopsByFace.GetValueOrDefault(face) is not { Count: 1 } loops
+                || TryOrderLoopRings(c, face, loops, edges, ToPlane(surface), [], []) is not [var ring])
+                continue;
+            masks.Add(ring);
+        }
+        return masks;
+    }
+
+    private static bool IsPlanCutCurve(ArcRec curve)
+    {
+        if (!IsFinite(curve.T0) || !IsFinite(curve.T1) || curve.T1 <= curve.T0
+            || !curve.C.All(IsFinite) || !curve.X.All(IsFinite) || Math.Abs(curve.X[2]) > 1e-9)
+            return false;
+        if (curve.R == 0) return curve.X[0] != 0 || curve.X[1] != 0;
+        return curve.R > 0 && curve.T1 - curve.T0 <= Math.Tau + 1e-9
+            && curve.Y.All(IsFinite) && Math.Abs(curve.Y[2]) <= 1e-9
+            && Math.Abs(curve.X[0] * curve.X[0] + curve.X[1] * curve.X[1] - 1) <= 1e-9
+            && Math.Abs(curve.Y[0] * curve.Y[0] + curve.Y[1] * curve.Y[1] - 1) <= 1e-9
+            && Math.Abs(curve.X[0] * curve.Y[0] + curve.X[1] * curve.Y[1]) <= 1e-9;
+    }
+
+    private static List<ViewFacingLine>? ReadViewFacingLines(Cur c)
+    {
+        if (c.ViewLineCandidates == null) return null;
+        // shortcut: require matching opposite elevation filters until asymmetric direction modes are decoded.
+        var alternatives = new List<(int Tag, int Side, ViewFacingLine Line)>();
+        foreach (var (index, tag, style, curve) in c.ViewLineCandidates)
+        {
+            int filter = c.QueueLinks[index].ParentQueueIndex;
+            var conditions = c.QueueChildren.GetValueOrDefault(filter)?.Where(i =>
+                i < c.QueueLinks.Count && c.QueueLinks[i].Field == "m_oConditions").ToArray();
+            if (conditions is not ({ Length: 1 } or { Length: 2 })) continue;
+            int direction = conditions.FirstOrDefault(i => c.Queue[i].Cls == 1996, -1);
+            if (direction < 0) continue;
+            int side = c.QueueInts.GetValueOrDefault(direction)?.GetValueOrDefault("m_comp") ?? 0;
+            if (side is not (6 or 7)
+                || c.QueueBytes.GetValueOrDefault(direction)?.GetValueOrDefault("m_negateDirCondition") is not [0]
+                || c.QueueDoubles.GetValueOrDefault(direction)?.GetValueOrDefault("m_dir") is not { Count: 3 } axis
+                || Normalize(axis.ToArray()) is not { } unitAxis) continue;
+            (int Comparison, int Level)? detailCondition = null;
+            if (conditions.Length == 2)
+            {
+                int detail = conditions.FirstOrDefault(i => c.Queue[i].Cls == 1999, -1);
+                if (detail < 0 || c.QueueInts.GetValueOrDefault(detail) is not { } level
+                    || level.GetValueOrDefault("m_param") != 3
+                    || !level.TryGetValue("m_comp", out int comparison) || comparison is < -1 or > 5
+                    || !level.TryGetValue("m_value", out int detailLevel) || detailLevel is < 1 or > 3) continue;
+                detailCondition = (comparison, detailLevel);
+            }
+            var start = Enumerable.Range(0, 3).Select(i => curve.C[i] + curve.T0 * curve.X[i]).ToArray();
+            var end = Enumerable.Range(0, 3).Select(i => curve.C[i] + curve.T1 * curve.X[i]).ToArray();
+            if (!start.All(IsFinite) || !end.All(IsFinite) || start.SequenceEqual(end)) continue;
+            alternatives.Add((tag, side, new(start, end, unitAxis, style, detailCondition)));
+        }
+        var result = new List<ViewFacingLine>();
+        foreach (var group in alternatives.GroupBy(item => (item.Tag, item.Line.StyleId)))
+        {
+            if (group.OrderBy(item => item.Side).ToArray() is not [{ Side: 6, Line: var a }, { Side: 7, Line: var b }]) continue;
+            if (a.DetailCondition != b.DetailCondition || !a.Axis.SequenceEqual(b.Axis)
+                || !SameProjection(a.Start, b.Start, a.Axis, out double startSpacing)
+                || !SameProjection(a.End, b.End, a.Axis, out double endSpacing)
+                || Math.Abs(startSpacing - endSpacing) > 1e-9) continue;
+            var reverse = a.Axis.Select(value => -value).ToArray();
+            result.Add(a with { Axis = startSpacing >= 0 ? reverse : a.Axis });
+            result.Add(b with { Axis = startSpacing >= 0 ? a.Axis : reverse });
+        }
+        return result.Count == 0 ? null : result;
+
+        static bool SameProjection(double[] a, double[] b, double[] axis, out double spacing)
+        {
+            double x = a[0] - b[0], y = a[1] - b[1], z = a[2] - b[2];
+            spacing = x * axis[0] + y * axis[1] + z * axis[2];
+            return Math.Abs(x - spacing * axis[0]) <= 1e-9 && Math.Abs(y - spacing * axis[1]) <= 1e-9
+                && Math.Abs(z - spacing * axis[2]) <= 1e-9;
+        }
+    }
 
     /// <summary>
     /// Plausibility gate for the 3x3 part of a serialized GInstance placement (InstanceInfo.m_Trf),
@@ -2214,7 +2617,8 @@ internal static partial class GRepParserV2
             case 0x04:
             {
                 int value = c.U32();
-                bool captureModelCondition = c.CurrentObjectClass is 1999 or 2002;
+                bool captureModelCondition = c.CurrentObjectClass is 1999 or 2002
+                    || c.RootClass == 2007 && (c.CurrentObjectClass is 1995 or 1996) && f.Name == "m_comp";
                 if (c.CurrentQueueIndex >= 0
                     && ((c.Debug && c.CurrentObjectClass is >= 1992 and <= 2015)
                         || captureModelCondition))
@@ -2229,7 +2633,11 @@ internal static partial class GRepParserV2
             case 0x07:
             {
                 double value = c.F64();
-                if (c.Debug && c.CurrentQueueIndex >= 0 && c.CurrentObjectClass is >= 1992 and <= 2003)
+                if (c.CurrentQueueIndex >= 0 && (c.Debug && c.CurrentObjectClass is >= 1992 and <= 2003
+                    || c.RootClass == 2007 && c.CurrentObjectClass == 1995
+                        && f.Name is "m_dir" or "m_rangeLo" or "m_rangeHi"
+                    || c.CurrentObjectClass == 1996 && f.Name == "m_dir"
+                        && c.QueueInts.GetValueOrDefault(c.CurrentQueueIndex)?.GetValueOrDefault("m_comp") is 6 or 7 or 8))
                 {
                     if (!c.QueueDoubles.TryGetValue(c.CurrentQueueIndex, out var values))
                         c.QueueDoubles[c.CurrentQueueIndex] = values = new();
@@ -2314,7 +2722,9 @@ internal static partial class GRepParserV2
         int childIndex = c.Queue.Count;
         c.Queue.Add((cls, handle));
         c.QueueLinks.Add((c.CurrentQueueIndex, field));
-        if (c.CurrentQueueIndex >= 0 && (c.Debug || field == "m_oConditions"))
+        if (c.CurrentQueueIndex >= 0 && (c.Debug || field == "m_oConditions"
+            || c.RootClass == 2007 && !c.IncludeNonVisible && field == "m_subNodes"
+                && c.CurrentObjectClass == 2015 && c.QueueLinks[c.CurrentQueueIndex] == (-1, "m_subNodes")))
         {
             if (!c.QueueChildren.TryGetValue(c.CurrentQueueIndex, out var children))
                 c.QueueChildren[c.CurrentQueueIndex] = children = new();
@@ -2750,6 +3160,10 @@ internal static partial class GRepParserV2
         // and a node it does not take is marked with a negative id (the faces stay in the geometry
         // for every other consumer): see ResolveGeometryNodes.
         var geometryNodeByFace = ResolveGeometryNodes(c.Queue, c.QueueLinks, c.ObjectGInfo, c.IncludeNonVisible);
+        var excludedFromTopPlan = c.RootClass == 2007 && c.Pos == c.End
+            ? geometryNodeByFace.Values.Select(owner => owner.Node).Where(node => node != 0)
+                .Distinct().Where(node => ExcludesTopPlan(c, Math.Abs(node) - 1)).ToHashSet()
+            : [];
         foreach (uint handle in inactiveBodyFaceHandles)
         {
             if (!c.DirectSurfaceByFace.TryGetValue(handle, out var surface) || surface.Kind == SurfKind.Unknown
@@ -2830,9 +3244,11 @@ internal static partial class GRepParserV2
             face = boundedFace with
             {
                 SourceFace = handle, GeometryNode = faceNode,
+                ExcludedFromTopPlan = excludedFromTopPlan.Contains(faceNode),
                 NodeOrder = faceNode != 0 ? nodeOrders.GetValueOrDefault(Math.Abs(faceNode) - 1) : 0,
                 GeometryStyle = faceStyle,
                 GInfoFlags = c.ObjectGInfo.TryGetValue((int)handle, out var faceGInfo) ? faceGInfo.Flags : null,
+                ModelPattern = PlacedFacePattern(c, handle),
                 MeshEdgeBounds = meshEdgeBounds.GetValueOrDefault(handle),
                 // (the circular Edges of the loops the face was built from; the others are
                 // leftovers of an earlier state of the join)
@@ -3801,6 +4217,7 @@ internal static partial class GRepParserV2
                     Origin = vertices[0],
                     XVector = normal,
                     RenderStyleId = meshMaterial,
+                    PolygonMesh = true,
                 });
                 AddEdge(a, b);
                 AddEdge(b, d);

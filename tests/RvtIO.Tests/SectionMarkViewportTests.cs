@@ -98,21 +98,19 @@ public class SectionMarkViewportTests
     }
 
     [Fact]
-    public void SampleFile_LongitudinalMarkCarriesTheMeasuredTraceShift()
+    public void SampleFile_StraightMarkUsesThePlanOwnedExtent()
     {
-        // The reference export draws the Longitudinal mark 3,090 mm along +X from its decoded front cut
-        // (control: the Building mark sits exactly on its own cut). The shift matches no stored field, so
-        // it is a measured constant; this pins it against the decoded cut.
         var document = SampleFile();
-        if (document.RawData.SectionViews?.TryGetValue(247013, out var section) != true
-            || section.FrontCut is not { Count: 2 } cut)
-            throw new SkipException("Longitudinal Section has no decoded front cut.");
         var marks = ElevationPrinter.SectionMarks(document, viewportViewId: 312, viewportScaleDenominator: 100);
-        var longitudinal = Assert.Single(marks, mark => mark.Name == "Longitudinal Section");
+        var mark = Assert.Single(marks, candidate => candidate.Name == "Longitudinal Section");
+        var viewer = document.GetElement(mark.ViewId)!.SectionViewerId!.Value;
+        var extent = document.RawData.DatumExtents![312].Sections![viewer];
+        var origin = document.RawData.SectionTraceOrigins![viewer];
+        var cut = document.RawData.SectionViews![viewer].FrontCut!;
 
-        Assert.Equal(cut[0][0] * 304.8 + 3090, longitudinal.Points[0].X, 0);
-        Assert.Equal(cut[1][0] * 304.8 + 3090, longitudinal.Points[^1].X, 0);
-        // Only X moves: the trace keeps the cut's own Y.
-        Assert.Equal(cut[0][1] * 304.8, longitudinal.Points[0].Y, 0);
+        Assert.True(mark.UsesPlanExtent);
+        Assert.Equal((origin.X + extent.Start) * 304.8, mark.Points[0].X, 8);
+        Assert.Equal((origin.X + extent.End) * 304.8, mark.Points[^1].X, 8);
+        Assert.Equal(cut[0][1] * 304.8, mark.Points[0].Y, 8);
     }
 }

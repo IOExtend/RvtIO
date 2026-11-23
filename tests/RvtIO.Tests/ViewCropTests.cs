@@ -137,6 +137,55 @@ public class ViewCropTests
         Assert.Null(view.ViewCrop);
     }
 
+    [Theory]
+    [InlineData(true, 0.125, true, 312)]
+    [InlineData(false, 0.125, false, 312)]
+    [InlineData(true, -0.125, false, 105)]
+    public void SectionViewer_ReadsAnnotationOffsetsAndParentCallout(bool active, double left, bool hasCrop, int calloutView)
+    {
+        const uint sectionId = 55;
+        const ushort sectionClass = 3545, annotationOffsetsClass = 334;
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+        writer.Write(sectionId);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write(sectionClass);
+        writer.Write(new byte[9 * 4]); // Element stores and pointers, all null or empty.
+        writer.Write(sectionId);
+        writer.Write(new byte[7 * 4 + 3]); // Other Element IDs and flags.
+        writer.Write(new byte[151]); // BoundedSpace.
+        writer.Write(uint.MaxValue);
+        writer.Write(annotationOffsetsClass);
+        writer.Write(new byte[7 * 8 + 4 * 4 + 2 + 3]); // Viewer placement, IDs, method and preceding flags.
+        writer.Write(active);
+        writer.Write(0u); // ViewLayout.
+        writer.Write(0u); // Crop loops.
+        writer.Write(0.01);
+        writer.Write(new byte[6 * 8]); // Section offsets.
+        writer.Write(312); // Parent view.
+        writer.Write(new byte[3 * 4 + 4]); // Old parent, creation method, angle and flags.
+        writer.Write(new byte[2 * 4]); // Empty front cut and creation pointer.
+        writer.Write(1); // One CalloutGraphicsViewData.
+        writer.Write(calloutView);
+        writer.Write(1.25);
+        writer.Write(2.5);
+        writer.Write(3.75);
+        writer.Write(new byte[128]); // Eye offset and Leader fields through m_extraData.
+        writer.Write(true); // Straight leader.
+        foreach (double value in new[] { left, 0.25, 0.375, 0.5 }) writer.Write(value);
+        uint size = (uint)(stream.Position + 4 - 16);
+        writer.Write(size);
+        stream.Position = 8;
+        writer.Write(size);
+
+        Assert.True(TfBlockDeserializer.TryExtractSectionViewdata(stream.ToArray(), 0, size, sectionClass, out var section));
+        Assert.Equal(312, section.ParentViewId);
+        Assert.Equal(hasCrop ? (left, 0.25, 0.375, 0.5) : ((double, double, double, double)?)null, section.AnnotationCrop);
+        if (calloutView == section.ParentViewId) Assert.Equal(new[] { 1.25, 2.5, 3.75 }, section.CalloutHead);
+        else Assert.Null(section.CalloutHead);
+    }
+
     [Fact]
     public void CropContentRect_OffsetsOriginRelativeCropByViewOrigin()
     {
@@ -190,8 +239,7 @@ public class ViewCropTests
     {
         // The Typical Wall Roof Connection detail: its file crop (660 x 837 mm at roof height) is the detail's
         // true extent, while the old plane-origin window sat floors below it and showed the wrong slice.
-        // The absolute crop edges map through DrawContent's mapping exactly onto the TryCropFrame corners,
-        // and a crop-collected detail carries no datum annotation of its own.
+        // Its annotation crop extends one inch from the model crop and the grid has authored ends.
         string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
         if (path == null) throw new SkipException("Private fixture 'Test_2022.rvt' is not available.");
         var document = RvtDocument.Open(path);
@@ -210,13 +258,24 @@ public class ViewCropTests
         double centerX = viewport?.ViewportOffset is { Length: >= 2 } offset ? offset[0] * 304.8 : 0;
         double centerY = viewport?.ViewportOffset is { Length: >= 2 } off ? off[1] * 304.8 : 0;
 
-        var content = ElevationPrinter.Collect(document, "section", false, view, null, isDetail: true);
+        Assert.NotNull(view.ViewAnnotationCrop);
+        Assert.Equal((1.0 / 12, 1.0 / 12, 1.0 / 12, 1.0 / 12), view.ViewAnnotationCrop.Value);
+        var cropRect = SheetComposer.CropContentRect(crop);
+        var content = ElevationPrinter.Collect(document, "section", false, view, null, isDetail: true,
+            cropWindow: cropRect, viewportScale: scale);
         Assert.NotNull(content);
-        Assert.Empty(content!.Levels);
-        Assert.Empty(content.Grids);
+        var roof = Assert.Single(content.Levels, level => level.Label == "Roof Line");
+        Assert.True(content.NativeLevels!.ContainsKey(roof.Y));
+        var grid = Assert.Single(content.Grids, datum => datum.Name == "A");
+        Assert.True(content.NativeGrids!.ContainsKey(grid.X));
+        Assert.NotNull(view.SectionCallout);
+        Assert.Equal("Typ. Wall Section", document.GetElement(view.SectionCallout.Value.ParentId)?.Name);
+        Assert.NotEmpty(content.Insulation!);
+        Assert.Equal(2, content.DetailBreaks!.Count);
+        Assert.Contains(content.LayerHatches!, hatch => hatch.Grids is [{ Target: 0, Segments.Length: 0 }]);
         Assert.True(SheetComposer.TryCropFrame(centerX, centerY, scale, crop, content.MinX, content.MinY,
             out double frameX, out double frameY, out _, out _, out double originX, out double originY));
-        var (x0, y0, x1, y1) = SheetComposer.CropContentRect(crop);
+        var (x0, y0, x1, y1) = cropRect;
         Assert.Equal(frameX, originX + (x0 - content.MinX) / scale, 6);
         Assert.Equal(frameY, originY + (y0 - content.MinY) / scale, 6);
         Assert.Equal(frameX + (x1 - x0) / scale, originX + (x1 - content.MinX) / scale, 6);
@@ -242,13 +301,14 @@ public class ViewCropTests
             cropWindow: (x0, y0, x1, y1));
 
         Assert.NotNull(content);
-        // The collected bounds stay within the crop up to a small slop from clipping arithmetic; what
-        // matters is that the slice is dense, not starved the way the whole-model pass left it (18 edges
-        // touched the crop there).
-        Assert.True(content!.MinX >= x0 - 25 && content.MaxX <= x1 + 25,
-            $"Content X[{content.MinX:F0},{content.MaxX:F0}] escapes crop X[{x0:F0},{x1:F0}].");
-        Assert.True(content.MinY >= y0 - 25 && content.MaxY <= y1 + 25,
-            $"Content Y[{content.MinY:F0},{content.MaxY:F0}] escapes crop Y[{y0:F0},{y1:F0}].");
+        // Datum heads have their own annotation extents. Check the collected construction edges.
+        Assert.All(content.Edges, edge =>
+        {
+            Assert.InRange(edge.X1, x0 - 25, x1 + 25);
+            Assert.InRange(edge.X2, x0 - 25, x1 + 25);
+            Assert.InRange(edge.Y1, y0 - 25, y1 + 25);
+            Assert.InRange(edge.Y2, y0 - 25, y1 + 25);
+        });
         Assert.True(content.Edges.Count > 18, $"Crop slice starved: {content.Edges.Count} edges.");
     }
 
@@ -335,6 +395,21 @@ public class ViewCropTests
             out _, out _, out _, out _, out _, out _);
 
         Assert.False(ok);
+    }
+
+    [Theory]
+    [InlineData(-280, 85.76, true)]
+    [InlineData(-400, -34.24, true)]
+    [InlineData(-430, -64.24, false)]
+    public void CroppedDetailUsesTheMappedFrameToDetermineSheetOverlap(
+        double viewportY, double frameY, bool overlaps)
+    {
+        var crop = new ViewCropFrame(0, 0, 0, [0, -1, 0], [0, 0, 1], [1, 0, 0],
+            -12, 12, 12, 14, true);
+        Assert.True(SheetComposer.TryCropFrame(420, viewportY, 10, crop, 0, 0,
+            out double x, out double y, out double width, out double height, out _, out _));
+        Assert.Equal(frameY, y, 4);
+        Assert.Equal(overlaps, SheetComposer.CropOverlapsSheet(x, y, width, height, 841, 594));
     }
 
     [Fact]

@@ -49,6 +49,18 @@ public class PrintCommandTests
         Assert.Contains("output PDF path", error.ToString());
     }
 
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-20")]
+    [InlineData("NaN")]
+    public void ViewportImageWithInvalidWidth_IsUsageError(string width)
+    {
+        var error = new StringWriter();
+        Assert.Equal(RvtExitCodes.Usage, Run(error, "model.rvt", "out.pdf", "--all-sheets",
+            "--viewport-image", "199", "20", "30", width, "50", "render.jpg"));
+        Assert.Contains("--viewport-image requires", error.ToString());
+    }
+
     [Fact]
     public void WhereWithoutValue_IsUsageError()
     {

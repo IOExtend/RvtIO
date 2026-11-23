@@ -57,6 +57,25 @@ public class PdfTrueTypeFontTests
         Assert.Contains("BT /F2 28.3465 Tf", pdf);
     }
 
+    [SkippableFact]
+    public void Document_EmbedsBoldTextWithItsOwnCharacterMap()
+    {
+        var bold = PdfFonts.TryFindBold() ?? throw new SkipException("No bold TrueType font was found on this machine.");
+        var document = new PdfDocument { Font = Font(), BoldFont = bold };
+        var page = document.AddPage(PdfPageSize.A4);
+        page.DrawText("A", 10, 10);
+        page.DrawStyledText("?", 30, 30, 5, PdfTextAlignment.Center, 0, true, new PdfColor(.9, .9, .9));
+
+        using var stream = new MemoryStream();
+        document.Save(stream);
+        string pdf = Encoding.ASCII.GetString(stream.ToArray());
+
+        Assert.Contains("BT /F2", pdf);
+        Assert.Contains("0.9 0.9 0.9 rg", pdf);
+        Assert.Contains("BT /F3", pdf);
+        Assert.Contains($"<{bold.GlyphOf('?'):X4}> <003F>", pdf);
+    }
+
     [Fact]
     public void Document_WithoutAFont_StillUsesHelvetica()
     {

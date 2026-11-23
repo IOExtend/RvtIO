@@ -38,6 +38,8 @@ namespace RvtIO.Model
         /// <summary>List of edges with 3D coordinates.</summary>
         public List<GeoEdge>? Edges { get; set; }
 
+        internal List<RvtIO.Internal.ViewFacingLine>? ViewFacingLines { get; set; }
+
         /// <summary>Unique vertices [x, y, z] in feet, deduplicated across all faces.</summary>
         public List<double[]>? Vertices { get; set; }
 
@@ -116,9 +118,13 @@ namespace RvtIO.Model
     /// <summary>A planar face defined by origin + two direction vectors.</summary>
     public class GeoFace
     {
+        // A saved direction filter excludes this face along the vertical axis of its current frame.
+        internal bool ExcludedFromTopPlan { get; set; }
+
         /// <summary>GFace.m_renderStyleId: the material element id of the face (internal; not serialized).</summary>
         [System.Text.Json.Serialization.JsonIgnore]
         internal int? RenderStyleId { get; set; }
+        internal RvtIO.Internal.ModelFacePattern? ModelPattern { get; set; }
 
         /// <summary>Plane origin [x, y, z] in feet.</summary>
         public double[] Origin { get; set; } = new double[3];
@@ -171,6 +177,9 @@ namespace RvtIO.Model
 
         /// <summary>True for a tessellated patch of a non-planar surface.</summary>
         internal bool CurvedSurface { get; set; }
+
+        /// <summary>Triangle supplied directly by a serialized polygon mesh.</summary>
+        internal bool PolygonMesh { get; set; }
 
         /// <summary>The face lies on a plane surface of the file (GRepFace.PlaneSurface); kept through placing and copying of
         /// the geometry.</summary>

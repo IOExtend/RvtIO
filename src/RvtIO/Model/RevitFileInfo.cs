@@ -71,12 +71,20 @@ namespace RvtIO.Model
         /// <summary>FamilySymbol id -> the fixed texts of a title block family symbol in symbol feet, for the
         /// symbols whose block decoded exactly once.</summary>
         [System.Text.Json.Serialization.JsonIgnore]
-        internal IReadOnlyDictionary<int, IReadOnlyList<(double Ox, double Oy, double Height, double Width, int Flags, double Bx, double By, byte[] Rtf)>>? TitleBlockTexts { get; set; }
+        internal IReadOnlyDictionary<int, IReadOnlyList<Parsing.TfBlockDeserializer.TitleBlockText>>? TitleBlockTexts { get; set; }
 
-        /// <summary>FamilySymbol id -> the labels of a title block family symbol in symbol feet, for the symbols
+        /// <summary>FamilySymbol id -> annotation labels in symbol feet, for the symbols
         /// whose block decoded exactly once.</summary>
         [System.Text.Json.Serialization.JsonIgnore]
-        internal IReadOnlyDictionary<int, IReadOnlyList<(double Ox, double Oy, double Height, double Width, int Flags, double Bx, double By, int ParamId, string Prefix, string Suffix)>>? TitleBlockLabels { get; set; }
+        internal IReadOnlyDictionary<int, IReadOnlyList<Parsing.TfBlockDeserializer.TitleBlockLabel>>? TitleBlockLabels { get; set; }
+        internal IReadOnlyDictionary<int, double>? TitleBlockCapHeightsFeet { get; set; }
+        internal IReadOnlySet<int>? OpaqueSymbolLabelStyles { get; set; }
+        internal IReadOnlySet<int>? RegularArialSymbolLabelStyles { get; set; }
+        internal IReadOnlyList<PlanElevationMark>? PlanElevationMarks { get; set; }
+        internal IReadOnlyDictionary<int, (int Head, int Tail)>? SectionMarkerSymbols { get; set; }
+
+        internal sealed record PlanElevationMark(int Id, double X, double Y, int BodyId, double ArrowHalfAngle, bool Filled,
+            int ArrowId, int ViewId, int ArrowSymbolId, double CoarserScale);
 
         /// <summary>ScheduleInstance element id -> the DBViewSchedule it shows and its top-left origin in sheet
         /// feet, for the instances whose block decoded exactly once.</summary>
@@ -86,7 +94,10 @@ namespace RvtIO.Model
         /// <summary>DBViewSchedule id -> its table definition (visible columns, category, show flags, grid and
         /// outline line styles, title-area rows and body sections), for the views whose block decoded exactly once.</summary>
         [System.Text.Json.Serialization.JsonIgnore]
-        internal IReadOnlyDictionary<int, (List<(string Heading, double WidthFt)> Columns, int CategoryId, bool ShowTitle, bool ShowHeaders, bool ShowGridLines, bool ShowOutline, int GridStyleId, int OutlineStyleId, double TitleHeightFt, List<(double HeightFt, string Text)> TitleBands, List<Parsing.TfBlockDeserializer.ScheduleBodySection> BodySections, double FixedHeightFt)>? ScheduleTables { get; set; }
+        internal IReadOnlyDictionary<int, Parsing.TfBlockDeserializer.ScheduleTableDef>? ScheduleTables { get; set; }
+        internal IReadOnlyDictionary<int, List<List<ScheduleCellValue>>>? EvaluatedScheduleRows { get; set; }
+
+        internal readonly record struct ScheduleCellValue(string Text, bool? Boolean = null);
 
         /// <summary>Sheet element id -> the revision ids explicitly present on it, for the sheets whose block
         /// decoded exactly once.</summary>
@@ -98,10 +109,26 @@ namespace RvtIO.Model
         [System.Text.Json.Serialization.JsonIgnore]
         internal IReadOnlyDictionary<int, (int ParentViewId, double CoarserScale, IReadOnlyList<double[]>? FrontCut)>? SectionViews { get; set; }
 
+        /// <summary>Project site graphics from TrueNorth: the base elevation in feet and cut material element id.</summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        internal (double BaseFeet, int MaterialId)? SiteCutGraphics { get; set; }
+        internal (int Method, int Units)? PropertyBearingFormat { get; set; }
+        internal IReadOnlyDictionary<int, List<Parsing.TfBlockDeserializer.SiteContour>>? SiteContours { get; set; }
+        internal sealed record SiteContourLabel(int ElementId, int SurfaceId, double[] Position, double[] Direction,
+            double TextHeightFeet);
+        internal IReadOnlyDictionary<int, List<SiteContourLabel>>? SiteContourLabels { get; set; }
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        internal IReadOnlyDictionary<int, Parsing.TfBlockDeserializer.ViewDatumExtents>? DatumExtents { get; set; }
+        internal IReadOnlyDictionary<int, (double X, double Y)>? SectionTraceOrigins { get; set; }
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        internal IReadOnlyDictionary<int, Parsing.TfBlockDeserializer.DatumHead>? DatumHeads { get; set; }
+
         /// <summary>Material element id -> its cut and surface fill pattern element ids (-1 when the material
         /// has no pattern of that kind), for the materials whose block decoded exactly once.</summary>
         [System.Text.Json.Serialization.JsonIgnore]
-        internal IReadOnlyDictionary<int, (int CutPatternId, int SurfacePatternId)>? MaterialPatterns { get; set; }
+        internal IReadOnlyDictionary<int, (int CutPatternId, int SurfacePatternId, int? SurfacePatternColor)>? MaterialPatterns { get; set; }
 
         /// <summary>Fill pattern element id -> its name and line families (angle, origin, shift/offset, dash list
         /// in the pattern's own feet), for the patterns whose block decoded exactly once.</summary>
@@ -119,6 +146,75 @@ namespace RvtIO.Model
         /// exactly once.</summary>
         [System.Text.Json.Serialization.JsonIgnore]
         internal IReadOnlyDictionary<int, int>? GridCenterCategories { get; set; }
+        internal IReadOnlyDictionary<int, IReadOnlyDictionary<string, uint>>? ViewRoomColors { get; set; }
+        internal IReadOnlyDictionary<int, List<PlanDimension>>? PlanDimensions { get; set; }
+
+        internal sealed record PlanDimension(int StyleId, double[] Origin, double[] Direction,
+            IReadOnlyList<double[]> References, IReadOnlyList<double> Values);
+        internal IReadOnlyDictionary<int, PlanDimensionStyle>? PlanDimensionStyles { get; set; }
+
+        internal sealed record PlanDimensionStyle(double TextHeightFeet, int LineCategory, int TickCategory,
+            double LineExtensionFeet, double WitnessExtensionFeet, double WitnessGapFeet, double TextGapFeet,
+            double TickSizeFeet);
+
+        internal IReadOnlyDictionary<int, List<CircularAnnotation>>? CircularAnnotations { get; set; }
+        internal sealed record CircularAnnotation(double[] Transform, CircularAnnotationStyle Style);
+        internal sealed record CircularAnnotationStyle(
+            Parsing.TfBlockDeserializer.FamilyAnnotationArc Outline, int FillColor, int BorderColor, int BorderPen,
+            Parsing.TfBlockDeserializer.TitleBlockText Text, string Value, double FontPoints, int TextColor, bool Bold);
+
+        internal IReadOnlyDictionary<int, ViewportTitle>? ViewportTitles { get; set; }
+        internal IReadOnlyDictionary<int, ViewportTitleStyle>? ViewportTitleStyles { get; set; }
+        internal sealed record ViewportTitle(int SymbolId, bool ShowLabel, bool ShowExtensionLine, string? CustomScale);
+        internal sealed record ViewportTitleStyle(
+            IReadOnlyList<(Parsing.TfBlockDeserializer.TitleBlockLabel Label, double FontPoints, bool Wrap)> Labels,
+            IReadOnlyList<Parsing.TfBlockDeserializer.TitleBlockLine> Lines,
+            IReadOnlyList<Parsing.TfBlockDeserializer.FamilyAnnotationArc> Arcs);
+
+        internal IReadOnlyDictionary<int, List<PlanOpeningTag>>? PlanOpeningTags { get; set; }
+        internal IReadOnlyDictionary<int, PlanOpeningTagStyle>? PlanOpeningTagStyles { get; set; }
+        internal sealed record PlanOpeningTag(int ElementId, int SymbolId, double X, double Y);
+        internal IReadOnlyDictionary<int, List<SitePlantingTag>>? SitePlantingTags { get; set; }
+        internal IReadOnlyDictionary<int, List<PlanOpeningTag>>? SitePropertyTags { get; set; }
+        internal IReadOnlyDictionary<int, IReadOnlyList<(Parsing.TfBlockDeserializer.TitleBlockLabel Label, double FontPoints)>>?
+            SitePropertyTagStyles { get; set; }
+        internal IReadOnlyDictionary<int, List<PlanOutlineAnnotation>>? PlanOutlineAnnotations { get; set; }
+        internal sealed record PlanOutlineAnnotation(double[] Transform,
+            IReadOnlyList<Parsing.TfBlockDeserializer.TitleBlockLine> Lines,
+            IReadOnlyList<Parsing.TfBlockDeserializer.FamilyAnnotationArc> Arcs);
+        internal sealed record SitePlantingTag(int ElementId, int SymbolId, double X, double Y,
+            (double X, double Y) Elbow, (double X, double Y) End);
+        internal sealed record PlanOpeningTagStyle(
+            Parsing.TfBlockDeserializer.TitleBlockLabel Label, double FontPoints,
+            IReadOnlyList<Parsing.TfBlockDeserializer.TitleBlockLine> Lines,
+            IReadOnlyList<Parsing.TfBlockDeserializer.FamilyAnnotationArc> Arcs);
+
+        internal IReadOnlyDictionary<int, List<PlanRoomTag>>? PlanRoomTags { get; set; }
+        internal IReadOnlyDictionary<int, PlanRoomTagStyle>? PlanRoomTagStyles { get; set; }
+        internal sealed record PlanRoomTag(int RoomId, int SymbolId, double X, double Y,
+            (double X, double Y)? LeaderAnchor, (double X, double Y)? LeaderEnd);
+        internal sealed record PlanRoomTagStyle(
+            IReadOnlyList<(Parsing.TfBlockDeserializer.TitleBlockLabel Label, double FontPoints)> Labels,
+            IReadOnlyList<Parsing.TfBlockDeserializer.TitleBlockLine> Lines);
+
+        internal IReadOnlyDictionary<int, List<PlanNote>>? PlanNotes { get; set; }
+        internal IReadOnlyDictionary<int, List<PlanStairPath>>? PlanStairPaths { get; set; }
+        internal sealed record PlanStairPath(int Id, int HostId, double ArrowSize, double ArrowAngle,
+            string? DownText, double CapHeight, double TextX, double TextY);
+        internal IReadOnlyDictionary<int, HashSet<int>>? ViewHiddenElements { get; set; }
+        internal IReadOnlyDictionary<int, HashSet<int>>? ViewHiddenCategories { get; set; }
+        internal IReadOnlySet<int>? OpaquePlanViews { get; set; }
+        internal IReadOnlyDictionary<int, (int Sky, int Horizon, int? Ground)>? ViewSkyGradients { get; set; }
+        internal IReadOnlyDictionary<int, (double Azimuth, double Altitude, int GroundLevel, int Intensity)>? ViewGroundShadows { get; set; }
+        internal IReadOnlyDictionary<int, uint>? ViewStillSunDates { get; set; }
+        internal IReadOnlyDictionary<int, double>? ViewAmbientLight { get; set; }
+        internal IReadOnlyDictionary<int, double>? ViewAmbientFractions { get; set; }
+        internal IReadOnlySet<int>? UnshadedHiddenLineViews { get; set; }
+        internal IReadOnlySet<int>? OpaqueViewsWithSurfacePatterns { get; set; }
+        internal sealed record PlanNote(string Text, double FontPoints, double X, double Y,
+            double WidthFeet, double HeightFeet, bool Wrap, bool HasBorder, bool Opaque, double PaddingFeet,
+            int CategoryId, bool ArcLeaders, IReadOnlyList<Parsing.TfBlockDeserializer.PlanNoteLeader> Leaders,
+            double ArrowSizeFeet, double ArrowAngle, int ElementId);
         /// <summary>CategoryElem id -> its name, for the category elements whose block decoded exactly once.</summary>
         [System.Text.Json.Serialization.JsonIgnore]
         internal IReadOnlyDictionary<int, string>? CategoryNames { get; set; }
@@ -191,6 +287,8 @@ namespace RvtIO.Model
 
         /// <summary>See <see cref="SiteLatitudeRadians"/>.</summary>
         public double? SiteLongitudeRadians { get; set; }
+
+        internal double? SiteTimeZoneHours { get; set; }
 
         /// <summary>Elevation (feet) of the project base point in shared coordinates; 0 when unknown.</summary>
         public double SiteElevationFeet { get; set; }

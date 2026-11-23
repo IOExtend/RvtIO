@@ -29,19 +29,32 @@ internal static class LinePatterns
                 break;
             }
         }
-        if (centerCategory == null) return false;
+        return centerCategory is int categoryId && TryGetDashes(document, categoryId, out dashes);
+    }
+
+    internal static bool TryGetDashes(RvtDocument document, int categoryId, out double[] dashes)
+    {
+        dashes = [];
+        var info = document.RawData;
+        if (info.GraphicsStylePens == null || info.LinePatterns == null) return false;
         int patternId = 0;
         bool found = false;
         foreach (var style in info.GraphicsStylePens.Values)
         {
-            if (style.CategoryId == centerCategory && style.OwnerId == -1 && style.GStyleType == 1)
+            if (style.CategoryId == categoryId && style.OwnerId == -1 && style.GStyleType == 1)
             {
                 patternId = style.LinePatternId;
                 found = true;
                 break;
             }
         }
-        if (!found || patternId <= 0 || !info.LinePatterns.TryGetValue(patternId, out var pattern))
+        return found && TryGetPatternDashes(document, patternId, out dashes);
+    }
+
+    internal static bool TryGetPatternDashes(RvtDocument document, int patternId, out double[] dashes)
+    {
+        dashes = [];
+        if (patternId <= 0 || document.RawData.LinePatterns?.TryGetValue(patternId, out var pattern) != true)
             return false;
         var points = new List<double>();
         var ink = new List<bool>();
@@ -58,5 +71,24 @@ internal static class LinePatterns
         }
         dashes = [.. points.Select(v => Math.Round(v, 3))];
         return true;
+    }
+
+    internal static double[] FitEndpointDashes(double lengthPoints, double[] dashes)
+    {
+        if (dashes.Length < 2 || dashes.Length % 2 != 0 || !double.IsFinite(lengthPoints)
+            || dashes.Any(value => !(value > 0 && double.IsFinite(value)))) return dashes;
+        double period = dashes.Sum();
+        double repeats = Math.Floor(lengthPoints / period);
+        if (repeats < 1) return [];
+        if (repeats * dashes.Length + 2 > 4096) return dashes;
+
+        // Keep the interior sequence and split the remaining length equally between the terminal dashes.
+        double terminal = (lengthPoints - repeats * period + dashes[0]) / 2;
+        var fitted = new double[(int)repeats * dashes.Length + 2];
+        for (int i = 0; i < fitted.Length - 2; i += dashes.Length)
+            Array.Copy(dashes, 0, fitted, i, dashes.Length);
+        fitted[0] = fitted[^2] = terminal;
+        fitted[^1] = dashes[1];
+        return fitted;
     }
 }

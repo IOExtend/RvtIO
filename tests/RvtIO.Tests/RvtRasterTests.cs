@@ -69,4 +69,15 @@ public class RvtRasterTests
     {
         Assert.Null(RvtRaster.DecodePng([1, 2, 3, 4, 5, 6, 7, 8]));
     }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    public void DecodePng_RejectsScanlinesThatDisagreeWithTheHeader(int declaredWidth)
+    {
+        byte[] png = MinimalPng(2, 1, [255, 0, 0, 0, 0, 255]);
+        BinaryPrimitives.WriteInt32BigEndian(png.AsSpan(16), declaredWidth);
+
+        Assert.Null(RvtRaster.DecodePng(png));
+    }
 }

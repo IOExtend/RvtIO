@@ -238,6 +238,76 @@ public class PdfWriterTests
     }
 
     [Fact]
+    public void ParallelLineFill_ReusesItsTileAndKeepsPageOutlines()
+    {
+        var pdf = new PdfDocument();
+        var page = pdf.AddPage(PdfPageSize.A4);
+        page.OutlineTitle = "Stair detail";
+        var polygon = new List<(double X, double Y)> { (0, 0), (50, 0), (50, 50), (0, 50) };
+        var hole = new List<(double X, double Y)> { (10, 10), (10, 20), (20, 20), (20, 10) };
+        page.FillWithParallelLines(polygon, 3, Math.PI / 2, 15, 0, 0.1);
+        page.FillWithParallelLines([polygon, hole], 3, Math.PI / 2, 15, 0, 0.1);
+        page.DrawText("A105", 30, 30);
+
+        string bytes = Write(pdf);
+
+        Assert.Single(pdf.LinePatterns);
+        Assert.Contains("/Pattern << /P0 6 0 R >>", bytes);
+        Assert.Contains("/XStep 8.5039 /YStep 2874.3307", bytes);
+        Assert.Contains("0 g 4.1102 -1437.1654 0.2835 2874.3307 re f", bytes);
+        Assert.Contains("q /Pattern cs /P0 scn", page.Content);
+        Assert.Contains("h 28.3465 28.3465 m 28.3465 56.6929 l 56.6929 56.6929 l 56.6929 28.3465 l h f Q", page.Content);
+        Assert.Contains("h f Q\n0 g\nBT /F1", page.Content);
+        Assert.Contains("/Outlines 7 0 R", bytes);
+        Assert.Contains("/Dest [4 0 R /Fit]", bytes);
+    }
+
+    [Fact]
+    public void ClippedParallelLines_FillsOnlyTheSavedStripsThroughTheFaceClip()
+    {
+        var document = new PdfDocument();
+        var page = document.AddPage(PdfPageSize.A4);
+        List<(double X, double Y)> face = [(0, 0), (12, 0), (12, 10), (0, 10)];
+        List<(double X, double Y)> hole = [(4, 2), (4, 8), (6, 8), (6, 2)];
+
+        page.FillWithClippedParallelLines([face, hole], 3, Math.PI / 2, -1, 0, 0.2);
+
+        Assert.Empty(document.LinePatterns);
+        string content = page.Content.Replace(" -0 ", " 0 ");
+        Assert.Contains("h W n\n0 g\n5.3858 0 m 5.9528 0 l 5.9528 28.3465 l 5.3858 28.3465 l h ", content);
+        Assert.Contains("30.8976 0 m 31.4646 0 l 31.4646 28.3465 l 30.8976 28.3465 l h f\nQ\n", content);
+        Assert.Contains("h 11.3386 5.6693 m 11.3386 22.6772 l 17.0079 22.6772 l 17.0079 5.6693 l h W n", page.Content);
+    }
+
+    [Fact]
+    public void ClippedParallelLines_UsesATileForDensePatterns()
+    {
+        var document = new PdfDocument();
+        var page = document.AddPage(PdfPageSize.A4);
+        List<(double X, double Y)> face = [(0, 0), (80, 0), (80, 10), (0, 10)];
+
+        page.FillWithClippedParallelLines([face], 0.01, Math.PI / 2, 0, 0, 0.002);
+
+        Assert.Single(document.LinePatterns);
+        Assert.Contains("q /Pattern cs /P0 scn", page.Content);
+    }
+
+    [Fact]
+    public void DashedLineFill_UsesTheSavedPeriodAndSignedRowShift()
+    {
+        var pdf = new PdfDocument();
+        var page = pdf.AddPage(PdfPageSize.A4);
+        List<(double X, double Y)> polygon = [(0, 0), (50, 0), (50, 50), (0, 50)];
+        page.FillWithLinePattern([polygon], new PdfLinePattern(3, 0, 0, 0, 0.2, -1, [2, 3]));
+
+        string bytes = Write(pdf);
+
+        Assert.Contains("/XStep 14.173228346 /YStep 8.503937008 /Matrix [1 0 -0.333333333 1 0 0]", bytes);
+        Assert.Contains("/Pattern << /P0 6 0 R >>", bytes);
+        Assert.Contains("q /Pattern cs /P0 scn", page.Content);
+    }
+
+    [Fact]
     public void Save_WritesACrossReferenceThatPointsAtEveryObject()
     {
         var document = new PdfDocument();

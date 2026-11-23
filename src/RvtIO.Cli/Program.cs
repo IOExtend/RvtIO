@@ -66,6 +66,7 @@ internal static partial class Program
                                             write the sheet catalog (sheets, viewports, parameters, limits not decoded) as JSON
           print <file.rvt> <out.pdf> [--level <id|name>] [--view <id|name>] [--sheet <id|number>] [--where FILTER] [--scale <n>]
                                             [--all-views] [--all-sheets] [--paper A4|A3|A2|A1|A0]
+                                            [--viewport-image ID X Y WIDTH HEIGHT JPEG]
                                             [--list-levels] [--list-views] [--list-sheets]
                                             render the plan of one level, one or more views (plans and elevations) or all of
                                             them, or one or more sheets, to PDF
