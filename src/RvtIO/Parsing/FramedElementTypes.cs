@@ -38,12 +38,27 @@ internal sealed class FramedElementTypes
     private const string RebarType = "RebarInstBase.m_barTypeId";
     private const string SoffitType = "Ceiling.m_ceilingAttributesId";
     private const string RampType = "Ramp.m_rampAttrId";
+    private const string GroupType = "GroupMembership.m_groupId";
 
     private static readonly Dictionary<string, (string Field, string Target)> UnanchoredTypes = new()
     {
         ["LinearDimString"] = ("Dimension.m_styleSymbolId", "DimensionStyle"),
         ["TextNote"] = ("TextElement.m_attrId", "TextNoteAttributes"),
         ["SWall"] = ("VWall.m_WallAttributesId", "BasicWallType"),
+    };
+
+    private static readonly Dictionary<string, (string Field, string Target)> RoutedTypes = new()
+    {
+        ["SWall"] = UnanchoredTypes["SWall"],
+        ["FamilyInstance"] = (MasterSymbol, "FamilySymbol"),
+        ["RoomTag"] = ("RoomTag.m_symbolId", "FamilySymbol"),
+        ["ProfileRoof"] = ("RoofBase.m_roofAttributesId", "RoofAttributes"),
+        ["LinearDimString"] = UnanchoredTypes["LinearDimString"],
+        ["Floor"] = ("Floor.m_floorAttributesId", "FloorAttributes"),
+        ["DBViewPlan"] = (ViewType, "DBViewType"),
+        ["DBViewSection"] = (ViewType, "DBViewType"),
+        ["BaseRailing"] = ("BaseRailing.m_stairsRailingAttrId", "StairsRailingAttr"),
+        ["ElementGroup"] = (GroupType, "ElementGroupType"),
     };
 
     private static readonly HashSet<string> CapturedFields =
@@ -79,12 +94,15 @@ internal sealed class FramedElementTypes
 
     private readonly WideBlockWalker _walker;
     private readonly HashSet<int> _classes;
+    private readonly bool _readGroupMembership;
     private readonly Dictionary<long, List<Source>> _sources = new();
     private readonly Dictionary<long, Root?> _roots = new();
 
-    private FramedElementTypes(SchemaDocument schema, IReadOnlyDictionary<Guid, SchemaField[]?> entities, bool recoverUnanchoredTypes)
+    private FramedElementTypes(SchemaDocument schema, IReadOnlyDictionary<Guid, SchemaField[]?> entities,
+        bool recoverUnanchoredTypes, bool recoverRoutedTypes)
     {
         var extraFields = recoverUnanchoredTypes ? UnanchoredTypes.Values.Select(link => link.Field).ToHashSet() : null;
+        if (recoverRoutedTypes) extraFields!.UnionWith(RoutedTypes.Values.Select(link => link.Field));
         _walker = new WideBlockWalker(schema, (declaring, field) =>
         {
             string key = declaring.Name + "." + field.Name;
@@ -93,8 +111,16 @@ internal sealed class FramedElementTypes
         }, [], captureRootPointers: true);
         _walker.UseEntitySchemas(entities, passUnknown: true);
         var extraTargets = recoverUnanchoredTypes ? UnanchoredTypes.Values.Select(link => link.Target).ToHashSet() : null;
+        if (recoverRoutedTypes)
+        {
+            extraTargets!.UnionWith(RoutedTypes.Values.Select(link => link.Target));
+            extraTargets.Add("NewCurtainWallType");
+            _readGroupMembership = SchemaRelease.FromEvidence(
+                schema.Classes.Find(cls => cls.Name == "ContentMarker")?.Id, schema.Classes.Count) == 2022;
+        }
         _classes = schema.Classes.Where(cls => Classes.Contains(cls.Name) || _walker.IsA(cls.Id, "FamilySymbol")
-                || recoverUnanchoredTypes && (UnanchoredTypes.ContainsKey(cls.Name) || extraTargets!.Contains(cls.Name)))
+                || recoverUnanchoredTypes && (UnanchoredTypes.ContainsKey(cls.Name) || extraTargets!.Contains(cls.Name))
+                || recoverRoutedTypes && RoutedTypes.ContainsKey(cls.Name))
             .Select(cls => cls.Id).ToHashSet();
     }
 
@@ -121,7 +147,8 @@ internal sealed class FramedElementTypes
         IReadOnlyDictionary<ulong, int>? unroutedTypePartitions = null, bool recoverUnanchoredTypes = false)
     {
         if (frames.Count == 0 || frames.Any(frame => frame == null)) return 0;
-        var reader = new FramedElementTypes(schema, entities, recoverUnanchoredTypes);
+        var routes = recoverUnanchoredTypes ? state.IncrementRoutedPartitions : null;
+        var reader = new FramedElementTypes(schema, entities, recoverUnanchoredTypes, routes is { Count: > 0 });
         var ids = state.ElementIds;
         long SourceId(int key) => ids?.SourceId(key) ?? key;
         bool LocalId(long sourceId, out int key)
@@ -141,11 +168,14 @@ internal sealed class FramedElementTypes
                     || !LocalId((long)item.Owner, out int key) || !state.ElemTable.ContainsKey((uint)key)) continue;
                 var (header, start, _) = frame.Bytes(item with { Length = headerSize + 2 });
                 int tag = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(start + headerSize, 2));
-                if (!reader._classes.Contains(tag) || reader._walker.Class(tag) is not { } kind
+                if (!reader._classes.Contains(tag) || reader._walker.Class(tag) is not { } kind) continue;
+                bool routed = routes?.ContainsKey((uint)key) == true && RoutedTypes.ContainsKey(kind.Name);
+                if (!routed && (!Classes.Contains(kind.Name) && !UnanchoredTypes.ContainsKey(kind.Name)
+                        && RoutedTypes.ContainsKey(kind.Name)
                     || UnanchoredTypes.ContainsKey(kind.Name) && state.NativeParamsFromRootClass.Contains((uint)key)
                     || kind.Name == "FamilyInstance" && (!details.Contains((long)item.Owner)
                         && unroutedTypePartitions?.ContainsKey(item.Owner) != true
-                        || state.IncrementRoutedPartitions?.ContainsKey((uint)key) == true)) continue;
+                        || state.IncrementRoutedPartitions?.ContainsKey((uint)key) == true))) continue;
                 if (!reader._sources.TryGetValue((long)item.Owner, out var copies))
                     reader._sources.Add((long)item.Owner, copies = []);
                 copies.Add(new(frame, item, kind));
@@ -184,14 +214,19 @@ internal sealed class FramedElementTypes
                 "RoofSoffit" => reader.DirectType(owner, "RoofSoffit", SoffitType, "RoofSoffitType"),
                 "Ramp" => reader.DirectType(owner, "Ramp", RampType, "RampAttributes"),
                 "FamilyInstance" when copies.Count == 1 && details.Contains(owner)
+                    && state.IncrementRoutedPartitions?.ContainsKey((uint)element.Id) != true
                     => reader.DirectType(owner, "FamilyInstance", MasterSymbol, "FamilySymbol"),
                 "FamilyInstance" when unroutedTypePartitions?.TryGetValue((ulong)owner, out int partition) == true
                     => reader.UnroutedFamilyType(owner, copies, partition),
                 // A single exact record can supply the type even when the stream walk never anchored on it.
                 var kind when copies.Count == 1 && UnanchoredTypes.TryGetValue(kind, out var link)
+                    && !state.NativeParamsFromRootClass.Contains((uint)element.Id)
                     => reader.DirectType(owner, kind, link.Field, link.Target),
                 _ => null,
             };
+            if (type == null && copies.Count > 1 && element.TypeId > 0
+                && routes?.TryGetValue((uint)element.Id, out int current) == true)
+                type = reader.RoutedType(owner, copies, current, SourceId(element.TypeId));
             if (type is not long sourceType || sourceType == owner || !LocalId(sourceType, out int typeKey)
                 || element.TypeId == typeKey) continue;
             element.TypeId = typeKey;
@@ -232,6 +267,12 @@ internal sealed class FramedElementTypes
                     && (capture.Key == RebarType ? rebarInstance >= 0 && capture.QueueIndex == rebarInstance : capture.AtRoot)
                     && !values.TryAdd(capture.Key, capture.Integer)) return null;
             if (!values.TryGetValue(OwnerField, out long decodedOwner) || decodedOwner != owner) return null;
+            if (_readGroupMembership && kind.Name == "ElementGroup" && cls.Id == 1322 && frame.IdWidth == 4
+                && TfBlockDeserializer.ExtractParams(data, start, (uint)size, (ushort)cls.Id) is { } parameters
+                && NativeTypePointers.Of((ushort)cls.Id, parameters) is int groupType
+                && walk.Captures.Any(capture => capture.Key == GroupType && !capture.AtRoot
+                    && capture.Kind == WideBlockWalker.CaptureKind.Integer && capture.Integer == groupType)
+                && !values.TryAdd(GroupType, groupType)) return null;
             fields.Add(values);
         }
         return new(kind, fields);
@@ -301,6 +342,25 @@ internal sealed class FramedElementTypes
         // The increment named by ElemTable lost its record. Use the last holder just for the symbol link.
         long symbol = root.Copies[latest][MasterSymbol];
         return GetRoot(symbol) is { } target && _walker.IsA(target.Class.Id, "FamilySymbol") ? symbol : null;
+    }
+
+    private long? RoutedType(long owner, List<Source> copies, int current, long oldType)
+    {
+        string kind = copies[0].Class.Name;
+        if (!RoutedTypes.TryGetValue(kind, out var link) || GetRoot(owner) is not { } root) return null;
+        var partitions = new HashSet<int>();
+        bool retainedTypeMatches = false;
+        long type = 0;
+        for (int i = 0; i < copies.Count; i++)
+        {
+            if (copies[i].Frame.Partition is not int partition || !partitions.Add(partition)
+                || !root.Copies[i].TryGetValue(link.Field, out long storedType) || storedType <= 0) return null;
+            if (partition == current) type = storedType;
+            else if (storedType == oldType) retainedTypeMatches = true;
+        }
+        if (!retainedTypeMatches || type == oldType || type == owner || GetRoot(type) is not { } target) return null;
+        return _walker.IsA(target.Class.Id, link.Target)
+            || kind == "SWall" && _walker.IsA(target.Class.Id, "NewCurtainWallType") ? type : null;
     }
 
     private long? DirectType(long id, string kind, string field, string target)
