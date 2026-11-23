@@ -138,6 +138,21 @@ public class RvtRasterTests
     }
 
     [Fact]
+    public void DecodePng_PaethFilterBreaksATieBetweenTwoDifferentNeighboursInTheOrderLeftAboveUpperLeft()
+    {
+        // Left 30, above 0, upper left 10: the estimate is 20, the left and the upper left neighbours are both 10 away
+        // and the one above is 20 away, so the left one wins. The first pixel of the second row is its above neighbour
+        // (Paeth with the left and upper left at 0), which the stored sample raises to the left neighbour wanted.
+        var left = RvtRaster.DecodePng(RawPng(2, 2, [0, 10, 0, 4, 20, 5], colorType: 0));
+        Assert.Equal([10, 10, 10, 0, 0, 0, 30, 30, 30, 35, 35, 35], left!.Rgb);
+
+        // Left 10, above 40, upper left 20: the estimate is 30, the one above and the upper left neighbours are both 10
+        // away and the left one is 20 away, so the one above wins.
+        var above = RvtRaster.DecodePng(RawPng(2, 2, [0, 20, 40, 4, 246, 5], colorType: 0));
+        Assert.Equal([20, 20, 20, 40, 40, 40, 10, 10, 10, 45, 45, 45], above!.Rgb);
+    }
+
+    [Fact]
     public void DecodePng_RejectsAScanlineFilterThatDoesNotExist()
     {
         Assert.Null(RvtRaster.DecodePng(RawPng(1, 1, [5, 1, 2, 3])));

@@ -126,6 +126,10 @@ public partial class GRepPlanSymbolReaderTests
             case "other-axis": axis7 = [0, -1, 0]; break;
             case "across": line7 = Line([0.25, 0, 0], [1, 0, 0]); break;
             case "tilted": line7 = Line([0, 0, 0], [1, 0.25, 0]); break;
+            // The slope moves the far end of line 7 by twice itself along the axis, so the two spacings differ by 5e-10
+            // (inside the 1e-9 they may differ by) or by 2e-9 (outside it).
+            case "spacing-within-tolerance": line7 = Line([0, 0, 0], [1, 2.5e-10, 0]); break;
+            case "spacing-beyond-tolerance": line7 = Line([0, 0, 0], [1, 1e-9, 0]); break;
             case "across-height": line7 = Line([0, 0, 0.25], [1, 0, 0]); break;
             // Both lines collapse to a point, spaced like the real pair.
             case "point": line6 = Line([0, offset, 0], [1, 0, 0], 0, 0); line7 = Line([0, 0, 0], [1, 0, 0], 0, 0); break;
@@ -224,6 +228,7 @@ public partial class GRepPlanSymbolReaderTests
     [InlineData("across")]
     [InlineData("across-height")]
     [InlineData("tilted")]
+    [InlineData("spacing-beyond-tolerance")]
     [InlineData("point")]
     [InlineData("not-finite")]
     [InlineData("no-direction")]
@@ -258,10 +263,16 @@ public partial class GRepPlanSymbolReaderTests
     }
 
     [Fact]
-    public void ViewFacingLines_IgnoreACandidateOfAnotherSideInsteadOfLosingThePair()
+    public void ViewFacingLines_PairLinesWhoseSpacingsDifferWithinTheTolerance() =>
+        Assert.NotNull(ReadPair("spacing-within-tolerance"));
+
+    [Theory]
+    [InlineData(5)]
+    [InlineData(8)]
+    public void ViewFacingLines_IgnoreACandidateOfAnotherSideInsteadOfLosingThePair(int otherSide)
     {
         var frame = new Frame();
-        foreach (var (comparison, offset) in new[] { (6, 0.5), (5, 0.25), (7, 0d) })
+        foreach (var (comparison, offset) in new[] { (6, 0.5), (otherSide, 0.25), (7, 0d) })
         {
             int filter = frame.Filter();
             frame.Direction(filter, comparison, [0, 1, 0]);
