@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using ICSharpCode.SharpZipLib;
 using ICSharpCode.SharpZipLib.Checksum;
 using ICSharpCode.SharpZipLib.Zip.Compression;
@@ -90,9 +91,7 @@ internal static class PartitionFraming
         blocks = 0;
         try
         {
-            var bytes = RemoveTails(raw);
-            Require(bytes != null, "page-framing");
-            var input = new Cursor(bytes!);
+            var input = new Cursor(raw, paged: true);
             Require(input.U32() == 9 && input.U32() == 0, "format");
             var keys = new HashSet<string>();
             long inflated = 0; // output of all finished chains
@@ -128,7 +127,7 @@ internal static class PartitionFraming
                     uint index = input.U32();
                     input.U32(); // the opaque value of the deposit is neither an owner nor a length
                     Require(index is >= 101 and <= 103, "segment-index");
-                    var payload = input.Bytes((int)size - 8);
+                    var payload = input.Take((int)size - 8);
                     Require(input.U16() == tags.SegmentCheckback && input.U32() == size, "segment-checkback");
                     uint mode = flags & 3;
                     if (mode is 0 or 2) Require(chainIndex == null, "chain-start");
@@ -195,15 +194,19 @@ internal static class PartitionFraming
         return PagedGzipStream.RemoveSegments(raw);
     }
 
-    private static void Inflate(ReadOnlySpan<byte> payload, MemoryStream chain)
+    private static void Inflate(ReadOnlyMemory<byte> member, MemoryStream chain)
     {
+        var payload = member.Span;
         Require(payload.Length >= 18 && payload[..10].SequenceEqual(new byte[] { 0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0x0b }), "gzip-header");
         uint expectedCrc = BinaryPrimitives.ReadUInt32LittleEndian(payload[^8..]);
         uint expectedLength = BinaryPrimitives.ReadUInt32LittleEndian(payload[^4..]);
         // shortcut: independently compressed members only; dictionary-dependent members reject
         // admission until their shared-window contract is implemented and tested.
         var inflater = new Inflater(noHeader: true);
-        inflater.SetInput(payload[10..^8].ToArray());
+        // The deflate data is read where it lies; the inflater stays inside the range it is given.
+        var deflate = member[10..^8];
+        if (MemoryMarshal.TryGetArray(deflate, out var data)) inflater.SetInput(data.Array!, data.Offset, data.Count);
+        else inflater.SetInput(deflate.ToArray());
         var crc = new Crc32();
         byte[] buffer = new byte[32768];
         long length = 0;
@@ -227,15 +230,36 @@ internal static class PartitionFraming
         if (!condition) throw new InvalidDataException(reason);
     }
 
-    private sealed class Cursor(ReadOnlyMemory<byte> bytes)
+    private sealed class Cursor(ReadOnlyMemory<byte> bytes, bool paged = false)
     {
+        private readonly int length = paged ? PayloadLength(bytes.Span) : bytes.Length;
+
         internal int Position { get; private set; }
-        internal int Remaining => bytes.Length - Position;
-        internal ReadOnlySpan<byte> Bytes(int count)
+        internal int Remaining => length - Position;
+        internal ReadOnlySpan<byte> Bytes(int count) => Take(count).Span;
+
+        /// <summary>The next <paramref name="count"/> bytes: a view of the stream where they lie, a copy only when a page tail runs through them.</summary>
+        internal ReadOnlyMemory<byte> Take(int count)
         {
             Require(count >= 0 && count <= Remaining, "bounds");
-            var value = bytes.Span.Slice(Position, count);
+            int start = Position;
             Position += count;
+            if (count == 0) return default;
+            if (!paged) return bytes.Slice(start, count);
+
+            int inPage = start % PagedGzipStream.PageDataLength;
+            int available = PagedGzipStream.PageDataLength - inPage;
+            if (count <= available) return bytes.Slice(PhysicalOffset(start), count);
+
+            // The inflater needs one contiguous gzip member. Only values spanning a page tail need a copy.
+            var value = new byte[count];
+            for (int copied = 0; copied < count;)
+            {
+                int offset = start + copied;
+                int take = Math.Min(count - copied, PagedGzipStream.PageDataLength - offset % PagedGzipStream.PageDataLength);
+                bytes.Span.Slice(PhysicalOffset(offset), take).CopyTo(value.AsSpan(copied));
+                copied += take;
+            }
             return value;
         }
         internal ushort U16() => BinaryPrimitives.ReadUInt16LittleEndian(Bytes(2));
@@ -245,6 +269,21 @@ internal static class PartitionFraming
         {
             Require(count >= 0 && count <= Remaining, "signature-bounds");
             Position += (int)count;
+        }
+
+        private static int PhysicalOffset(int logicalOffset) => logicalOffset
+            + logicalOffset / PagedGzipStream.PageDataLength * PagedGzipStream.SegmentLength;
+
+        private static int PayloadLength(ReadOnlySpan<byte> raw)
+        {
+            int tails = 0;
+            for (long offset = PagedGzipStream.PageDataLength; offset < raw.Length; offset += PagedGzipStream.PageStride)
+            {
+                // A complete tail at the very end is allowed to have a different tag, as in RemoveTails.
+                Require(raw.Length - offset == PagedGzipStream.SegmentLength || PagedGzipStream.HoldsSegment(raw, offset), "page-framing");
+                tails++;
+            }
+            return raw.Length - tails * PagedGzipStream.SegmentLength;
         }
     }
 }
