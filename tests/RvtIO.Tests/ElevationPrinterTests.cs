@@ -183,21 +183,34 @@ public class ElevationPrinterTests
     [InlineData(true, 100, "east", false, true, false, true)]
     [InlineData(true, 100, "east", false, true, false, false, true)]
     [InlineData(true, 100, "east", true, true, false, false, true)]
+    [InlineData(true, 100, "east", false, true, false, false, false, true)]
     public void Collect_ProjectsThinRoundRailWithItsVerifiedPlacedFaces(bool matchingFaces, int scale,
         string direction = "section", bool inclined = false, bool surfacePatterns = false, bool occluded = false,
-        bool rotate = false, bool rotateAboutZ = false)
+        bool rotate = false, bool rotateAboutZ = false, bool generalPlacement = false)
     {
         const double radius = 1d / 192;
         double rise = inclined ? 0.25 : 0;
         double run = Math.Sqrt(1 - rise * rise);
-        double[] axis = [0, run, rise];
+        // The general case slants the rail along all three axes so that every term of the placement matrix reaches the
+        // printed endpoints.
+        double[] axis = generalPlacement ? [2d / 11, 6d / 11, 9d / 11] : [0, run, rise];
+        double[] ringX = generalPlacement ? [6 / Math.Sqrt(40), -2 / Math.Sqrt(40), 0] : [1, 0, 0];
+        double[] ringY =
+        [
+            ringX[1] * axis[2] - ringX[2] * axis[1], ringX[2] * axis[0] - ringX[0] * axis[2],
+            ringX[0] * axis[1] - ringX[1] * axis[0],
+        ];
         var view = SectionView(1, [10, 0, 2]);
         Add(view, BuiltInParameter.VIEW_SCALE, StorageType.Integer, scale);
         var symbol = new Element { Id = 3, NativeRecordClass = 492, Geometry = new GeometryData() };
         double c = rotate || rotateAboutZ ? 0.8 : 1, s = rotate || rotateAboutZ ? 0.6 : 0;
         // The rows are the placement matrix; the origin is non-zero when the rail turns about Z so a dropped or
-        // transposed origin and a transposed matrix each move the printed endpoints.
-        double[] transform = rotateAboutZ ? [c, -s, 0, s, c, 0, 0, 0, 1, 0.5, 0.25, 0.75] : [1, 0, 0, 0, c, -s, 0, s, c, 0, 0, 0];
+        // transposed origin and a transposed matrix each move the printed endpoints. The general rotation has nine
+        // distinct non-zero terms (a unit quaternion turned into integers over 57), so a mixed row or a transposed
+        // matrix cannot land on the same endpoints.
+        double[] transform = generalPlacement
+            ? [47d / 57, -32d / 57, -4d / 57, -16d / 57, -17d / 57, -52d / 57, 28d / 57, 44d / 57, -23d / 57, 0.5, 0.25, 0.75]
+            : rotateAboutZ ? [c, -s, 0, s, c, 0, 0, 0, 1, 0.5, 0.25, 0.75] : [1, 0, 0, 0, c, -s, 0, s, c, 0, 0, 0];
         double[] Place(double[] point) =>
         [
             transform[9] + transform[0] * point[0] + transform[1] * point[1] + transform[2] * point[2],
@@ -217,8 +230,13 @@ public class ElevationPrinterTests
             double[] Point(int index, double distance)
             {
                 double angle = index * Math.PI / 16;
-                double across = radius * Math.Sin(angle);
-                return [9 + radius * Math.Cos(angle), distance * run - across * rise, 2 + distance * rise + across * run];
+                double along = radius * Math.Cos(angle), across = radius * Math.Sin(angle);
+                return
+                [
+                    9 + distance * axis[0] + along * ringX[0] + across * ringY[0],
+                    distance * axis[1] + along * ringX[1] + across * ringY[1],
+                    2 + distance * axis[2] + along * ringX[2] + across * ringY[2],
+                ];
             }
             List<double[]> ring = [Point(facet, 0), Point(facet + 1, 0), Point(facet + 1, 11), Point(facet, 11)];
             uint face = facet < 16 ? 10u : 11u;
@@ -237,7 +255,7 @@ public class ElevationPrinterTests
 
         bool elevation = direction == "east";
         // A rail turned about Z crosses the plane the usual wall stands in, so that wall is moved behind the whole rail.
-        double wallDepth = occluded ? 9.5 : rotateAboutZ ? -2 : 8;
+        double wallDepth = occluded ? 9.5 : generalPlacement ? 4 : rotateAboutZ ? -2 : 8;
         var wall = QuadWall(4, [[wallDepth, -1, 0], [wallDepth, 12, 0], [wallDepth, 12, 7], [wallDepth, -1, 7]],
             [1, 0, 0]);
         var document = elevation ? Document(rail, symbol, wall) : Document(rail, symbol);
@@ -254,7 +272,7 @@ public class ElevationPrinterTests
             else
             {
                 var side = Assert.Single(tubes);
-                double[] start = Place([9, 0, 2]), end = Place([9, 11 * run, 2 + 11 * rise]);
+                double[] start = Place([9, 0, 2]), end = Place([9 + 11 * axis[0], 11 * axis[1], 2 + 11 * axis[2]]);
                 Assert.Equal(start[1] * FeetToMillimetres, side.X1, 6);
                 Assert.Equal(start[2] * FeetToMillimetres, side.Y1, 6);
                 Assert.Equal(end[1] * FeetToMillimetres, side.X2, 6);
