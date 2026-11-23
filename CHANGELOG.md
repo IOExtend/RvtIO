@@ -9,6 +9,7 @@ API between minor releases.
 ### Fixed
 
 - Avoid overflow when triangulating trimmed faces with 46,341 or more vertices after bridging.
+- Use the saved section plane in model millimetres to clip PDF geometry and place detail windows.
 
 ## [0.6.3] - 2026-11-20
 
