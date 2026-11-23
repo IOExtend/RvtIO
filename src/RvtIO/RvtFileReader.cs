@@ -44,8 +44,11 @@ public partial class RvtFileReader
 
     /// <summary>Reads a Revit compound file from the beginning of a readable, seekable stream, whatever its position.
     /// The stream is only read: it is never written to, shortened or closed, also when it is writable, and its position may change.</summary>
-    /// <remarks>A failure of the stream itself, such as an <see cref="IOException"/>, a cancellation or a closed stream, is thrown as
-    /// the stream threw it; it is not reported as a file that is cut or damaged. A stream that ends early is.</remarks>
+    /// <remarks>A failure of the stream itself, such as an <see cref="IOException"/>, a cancellation or a stream closed while it is read,
+    /// is thrown as the stream threw it; it is not reported as a file that is cut or damaged. A stream that ends early is.
+    /// The result carries no file path: a document made from it with <see cref="RvtDocument.FromInfo"/> has no
+    /// <see cref="RvtDocument.SourcePath"/>, so <see cref="RvtDocument.SaveAs"/> throws <see cref="InvalidOperationException"/> for it
+    /// and printing cannot read the images it takes from the file.</remarks>
     /// <param name="stream">The Revit file, which the caller keeps.</param>
     /// <exception cref="ArgumentNullException"><paramref name="stream"/> is null.</exception>
     /// <exception cref="ArgumentException"><paramref name="stream"/> is not readable or not seekable, or is closed.</exception>
