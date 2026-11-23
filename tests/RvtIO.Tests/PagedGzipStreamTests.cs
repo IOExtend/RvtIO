@@ -57,6 +57,40 @@ public class PagedGzipStreamTests
         Assert.Null(PagedGzipStream.Decompress(raw));
     }
 
+    [Theory]
+    [InlineData(1, false)]
+    [InlineData(PagedGzipStream.SegmentLength - 1, false)]
+    [InlineData(PagedGzipStream.SegmentLength, true)]
+    [InlineData(PagedGzipStream.SegmentLength + 1, false)]
+    [InlineData(6_000, false)]
+    public void OnlyAnExactLengthTerminalPageIsTrimmedAtAMissingSegmentMarker(int remaining, bool trimmed)
+    {
+        byte[] payload = Payload(100_000);
+        int secondSegment = PagedGzipStream.PageDataLength + PagedGzipStream.PageStride;
+        var raw = new byte[secondSegment + remaining];
+        StreamWithSegment(Member(payload), tail: 0).CopyTo(raw, 0);
+        raw[secondSegment] = 0x83;
+
+        Assert.Null(PagedGzipStream.RemoveSegments(raw));
+        // The segment of the first boundary is removed in every case; the bytes behind the second position stay unless that
+        // position is the start of an exact-length terminal page.
+        var tolerant = PagedGzipStream.RemoveSegments(raw, tolerateTail: true);
+        Assert.Equal(raw.Length - PagedGzipStream.SegmentLength - (trimmed ? PagedGzipStream.SegmentLength : 0), tolerant?.Length);
+        Assert.Equal(payload, PagedGzipStream.Decompress(raw));
+    }
+
+    [Fact]
+    public void AValidSegmentMarkerOfATerminalPageIsRemovedByTheStrictRule()
+    {
+        byte[] payload = Payload(100_000);
+        int secondSegment = PagedGzipStream.PageDataLength + PagedGzipStream.PageStride;
+        var raw = new byte[secondSegment + PagedGzipStream.SegmentLength];
+        StreamWithSegment(Member(payload), tail: 0).CopyTo(raw, 0);
+
+        Assert.Equal(raw.Length - 2 * PagedGzipStream.SegmentLength, PagedGzipStream.RemoveSegments(raw)?.Length);
+        Assert.Equal(payload, PagedGzipStream.Decompress(raw));
+    }
+
     [Fact]
     public void StreamWithoutItsFirstSegment_IsRejectedByTheMemberCrc()
     {

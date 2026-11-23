@@ -113,6 +113,77 @@ public class WideBlockWalkerTests
     }
 
     [Fact]
+    public void Walk_RecordsWhereEachCapturedValueStartsAndWhereAQueuedObjectIsExpected()
+    {
+        var block = DerivedBlock(withStore: true);
+        var walk = Walker().Run(block, 0, block.Length, DerivedId);
+        var captures = walk.Captures.ToDictionary(c => c.Key);
+        Assert.Equal(4711L, BitConverter.ToInt64(block, captures["Base.m_id"].ValueOffset));
+        Assert.Equal(1, block[captures["Base.m_flag"].ValueOffset]);
+        Assert.Equal(2.5, BitConverter.ToDouble(block, captures["Derived.m_point@1"].ValueOffset));
+        Assert.Equal(42, BitConverter.ToInt32(block, captures["Store.m_value"].ValueOffset));
+
+        // A text starts at its length, an array at its count.
+        var name = captures["Derived.m_name"];
+        Assert.Equal(4u, BitConverter.ToUInt32(block, name.ValueOffset));
+        Assert.Equal("Wall", Encoding.Unicode.GetString(block, name.ValueOffset + sizeof(uint), 8));
+        Assert.Equal(2u, BitConverter.ToUInt32(block, captures["Derived.m_ids#"].ValueOffset));
+
+        // A pointer starts at its handle and names the position of its object in the queue.
+        var store = captures["Base.m_pStore"];
+        Assert.Equal(uint.MaxValue, BitConverter.ToUInt32(block, store.ValueOffset));
+        Assert.Equal(0, store.QueuePosition);
+        Assert.Equal(StoreId, walk.Queue[store.QueuePosition]);
+
+        // A capture the walker makes without reading a field of its own has no offset.
+        Assert.All(walk.Captures.Where(c => c.Key.EndsWith("m_short")), c => Assert.Equal(-1, c.ValueOffset));
+    }
+
+    [Fact]
+    public void Walk_WithRootOnlyReadsTheFieldsOfTheElementAndStopsBeforeItsQueuedObjects()
+    {
+        var block = DerivedBlock(withStore: true);
+        var root = Walker().Run(block, 0, block.Length, DerivedId, rootOnly: true);
+        Assert.True(root.RootRead);
+        Assert.False(root.Exact);
+        Assert.Null(root.Error);
+        Assert.Equal([StoreId], root.Queue);
+        var captures = root.Captures.ToDictionary(c => c.Key);
+        Assert.Equal(4711, captures["Base.m_id"].Integer);
+        Assert.Equal(7, captures["Derived.m_short"].Integer);
+        Assert.DoesNotContain("Store.m_value", captures.Keys);
+
+        var full = Walker().Run(block, 0, block.Length, DerivedId);
+        Assert.True(full.Exact, full.Error);
+        Assert.True(full.Captures.Count > root.Captures.Count);
+    }
+
+    [Fact]
+    public void Walk_CapturesTheGuidOfAnExternalParameterKeyAsText()
+    {
+        var guid = new Guid("50b3ce53-fa73-47a1-ae3e-75035a1f17dd");
+        var schema = new SchemaDocument
+        {
+            Classes =
+            [
+                new(1, "GUIDvalue", 0, 1, [Field("m_guid", 9)], []),
+                new(2, "ExternalParamKey", 0, 1, [Field("m_guidValue", 14, 0, 1)], []),
+                new(3, "Holder", 0, 1, [Field("m_key", 14, 0, 2), Field("m_next", 4)], []),
+            ],
+        };
+        var block = Block(3, w => { w.Write(guid.ToByteArray()); w.Write(77); });
+        var walk = new WideBlockWalker(schema, (declaring, field) => declaring.Name + "." + field.Name, []).Run(block, 0, block.Length, 3);
+
+        Assert.True(walk.Exact, walk.Error);
+        var key = Assert.Single(walk.Captures, c => c.Key == "Holder.m_key");
+        Assert.Equal(CaptureKindText, key.Kind);
+        Assert.Equal(guid.ToString(), key.Text);
+        Assert.Equal(77, Assert.Single(walk.Captures, c => c.Key == "Holder.m_next").Integer);
+    }
+
+    private const WideBlockWalker.CaptureKind CaptureKindText = WideBlockWalker.CaptureKind.Text;
+
+    [Fact]
     public void RoomPhase_IsReadWhenTheFieldIsACapturedKey()
     {
         const int roomId = 3;

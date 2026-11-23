@@ -161,7 +161,7 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
         string source = CreateSource(release: release, shared: shared, nested: (oldA, oldB, instance));
 
         RvtWriter.SetFamilyParameter(source, Output, type, Id(ParameterId, wide),
-            (target == -1 ? target : Id(target, wide)).ToString());
+            (target == -1 ? target : Id(target, wide)).ToString(CultureInfo.InvariantCulture));
 
         using var root = RootStorage.OpenRead(Output);
         Assert.Equal(PartitionStreamEditorTests.TaggedBody(FamilyClass, FamilyBody("", "", "", wide: wide,
@@ -417,7 +417,7 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
         bool wide = release >= 2024;
         string source = CreateSource(release: release, customImage: (before, before));
         RvtWriter.SetFamilyParameter(source, Output, type, Id(ParameterId, wide),
-            (after == -1 ? -1 : Id(after, wide)).ToString());
+            (after == -1 ? -1 : Id(after, wide)).ToString(CultureInfo.InvariantCulture));
 
         using var root = RootStorage.OpenRead(Output);
         var a = type == "A" ? after : before;
