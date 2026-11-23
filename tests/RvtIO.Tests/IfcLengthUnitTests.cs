@@ -160,6 +160,38 @@ public class IfcLengthUnitFamilyTests
         }
     }
 
+    // The centimetre conversions are decimal shifts of the literal, as the millimetre ones are: each expected text is the exact
+    // decimal result, where a division by the double 0.01, 0.0001 or 0.000001 would leave low-digit noise (0.29 / 0.01 is 28.999999999999996).
+    [Theory]
+    [InlineData("IFCCARTESIANPOINT", "(0.29,1.15,2.3)", "(29.,115.,230.)")]
+    [InlineData("IFCVECTOR", "#9,0.07", "#9,7.")]
+    [InlineData("IFCDOOR", "#1,#2,'a','','',#3,#4,'5',2133.6,914.4", "#1,#2,'a','','',#3,#4,'5',213.36,91.44")]
+    [InlineData("IFCQUANTITYAREA", "'Q','',$,1.2", "'Q','',$,12000.")]
+    [InlineData("IFCQUANTITYVOLUME", "'Q','',$,0.07", "'Q','',$,70000.")]
+    [InlineData("IFCPROPERTYSINGLEVALUE", "'P','',IFCLENGTHMEASURE(8.2),$", "'P','',IFCLENGTHMEASURE(0.82),$")]
+    [InlineData("IFCPROPERTYSINGLEVALUE", "'P','',IFCAREAMEASURE(0.29),$", "'P','',IFCAREAMEASURE(2900.),$")]
+    [InlineData("IFCPROPERTYSINGLEVALUE", "'P','',IFCVOLUMEMEASURE(2.2),$", "'P','',IFCVOLUMEMEASURE(2200000.),$")]
+    public void Centimetre_MovesTheDecimalPointWithoutNoise(string type, string args, string expected) =>
+        Assert.Equal(expected, IfcLengthUnit.ToFamily(type, args, IfcUnitFamily.Centimetre));
+
+    // The exact quantities of the current profile print the double itself, which is multiplied by an exact 100, 10000 or 1000000
+    // and so rounds once; these inputs give the round result, a division by 0.0001 or 0.000001 gives 11999.999999999998 and 2200000.0000000005.
+    [Theory]
+    [InlineData("IFCQUANTITYAREA", "'Q','',$,1.2", "'Q','',$,12000.")]
+    [InlineData("IFCQUANTITYVOLUME", "'Q','',$,2.2", "'Q','',$,2200000.")]
+    [InlineData("IFCPROPERTYSINGLEVALUE", "'P','',IFCAREAMEASURE(1.2),$", "'P','',IFCAREAMEASURE(12000.),$")]
+    [InlineData("IFCPROPERTYSINGLEVALUE", "'P','',IFCVOLUMEMEASURE(2.2),$", "'P','',IFCVOLUMEMEASURE(2200000.),$")]
+    public void Centimetre_ExactQuantitiesMultiplyByAnExactPowerOfTen(string type, string args, string expected) =>
+        Assert.Equal(expected, IfcLengthUnit.ToFamily(type, args, IfcUnitFamily.Centimetre, exact: true));
+
+    [Fact]
+    public void Centimetre_LeavesALiteralTooLargeForADecimalToTheDoubleInsteadOfOverflowing()
+    {
+        // 1e27 is a decimal, but 1e27 * 100 is more than a decimal holds (7.9e28)
+        string text = IfcLengthUnit.ToFamily("IFCVECTOR", "#9,1.E+27", IfcUnitFamily.Centimetre);
+        Assert.Equal(1e29, double.Parse(text[3..], CultureInfo.InvariantCulture), 1e15);
+    }
+
     [Fact]
     public void FootUnitAssignment_NamesTheFootAndTheSquareAndCubicFoot()
     {
