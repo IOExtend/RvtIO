@@ -569,6 +569,60 @@ public class IfcLengthUnitChoiceOptionTests
         finally { if (File.Exists(path)) File.Delete(path); }
     }
 
+    // Every unit follows the one convention: the end parameter is the straight length measured on the polyline points of the
+    // file itself plus the degrees of the trimmed arc, so a unit whose parameter scale drifts from its coordinates fails here.
+    [Theory]
+    [InlineData(IfcUnitFamily.Millimetre, 304.8)]
+    [InlineData(IfcUnitFamily.Centimetre, 30.48)]
+    [InlineData(IfcUnitFamily.Metre, 0.3048)]
+    [InlineData(IfcUnitFamily.Inch, 12.0)]
+    [InlineData(IfcUnitFamily.Foot, 1.0)]
+    public void Export_RebarEndParameterIsTheStraightLengthInFileUnitsPlusTheArcDegreesInEveryUnit(
+        IfcUnitFamily family, double footInFileUnits)
+    {
+        var info = new RevitFileInfo();
+        info.Elements.Add(RebarReaderTests.Bar(500, 0));
+        string path = Path.Combine(Path.GetTempPath(), $"rvtio-unit-rebar-param-{Guid.NewGuid():N}.ifc");
+        try
+        {
+            new IfcExporter { LengthUnit = family }.Export(info, path);
+            var entities = ParseEntities(File.ReadAllText(path));
+            var disks = entities.Values.Where(entity => entity.Type == "IFCSWEPTDISKSOLID").ToList();
+            Assert.Equal(2, disks.Count);
+            foreach (var disk in disks)
+            {
+                string[] diskArgs = IfcExporter.SplitStepArguments(disk.Args);
+                Assert.True(TryParseRef(diskArgs[0], out int compositeId));
+                double lines = 0, degrees = 0;
+                Assert.True(TryParseRefList(IfcExporter.SplitStepArguments(entities[compositeId].Args)[0], out var segmentIds));
+                foreach (int segmentId in segmentIds)
+                {
+                    Assert.True(TryParseRef(IfcExporter.SplitStepArguments(entities[segmentId].Args)[2], out int curveId));
+                    var (type, args) = entities[curveId];
+                    string[] curveArgs = IfcExporter.SplitStepArguments(args);
+                    if (type == "IFCPOLYLINE")
+                    {
+                        Assert.True(TryParseRefList(curveArgs[0], out var pointIds));
+                        var points = pointIds.Select(id => entities[id].Args.Trim('(', ')').Split(',')
+                            .Select(s => double.Parse(s, CultureInfo.InvariantCulture)).ToArray()).ToList();
+                        lines += Math.Sqrt(points[0].Zip(points[1], (a, b) => (a - b) * (a - b)).Sum());
+                    }
+                    else
+                    {
+                        Assert.Equal("IFCTRIMMEDCURVE", type);
+                        var parameters = Regex.Matches(curveArgs[1] + curveArgs[2], @"IFCPARAMETERVALUE\(([^)]+)\)")
+                            .Select(m => double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture)).ToList();
+                        degrees += Math.Abs(parameters[1] - parameters[0]);
+                    }
+                }
+                Assert.Equal(footInFileUnits, lines, 9);
+                Assert.Equal(90.0, degrees, 9);
+                Assert.Equal(lines + degrees, double.Parse(diskArgs[4], CultureInfo.InvariantCulture), 9);
+            }
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
     [Fact]
     public void CliExport_WithIfcLengthUnit_WritesChosenUnitAndRejectsUnknownUnitsOrJsonOutput()
     {
