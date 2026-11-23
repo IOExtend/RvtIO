@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using IOScene;
 using RvtIO.Meshes;
 using RvtIO.Scene;
@@ -152,6 +153,8 @@ public sealed class StreamInputTests
         public override long Length => inner.Length;
         public override long Position { get => inner.Position; set => inner.Position = value; }
         public override void Flush() { }
+        // The tests below look for this class in the stack of the exception; a frame the JIT inlines at a higher tier is not in it.
+        [MethodImpl(MethodImplOptions.NoInlining)]
         public override int Read(byte[] buffer, int offset, int count)
         {
             if (_served >= limit) throw ++_failures == 1 || !VaryingFailures ? failure : new IOException("failure " + _failures);
@@ -171,6 +174,8 @@ public sealed class StreamInputTests
     {
         private int _calls;
         public int Calls => _calls;
+        // The thrower stays a frame of its own: an inlined one is missing from the stack that the tests look at.
+        [MethodImpl(MethodImplOptions.NoInlining)]
         private void Enter(string name)
         {
             if (name == member && ++_calls == failAt) throw failure;
