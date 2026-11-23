@@ -244,14 +244,20 @@ public class FramedElementTypesTests
     [InlineData("SWall", "BasicWallType", 20L, 4)]
     [InlineData("SWall", "NewCurtainWallType", 20L, 4)]
     [InlineData("FamilyInstance", "SysPanelFamSym", 2147483668L, 8)]
+    [InlineData("RoomTag", "FamilySymbol", 20L, 4)]
+    [InlineData("ProfileRoof", "RoofAttributes", 20L, 4)]
+    [InlineData("LinearDimString", "DimensionStyle", 20L, 4)]
+    [InlineData("Floor", "FloorAttributes", 20L, 4)]
+    [InlineData("DBViewPlan", "DBViewType", 20L, 4)]
     [InlineData("DBViewSection", "DBViewType", 20L, 4)]
+    [InlineData("BaseRailing", "StairsRailingAttr", 20L, 4)]
     public void KeepCopiesUsesTheRoutedTypeWithoutReplacingOtherFields(string kind, string target, long type, int width)
     {
         var fixture = new Fixture(width);
         void WriteOccurrence(BinaryWriter writer, long storedType)
         {
             fixture.Id(writer, storedType);
-            if (kind == "DBViewSection") fixture.Id(writer, -1);
+            if (kind is "DBViewPlan" or "DBViewSection") fixture.Id(writer, -1);
         }
 
         fixture.Add(kind, 10, w => WriteOccurrence(w, 30), partition: 0);
@@ -285,7 +291,7 @@ public class FramedElementTypesTests
         if (reason == "duplicate current partition")
             fixture.Add("SWall", 10, w => fixture.Id(w, 20), partition: 1);
         if (reason != "missing type")
-            fixture.Add(reason == "different target class" ? "Other" : "BasicWallType", 20);
+            fixture.Add(reason == "different target class" ? "DimensionStyle" : "BasicWallType", 20);
         if (reason == "unsupported target copy") fixture.Add("Other", 20);
         fixture.Add("BasicWallType", 30);
 
@@ -295,16 +301,81 @@ public class FramedElementTypesTests
             recoverUnanchoredTypes: reason != "ordinary mode", anchored: true));
     }
 
+    [Theory]
+    [InlineData(20, 20)]
+    [InlineData(-1, 30)]
+    public void RoutedGroupTypeComesFromIts2022MembershipCell(int currentType, int expectedType)
+    {
+        using var resource = typeof(TfBlockDeserializer).Assembly.GetManifestResourceStream("RvtIO.Resources.r22_schemas.json")!;
+        var schema = TfSchemaReader.ReadShipped2022(resource);
+        // The shipped table preserves the transform dimensions, but omits the template argument.
+        var fields = schema.Classes.Single(cls => cls.Name == "Trf").Fields;
+        int matrix = fields.FindIndex(field => field.Name == "m_3x3");
+        fields[matrix] = fields[matrix] with { Args = [new("", 7, 16, 0, 3, null, null, null)] };
+        var fixture = new Fixture(schema: schema);
+
+        void AddGroup(int type, int partition)
+        {
+            fixture.AddBlock("ElementGroup", 10, writer =>
+            {
+                foreach (var field in TfBlockDeserializer.SerializationFields(1322)!)
+                {
+                    if (field is { Declaring: 37, Name: "m_cellList" }) fixture.Pointer(writer, "CellList");
+                    else if (field is { Declaring: 37, Name: "m_id" }) writer.Write(10);
+                    else WriteDefault2022Field(writer, field);
+                }
+                writer.Write(1u);
+                fixture.Pointer(writer, "GroupMembership");
+                writer.Write(type);
+            }, partition);
+        }
+
+        AddGroup(30, 0);
+        AddGroup(currentType, 1);
+        fixture.AddBlock("ElementGroupType", 20, writer =>
+        {
+            foreach (var field in TfBlockDeserializer.SerializationFields(1333)!)
+                if (field is { Declaring: 37, Name: "m_id" }) writer.Write(20);
+                else WriteDefault2022Field(writer, field);
+        });
+
+        Assert.Equal(expectedType, fixture.Apply(new Element { Id = 10, TypeId = 30 },
+            wasRouted: true, recoverUnanchoredTypes: true));
+    }
+
+    private static void WriteDefault2022Field(BinaryWriter writer, TfBlockDeserializer.TfField field)
+    {
+        if (field.Mods >> 4 == 5) { writer.Write(0u); return; }
+        int count = field.Mods >> 4 == 1 ? field.Cnt!.Value : 1;
+        for (int i = 0; i < count; i++)
+            switch (field.Type)
+            {
+                case 1: writer.Write((byte)0); break;
+                case 4: writer.Write(0); break;
+                case 7: writer.Write(0d); break;
+                case 13 when field is { Declaring: 78, Name: "m_3x3" }:
+                    for (int column = 0; column < 3; column++) writer.Write(i == column ? 1d : 0d);
+                    break;
+                case 14 when (field.Mods & 15) == 0 && field.Ref is int reference && reference != 20:
+                    foreach (var nested in TfBlockDeserializer.SerializationFields(reference)!) WriteDefault2022Field(writer, nested);
+                    break;
+                case 14: writer.Write(field.Ref == 20 ? -1 : 0); break;
+                default: throw new InvalidOperationException(field.Name);
+            }
+    }
+
     private sealed class Fixture
     {
-        private readonly SchemaDocument _schema = new();
+        private readonly SchemaDocument _schema;
         private readonly List<PartitionFraming.Framed?> _frames = [];
         private readonly HashSet<long> _ids = [];
         private readonly int _width;
 
-        internal Fixture(int width = 4)
+        internal Fixture(int width = 4, SchemaDocument? schema = null)
         {
             _width = width;
+            _schema = schema ?? new();
+            if (schema != null) return;
             int identifier = Class("Identifier", 0, new SchemaField("m_id", (byte)(width == 8 ? 11 : 4), 0, 0, null, null, null, null));
             int elementId = Class("ElementId", 0, new SchemaField("m_id", 14, 0, 0, null, identifier, null, null));
             SchemaField Ref(string field, byte mods = 0) => new(field, 14, mods, 0, null, elementId, null, null);
@@ -316,6 +387,7 @@ public class FramedElementTypesTests
             int viewer = Class("Viewer", element, Ref("m_dbViewId"), new SchemaField("m_bIsViewerReference", 1, 0, 0, null, null, null, null));
             Class("Viewer3d", viewer);
             Class("DBView3d", view);
+            Class("DBViewPlan", view);
             Class("DBViewSection", view);
             Class("DBViewType", element);
             Class("InteriorElevArrow", viewer, Ref("m_parentId"));
@@ -353,6 +425,13 @@ public class FramedElementTypesTests
             Class("RoofSoffitType", element);
             Class("Ramp", element, Ref("m_rampAttrId"));
             Class("RampAttributes", element);
+            Class("RoomTag", element, Ref("m_symbolId"));
+            Class("ProfileRoof", Class("RoofBase", element, Ref("m_roofAttributesId")));
+            Class("RoofAttributes", element);
+            Class("Floor", element, Ref("m_floorAttributesId"));
+            Class("FloorAttributes", element);
+            Class("BaseRailing", element, Ref("m_stairsRailingAttrId"));
+            Class("StairsRailingAttr", element);
             Class("LinearDimString", Class("Dimension", element, Ref("m_styleSymbolId")));
             Class("DimensionStyle", element);
             Class("TextNote", Class("TextElement", element, Ref("m_attrId")));
@@ -395,6 +474,9 @@ public class FramedElementTypesTests
 
         internal void Add(string kind, long owner, Action<BinaryWriter>? payload = null, long? storedOwner = null,
             int? partition = null)
+            => AddBlock(kind, owner, writer => { Id(writer, storedOwner ?? owner); payload?.Invoke(writer); }, partition);
+
+        internal void AddBlock(string kind, long owner, Action<BinaryWriter> payload, int? partition = null)
         {
             using var stream = new MemoryStream();
             using var writer = new BinaryWriter(stream);
@@ -402,8 +484,7 @@ public class FramedElementTypesTests
             writer.Write(0u);
             writer.Write(0u);
             writer.Write((ushort)_schema.Classes.Single(cls => cls.Name == kind).Id);
-            Id(writer, storedOwner ?? owner);
-            payload?.Invoke(writer);
+            payload(writer);
             uint size = checked((uint)stream.Length - (uint)_width - 8);
             writer.Write(size);
             stream.Position = _width + 4;
