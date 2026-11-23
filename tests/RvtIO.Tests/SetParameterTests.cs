@@ -424,6 +424,238 @@ public sealed class SetParameterTests : IDisposable
         Assert.False(File.Exists(Output));
     }
 
+    private static (int Exit, string Output, string Error) RunCli(Func<TextWriter, TextWriter, int> command)
+    {
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        int exit = command(output, error);
+        return (exit, output.ToString(), error.ToString());
+    }
+
+    private string Manifest(string json)
+    {
+        string path = Path.Combine(_folder, "edits.json");
+        File.WriteAllText(path, json);
+        return path;
+    }
+
+    private static string Id(BuiltInParameter parameter) => ((int)parameter).ToString(CultureInfo.InvariantCulture);
+
+    [Theory]
+    [InlineData("a.rvt|b.rvt|70|71")]
+    [InlineData("a.rvt|b.rvt|70|71|v|extra")]
+    [InlineData(" |b.rvt|70|71|v")]
+    [InlineData("a.rvt|\t|70|71|v")]
+    [InlineData("a.rvt|b.rvt| |71|v")]
+    [InlineData("a.rvt|b.rvt|abc|71|v")]
+    [InlineData("a.rvt|b.rvt|0|71|v")]
+    [InlineData("a.rvt|b.rvt|-5|71|v")]
+    [InlineData("a.rvt|b.rvt|70.5|71|v")]
+    [InlineData("a.rvt|b.rvt|70|0|v")]
+    [InlineData("a.rvt|b.rvt|70|NOT_A_PARAMETER|v")]
+    [InlineData("a.rvt|b.rvt|70|client_name|v")]
+    public void SetParameterReportsUsageForMalformedArguments(string joined)
+    {
+        var (exit, output, error) = RunCli((o, e) => SetParameterCommand.Run(joined.Split('|'), o, e));
+        Assert.Equal(RvtExitCodes.Usage, exit);
+        Assert.Contains("Usage: rvtio set-parameter <source.rvt> <output.rvt> <element-id>", error);
+        Assert.Equal("", output);
+    }
+
+    [Theory]
+    [InlineData("a.rfa|b.rfa|Type|71")]
+    [InlineData("a.rfa|b.rfa|Type|71|v|extra")]
+    [InlineData("a.rfa|b.rfa| |71|v")]
+    [InlineData(" |b.rfa|Type|71|v")]
+    [InlineData("a.rfa|b.rfa|Type|0|v")]
+    [InlineData("a.rfa|b.rfa|Type|NOT_A_PARAMETER|v")]
+    public void SetFamilyParameterReportsUsageForMalformedArguments(string joined)
+    {
+        var (exit, output, error) = RunCli((o, e) => SetParameterCommand.Run(joined.Split('|'), o, e, familyFile: true));
+        Assert.Equal(RvtExitCodes.Usage, exit);
+        Assert.Contains("Usage: rvtio set-family-parameter <source.rfa> <output.rfa> <type-name>", error);
+        Assert.Equal("", output);
+    }
+
+    [Theory]
+    [InlineData("a.rvt|b.rvt")]
+    [InlineData("a.rvt|b.rvt|edits.json|extra")]
+    [InlineData(" |b.rvt|edits.json")]
+    [InlineData("a.rvt| |edits.json")]
+    [InlineData("a.rvt|b.rvt| ")]
+    public void EditParametersReportsUsageForMalformedArguments(string joined)
+    {
+        var (exit, output, error) = RunCli((o, e) => SetParameterCommand.RunBatch(joined.Split('|'), o, e));
+        Assert.Equal(RvtExitCodes.Usage, exit);
+        Assert.Contains("Usage: rvtio edit-parameters <source.rvt|source.rfa> <output.rvt|output.rfa> <edits.json>", error);
+        Assert.Equal("", output);
+    }
+
+    [Theory]
+    [InlineData("""{"elementId":70,"parameterId":71,"value":"x"}""", "Expected a non-empty array")]
+    [InlineData("[]", "Expected a non-empty array")]
+    [InlineData("[1]", "Edit 1 must have")]
+    [InlineData("""[{"elementId":70,"parameterId":71}]""", "Edit 1 must have")]
+    [InlineData("""[{"elementId":70,"parameterId":71,"value":"x","extra":1}]""", "Edit 1 must have")]
+    [InlineData("""[{"elementId":70,"parameterId":71,"value":5}]""", "Edit 1 must have")]
+    [InlineData("""[{"elementId":70,"parameterId":"71","value":"x"}]""", "Edit 1 must have")]
+    [InlineData("""[{"elementId":70,"parameterId":0,"value":"x"}]""", "Edit 1 must have")]
+    [InlineData("""[{"elementId":70,"parameterId":71.5,"value":"x"}]""", "Edit 1 must have")]
+    [InlineData("""[{"elementId":0,"parameterId":71,"value":"x"}]""", "Edit 1 requires a positive integer elementId")]
+    [InlineData("""[{"elementId":-3,"parameterId":71,"value":"x"}]""", "Edit 1 requires a positive integer elementId")]
+    [InlineData("""[{"elementId":"70","parameterId":71,"value":"x"}]""", "Edit 1 requires a positive integer elementId")]
+    [InlineData("""[{"elementId":70.5,"parameterId":71,"value":"x"}]""", "Edit 1 requires a positive integer elementId")]
+    [InlineData("""[{"typeName":"A","parameterId":71,"value":"x"}]""", "Edit 1 requires a positive integer elementId")]
+    [InlineData("""[{"elementId":70,"parameterId":71,"value":"x"},{"elementId":0,"parameterId":71,"value":"x"}]""",
+        "Edit 2 requires a positive integer elementId")]
+    [InlineData("[{", "")]
+    [InlineData("", "")]
+    public void EditParametersRefusesAMalformedProjectManifestBeforeWriting(string json, string message)
+    {
+        string source = CreateSource();
+        byte[] hash = SHA256.HashData(File.ReadAllBytes(source));
+        var (exit, output, error) = RunCli((o, e) => SetParameterCommand.RunBatch([source, Output, Manifest(json)], o, e));
+        Assert.Equal(RvtExitCodes.Usage, exit);
+        Assert.StartsWith("error: ", error);
+        Assert.Contains(message, error);
+        Assert.Equal("", output);
+        Assert.False(File.Exists(Output));
+        Assert.Equal(hash, SHA256.HashData(File.ReadAllBytes(source)));
+    }
+
+    [Fact]
+    public void EditParametersReportsAMissingManifestAsAnInputError()
+    {
+        var (exit, _, error) = RunCli((o, e) => SetParameterCommand.RunBatch([CreateSource(), Output, Path.Combine(_folder, "none.json")], o, e));
+        Assert.Equal(RvtExitCodes.InputError, exit);
+        Assert.StartsWith("error: ", error);
+        Assert.False(File.Exists(Output));
+    }
+
+    [Fact]
+    public void EditParametersAppliesAProjectManifestIncludingANullClear()
+    {
+        var parameter = new UserParameter(Kind.Text, true, HideWhenNoValue: true);
+        string source = CreateSource(wall: true, user: parameter);
+        var (exit, output, error) = RunCli((o, e) => SetParameterCommand.RunBatch([source, Output, Manifest("""
+            [
+              {"elementId":70,"parameterId":71,"value":null},
+              {"elementId":70,"parameterId":71,"value":"Restored"}
+            ]
+            """)], o, e));
+        Assert.True(exit == RvtExitCodes.Success, error);
+        Assert.Equal("Saved: output.rvt" + Environment.NewLine, output);
+        using (var root = RootStorage.OpenRead(Output))
+            Assert.Equal(UserBody(parameter, "Restored"), ReadBody(root));
+
+        string cleared = Path.Combine(_folder, "cleared.rvt");
+        var clear = RunCli((o, e) => SetParameterCommand.RunBatch([source, cleared, Manifest("""[{"elementId":70,"parameterId":71,"value":null}]""")], o, e));
+        Assert.True(clear.Exit == RvtExitCodes.Success, clear.Error);
+        using var clearedRoot = RootStorage.OpenRead(cleared);
+        Assert.Equal(UserBody(parameter, cleared: true), ReadBody(clearedRoot));
+    }
+
+    [Fact]
+    public void EditParametersRefusesTheWholeProjectBatchWhenALaterEditIsRefused()
+    {
+        string source = CreateSource();
+        byte[] hash = SHA256.HashData(File.ReadAllBytes(source));
+        string manifest = Manifest("[{\"elementId\":70,\"parameterId\":" + Id(BuiltInParameter.CLIENT_NAME) + ",\"value\":\"Staged\"},"
+            + "{\"elementId\":70,\"parameterId\":" + Id(BuiltInParameter.HOST_AREA_COMPUTED) + ",\"value\":\"1\"}]");
+        var (exit, output, error) = RunCli((o, e) => SetParameterCommand.RunBatch([source, Output, manifest], o, e));
+        Assert.Equal(SaveAsCommand.Refused, exit);
+        Assert.StartsWith("error [read-only-parameter]: ", error);
+        Assert.Equal("", output);
+        Assert.False(File.Exists(Output));
+        Assert.Equal(hash, SHA256.HashData(File.ReadAllBytes(source)));
+    }
+
+    [Theory]
+    [InlineData("Owner", "Saved: output.rvt (value already matched)")]
+    [InlineData("Changed", "Saved: output.rvt")]
+    public void SetParameterReportsWhetherTheValueAlreadyMatched(string value, string expected)
+    {
+        string source = CreateSource();
+        var (exit, output, error) = RunCli((o, e) => SetParameterCommand.Run([source, Output, "70", "CLIENT_NAME", value], o, e));
+        Assert.True(exit == RvtExitCodes.Success, error);
+        Assert.Equal(expected + Environment.NewLine, output);
+    }
+
+    [Fact]
+    public void SetParameterReportsInputProblemsAsInputErrors()
+    {
+        string source = CreateSource();
+        File.WriteAllText(Output, "occupied");
+        var existing = RunCli((o, e) => SetParameterCommand.Run([source, Output, "70", "CLIENT_NAME", "New"], o, e));
+        Assert.Equal(RvtExitCodes.InputError, existing.Exit);
+        Assert.StartsWith("error: ", existing.Error);
+        Assert.Equal("occupied", File.ReadAllText(Output));
+
+        var missing = RunCli((o, e) => SetParameterCommand.Run([Path.Combine(_folder, "none.rvt"), Path.Combine(_folder, "o2.rvt"), "70", "CLIENT_NAME", "New"], o, e));
+        Assert.Equal(RvtExitCodes.InputError, missing.Exit);
+        Assert.StartsWith("error: ", missing.Error);
+    }
+
+    [Fact]
+    public void AFamilyBatchRefusesAProjectContainer()
+    {
+        string project = CreateSource();
+        string source = Path.ChangeExtension(project, ".rfa");
+        File.Move(project, source);
+        string output = Path.Combine(_folder, "output.rfa");
+        string manifest = Manifest("[{\"typeName\":\"A\",\"parameterId\":" + Id(BuiltInParameter.ALL_MODEL_TYPE_COMMENTS) + ",\"value\":\"x\"}]");
+        var (exit, _, error) = RunCli((o, e) => SetParameterCommand.RunBatch([source, output, manifest], o, e));
+        Assert.Equal(SaveAsCommand.Refused, exit);
+        Assert.StartsWith("error [unsupported-parameter-file]: ", error);
+        Assert.False(File.Exists(output));
+    }
+
+    [Fact]
+    public void SaveAsRefusesAnotherDirectoryWhenAnImageLinkIsRelative()
+    {
+        string source = CreateSource(image: new(OwnerKind.Wall, LinkedPath: "picture.png"));
+        string output = Path.Combine(Directory.CreateDirectory(Path.Combine(_folder, "moved")).FullName, "output.rvt");
+        var refused = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SaveAs(source, output));
+        Assert.Equal("relative-reference-relocation", refused.Kind);
+        Assert.False(File.Exists(output));
+    }
+
+    [Fact]
+    public void SaveAsRefusesAnotherDirectoryWhenAnImageLinkCannotBeVerified()
+    {
+        string source = CreateSource(image: new(OwnerKind.Wall, LinkedPath: "picture.png", PathType: "Server"));
+        string output = Path.Combine(Directory.CreateDirectory(Path.Combine(_folder, "moved")).FullName, "output.rvt");
+        var refused = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SaveAs(source, output));
+        Assert.Equal("relative-reference-relocation", refused.Kind);
+        Assert.Contains("could not be verified", refused.Message);
+        Assert.False(File.Exists(output));
+    }
+
+    [Theory]
+    [InlineData("Relative to Central Model", false)]
+    [InlineData("Server", false)]
+    [InlineData("Absolute", true)]
+    public void SaveAsInTheSameDirectoryNeverInspectsImageLinks(string pathType, bool absolute)
+    {
+        string path = absolute ? Path.Combine(_folder, "picture.png") : "picture.png";
+        string source = CreateSource(image: new(OwnerKind.Wall, LinkedPath: path, PathType: pathType));
+        RvtWriter.SaveAs(source, Output);
+        Assert.True(File.Exists(Output));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void SaveAsAcceptsAnotherDirectoryForAnAbsoluteLinkAndAnImportedImage(bool linked)
+    {
+        var image = linked ? new ProjectImage(OwnerKind.Wall, LinkedPath: Path.Combine(_folder, "picture.png"), PathType: "Absolute")
+            : new ProjectImage(OwnerKind.Wall);
+        string source = CreateSource(image: image);
+        string output = Path.Combine(Directory.CreateDirectory(Path.Combine(_folder, "moved")).FullName, "output.rvt");
+        RvtWriter.SaveAs(source, output);
+        Assert.True(File.Exists(output));
+    }
+
     [Fact]
     public void RefusesANegativeIdOutsideTheBuiltInRange()
     {
