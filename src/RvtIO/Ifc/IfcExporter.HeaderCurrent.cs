@@ -22,49 +22,62 @@ public partial class IfcExporter
         return w.Add("IFCCONVERSIONBASEDUNIT", $"{R(dimensionsId)},.{unitType}UNIT.,'{name}',{R(measureWithUnitId)}");
     }
 
-    private static int AddFootLengthUnit(StepWriter w, int metreUnitId) =>
-        AddConversionBasedUnit(w, "1,0,0,0,0,0,0", "LENGTH", "FOOT", "IFCLENGTHMEASURE",
-            StepWriter.Real(IfcLengthUnit.MetresPerFoot, "G17"), metreUnitId);
+    private static int AddProjectLengthUnit(StepWriter w, int siLength, IfcUnitFamily family) => family switch
+    {
+        IfcUnitFamily.Foot => AddConversionBasedUnit(w, "1,0,0,0,0,0,0", "LENGTH", "FOOT", "IFCLENGTHMEASURE",
+            StepWriter.Real(IfcLengthUnit.MetresPerFoot, "G17"), siLength),
+        IfcUnitFamily.Inch => AddConversionBasedUnit(w, "1,0,0,0,0,0,0", "LENGTH", "INCH", "IFCLENGTHMEASURE",
+            StepWriter.Real(IfcLengthUnit.MetresPerInch, "G17"), siLength),
+        _ => siLength,
+    };
 
-    private static int AddSquareFootUnit(StepWriter w) =>
-        AddConversionBasedUnit(w, "2,0,0,0,0,0,0", "AREA", "SQUARE FOOT", "IFCAREAMEASURE",
-            StepWriter.Real(IfcLengthUnit.SquareMetresPerSquareFoot, "G17"),
-            w.Add("IFCSIUNIT", "*,.AREAUNIT.,$,.SQUARE_METRE."));
+    // Centimetre areas and volumes are conversion-based units of the square and cubic metre, like the inch and foot units. A CENTI
+    // prefix on SQUARE_METRE or CUBIC_METRE is read by IfcOpenShell 0.8.4 as a prefix of the area or volume unit itself (0.01 m2,
+    // 0.01 m3), while the exporter meant the square and cube of the centimetre, so that reader was 100 and 10000 times off. The factors
+    // are written as the exact decimals: G17 prints the double 0.000001 as 9.9999999999999995E-07.
+    private const string SquareMetresPerSquareCentimetreLiteral = "0.0001";
+    private const string CubicMetresPerCubicCentimetreLiteral = "0.000001";
 
-    private static int AddCubicFootUnit(StepWriter w) =>
-        AddConversionBasedUnit(w, "3,0,0,0,0,0,0", "VOLUME", "CUBIC FOOT", "IFCVOLUMEMEASURE",
-            StepWriter.Real(IfcLengthUnit.CubicMetresPerCubicFoot, "G17"),
-            w.Add("IFCSIUNIT", "*,.VOLUMEUNIT.,$,.CUBIC_METRE."));
+    private static int AddProjectAreaUnit(StepWriter w, IfcUnitFamily family) => family switch
+    {
+        IfcUnitFamily.Foot => AddConversionBasedUnit(w, "2,0,0,0,0,0,0", "AREA", "SQUARE FOOT", "IFCAREAMEASURE",
+            StepWriter.Real(IfcLengthUnit.SquareMetresPerSquareFoot, "G17"), w.Add("IFCSIUNIT", "*,.AREAUNIT.,$,.SQUARE_METRE.")),
+        IfcUnitFamily.Inch => AddConversionBasedUnit(w, "2,0,0,0,0,0,0", "AREA", "SQUARE INCH", "IFCAREAMEASURE",
+            StepWriter.Real(IfcLengthUnit.SquareMetresPerSquareInch, "G17"), w.Add("IFCSIUNIT", "*,.AREAUNIT.,$,.SQUARE_METRE.")),
+        IfcUnitFamily.Centimetre => AddConversionBasedUnit(w, "2,0,0,0,0,0,0", "AREA", "SQUARE CENTIMETRE", "IFCAREAMEASURE",
+            SquareMetresPerSquareCentimetreLiteral, w.Add("IFCSIUNIT", "*,.AREAUNIT.,$,.SQUARE_METRE.")),
+        _ => w.Add("IFCSIUNIT", "*,.AREAUNIT.,$,.SQUARE_METRE."),
+    };
+
+    private static int AddProjectVolumeUnit(StepWriter w, IfcUnitFamily family) => family switch
+    {
+        IfcUnitFamily.Foot => AddConversionBasedUnit(w, "3,0,0,0,0,0,0", "VOLUME", "CUBIC FOOT", "IFCVOLUMEMEASURE",
+            StepWriter.Real(IfcLengthUnit.CubicMetresPerCubicFoot, "G17"), w.Add("IFCSIUNIT", "*,.VOLUMEUNIT.,$,.CUBIC_METRE.")),
+        IfcUnitFamily.Inch => AddConversionBasedUnit(w, "3,0,0,0,0,0,0", "VOLUME", "CUBIC INCH", "IFCVOLUMEMEASURE",
+            StepWriter.Real(IfcLengthUnit.CubicMetresPerCubicInch, "G17"), w.Add("IFCSIUNIT", "*,.VOLUMEUNIT.,$,.CUBIC_METRE.")),
+        IfcUnitFamily.Centimetre => AddConversionBasedUnit(w, "3,0,0,0,0,0,0", "VOLUME", "CUBIC CENTIMETRE", "IFCVOLUMEMEASURE",
+            CubicMetresPerCubicCentimetreLiteral, w.Add("IFCSIUNIT", "*,.VOLUMEUNIT.,$,.CUBIC_METRE.")),
+        _ => w.Add("IFCSIUNIT", "*,.VOLUMEUNIT.,$,.CUBIC_METRE."),
+    };
 
     private static int AddDegreeUnit(StepWriter w) =>
         AddConversionBasedUnit(w, "0,0,0,0,0,0,0", "PLANEANGLE", "DEGREE", "IFCPLANEANGLEMEASURE",
             DegreeInRadiansCurrent, w.Add("IFCSIUNIT", "*,.PLANEANGLEUNIT.,$,.RADIAN."));
 
     /// <summary>A unit is created when the first measure of its kind is made; the created ones are assigned, in creation order,
-    /// in <c>IfcProject.UnitsInContext</c> at the end of the export. The project units are millimetre, degree, square metre and
-    /// cubic metre; the selected unit of a spec that has an SI unit of its own is written as <c>IfcSIUnit</c> (area, volume),
+    /// in <c>IfcProject.UnitsInContext</c> at the end of the export. The default project units are millimetre, degree, square metre
+    /// and cubic metre. Metric units are written as <c>IfcSIUnit</c>, imperial units and the centimetre area and volume as <c>IfcConversionBasedUnit</c>, and
     /// the degree as <c>IfcConversionBasedUnit</c> of the radian with the factor <see cref="DegreeInRadiansCurrent"/>.
     /// All four are always present, so they are written up front; the assignment lists the defaults until the final order is known.</summary>
     internal static UnitAssignmentCurrent CreateUnitAssignmentCurrent(StepWriter w, int lengthUnitId, IfcUnitFamily family = IfcUnitFamily.Millimetre)
     {
-        if (family == IfcUnitFamily.Foot)
-        {
-            // A project in feet: length, area and volume are conversion-based foot units referencing named
-            // SI base units (.METRE., .SQUARE_METRE., .CUBIC_METRE.) via IfcMeasureWithUnit factors.
-            int footLength = AddFootLengthUnit(w, lengthUnitId);
-            int degreeFoot = AddDegreeUnit(w);
-            int squareFoot = AddSquareFootUnit(w);
-            int cubicFoot = AddCubicFootUnit(w);
-            int footIndex = w.EntityCount;
-            int footAssignment = w.Add("IFCUNITASSIGNMENT", StepWriter.List(R(footLength), R(degreeFoot), R(squareFoot), R(cubicFoot)));
-            return new UnitAssignmentCurrent(footLength, degreeFoot, squareFoot, cubicFoot, footIndex, footAssignment);
-        }
+        int length = AddProjectLengthUnit(w, lengthUnitId, family);
         int degree = AddDegreeUnit(w);
-        int area = w.Add("IFCSIUNIT", "*,.AREAUNIT.,$,.SQUARE_METRE.");
-        int volume = w.Add("IFCSIUNIT", "*,.VOLUMEUNIT.,$,.CUBIC_METRE.");
+        int area = AddProjectAreaUnit(w, family);
+        int volume = AddProjectVolumeUnit(w, family);
         int index = w.EntityCount;
-        int assignment = w.Add("IFCUNITASSIGNMENT", StepWriter.List(R(lengthUnitId), R(degree), R(area), R(volume)));
-        return new UnitAssignmentCurrent(lengthUnitId, degree, area, volume, index, assignment);
+        int assignment = w.Add("IFCUNITASSIGNMENT", StepWriter.List(R(length), R(degree), R(area), R(volume)));
+        return new UnitAssignmentCurrent(length, degree, area, volume, index, assignment);
     }
 
     /// <summary>Completes the unit assignment from the finished property values: the thermal transmittance unit

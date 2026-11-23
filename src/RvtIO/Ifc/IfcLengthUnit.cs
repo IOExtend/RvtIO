@@ -61,14 +61,16 @@ internal static class IfcLengthUnit
 
     /// <summary>The conversion of the finished entity list for a unit family. Millimetre is <see cref="ToMillimetres"/>
     /// (what every file wrote before the family existed); Metre keeps the metres of the table and moves the
-    /// millimetre-written attributes; Foot divides every length, area and volume by its factor, which is what the Revit
-    /// internal unit is, so those files are printed in the values of the document itself.</summary>
+    /// millimetre-written attributes; the other families convert lengths, areas and volumes to their corresponding units.</summary>
     internal static Func<string, string, string> Converter(IfcUnitFamily family, bool exactQuantities = false) =>
         family == IfcUnitFamily.Millimetre ? (type, args) => ToMillimetres(type, args, exactQuantities) : (type, args) => ToFamily(type, args, family, exactQuantities);
 
     internal const double MetresPerFoot = 0.3048;
     internal const double SquareMetresPerSquareFoot = MetresPerFoot * MetresPerFoot;
     internal const double CubicMetresPerCubicFoot = MetresPerFoot * MetresPerFoot * MetresPerFoot;
+    internal const double MetresPerInch = 0.0254;
+    internal const double SquareMetresPerSquareInch = MetresPerInch * MetresPerInch;
+    internal const double CubicMetresPerCubicInch = MetresPerInch * MetresPerInch * MetresPerInch;
 
     /// <summary>Attributes written in millimetres at their source (the overall size of a door or window, the nominal diameter
     /// and the length of a bar, the radius of a swept disk).</summary>
@@ -101,6 +103,15 @@ internal static class IfcLengthUnit
         (SourceUnit.Millimetre, IfcUnitFamily.Metre) => 1000,
         (SourceUnit.SquareMetre, IfcUnitFamily.Foot) => SquareMetresPerSquareFoot,
         (SourceUnit.CubicMetre, IfcUnitFamily.Foot) => CubicMetresPerCubicFoot,
+        // centimetre: powers of ten, applied exactly (see Quotient and DecimalDivisor)
+        (SourceUnit.Metre, IfcUnitFamily.Centimetre) => 0.01,
+        (SourceUnit.Millimetre, IfcUnitFamily.Centimetre) => 10,
+        (SourceUnit.SquareMetre, IfcUnitFamily.Centimetre) => 0.0001,
+        (SourceUnit.CubicMetre, IfcUnitFamily.Centimetre) => 0.000001,
+        (SourceUnit.Metre, IfcUnitFamily.Inch) => MetresPerInch,
+        (SourceUnit.Millimetre, IfcUnitFamily.Inch) => 25.4,
+        (SourceUnit.SquareMetre, IfcUnitFamily.Inch) => SquareMetresPerSquareInch,
+        (SourceUnit.CubicMetre, IfcUnitFamily.Inch) => CubicMetresPerCubicInch,
         _ => 1,
     };
 
@@ -164,11 +175,11 @@ internal static class IfcLengthUnit
         if (divisor == 1 || text.Length == 0 || !(char.IsDigit(text[0]) || text[0] is '-' or '+' or '.')) return token;
         if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double value)) return token;
         if (value == 0) return token;
-        if (exactReal) return StepWriter.RealExact(value / divisor);
-        // millimetres to metres moves the decimal point of the literal, as metres to millimetres does
-        string result = divisor == 1000 && decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out decimal exact)
-            ? (exact / 1000m).ToString("0.############################", CultureInfo.InvariantCulture)
-            : (value / divisor).ToString("R", CultureInfo.InvariantCulture);
+        if (exactReal) return StepWriter.RealExact(Quotient(value, divisor));
+        // a power-of-ten divisor moves the decimal point of the literal, as metres to millimetres does
+        string result = DecimalDivisor(divisor) is decimal shift && ShiftLiteral(text, shift) is string shifted
+            ? shifted
+            : Quotient(value, divisor).ToString("R", CultureInfo.InvariantCulture);
         int exponent = result.IndexOfAny(['E', 'e']);
         if (exponent >= 0)
         {
@@ -177,6 +188,32 @@ internal static class IfcLengthUnit
         }
         return result.Contains('.') ? result : result + ".";
     }
+
+    /// <summary>The divisors of the table that are powers of ten, as decimals. 0.01, 0.0001 and 0.000001 (the centimetre family) are
+    /// not doubles, so dividing by them leaves low-digit noise (0.29 / 0.01 is 28.999999999999996).</summary>
+    private static decimal? DecimalDivisor(double divisor) => divisor switch
+    {
+        1000 => 1000m,
+        10 => 10m,
+        0.01 => 0.01m,
+        0.0001 => 0.0001m,
+        0.000001 => 0.000001m,
+        _ => null,
+    };
+
+    /// <summary>The literal divided by an exact decimal divisor, or null when it does not fit a decimal. A divisor below 1 multiplies, so
+    /// the literals from 1e22 up, which are not geometry, are left to the double instead of overflowing.</summary>
+    private static string? ShiftLiteral(string text, decimal divisor)
+    {
+        if (!decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out decimal exact)) return null;
+        if (divisor < 1 && Math.Abs(exact) >= 1e22m) return null;
+        return (exact / divisor).ToString("0.############################", CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>The value divided by the divisor; a decimal divisor below 1 is applied as its exact reciprocal (a multiplication by
+    /// 100, 10000 or 1000000), which rounds once.</summary>
+    private static double Quotient(double value, double divisor) =>
+        DecimalDivisor(divisor) is decimal d && d < 1 ? value * (double)(1 / d) : value / divisor;
 
     /// <summary>The attribute text split at the commas outside strings and parentheses.</summary>
     internal static List<string> SplitTopLevel(string args)

@@ -21,6 +21,10 @@ API between minor releases.
   position and is only read: it is never written to, shortened or closed, also when it is writable. Errors are the
   `RvtInputException` kinds of a path read, and a failure of the stream itself is thrown as it was. A document opened from
   a stream has no `SourcePath`, so `SaveAs` throws and printing leaves out the images it takes from the file.
+- IFC export supports explicit centimetres (`cm`) and inches (`in`) in the CLI and API, with the corresponding square
+  and cubic units in both profiles. Default IFC output and JSON units are unchanged. Centimetre areas and volumes are
+  written in cm² and cm³ and declared as the conversion-based units `SQUARE CENTIMETRE` and `CUBIC CENTIMETRE`, as the
+  inch and foot units are.
 
 ### Changed
 

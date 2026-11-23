@@ -23,6 +23,8 @@ public partial class IfcExporter
     {
         IfcUnitFamily.Foot => 1,
         IfcUnitFamily.Metre => FeetToMetres,
+        IfcUnitFamily.Centimetre => FeetToMillimetres / 10,
+        IfcUnitFamily.Inch => 12,
         _ => FeetToMillimetres,
     };
 
@@ -183,7 +185,9 @@ public partial class IfcExporter
         string Direction(double[] v) => R(w.Add("IFCDIRECTION", StepWriter.List(D(v[0]), D(v[1]), D(v[2]))));
         var curves = new List<int>();
         lengthFt = 0;
-        // the end parameter of the directrix is the sum of the parameter extents of its pieces: millimetres of a line, degrees of an arc
+        // The end parameter is the sum of the line lengths in file units plus the sum of the arc extents in degrees. The millimetre, metre
+        // and foot output has always carried this value (RebarReaderTests pins the millimetre one). It is not the parameter span of the
+        // composite curve, but there is no centimetre or inch reference to justify a second convention, so those units keep it.
         double endParameter = 0;
         foreach (var piece in pieces)
         {

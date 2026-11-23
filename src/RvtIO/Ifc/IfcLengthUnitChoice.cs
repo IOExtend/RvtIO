@@ -11,6 +11,11 @@ public enum IfcUnitFamily
     Metre,
     /// <summary>Lengths are written in feet.</summary>
     Foot,
+    /// <summary>Lengths are written in centimetres (CENTI METRE), areas and volumes in cm2 and cm3 as the conversion-based units
+    /// SQUARE CENTIMETRE and CUBIC CENTIMETRE of the square and cubic metre. This family is opt-in.</summary>
+    Centimetre,
+    /// <summary>Lengths are written in inches. This family is opt-in.</summary>
+    Inch,
 }
 
 internal static class IfcLengthUnitChoice
@@ -19,7 +24,7 @@ internal static class IfcLengthUnitChoice
 
     /// <summary>The family the stored unit is written in, as Revit's own IFC export declares it: feet, feet-and-fractional-inches
     /// and US survey feet as FOOT, meters and meters-and-centimeters as METRE, millimeters as MILLI METRE. Null for every
-    /// other unit (centimeters and inches among them, which have no family here) and for an unreadable option.</summary>
+    /// other unit (including centimetres and inches, which require an explicit override) and for an unreadable option.</summary>
     internal static IfcUnitFamily? OwnFamily(string? storedLengthUnit) =>
         storedLengthUnit == null ? null
         : UnitSchemaEvaluator.DisplayNameKey(storedLengthUnit) switch

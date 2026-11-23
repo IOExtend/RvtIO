@@ -134,6 +134,64 @@ public class IfcLengthUnitFamilyTests
         Assert.Equal("'P','',IFCLENGTHMEASURE(0.0254),$", IfcLengthUnit.ToFamily("IFCPROPERTYSINGLEVALUE", "'P','',IFCLENGTHMEASURE(25.4),$", IfcUnitFamily.Metre));
     }
 
+    [Theory]
+    [InlineData(IfcUnitFamily.Centimetre, 0.01, 0.0001, 0.000001)]
+    [InlineData(IfcUnitFamily.Inch, 0.0254, 0.00064516, 0.000016387064)]
+    public void ExplicitUnits_ScaleMillimetreDoorSizesAndTypedProperties(
+        IfcUnitFamily family, double lengthFactor, double areaFactor, double volumeFactor)
+    {
+        string door = IfcLengthUnit.ToFamily("IFCDOOR", "#1,#2,'Door','','',#3,#4,'5',2000.,800.", family);
+        var sizes = IfcLengthUnit.SplitTopLevel(door);
+        Assert.Equal(2.0, double.Parse(sizes[8], CultureInfo.InvariantCulture) * lengthFactor, 12);
+        Assert.Equal(0.8, double.Parse(sizes[9], CultureInfo.InvariantCulture) * lengthFactor, 12);
+
+        foreach (var (measure, source, factor, expected) in new[]
+        {
+            ("IFCLENGTHMEASURE", "25.4", lengthFactor, 0.0254),
+            ("IFCAREAMEASURE", "2.5", areaFactor, 2.5),
+            ("IFCVOLUMEMEASURE", "1.25", volumeFactor, 1.25),
+        })
+        {
+            string args = IfcLengthUnit.ToFamily("IFCPROPERTYSINGLEVALUE", $"'P',$,{measure}({source}),$", family);
+            string nominal = IfcLengthUnit.SplitTopLevel(args)[2];
+            Assert.StartsWith(measure + "(", nominal);
+            Assert.Equal(expected, double.Parse(nominal.AsSpan(measure.Length + 1, nominal.Length - measure.Length - 2),
+                CultureInfo.InvariantCulture) * factor, 12);
+        }
+    }
+
+    // The centimetre conversions are decimal shifts of the literal, as the millimetre ones are: each expected text is the exact
+    // decimal result, where a division by the double 0.01, 0.0001 or 0.000001 would leave low-digit noise (0.29 / 0.01 is 28.999999999999996).
+    [Theory]
+    [InlineData("IFCCARTESIANPOINT", "(0.29,1.15,2.3)", "(29.,115.,230.)")]
+    [InlineData("IFCVECTOR", "#9,0.07", "#9,7.")]
+    [InlineData("IFCDOOR", "#1,#2,'a','','',#3,#4,'5',2133.6,914.4", "#1,#2,'a','','',#3,#4,'5',213.36,91.44")]
+    [InlineData("IFCQUANTITYAREA", "'Q','',$,1.2", "'Q','',$,12000.")]
+    [InlineData("IFCQUANTITYVOLUME", "'Q','',$,0.07", "'Q','',$,70000.")]
+    [InlineData("IFCPROPERTYSINGLEVALUE", "'P','',IFCLENGTHMEASURE(8.2),$", "'P','',IFCLENGTHMEASURE(0.82),$")]
+    [InlineData("IFCPROPERTYSINGLEVALUE", "'P','',IFCAREAMEASURE(0.29),$", "'P','',IFCAREAMEASURE(2900.),$")]
+    [InlineData("IFCPROPERTYSINGLEVALUE", "'P','',IFCVOLUMEMEASURE(2.2),$", "'P','',IFCVOLUMEMEASURE(2200000.),$")]
+    public void Centimetre_MovesTheDecimalPointWithoutNoise(string type, string args, string expected) =>
+        Assert.Equal(expected, IfcLengthUnit.ToFamily(type, args, IfcUnitFamily.Centimetre));
+
+    // The exact quantities of the current profile print the double itself, which is multiplied by an exact 100, 10000 or 1000000
+    // and so rounds once; these inputs give the round result, a division by 0.0001 or 0.000001 gives 11999.999999999998 and 2200000.0000000005.
+    [Theory]
+    [InlineData("IFCQUANTITYAREA", "'Q','',$,1.2", "'Q','',$,12000.")]
+    [InlineData("IFCQUANTITYVOLUME", "'Q','',$,2.2", "'Q','',$,2200000.")]
+    [InlineData("IFCPROPERTYSINGLEVALUE", "'P','',IFCAREAMEASURE(1.2),$", "'P','',IFCAREAMEASURE(12000.),$")]
+    [InlineData("IFCPROPERTYSINGLEVALUE", "'P','',IFCVOLUMEMEASURE(2.2),$", "'P','',IFCVOLUMEMEASURE(2200000.),$")]
+    public void Centimetre_ExactQuantitiesMultiplyByAnExactPowerOfTen(string type, string args, string expected) =>
+        Assert.Equal(expected, IfcLengthUnit.ToFamily(type, args, IfcUnitFamily.Centimetre, exact: true));
+
+    [Fact]
+    public void Centimetre_LeavesALiteralTooLargeForADecimalToTheDoubleInsteadOfOverflowing()
+    {
+        // 1e27 is a decimal, but 1e27 * 100 is more than a decimal holds (7.9e28)
+        string text = IfcLengthUnit.ToFamily("IFCVECTOR", "#9,1.E+27", IfcUnitFamily.Centimetre);
+        Assert.Equal(1e29, double.Parse(text[3..], CultureInfo.InvariantCulture), 1e15);
+    }
+
     [Fact]
     public void FootUnitAssignment_NamesTheFootAndTheSquareAndCubicFoot()
     {
@@ -157,6 +215,34 @@ public class IfcLengthUnitFamilyTests
         Assert.Equal(4, assignedRefs.Count);
         foreach (string id in assignedRefs)
             Assert.Contains($"#{id}=IFCCONVERSIONBASEDUNIT(", file);
+    }
+
+    [Fact]
+    public void CentimetreUnitAssignment_KeepsTheCentiMetreAndNamesTheSquareAndCubicCentimetre()
+    {
+        var w = new StepWriter();
+        int length = w.Add("IFCSIUNIT", "*,.LENGTHUNIT.,.CENTI.,.METRE.");
+        IfcExporter.CreateUnitAssignmentCurrent(w, length, IfcUnitFamily.Centimetre);
+        var text = new System.IO.StringWriter();
+        w.WriteTo(text, "f", "IFC2X3", "d", "a");
+        string file = text.ToString();
+        Assert.Contains("=IFCSIUNIT(*,.LENGTHUNIT.,.CENTI.,.METRE.);", file);
+        Assert.Contains(",'SQUARE CENTIMETRE',", file);
+        Assert.Contains(",'CUBIC CENTIMETRE',", file);
+        Assert.Contains("=IFCMEASUREWITHUNIT(IFCAREAMEASURE(0.0001),", file);
+        Assert.Contains("=IFCMEASUREWITHUNIT(IFCVOLUMEMEASURE(0.000001),", file);
+        Assert.DoesNotContain(".CENTI.,.SQUARE_METRE.", file);
+        Assert.DoesNotContain(".CENTI.,.CUBIC_METRE.", file);
+        IfcLengthUnitChoiceOptionTests.AssertValidIfcUnitGraph(file, requireProjectReference: false);
+        string assignmentArgs = Regex.Match(file, @"=IFCUNITASSIGNMENT\(\(([^)]*)\)\);").Groups[1].Value;
+        var assignedLines = assignmentArgs.Split(',')
+            .Select(r => Regex.Match(file, $@"(?m)^{Regex.Escape(r)}=([^\r\n]*);").Value).ToList();
+        Assert.DoesNotContain("", assignedLines);
+        // each of the four units exactly once, so the area and the volume are what the assignment lists
+        foreach (string unit in new[] { ".LENGTHUNIT.", ".PLANEANGLEUNIT.", ".AREAUNIT.", ".VOLUMEUNIT." })
+            Assert.Single(assignedLines, line => line.Contains(unit, StringComparison.Ordinal));
+        Assert.Single(assignedLines, line => line.Contains("'SQUARE CENTIMETRE'", StringComparison.Ordinal));
+        Assert.Single(assignedLines, line => line.Contains("'CUBIC CENTIMETRE'", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -233,6 +319,10 @@ public class IfcLengthUnitChoiceOptionTests
     [InlineData("millimeter", IfcUnitFamily.Millimetre)]
     [InlineData("millimetres", IfcUnitFamily.Millimetre)]
     [InlineData("millimeters", IfcUnitFamily.Millimetre)]
+    [InlineData("cm", IfcUnitFamily.Centimetre)]
+    [InlineData("CM", IfcUnitFamily.Centimetre)]
+    [InlineData("centimetre", IfcUnitFamily.Centimetre)]
+    [InlineData("centimeters", IfcUnitFamily.Centimetre)]
     [InlineData("m", IfcUnitFamily.Metre)]
     [InlineData("metre", IfcUnitFamily.Metre)]
     [InlineData("meter", IfcUnitFamily.Metre)]
@@ -242,6 +332,10 @@ public class IfcLengthUnitChoiceOptionTests
     [InlineData("FT", IfcUnitFamily.Foot)]
     [InlineData("foot", IfcUnitFamily.Foot)]
     [InlineData("feet", IfcUnitFamily.Foot)]
+    [InlineData("in", IfcUnitFamily.Inch)]
+    [InlineData("IN", IfcUnitFamily.Inch)]
+    [InlineData("inch", IfcUnitFamily.Inch)]
+    [InlineData("inches", IfcUnitFamily.Inch)]
     public void IfcLengthUnitOption_SupportedSpellings_MapToExpectedFamily(string raw, IfcUnitFamily expected)
     {
         Assert.True(RvtIO.Cli.IfcLengthUnitOption.TryParse(["project.rvt", "project.ifc", "--ifc-length-unit", raw], out var unit, out string? error));
@@ -253,10 +347,6 @@ public class IfcLengthUnitChoiceOptionTests
     {
         yield return [new[] { "project.rvt", "project.ifc", "--ifc-length-unit" }];
         yield return [new[] { "project.rvt", "project.ifc", "--ifc-length-unit", "--ifc-revit-parameters" }];
-        yield return [new[] { "project.rvt", "project.ifc", "--ifc-length-unit", "cm" }];
-        yield return [new[] { "project.rvt", "project.ifc", "--ifc-length-unit", "centimetre" }];
-        yield return [new[] { "project.rvt", "project.ifc", "--ifc-length-unit", "in" }];
-        yield return [new[] { "project.rvt", "project.ifc", "--ifc-length-unit", "inch" }];
         yield return [new[] { "project.rvt", "project.ifc", "--ifc-length-unit", "km" }];
         yield return [new[] { "project.rvt", "project.ifc", "--ifc-length-unit", "m", "--ifc-length-unit", "ft" }];
     }
@@ -290,6 +380,8 @@ public class IfcLengthUnitChoiceOptionTests
     [InlineData(IfcProfile.Current, "autodesk.unit.unit:millimeters-1.0.1", IfcUnitFamily.Millimetre)]
     [InlineData(IfcProfile.Current, "autodesk.unit.unit:meters-1.0.0", IfcUnitFamily.Metre)]
     [InlineData(IfcProfile.Current, "autodesk.unit.unit:feet-1.0.1", IfcUnitFamily.Foot)]
+    [InlineData(IfcProfile.Current, "autodesk.unit.unit:centimeters-1.0.1", IfcUnitFamily.Millimetre)]
+    [InlineData(IfcProfile.Current, "autodesk.unit.unit:inches-1.0.1", IfcUnitFamily.Millimetre)]
     [InlineData(IfcProfile.Legacy, "autodesk.unit.unit:meters-1.0.0", IfcUnitFamily.Millimetre)]
     public void Export_WithoutExplicitSetting_MatchesMatchingExplicitFamilyByteForByte(
         IfcProfile profile, string storedUnit, IfcUnitFamily matchingFamily)
@@ -326,14 +418,14 @@ public class IfcLengthUnitChoiceOptionTests
     [Theory]
     [InlineData(IfcProfile.Current)]
     [InlineData(IfcProfile.Legacy)]
-    public void Export_AcrossMillimetreMetreAndFoot_DeclaresMatchingUnitsAndPreservesPhysicalGeometryAndQuantities(IfcProfile profile)
+    public void Export_AcrossUnitFamilies_DeclaresMatchingUnitsAndPreservesPhysicalGeometryAndQuantities(IfcProfile profile)
     {
         string dir = Path.Combine(Path.GetTempPath(), $"rvtio-unit-equiv-{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
         try
         {
             var outputs = new Dictionary<IfcUnitFamily, string>();
-            foreach (var family in new[] { IfcUnitFamily.Millimetre, IfcUnitFamily.Metre, IfcUnitFamily.Foot })
+            foreach (var family in Enum.GetValues<IfcUnitFamily>())
             {
                 string path = Path.Combine(dir, $"{family}.ifc");
                 var diag = new StringWriter();
@@ -365,13 +457,42 @@ public class IfcLengthUnitChoiceOptionTests
             Assert.Contains("=IFCSIUNIT(*,.AREAUNIT.,$,.SQUARE_METRE.);", outputs[IfcUnitFamily.Foot]);
             Assert.Contains("=IFCSIUNIT(*,.VOLUMEUNIT.,$,.CUBIC_METRE.);", outputs[IfcUnitFamily.Foot]);
 
-            foreach (var family in new[] { IfcUnitFamily.Millimetre, IfcUnitFamily.Metre, IfcUnitFamily.Foot })
-                AssertValidIfcUnitGraph(outputs[family]);
+            string cm = outputs[IfcUnitFamily.Centimetre];
+            Assert.Contains("=IFCSIUNIT(*,.LENGTHUNIT.,.CENTI.,.METRE.);", cm);
+            // not a prefix on the area or volume unit: readers differ in whether they apply it to the unit or to the length
+            Assert.DoesNotContain(".CENTI.,.SQUARE_METRE.", cm);
+            Assert.DoesNotContain(".CENTI.,.CUBIC_METRE.", cm);
+            Assert.Contains("=IFCSIUNIT(*,.AREAUNIT.,$,.SQUARE_METRE.);", cm);
+            Assert.Contains("=IFCSIUNIT(*,.VOLUMEUNIT.,$,.CUBIC_METRE.);", cm);
+            Assert.Contains(",'SQUARE CENTIMETRE',", cm);
+            Assert.Contains(",'CUBIC CENTIMETRE',", cm);
+            // the exact decimals, which a G17 print of the double would not give
+            Assert.Contains("=IFCMEASUREWITHUNIT(IFCAREAMEASURE(0.0001),", cm);
+            Assert.Contains("=IFCMEASUREWITHUNIT(IFCVOLUMEMEASURE(0.000001),", cm);
+            AssertConversionFactor(cm, "IFCAREAMEASURE", 0.0001);
+            AssertConversionFactor(cm, "IFCVOLUMEMEASURE", 0.000001);
+            string inch = outputs[IfcUnitFamily.Inch];
+            Assert.Contains(",'INCH',", inch);
+            Assert.Contains(",'SQUARE INCH',", inch);
+            Assert.Contains(",'CUBIC INCH',", inch);
+            AssertConversionFactor(inch, "IFCLENGTHMEASURE", 0.0254);
+            AssertConversionFactor(inch, "IFCAREAMEASURE", 0.00064516);
+            AssertConversionFactor(inch, "IFCVOLUMEMEASURE", 0.000016387064);
+
+            foreach (string ifc in outputs.Values)
+                AssertValidIfcUnitGraph(ifc);
+
+            // the units must be the ones IfcProject.UnitsInContext assigns, not merely entities somewhere in the file
+            foreach (var (family, ifc) in outputs)
+            {
+                var (length, area, volume) = AssignedUnitsOfFamily[family];
+                var assigned = AssignedUnits(ifc);
+                Assert.Equal(length, assigned[".LENGTHUNIT."]);
+                Assert.Equal(area, assigned[".AREAUNIT."]);
+                Assert.Equal(volume, assigned[".VOLUMEUNIT."]);
+            }
 
             var mmMetrics = ExtractPhysicalMetricsInSi(outputs[IfcUnitFamily.Millimetre], IfcUnitFamily.Millimetre);
-            var mMetrics = ExtractPhysicalMetricsInSi(outputs[IfcUnitFamily.Metre], IfcUnitFamily.Metre);
-            var ftMetrics = ExtractPhysicalMetricsInSi(outputs[IfcUnitFamily.Foot], IfcUnitFamily.Foot);
-
             Assert.NotEmpty(mmMetrics.Points);
             Assert.NotEmpty(mmMetrics.StoreyElevations);
             if (profile == IfcProfile.Current)
@@ -381,18 +502,160 @@ public class IfcLengthUnitChoiceOptionTests
                 Assert.NotEmpty(mmMetrics.Volumes);
             }
 
-            AssertListsClose(mmMetrics.StoreyElevations, mMetrics.StoreyElevations, 1e-9);
-            AssertListsClose(mmMetrics.StoreyElevations, ftMetrics.StoreyElevations, 1e-9);
-            AssertPointListsClose(mmMetrics.Points, mMetrics.Points, 1e-9);
-            AssertPointListsClose(mmMetrics.Points, ftMetrics.Points, 1e-9);
-            AssertListsClose(mmMetrics.Lengths, mMetrics.Lengths, 1e-9);
-            AssertListsClose(mmMetrics.Lengths, ftMetrics.Lengths, 1e-9);
-            AssertListsClose(mmMetrics.Areas, mMetrics.Areas, 1e-9);
-            AssertListsClose(mmMetrics.Areas, ftMetrics.Areas, 1e-9);
-            AssertListsClose(mmMetrics.Volumes, mMetrics.Volumes, 1e-9);
-            AssertListsClose(mmMetrics.Volumes, ftMetrics.Volumes, 1e-9);
+            foreach (var family in Enum.GetValues<IfcUnitFamily>().Where(family => family != IfcUnitFamily.Millimetre))
+            {
+                var metrics = ExtractPhysicalMetricsInSi(outputs[family], family);
+                AssertListsClose(mmMetrics.StoreyElevations, metrics.StoreyElevations, 1e-9);
+                AssertPointListsClose(mmMetrics.Points, metrics.Points, 1e-9);
+                AssertListsClose(mmMetrics.Depths, metrics.Depths, 1e-9);
+                AssertListsClose(mmMetrics.Lengths, metrics.Lengths, 1e-9);
+                AssertListsClose(mmMetrics.Areas, metrics.Areas, 1e-9);
+                AssertListsClose(mmMetrics.Volumes, metrics.Volumes, 1e-9);
+                if (family is IfcUnitFamily.Centimetre or IfcUnitFamily.Inch)
+                {
+                    double precision = profile == IfcProfile.Current ? 0.0001 : 0.00001;
+                    Assert.Equal(precision, metrics.Precision, 13);
+                }
+            }
         }
         finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    private static void AssertConversionFactor(string ifc, string measure, double expected) =>
+        Assert.Equal(expected, DeclaredFactor(ifc, measure), 15);
+
+    /// <summary>The length, area and volume unit each family assigns, as <see cref="AssignedUnits"/> describes them.</summary>
+    private static readonly Dictionary<IfcUnitFamily, (string Length, string Area, string Volume)> AssignedUnitsOfFamily = new()
+    {
+        [IfcUnitFamily.Millimetre] = ("IFCSIUNIT .MILLI. .METRE.", "IFCSIUNIT $ .SQUARE_METRE.", "IFCSIUNIT $ .CUBIC_METRE."),
+        [IfcUnitFamily.Metre] = ("IFCSIUNIT $ .METRE.", "IFCSIUNIT $ .SQUARE_METRE.", "IFCSIUNIT $ .CUBIC_METRE."),
+        [IfcUnitFamily.Foot] = ("IFCCONVERSIONBASEDUNIT 'FOOT'", "IFCCONVERSIONBASEDUNIT 'SQUARE FOOT'", "IFCCONVERSIONBASEDUNIT 'CUBIC FOOT'"),
+        [IfcUnitFamily.Centimetre] = ("IFCSIUNIT .CENTI. .METRE.", "IFCCONVERSIONBASEDUNIT 'SQUARE CENTIMETRE'", "IFCCONVERSIONBASEDUNIT 'CUBIC CENTIMETRE'"),
+        [IfcUnitFamily.Inch] = ("IFCCONVERSIONBASEDUNIT 'INCH'", "IFCCONVERSIONBASEDUNIT 'SQUARE INCH'", "IFCCONVERSIONBASEDUNIT 'CUBIC INCH'"),
+    };
+
+    /// <summary>The units of <c>IfcProject.UnitsInContext</c> by unit type (<c>.LENGTHUNIT.</c> and the like), each resolved to the
+    /// entity that defines it: an IfcSIUnit as "type prefix name", an IfcConversionBasedUnit as "type name".</summary>
+    private static Dictionary<string, string> AssignedUnits(string ifc)
+    {
+        var entities = ParseEntities(ifc);
+        var project = Assert.Single(entities.Values, entity => entity.Type == "IFCPROJECT");
+        string[] projectArgs = IfcExporter.SplitStepArguments(project.Args);
+        Assert.True(TryParseRef(projectArgs[8], out int assignmentId), "UnitsInContext is not a reference.");
+        Assert.Equal("IFCUNITASSIGNMENT", entities[assignmentId].Type);
+        Assert.True(TryParseRefList(IfcExporter.SplitStepArguments(entities[assignmentId].Args)[0], out var unitRefs));
+        var units = new Dictionary<string, string>();
+        foreach (int id in unitRefs)
+        {
+            var (type, args) = entities[id];
+            string[] a = IfcExporter.SplitStepArguments(args);
+            units.Add(a[1], type switch
+            {
+                "IFCSIUNIT" => $"{type} {a[2]} {a[3]}",
+                "IFCCONVERSIONBASEDUNIT" => $"{type} {a[2]}",
+                _ => type,
+            });
+        }
+        return units;
+    }
+
+    private static Dictionary<int, (string Type, string Args)> ParseEntities(string ifc)
+    {
+        var entities = new Dictionary<int, (string Type, string Args)>();
+        foreach (string rawLine in ifc.Split('\n'))
+        {
+            string line = rawLine.Trim();
+            if (!line.StartsWith('#')) continue;
+            int eq = line.IndexOf('=');
+            int open = eq > 1 ? line.IndexOf('(', eq + 1) : -1;
+            if (open < 0 || !line.EndsWith(");", StringComparison.Ordinal)
+                || !int.TryParse(line.AsSpan(1, eq - 1), NumberStyles.Integer, CultureInfo.InvariantCulture, out int id))
+                continue;
+            entities.Add(id, (line[(eq + 1)..open].Trim(), line[(open + 1)..^2]));
+        }
+        return entities;
+    }
+
+    // The bar is one line of 1 foot and a quarter circle. Its directrix end parameter is the line length in file units plus the arc
+    // in degrees, the convention of the millimetre, metre and foot output (RebarReaderTests pins 304.8 + 90 for millimetres). That is
+    // not the parameter span of the composite curve, which would be 1 + 90; centimetres and inches keep the convention because
+    // there is no reference in those units to justify another. The expected line parameter is the foot in the unit of the file.
+    [Theory]
+    [InlineData(IfcUnitFamily.Centimetre, 0.01, 30.48)]
+    [InlineData(IfcUnitFamily.Inch, 0.0254, 12.0)]
+    public void Export_ScalesRebarRadiusAndLineParameterButKeepsTheArcAngle(
+        IfcUnitFamily family, double metresPerUnit, double lineParameter)
+    {
+        var info = new RevitFileInfo();
+        info.Elements.Add(RebarReaderTests.Bar(500, 0));
+        string path = Path.Combine(Path.GetTempPath(), $"rvtio-unit-rebar-{Guid.NewGuid():N}.ifc");
+        try
+        {
+            new IfcExporter { LengthUnit = family }.Export(info, path);
+            string ifc = File.ReadAllText(path);
+            var disks = Regex.Matches(ifc, @"=IFCSWEPTDISKSOLID\(#\d+,([^,]+),\$,0\.,([^)]+)\);");
+            Assert.Equal(2, disks.Count);
+            foreach (Match disk in disks)
+            {
+                Assert.Equal(0.004, double.Parse(disk.Groups[1].Value, CultureInfo.InvariantCulture) * metresPerUnit, 12);
+                Assert.Equal(lineParameter + 90, double.Parse(disk.Groups[2].Value, CultureInfo.InvariantCulture), 12);
+            }
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    // Every unit follows the one convention: the end parameter is the straight length measured on the polyline points of the
+    // file itself plus the degrees of the trimmed arc, so a unit whose parameter scale drifts from its coordinates fails here.
+    [Theory]
+    [InlineData(IfcUnitFamily.Millimetre, 304.8)]
+    [InlineData(IfcUnitFamily.Centimetre, 30.48)]
+    [InlineData(IfcUnitFamily.Metre, 0.3048)]
+    [InlineData(IfcUnitFamily.Inch, 12.0)]
+    [InlineData(IfcUnitFamily.Foot, 1.0)]
+    public void Export_RebarEndParameterIsTheStraightLengthInFileUnitsPlusTheArcDegreesInEveryUnit(
+        IfcUnitFamily family, double footInFileUnits)
+    {
+        var info = new RevitFileInfo();
+        info.Elements.Add(RebarReaderTests.Bar(500, 0));
+        string path = Path.Combine(Path.GetTempPath(), $"rvtio-unit-rebar-param-{Guid.NewGuid():N}.ifc");
+        try
+        {
+            new IfcExporter { LengthUnit = family }.Export(info, path);
+            var entities = ParseEntities(File.ReadAllText(path));
+            var disks = entities.Values.Where(entity => entity.Type == "IFCSWEPTDISKSOLID").ToList();
+            Assert.Equal(2, disks.Count);
+            foreach (var disk in disks)
+            {
+                string[] diskArgs = IfcExporter.SplitStepArguments(disk.Args);
+                Assert.True(TryParseRef(diskArgs[0], out int compositeId));
+                double lines = 0, degrees = 0;
+                Assert.True(TryParseRefList(IfcExporter.SplitStepArguments(entities[compositeId].Args)[0], out var segmentIds));
+                foreach (int segmentId in segmentIds)
+                {
+                    Assert.True(TryParseRef(IfcExporter.SplitStepArguments(entities[segmentId].Args)[2], out int curveId));
+                    var (type, args) = entities[curveId];
+                    string[] curveArgs = IfcExporter.SplitStepArguments(args);
+                    if (type == "IFCPOLYLINE")
+                    {
+                        Assert.True(TryParseRefList(curveArgs[0], out var pointIds));
+                        var points = pointIds.Select(id => entities[id].Args.Trim('(', ')').Split(',')
+                            .Select(s => double.Parse(s, CultureInfo.InvariantCulture)).ToArray()).ToList();
+                        lines += Math.Sqrt(points[0].Zip(points[1], (a, b) => (a - b) * (a - b)).Sum());
+                    }
+                    else
+                    {
+                        Assert.Equal("IFCTRIMMEDCURVE", type);
+                        var parameters = Regex.Matches(curveArgs[1] + curveArgs[2], @"IFCPARAMETERVALUE\(([^)]+)\)")
+                            .Select(m => double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture)).ToList();
+                        degrees += Math.Abs(parameters[1] - parameters[0]);
+                    }
+                }
+                Assert.Equal(footInFileUnits, lines, 9);
+                Assert.Equal(90.0, degrees, 9);
+                Assert.Equal(lines + degrees, double.Parse(diskArgs[4], CultureInfo.InvariantCulture), 9);
+            }
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
     }
 
     [Fact]
@@ -405,7 +668,7 @@ public class IfcLengthUnitChoiceOptionTests
             string rvt = Path.Combine(dir, "synthetic.rvt");
             IfcDeterminismTests.WriteSyntheticRvt(rvt);
 
-            var (badExit, badErr) = RunCli(rvt, Path.Combine(dir, "bad.ifc"), "--ifc-length-unit", "cm");
+            var (badExit, badErr) = RunCli(rvt, Path.Combine(dir, "bad.ifc"), "--ifc-length-unit", "km");
             Assert.Equal(RvtExitCodes.Usage, badExit);
             Assert.Contains("--ifc-length-unit", badErr);
             Assert.False(File.Exists(Path.Combine(dir, "bad.ifc")));
@@ -418,13 +681,48 @@ public class IfcLengthUnitChoiceOptionTests
             string mmPath = Path.Combine(dir, "mm.ifc");
             string mPath = Path.Combine(dir, "m.ifc");
             string ftPath = Path.Combine(dir, "ft.ifc");
+            string cmPath = Path.Combine(dir, "cm.ifc");
+            string inPath = Path.Combine(dir, "in.ifc");
             Assert.Equal(RvtExitCodes.Success, RunCli(rvt, mmPath, "--ifc-length-unit", "mm").ExitCode);
             Assert.Equal(RvtExitCodes.Success, RunCli(rvt, mPath, "--ifc-length-unit", "m").ExitCode);
             Assert.Equal(RvtExitCodes.Success, RunCli(rvt, ftPath, "--ifc-length-unit", "ft").ExitCode);
+            Assert.Equal(RvtExitCodes.Success, RunCli(rvt, cmPath, "--ifc-length-unit", "cm").ExitCode);
+            Assert.Equal(RvtExitCodes.Success, RunCli(rvt, inPath, "--ifc-length-unit", "in").ExitCode);
 
             Assert.Contains("=IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.);", File.ReadAllText(mmPath));
             Assert.Contains("=IFCSIUNIT(*,.LENGTHUNIT.,$,.METRE.);", File.ReadAllText(mPath));
             Assert.Contains("'FOOT'", File.ReadAllText(ftPath));
+            Assert.Contains("=IFCSIUNIT(*,.LENGTHUNIT.,.CENTI.,.METRE.);", File.ReadAllText(cmPath));
+            Assert.Contains("'INCH'", File.ReadAllText(inPath));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    [Theory]
+    [InlineData("cm")]
+    [InlineData("in")]
+    public void CliExport_WithIfcLengthUnit_LeavesBothJsonOutputsUnchanged(string unit)
+    {
+        string dir = Path.Combine(Path.GetTempPath(), $"rvtio-cli-unit-json-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string rvt = Path.Combine(dir, "synthetic.rvt");
+            IfcDeterminismTests.WriteSyntheticRvt(rvt);
+            // each run writes into its own folder: a run that wrote nothing cannot be mistaken for the unchanged default
+            string Output(string run, string name) => Path.Combine(dir, run, name);
+            string[] Args(string run, params string[] extra) =>
+                [rvt, "--ifc", Output(run, "model.ifc"), "--compact-json", Output(run, "compact.json"), "--full-json", Output(run, "full.json"), .. extra];
+            Directory.CreateDirectory(Path.Combine(dir, "default"));
+            Directory.CreateDirectory(Path.Combine(dir, "unit"));
+            Assert.Equal(RvtExitCodes.Success, RunCli(Args("default")).ExitCode);
+            Assert.Equal(RvtExitCodes.Success, RunCli(Args("unit", "--ifc-length-unit", unit)).ExitCode);
+
+            foreach (string name in new[] { "model.ifc", "compact.json", "full.json" })
+                Assert.True(File.Exists(Output("unit", name)), $"The run with the unit option wrote no {name}.");
+            Assert.Contains(unit == "cm" ? ".CENTI.,.METRE." : "'INCH'", File.ReadAllText(Output("unit", "model.ifc")));
+            Assert.Equal(File.ReadAllBytes(Output("default", "compact.json")), File.ReadAllBytes(Output("unit", "compact.json")));
+            Assert.Equal(File.ReadAllBytes(Output("default", "full.json")), File.ReadAllBytes(Output("unit", "full.json")));
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
@@ -433,9 +731,13 @@ public class IfcLengthUnitChoiceOptionTests
     [InlineData(IfcProfile.Current, IfcUnitFamily.Millimetre)]
     [InlineData(IfcProfile.Current, IfcUnitFamily.Metre)]
     [InlineData(IfcProfile.Current, IfcUnitFamily.Foot)]
+    [InlineData(IfcProfile.Current, IfcUnitFamily.Centimetre)]
+    [InlineData(IfcProfile.Current, IfcUnitFamily.Inch)]
     [InlineData(IfcProfile.Legacy, IfcUnitFamily.Millimetre)]
     [InlineData(IfcProfile.Legacy, IfcUnitFamily.Metre)]
     [InlineData(IfcProfile.Legacy, IfcUnitFamily.Foot)]
+    [InlineData(IfcProfile.Legacy, IfcUnitFamily.Centimetre)]
+    [InlineData(IfcProfile.Legacy, IfcUnitFamily.Inch)]
     public void Export_EmptyAndPopulatedModels_EmitSchemaValidUnitGraphAcrossProfilesAndFamilies(
         IfcProfile profile, IfcUnitFamily family)
     {
@@ -467,7 +769,7 @@ public class IfcLengthUnitChoiceOptionTests
                 Assert.Contains(".WATT.", populatedIfc);
             }
 
-            if (family == IfcUnitFamily.Foot)
+            if (family is IfcUnitFamily.Foot or IfcUnitFamily.Inch)
             {
                 foreach (string ifc in new[] { emptyIfc, populatedIfc })
                 {
@@ -897,7 +1199,14 @@ public class IfcLengthUnitChoiceOptionTests
     }
 
     private sealed record PhysicalMetrics(
-        List<double[]> Points, List<double> StoreyElevations, List<double> Lengths, List<double> Areas, List<double> Volumes);
+        List<double[]> Points, List<double> StoreyElevations, List<double> Depths, List<double> Lengths,
+        List<double> Areas, List<double> Volumes, double Precision);
+
+    private static double DeclaredFactor(string ifc, string measure)
+    {
+        var match = Assert.Single(Regex.Matches(ifc, $@"=IFCMEASUREWITHUNIT\({measure}\(([^)]+)\),"));
+        return double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+    }
 
     private static PhysicalMetrics ExtractPhysicalMetricsInSi(string ifc, IfcUnitFamily family)
     {
@@ -906,16 +1215,22 @@ public class IfcLengthUnitChoiceOptionTests
             IfcUnitFamily.Millimetre => 0.001,
             IfcUnitFamily.Metre => 1.0,
             IfcUnitFamily.Foot => IfcLengthUnit.MetresPerFoot,
+            IfcUnitFamily.Centimetre => 0.01,
+            IfcUnitFamily.Inch => 0.0254,
             _ => throw new ArgumentOutOfRangeException(nameof(family)),
         };
-        double areaToSqMetres = family == IfcUnitFamily.Foot ? IfcLengthUnit.SquareMetresPerSquareFoot : 1.0;
-        double volumeToCuMetres = family == IfcUnitFamily.Foot ? IfcLengthUnit.CubicMetresPerCubicFoot : 1.0;
+        // The area and volume of the families with their own units are what the file declares: the factor of its conversion-based
+        // unit to the square and cubic metre, so a wrong declaration shows as a difference from the millimetre output.
+        double areaToSqMetres = family is IfcUnitFamily.Millimetre or IfcUnitFamily.Metre ? 1.0 : DeclaredFactor(ifc, "IFCAREAMEASURE");
+        double volumeToCuMetres = family is IfcUnitFamily.Millimetre or IfcUnitFamily.Metre ? 1.0 : DeclaredFactor(ifc, "IFCVOLUMEMEASURE");
 
         var points = new List<double[]>();
         var elevations = new List<double>();
+        var depths = new List<double>();
         var lengths = new List<double>();
         var areas = new List<double>();
         var volumes = new List<double>();
+        double precision = 0;
 
         foreach (string rawLine in ifc.Split('\n'))
         {
@@ -937,6 +1252,12 @@ public class IfcLengthUnitChoiceOptionTests
                         elevations.Add(elev * lengthToMetres);
                     break;
                 }
+                case "IFCGEOMETRICREPRESENTATIONCONTEXT":
+                    precision = double.Parse(IfcExporter.SplitStepArguments(args)[3], CultureInfo.InvariantCulture) * lengthToMetres;
+                    break;
+                case "IFCEXTRUDEDAREASOLID":
+                    depths.Add(double.Parse(IfcExporter.SplitStepArguments(args)[3], CultureInfo.InvariantCulture) * lengthToMetres);
+                    break;
                 case "IFCQUANTITYLENGTH":
                     lengths.Add(double.Parse(args[(args.LastIndexOf(',') + 1)..], System.Globalization.CultureInfo.InvariantCulture) * lengthToMetres);
                     break;
@@ -948,7 +1269,7 @@ public class IfcLengthUnitChoiceOptionTests
                     break;
             }
         }
-        return new PhysicalMetrics(points, elevations, lengths, areas, volumes);
+        return new PhysicalMetrics(points, elevations, depths, lengths, areas, volumes, precision);
     }
 
     private static void AssertListsClose(List<double> expected, List<double> actual, double relativeTolerance)
