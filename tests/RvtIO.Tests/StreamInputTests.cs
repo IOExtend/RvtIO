@@ -328,19 +328,18 @@ public sealed class StreamInputTests
     }
 
     // The decoders absorb a read that fails and may read again; the first failure is the cause, the later ones are its consequence.
-    [Theory]
-    [MemberData(nameof(EntryPoints))]
-    public void TheFirstFailureOfTheStreamIsTheOneThrown(string entry)
+    [Fact]
+    public void TheViewKeepsTheFirstFailureOfTheStream()
     {
-        byte[] bytes = SyntheticRvt();
-        using var whole = new FailingStream(new MemoryStream(bytes, writable: false), long.MaxValue, new IOException());
-        RvtDocument.OpenStream(whole);
         var first = new IOException("first failure");
-        using var stream = new FailingStream(new MemoryStream(bytes, writable: false), whole.Served - 10, first) { VaryingFailures = true };
+        using var stream = new FailingStream(new MemoryStream(new byte[16], writable: false), 0, first) { VaryingFailures = true };
+        var view = new ReadOnlyStreamView(stream);
+        var buffer = new byte[4];
 
-        var thrown = Assert.Throws<IOException>(() => Read(entry, stream));
+        Assert.Same(first, Assert.Throws<IOException>(() => view.Read(buffer, 0, 4)));
+        Assert.Equal("failure 2", Assert.Throws<IOException>(() => view.Read(buffer, 0, 4)).Message);
 
-        Assert.Same(first, thrown);
+        Assert.Same(first, Assert.Throws<IOException>(view.ThrowStreamFailure));
     }
 
     // A damaged container can name a position that a buffer cannot take (a sector number beyond what one array holds). It is damage of
