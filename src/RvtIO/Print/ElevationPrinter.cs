@@ -1957,6 +1957,11 @@ public static partial class ElevationPrinter
             var outlines = plantingOutlines.Project(ground).ToList();
             if (outlines.Count > 0) (siteOutlines ??= []).AddRange(outlines);
         }
+        if (cropWindow is { } finalCrop)
+        {
+            // Layer boundaries and roof-wall seams can be derived from full host rings after the faces were clipped.
+            edges = edges.Select(edge => ClipCollectedEdge(edge, finalCrop)).OfType<CollectedEdge>().ToList();
+        }
         // Visibility uses face indices in collection order. Reorder the fills only for painting.
         faces.Sort((left, right) => right.Depth.CompareTo(left.Depth));
         return new ElevationContent(faces, distinctLevels, grids, context, edges, minX, minY, maxX, maxY,
@@ -2675,6 +2680,15 @@ public static partial class ElevationPrinter
             band = ClipHalfPlane(band, point => RidgeDistance(point) >= 0, RidgeDistance);
         }
         return band;
+    }
+
+    private static CollectedEdge? ClipCollectedEdge(CollectedEdge edge,
+        (double X0, double Y0, double X1, double Y1) crop)
+    {
+        if (!ClipSegment(edge.X1, edge.Y1, edge.X2, edge.Y2, crop.X0, crop.Y0, crop.X1, crop.Y1,
+            out double x1, out double y1, out double x2, out double y2)
+            || (x1, y1) == (x2, y2)) return null;
+        return edge with { X1 = x1, Y1 = y1, X2 = x2, Y2 = y2 };
     }
 
     internal static List<CollectedEdge> ResolveRoofWallCutJoins(List<CollectedEdge> edges,

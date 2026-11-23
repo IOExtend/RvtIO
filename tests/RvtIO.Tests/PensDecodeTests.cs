@@ -130,7 +130,7 @@ public class PensDecodeTests
         Assert.Equal(0.001 * 864.0 * 25.4 / 72.0, widthMm, 6);
     }
 
-    [Fact]
+    [SkippableFact]
     public void GridProjection_UsesAnnotationPenOne()
     {
         // Grids are datum elements: the reference inks them 0.283 pt at every scale, which is annotation
@@ -162,7 +162,7 @@ public class PensDecodeTests
         Assert.False(PenWidths.TryGetWidth(document, -2000011, false, 0, out _));
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_DecodesWallsCutPen3AndSixTableRows()
     {
         string? path = TestFiles.TryFind("Test_2022.rvt");

@@ -311,7 +311,7 @@ public class PlanPrinterTests
         static GeoFace Face(List<double[]> vertices) => new() { OuterVertices = vertices, PlaneSurface = true };
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_PlanElevationMarksUseTheirSavedViewsAndCrop()
     {
         string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
@@ -789,7 +789,7 @@ public class PlanPrinterTests
         Assert.Equal(visible, page.Content.Contains("1 0 0 RG", StringComparison.Ordinal));
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_Level1FurnitureIsASilhouette()
     {
         // The plan silhouettes each piece of furniture: the boundary of the union of its faces on a 5 mm grid, so a
@@ -838,7 +838,7 @@ public class PlanPrinterTests
         Assert.Single(content!.Furniture);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_Level1PlanDrawsTheStairTreads()
     {
         // The file's main stair (665557) names Level 1 (311) as its base level: the Level 1 plan collects
@@ -853,7 +853,7 @@ public class PlanPrinterTests
         Assert.Contains(content!.Furniture, outline => outline.All(point => point.X > 9000));
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_Level1ViewportUsesSavedStairGraphics()
     {
         string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
@@ -886,7 +886,7 @@ public class PlanPrinterTests
             && line.X1 == exterior[1].X1 * 304.8 && line.Y1 == exterior[1].Y1 * 304.8);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_Level2ViewportUsesSavedDescendingStairGraphics()
     {
         string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
@@ -946,7 +946,7 @@ public class PlanPrinterTests
         Assert.Empty(hidden.Content);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_Level1ViewportDrawsItsOwnDescendingStairPath()
     {
         string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");

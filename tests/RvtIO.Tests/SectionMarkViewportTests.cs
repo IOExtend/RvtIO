@@ -17,7 +17,7 @@ public class SectionMarkViewportTests
         return RvtDocument.Open(path);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_DecodesSectionViewdata()
     {
         var document = SampleFile();
@@ -34,7 +34,7 @@ public class SectionMarkViewportTests
         Assert.Equal(0.02, stair.CoarserScale, 4);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_DecodesSectionFrontCut()
     {
         // The Section m_frontCut polyline in model feet, cross-checked against rvt-prt's datums.read:
@@ -59,7 +59,7 @@ public class SectionMarkViewportTests
         Assert.Equal(-7.16, longitudinal.FrontCut[0][1], 2);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_ShowsOnlyVisibleMarksOnLevel1()
     {
         var document = SampleFile();
@@ -79,7 +79,7 @@ public class SectionMarkViewportTests
         Assert.DoesNotContain(marks, mark => mark.Name == "Architectural Section");
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_Level1MarksFollowDecodedExtents()
     {
         // The Building mark draws its decoded jog (four points), not an infinite line: the trace turns
@@ -97,7 +97,7 @@ public class SectionMarkViewportTests
         Assert.Equal(2, longitudinal.Points.Count);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_StraightMarkUsesThePlanOwnedExtent()
     {
         var document = SampleFile();

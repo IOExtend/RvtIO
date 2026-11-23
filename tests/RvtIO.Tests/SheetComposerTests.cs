@@ -158,7 +158,7 @@ public class SheetComposerTests
         Assert.Contains("not a numbered sheet", error.Message);
     }
 
-    [Fact]
+    [SkippableFact]
     public void Render_DrawsViewportTitlesAtTheirStoredOriginAndLength()
     {
         // The South viewport's title extension line: the file stores its origin on the sheet and its length
@@ -214,7 +214,7 @@ public class SheetComposerTests
         Assert.True(found, "South title extension line (1485 pt at y1104.3) not drawn.");
     }
 
-    [Fact]
+    [SkippableFact]
     public void Render_DrawsOffPageWindowedDetailsAboveTheirTitles()
     {
         // The four A104 wall/roof/foundation details sit off the drawable page in the file, but Revit prints
@@ -339,7 +339,7 @@ public class SheetComposerTests
         Assert.Equal((-20000, -15000, 30000, 25000), (kept.MinX, kept.MinY, kept.MaxX, kept.MaxY));
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_PrintReadsRenderSizeSiteBoundaryAndRoomGraphics()
     {
         string? path = TestFiles.TryFind("Test_2022.rvt");

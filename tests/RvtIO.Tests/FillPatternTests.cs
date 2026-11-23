@@ -80,7 +80,7 @@ public class FillPatternTests
         Assert.Equal(family == -1 ? (1, 1) : ((int, int)?)null, bearing);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_DecodesMaterialSurfacePatternAndItsGrids()
     {
         // A floor type's top compound layer is the material that prints in plan; a carpet names the "Sand"
@@ -110,7 +110,7 @@ public class FillPatternTests
         Assert.Equal(0.0011, pattern.Grids[0].Segments[0], 6);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_LivingRoomCarriesItsFloorPattern()
     {
         // The Living room stands on the sunken floor whose carpet names the Sand pattern, so its plan fill

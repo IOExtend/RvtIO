@@ -202,7 +202,7 @@ public class ViewCropTests
         Assert.Equal((12.1369 + 2.1365) * 304.8, y1, 3);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_StairDetailClipLandsOnItsFrame()
     {
         // End to end on the sample model: the detail's absolute crop edges map through DrawContent's
@@ -234,7 +234,7 @@ public class ViewCropTests
         Assert.Equal(frameX + (x1 - x0) / scale, originX + (x1 - content.MinX) / scale, 6);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_WallRoofDetailCropMatchesFile()
     {
         // The Typical Wall Roof Connection detail: its file crop (660 x 837 mm at roof height) is the detail's
@@ -281,7 +281,7 @@ public class ViewCropTests
         Assert.Equal(frameX + (x1 - x0) / scale, originX + (x1 - content.MinX) / scale, 6);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_WallRoofDetailCropWindowKeepsInCropEdges()
     {
         // Filtering by the file crop rectangle at collection (not just at draw time) keeps the occlusion
@@ -312,7 +312,7 @@ public class ViewCropTests
         Assert.True(content.Edges.Count > 18, $"Crop slice starved: {content.Edges.Count} edges.");
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_ViewportTitleLineMatchesReference()
     {
         // The South viewport's title extension line: the file stores its origin on the sheet and its length
@@ -337,7 +337,7 @@ public class ViewCropTests
         Assert.Equal(1.719, viewport.ViewportLabelLength.Value, 3);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_StairDetailTitleLineMatchesReference()
     {
         // The Main Stair Detail viewport's title line, same record: origin (1.1061, 0.8355) ft, length 1.126 ft.

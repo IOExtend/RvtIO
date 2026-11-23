@@ -16,6 +16,7 @@ API between minor releases.
 - Elevations hide covered skylight frame edges when the glazing is seen edge-on.
 - Elevations project shadows from opaque skylight frames onto their sloped host roofs.
 - In elevations, planar opaque faces of placed structural columns cast shadows using the saved light direction.
+- Cropped detail views clip model edges added by layer boundaries and roof-wall joins to the saved viewport.
 - Overview sections trim sloping railing lines behind nearer opaque wall faces.
 - Fine section callouts with ambient shadows use the saved graphics colour of supported wall finish layers.
 - Visible slab sides in opaque details shade from samples outside the nearer cut caps.

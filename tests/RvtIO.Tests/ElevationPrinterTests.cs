@@ -461,7 +461,7 @@ public class ElevationPrinterTests
         Assert.Null(detail.SectionBands);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_UsesTheNativeCutDepthInBuildingSection()
     {
         string path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.Find("rac_basic_sample_project.rvt");
@@ -623,7 +623,7 @@ public class ElevationPrinterTests
         Assert.All(content.Faces[0].Points, point => Assert.True(point.X <= 10 * FeetToMillimetres + 1));
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_StairSectionShowsTheStair()
     {
         // The stair railing (world y about -13.7..-6.5 m) projects onto content X in that range
@@ -642,7 +642,7 @@ public class ElevationPrinterTests
         Assert.Contains(content!.Edges, edge => Math.Min(edge.X1, edge.X2) < -6000);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_RoofDetailDrawsItsOwnAnnotationCurves()
     {
         // A detail's annotation lines belong to the view itself: the file stores them as curve elements that
@@ -662,7 +662,7 @@ public class ElevationPrinterTests
         Assert.Contains(content!.Edges, edge => edge.CategoryId == (int)BuiltInCategory.OST_InsulationLines);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_StairSectionIncludesTreadAndRiserMass()
     {
         string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
@@ -844,7 +844,7 @@ public class ElevationPrinterTests
         Assert.Equal(4 * FeetToMillimetres, leftJamb[1].End, 6);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_UsesThePlacedOpeningLinesInTheLongitudinalSection()
     {
         string path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.Find("rac_basic_sample_project.rvt");
@@ -863,7 +863,7 @@ public class ElevationPrinterTests
         Assert.Contains((int)BuiltInCategory.OST_Doors, categories);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_UsesThePlacedWindowOpeningLinesOnTheWestElevation()
     {
         string path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.Find("rac_basic_sample_project.rvt");
@@ -939,7 +939,7 @@ public class ElevationPrinterTests
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_StairDetailWindowFramesTheStair()
     {
         // The Main Stair Detail window (2.6 x 1.9 m around the stair) clips the model to the stair
@@ -1475,7 +1475,7 @@ public class ElevationPrinterTests
         Assert.Equal(3 * FeetToMillimetres, chord.Y2, 0);
     }
 
-    [Fact]
+    [SkippableFact]
     public void Collect_KeepsCutEdgesWhenTheCropWindowClipsTheFace()
     {
         // A detail view clips its faces to the file crop before the edge pass. Clipping only the projected points
@@ -1503,7 +1503,7 @@ public class ElevationPrinterTests
         Assert.Contains(withWindow.Edges, edge => edge.IsCut && Math.Abs(edge.X1 - 3982) < 5 && Math.Abs(edge.X2 - 3982) < 5);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_WallSectionDetailsHaveCutProfiles()
     {
         // The sample's wall-section details previously collected zero cut edges: their planes slice the walls,
@@ -1935,7 +1935,7 @@ public class ElevationPrinterTests
         Assert.All(output, edge => Assert.Equal(1000, edge.Y2, 1));
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_WallSectionDetailsHaveLayerLines()
     {
         // The 1:20 wall section draws every layer boundary of its walls, not just the two outer faces: a thin
@@ -1994,7 +1994,7 @@ public class ElevationPrinterTests
         Assert.All(content.Edges, e => Assert.Equal((int)BuiltInCategory.OST_StairsRailing, e.CategoryId));
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_StairDetailKeepsGridsAndInCropLevels()
     {
         // The reference draws grid bubbles across the Main Stair Detail and exactly the three level
@@ -2029,7 +2029,7 @@ public class ElevationPrinterTests
             content.NativeGrids![grid.X].Top, 6));
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_StairSectionUsesUncroppedGridEnvelope()
     {
         string? path = TestFiles.TryFind("Test_2022.rvt");
@@ -4285,7 +4285,7 @@ public class ElevationPrinterTests
         Assert.Equal(8, content.Edges.Count);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_DetailKeepsItsLevelRows()
     {
         // A crop-drawn detail keeps the levels whose height falls in its crop: the reference details draw
@@ -4767,7 +4767,7 @@ public class ElevationPrinterTests
         Assert.Equal(content.MaxX, plain.X1, 6);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_DecodesLevelDatumPlanes()
     {
         string? path = TestFiles.TryFind("Test_2022.rvt");
@@ -4794,7 +4794,7 @@ public class ElevationPrinterTests
             $"widest level span is {widest.LevelPlane.Envelope[2] - widest.LevelPlane.Envelope[0]:0.#} ft");
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_ResolvesGridCenterDashes()
     {
         string? path = TestFiles.TryFind("Test_2022.rvt");

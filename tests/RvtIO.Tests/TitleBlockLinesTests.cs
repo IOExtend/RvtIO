@@ -27,7 +27,7 @@ public class TitleBlockLinesTests
         Assert.Equal("Как указано", SheetComposer.TitleBlockScale([50, 100], true));
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_DecodesA1TitleBlockSymbol()
     {
         string? path = TestFiles.TryFind("Test_2022.rvt");
@@ -62,7 +62,7 @@ public class TitleBlockLinesTests
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_DecodesTitleBlockTextsAndLabels()
     {
         string? path = TestFiles.TryFind("Test_2022.rvt");
