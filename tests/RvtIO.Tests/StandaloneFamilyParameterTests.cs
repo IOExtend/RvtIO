@@ -28,8 +28,9 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
 
     /// <summary>A numeric built-in value row stored in both types and the active copy, with the units element and the PartAtom entry
     /// that go with it; the fixture holds exactly one display option, the one of this value.</summary>
-    private sealed record BuiltInNumber(int Id, string Element, string? DisplayName, string Type, string Unit, double A, double B,
-        string Spec, string UnitId, double Accuracy, Func<double, string> Text, bool Custom = false)
+    private sealed record BuiltInNumber(int Id, string Element, string? DisplayName, string Type, string? Unit, double A, double B,
+        string Spec, string UnitId, double Accuracy, Func<double, string> Text, bool Custom = false, UnitType Quantity = UnitType.UT_Length,
+        bool UnitsElement = true, int DecimalSymbol = 0)
     {
         internal static readonly BuiltInNumber Cost = new(CostId, "Cost", null, "Currency", "$", 12.5, 17.25,
             "autodesk.spec.measurable:currency-2.0.0", "autodesk.unit.unit:currency-1.0.0", 0.01,
@@ -39,6 +40,10 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
             value => Math.Round(value / MillimetreToFeet, 0, MidpointRounding.AwayFromZero).ToString("F0", CultureInfo.InvariantCulture));
         /// <summary>The fixture's own type parameter with a Length spec instead of the Text one, shown in millimetres.</summary>
         internal static readonly BuiltInNumber CustomLength = Elevation with { Id = ParameterId, Element = "Proof", DisplayName = null, Custom = true };
+        /// <summary>The fixture's own type parameter with a Number spec: no unit, written as the shortest text that reads back.</summary>
+        internal static readonly BuiltInNumber CustomNumber = new(ParameterId, "Proof", null, "Number", null, 0.5, 2.25,
+            "autodesk.spec.aec:number-2.0.0", "autodesk.unit.unit:general-1.0.1", 0.01,
+            value => value.ToString("R", CultureInfo.InvariantCulture), Custom: true, Quantity: UnitType.UT_Number);
     }
 
     private static readonly Guid SharedGuid = new("50b3ce53-fa73-47a1-ae3e-75035a1f17dd");
@@ -698,6 +703,63 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
         Assert.False(File.Exists(Output));
     }
 
+    [Theory]
+    [InlineData(true, 0, "A", "0.125", "0.125", "2.25")]
+    [InlineData(true, 0, "B", "1234567.5", "0.5", "1234567.5")]
+    [InlineData(true, 0, "A", "0.0001", "0.0001", "2.25")]
+    [InlineData(true, 1, "A", "0.125", "0,125", "2,25")]
+    [InlineData(false, 0, "A", "0.125", "0.125", "2.25")]
+    [InlineData(false, 0, "B", "7", "0.5", "7")]
+    public void WritesACustomNumberAndItsPartAtomEntryWithTheDecimalSeparatorOfTheDocument(bool unitsElement, int decimalSymbol, string type,
+        string value, string a, string b)
+    {
+        var number = BuiltInNumber.CustomNumber with
+        {
+            UnitsElement = unitsElement,
+            DecimalSymbol = decimalSymbol,
+            Text = v => v.ToString("R", decimalSymbol == 1 ? new NumberFormatInfo { NumberDecimalSeparator = "," } : CultureInfo.InvariantCulture),
+        };
+        string source = CreateSource(number: number);
+        byte[] hash = SHA256.HashData(File.ReadAllBytes(source));
+        RvtWriter.SetFamilyParameter(source, Output, type, ParameterId, value);
+
+        double written = double.Parse(value, CultureInfo.InvariantCulture);
+        using var root = RootStorage.OpenRead(Output);
+        Assert.Equal(PartitionStreamEditorTests.TaggedBody(FamilyClass, FamilyBody("Original B", "Original A", "Original B",
+            number: (ParameterId, type == "A" ? written : number.A, type == "B" ? written : number.B))), ReadFamilyBody(root, 2022));
+        var entries = NumberEntries(root, "Proof");
+        Assert.Equal([a, b], entries.Select(e => e.Value));
+        Assert.All(entries, e => Assert.Equal("Number", (string?)e.Attribute("typeOfParameter")));
+        Assert.All(entries, e => Assert.Null(e.Attribute("units")));
+        Assert.Equal(hash, SHA256.HashData(File.ReadAllBytes(source)));
+    }
+
+    [Theory]
+    [InlineData(true, "0.00001", "display format")]
+    [InlineData(true, "1e21", "display format")]
+    [InlineData(false, "0.00001", "metadata text")]
+    [InlineData(false, "-1e21", "metadata text")]
+    public void RefusesACustomNumberWhoseShortestTextNeedsAnExponent(bool unitsElement, string value, string reason)
+    {
+        string source = CreateSource(number: BuiltInNumber.CustomNumber with { UnitsElement = unitsElement });
+        byte[] hash = SHA256.HashData(File.ReadAllBytes(source));
+        var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetFamilyParameter(source, Output, "A", ParameterId, value));
+        Assert.Equal("unverified-parameter-storage", error.Kind);
+        Assert.Contains(reason, error.Message);
+        Assert.False(File.Exists(Output));
+        Assert.Equal(hash, SHA256.HashData(File.ReadAllBytes(source)));
+    }
+
+    [Fact]
+    public void RefusesACustomNumberWhenTheDecimalSymbolOfTheDocumentIsUnknown()
+    {
+        string source = CreateSource(number: BuiltInNumber.CustomNumber with { DecimalSymbol = 2 });
+        var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetFamilyParameter(source, Output, "A", ParameterId, "0.125"));
+        Assert.Equal("unverified-parameter-storage", error.Kind);
+        Assert.Contains("display format", error.Message);
+        Assert.False(File.Exists(Output));
+    }
+
     private static byte[] ReadFamilyBody(RootStorage root, int release)
     {
         bool wide = release >= 2024;
@@ -768,7 +830,8 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
         schema.Top(new("ParamElem", new Back(18), 1, [PointerField("m_pParamDef")], [])); // 28
         schema.Top(new("ParamElemFamily", new Back(28), 1, [new("m_instanceParam", 1)], [])); // 29
         List<Fld> documentFields = [Reference("m_ownerFamilyId", 14), Reference("m_ownerFamilyContainingGroupId", 14)];
-        if (number is not null)
+        bool unitsElement = number?.UnitsElement == true;
+        if (unitsElement)
             documentFields.AddRange([PointerField("m_pSchemaStorage"), PointerField("m_pUnitsTracking")]);
         Add("ADocument", documentFields.ToArray()); // 30
         Add("ParamIdPair", Reference("m_famParamId", 14)); // 31
@@ -800,7 +863,7 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
         schema.Top(new("ParamDefValue", new Back(26), 1,
             [release == 2020 ? new("m_unitType", 4) : new("m_specTypeId", 8), new("m_restriction", 4), new("m_boundless", 1)], [])); // 51
         int fillers = 52;
-        if (number is not null)
+        if (unitsElement)
         {
             // The units element of the modern layout: one display option per spec, each a pair of the spec and its format options.
             Add("ESSchemaStorage"); // 52
@@ -831,7 +894,7 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
             header.Write(PagedStreamCodec.Encode(new byte[8], Pack(w =>
             {
                 w.Write((ushort)30); WriteId(w, OwnerId, wide); WriteId(w, -1, wide);
-                if (number is not null)
+                if (unitsElement)
                 {
                     Pointer(w, 52); Pointer(w, 53); // the schema storage (empty) and the units tracking object that names the units element
                     WriteId(w, UnitsId, wide);
@@ -848,7 +911,7 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
                 ids.Add(FormulaResultId);
             if (nested.HasValue)
                 ids.AddRange([NestedFamilyId, NestedTypeA, NestedTypeB]);
-            if (number is not null)
+            if (unitsElement)
                 ids.Add(UnitsId);
             byte[] bytes = Pack(w =>
             {
@@ -896,17 +959,17 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
                     if (currencyInstance)
                         WriteCurrencySpec(w);
                     else if (number?.Custom == true)
-                        WriteSpec(w, UnitType.UT_Length, number.Spec);
+                        WriteSpec(w, number.Quantity, number.Spec);
                 })),
             };
-            if (number is not null)
+            if (unitsElement)
                 records.Add(((ulong)Id(UnitsId, wide), 58, Pack(w =>
                 {
                     WriteId(w, UnitsId, wide);
                     w.Write(1); Text(w, number.Spec);                  // the one display option: its spec,
                     Text(w, ""); Text(w, number.UnitId);               // no symbol, the unit
                     w.Write(number.Accuracy); w.Write(0); w.Write(new byte[6]);
-                    w.Write(1); w.Write(0); w.Write(0); w.Write(0);   // metric, decimal point, grouping (unused)
+                    w.Write(1); w.Write(number.DecimalSymbol); w.Write(0); w.Write(0);   // metric, decimal symbol, grouping (unused)
                 })));
             if (nested.HasValue)
             {
@@ -998,7 +1061,9 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
             if (number is not null)
             {
                 var entry = new XElement(ns + number.Element, new XAttribute("type", number.Custom ? "custom" : "system"), new XAttribute("typeOfParameter", number.Type),
-                    new XAttribute("units", number.Unit), number.Text(type == "A" ? number.A : number.B));
+                    number.Text(type == "A" ? number.A : number.B));
+                if (number.Unit is not null)
+                    entry.SetAttributeValue("units", number.Unit);
                 if (number.DisplayName is not null)
                     entry.SetAttributeValue("displayName", number.DisplayName);
                 node.Add(entry);

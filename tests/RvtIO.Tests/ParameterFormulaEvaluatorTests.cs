@@ -128,11 +128,13 @@ public sealed class ParameterFormulaEvaluatorTests
     [Theory]
     [InlineData(Equal, 2, 2, true)]
     [InlineData(Equal, 2, 3, false)]
+    [InlineData(Equal, 3, 2, false)]
     [InlineData(Greater, 3, 2, true)]
     [InlineData(Greater, 2, 3, false)]
     [InlineData(Greater, 2, 2, false)]
     [InlineData(Less, 2, 3, true)]
     [InlineData(Less, 3, 2, false)]
+    [InlineData(Less, 2, 2, false)]
     public void ComparesNumbers(long operation, double left, double right, bool expected)
     {
         var value = Calculate(new Binary(operation, new Num(left), new Num(right)));
