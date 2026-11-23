@@ -571,9 +571,10 @@ internal static class StandaloneFamilyParameterWriter
                 throw Unverified("The built-in family metadata entry is ambiguous.");
             var entry = matches.SingleOrDefault();
             bool expected = !first && (display is not null || !string.IsNullOrEmpty(before));
+            string? unit = (string?)entry?.Attribute("units");
             if (expected != (entry is not null)
                 || (entry is not null && (entry.HasElements || (string?)entry.Attribute("typeOfParameter") != field.Type
-                    || (string?)entry.Attribute("displayName") != field.DisplayName || (string?)entry.Attribute("units") != display?.Unit
+                    || (string?)entry.Attribute("displayName") != field.DisplayName || !(display?.MatchesUnit(unit) ?? unit is null)
                     || !(display?.Matches(entry.Value) ?? entry.Value == before))))
                 throw Unverified("The stored built-in value and family metadata disagree.");
 
@@ -706,7 +707,10 @@ internal static class StandaloneFamilyParameterWriter
             part.Add(CreatePartAtomEntry(caption, sharedGuid, "Text", text));
             return true;
         }
-        if (mode != 0 || matches is not [var target] || target.HasElements || (string?)target.Attribute("units") != display?.Unit)
+        if (mode != 0 || matches is not [var target] || target.HasElements)
+            throw Unverified("The parameter's family metadata is outside the verified layout.");
+        string? unit = (string?)target.Attribute("units");
+        if (!(display?.MatchesUnit(unit) ?? unit is null))
             throw Unverified("The parameter's family metadata is outside the verified layout.");
 
         string before = target.Value;

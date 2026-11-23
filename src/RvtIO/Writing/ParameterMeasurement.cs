@@ -7,10 +7,13 @@ namespace RvtIO.Writing;
 internal static class ParameterMeasurement
 {
     private const double MetresPerFoot = 0.3048;
+    private const double InternalFeetPerInch = 0.08333333333333334; // Revit's stored conversion differs from 1.0 / 12.
     private const string SpecPrefix = "autodesk.spec.aec:";
     private const string UnitPrefix = "autodesk.unit.unit:";
+    private const string SymbolPrefix = "autodesk.unit.symbol:";
     internal const string LegacyFormats = WideBlockWalker.AllItemsKeyPrefix + "legacy-unit-options";
-    private sealed record Unit(UnitType Spec, string Input, string Forge, DisplayUnitType? Legacy, string Atom, double ToInternal);
+    private sealed record Unit(UnitType Spec, string Input, string Forge, DisplayUnitType? Legacy, string Atom, double ToInternal,
+        string? AlternateAtom = null);
     private sealed record MeasurableSpec(UnitType Unit, string Forge, string Atom);
 
     private static readonly MeasurableSpec[] AdditionalSpecs =
@@ -28,12 +31,12 @@ internal static class ParameterMeasurement
         new(UnitType.UT_Length, "mm", "millimeters", DisplayUnitType.DUT_MILLIMETERS, "mm", 0.001 / MetresPerFoot),
         new(UnitType.UT_Length, "cm", "centimeters", DisplayUnitType.DUT_CENTIMETERS, "cm", 0.01 / MetresPerFoot),
         new(UnitType.UT_Length, "m", "meters", DisplayUnitType.DUT_METERS, "m", 1 / MetresPerFoot),
-        new(UnitType.UT_Length, "ft", "feet", DisplayUnitType.DUT_DECIMAL_FEET, "ft", 1),
-        new(UnitType.UT_Length, "in", "inches", DisplayUnitType.DUT_DECIMAL_INCHES, "in", 1.0 / 12),
+        new(UnitType.UT_Length, "ft", "feet", DisplayUnitType.DUT_DECIMAL_FEET, "'", 1, "ft"),
+        new(UnitType.UT_Length, "in", "inches", DisplayUnitType.DUT_DECIMAL_INCHES, "\"", InternalFeetPerInch, "in"),
         new(UnitType.UT_Area, "m2", "squareMeters", DisplayUnitType.DUT_SQUARE_METERS, "m²", 1 / (MetresPerFoot * MetresPerFoot)),
-        new(UnitType.UT_Area, "ft2", "squareFeet", DisplayUnitType.DUT_SQUARE_FEET, "ft²", 1),
+        new(UnitType.UT_Area, "ft2", "squareFeet", DisplayUnitType.DUT_SQUARE_FEET, "SF", 1, "ft²"),
         new(UnitType.UT_Volume, "m3", "cubicMeters", DisplayUnitType.DUT_CUBIC_METERS, "m³", 1 / (MetresPerFoot * MetresPerFoot * MetresPerFoot)),
-        new(UnitType.UT_Volume, "ft3", "cubicFeet", DisplayUnitType.DUT_CUBIC_FEET, "ft³", 1),
+        new(UnitType.UT_Volume, "ft3", "cubicFeet", DisplayUnitType.DUT_CUBIC_FEET, "CF", 1, "ft³"),
         new(UnitType.UT_Angle, "deg", "degrees", DisplayUnitType.DUT_DECIMAL_DEGREES, "°", Math.PI / 180),
         new(UnitType.UT_Angle, "rad", "radians", null, "rad", 1),
         new(UnitType.UT_Currency, "", "currency", DisplayUnitType.DUT_CURRENCY, "$", 1),
@@ -94,8 +97,11 @@ internal static class ParameterMeasurement
     private static double? ReadNumber(ReadOnlySpan<char> text) =>
         double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double value) && double.IsFinite(value) ? value : null;
 
-    internal readonly record struct DisplayValue(string Type, string Unit, string Symbol, double Before, string After)
+    internal readonly record struct DisplayValue(string Type, string Unit, string Symbol, double Before, string After,
+        string? AlternateUnit = null)
     {
+        internal bool MatchesUnit(string? unit) => unit is not null && (unit == Unit || unit == AlternateUnit);
+
         internal bool Matches(string text) => text.EndsWith(Symbol, StringComparison.Ordinal)
             && ReadNumber(text.AsSpan(0, text.Length - Symbol.Length)) == Before;
     }
@@ -109,6 +115,8 @@ internal static class ParameterMeasurement
         Unit? unit;
         double accuracy;
         string symbol;
+        bool suppressZeros;
+        bool suppressSpaces;
         var additional = AdditionalSpecs.SingleOrDefault(entry => entry.Unit == spec);
         if (WideDocument.UnitOptions(records) is { } modern)
         {
@@ -117,12 +125,11 @@ internal static class ParameterMeasurement
             if (modern.Options.Where(o => UnitSchemaEvaluator.DisplayNameKey(o.Spec) == specName).ToArray() is not [var option]
                 || option.UseDefault != 0 || option.RoundingMethod != 0 || option.UseGrouping != 0 || option.UsePlusPrefix != 0)
                 return null;
-            if ((spec == UnitType.UT_Currency || additional is not null) &&
-                (option.SuppressLeadingZeros != 0 || option.SuppressTrailingZeros != 0))
-                return null;
             unit = Units.SingleOrDefault(u => u.Spec == spec && UnitPrefix + u.Forge == UnitSchemaEvaluator.DisplayNameKey(option.Unit));
             accuracy = option.Accuracy;
             symbol = UnitSchemaEvaluator.DisplayNameKey(option.Symbol);
+            suppressZeros = option.SuppressLeadingZeros != 0 || option.SuppressTrailingZeros != 0;
+            suppressSpaces = option.SuppressSpaces != 0;
         }
         else
         {
@@ -136,14 +143,35 @@ internal static class ParameterMeasurement
                 || option.GetValueOrDefault("m_unitSymbol") is not long legacySymbol
                 || new[] { "m_bUseDefault", "m_roundingMethod", "m_bUseGrouping", "m_bUsePlusPrefix" }.Any(f => option.GetValueOrDefault(f) is not 0L))
                 return null;
-            if ((spec == UnitType.UT_Currency || additional is not null) && new[] { "m_bSuppressLeadingZeros", "m_bSuppressTrailingZeros" }
-                .Any(f => option.GetValueOrDefault(f) is not 0L))
-                return null;
             unit = Units.SingleOrDefault(u => u.Spec == spec && u.Legacy == (DisplayUnitType)display);
             accuracy = precision;
-            symbol = legacySymbol switch { 0 => "", (int)UnitSymbolType.UST_DEGREE_SYMBOL => "autodesk.unit.symbol:degree", _ => "unsupported" };
+            symbol = legacySymbol switch
+            {
+                0 => "",
+                (int)UnitSymbolType.UST_DEGREE_SYMBOL => SymbolPrefix + "degree",
+                (int)UnitSymbolType.UST_FOOT_SINGLE_QUOTE => SymbolPrefix + "footSingleQuote",
+                (int)UnitSymbolType.UST_INCH_DOUBLE_QUOTE => SymbolPrefix + "inchDoubleQuote",
+                (int)UnitSymbolType.UST_SF => SymbolPrefix + "sf",
+                (int)UnitSymbolType.UST_CF => SymbolPrefix + "cf",
+                _ => "unsupported",
+            };
+            suppressZeros = option.GetValueOrDefault("m_bSuppressLeadingZeros") is not 0L ||
+                option.GetValueOrDefault("m_bSuppressTrailingZeros") is not 0L;
+            suppressSpaces = option.GetValueOrDefault("m_bSuppressSpaces") is not 0L;
         }
-        if (unit is null || (symbol != "" && (unit.Input != "deg" || symbol != "autodesk.unit.symbol:degree")))
+        if (unit is null || (suppressZeros && (spec == UnitType.UT_Currency || additional is not null || unit.AlternateAtom is not null)))
+            return null;
+        string? suffix = (unit.Input, symbol) switch
+        {
+            (_, "") => "",
+            ("deg", SymbolPrefix + "degree") => "°",
+            ("ft", SymbolPrefix + "footSingleQuote") => "'",
+            ("in", SymbolPrefix + "inchDoubleQuote") => "\"",
+            ("ft2", SymbolPrefix + "sf") => " SF",
+            ("ft3", SymbolPrefix + "cf") => " CF",
+            _ => null,
+        };
+        if (suffix is null || (suppressSpaces && suffix.StartsWith(' ')))
             return null;
         if (spec == UnitType.UT_Currency && accuracy != 0.01)
             return null;
@@ -152,14 +180,13 @@ internal static class ParameterMeasurement
             digits++;
         if (digits > 8)
             return null;
-        string suffix = symbol == "" ? "" : "°";
         double Round(double number) => Math.Round(number / unit.ToInternal, digits, MidpointRounding.AwayFromZero);
         double oldValue = Round(before), newValue = Round(after);
         if (!double.IsFinite(oldValue) || !double.IsFinite(newValue))
             return null;
-        if (spec == UnitType.UT_Currency && newValue == 0)
+        if ((spec == UnitType.UT_Currency || unit.AlternateAtom is not null) && newValue == 0)
             newValue = 0; // Revit writes 0.00 for amounts rounded to zero on either side.
         return new(additional?.Atom ?? spec.ToString()[3..], unit.Atom, suffix, oldValue,
-            newValue.ToString($"F{digits}", CultureInfo.InvariantCulture) + suffix);
+            newValue.ToString($"F{digits}", CultureInfo.InvariantCulture) + suffix, symbol == "" ? unit.AlternateAtom : null);
     }
 }
