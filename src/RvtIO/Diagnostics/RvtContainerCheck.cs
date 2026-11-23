@@ -25,21 +25,37 @@ public static class RvtContainerCheck
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { throw new RvtInputException("cannot-open", $"'{info.Name}' cannot be opened ({ex.GetType().Name}); the file may be in use or not readable.", ex); }
         using var _ = file;
+        using var root = OpenVerified(file, info.Name);
+    }
+
+    internal static RootStorage OpenVerified(Stream stream, string name)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        if (!stream.CanRead || !stream.CanSeek)
+            throw new ArgumentException("The Revit input stream must be readable and seekable.", nameof(stream));
+        if (stream.Length == 0)
+            throw new RvtInputException("empty-file", $"'{name}' is empty.");
+        stream.Position = 0;
+
         RootStorage root;
-        try { root = RootStorage.Open(file, StorageModeFlags.LeaveOpen); }
+        try { root = RootStorage.Open(stream, StorageModeFlags.LeaveOpen); }
         catch (Exception ex) when (ex is not OutOfMemoryException)
-        { throw new RvtInputException("not-a-compound-file", $"'{info.Name}' is not a Revit file: its compound file header or directory cannot be read ({ex.Message}). The file may be cut or damaged.", ex); }
-        using (root)
+        { throw new RvtInputException("not-a-compound-file", $"'{name}' is not a Revit file: its compound file header or directory cannot be read ({ex.Message}). The file may be cut or damaged.", ex); }
+
+        try
         {
             var buffer = new byte[1 << 20];
             int visited = 0;
-            try { Walk(root, "", buffer, ref visited); }
-            catch (Exception ex) when (ex is not (OutOfMemoryException or RvtLimitException))
-            {
-                string where = ex is EndOfStreamException eos && eos.Data["stream"] is string name ? $" in stream '{name}'" : "";
-                throw new RvtInputException("truncated-or-damaged",
-                    $"'{info.Name}' is cut or damaged: the compound file ends early{where} ({ex.Message}).", ex);
-            }
+            Walk(root, "", buffer, ref visited);
+            return root;
+        }
+        catch (Exception ex)
+        {
+            root.Dispose();
+            if (ex is OutOfMemoryException or RvtLimitException) throw;
+            string where = ex is EndOfStreamException eos && eos.Data["stream"] is string entryName ? $" in stream '{entryName}'" : "";
+            throw new RvtInputException("truncated-or-damaged",
+                $"'{name}' is cut or damaged: the compound file ends early{where} ({ex.Message}).", ex);
         }
     }
 

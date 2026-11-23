@@ -330,6 +330,11 @@ public class RvtDocument
         return new RvtDocument(info, Path.GetFullPath(rvtPath));
     }
 
+    /// <summary>Opens a Revit document from the beginning of a readable, seekable stream.
+    /// The caller retains ownership of the stream.</summary>
+    public static RvtDocument OpenStream(Stream stream, RvtReaderOptions? options = null)
+        => new(new RvtFileReader(options).ReadStream(stream));
+
     /// <summary>
     /// Wrap an existing RevitFileInfo as a queryable Document.
     /// Useful when you already have the data from RvtFileReader.Read().

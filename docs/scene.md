@@ -26,9 +26,10 @@ needs `RvtSceneOptions.ModelKey`, because a document does not know its file name
 takes the meshes you extracted from that document yourself, for example with `ElementMeshes.Extract` and options of your
 own. Open a file of a release other than
 Revit 2022 with `R22Layout = true`, or its elements have no geometry and the result has the error `geometry-undecoded`.
-Only `Read(path)` reports the diagnostics of the read (`read-cut`, `failed-members`, `recovered-members`,
+The path and stream reader methods report the diagnostics of the read (`read-cut`, `failed-members`, `recovered-members`,
 `unverified-members`), as only it opens the file; if you open the document yourself, read them from the
-`RvtReaderOptions.Diagnostics` you opened it with.
+`RvtReaderOptions.Diagnostics` you opened it with. `ReadStream(stream, options)` reads from the beginning of a
+readable, seekable stream with the same reader options and leaves it open. Supply a scene model key in `options`.
 
 Set `RvtSceneOptions.IncludeModelLinesAndReinforcement` to include straight model lines as line primitives and reinforcement with decoded bar paths as triangles. The native RVT-to-NWC tool enables this option.
 

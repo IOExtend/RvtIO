@@ -38,12 +38,24 @@ public partial class RvtFileReader
     public RevitFileInfo Read(string rvtPath)
     {
         RvtContainerCheck.Verify(rvtPath);
+        using var root = RootStorage.OpenRead(rvtPath);
+        return ReadCore(root);
+    }
+
+    /// <summary>Reads a Revit compound file from the beginning of a readable, seekable stream.
+    /// The stream remains open and its position may change.</summary>
+    public RevitFileInfo ReadStream(Stream stream)
+    {
+        using var root = RvtContainerCheck.OpenVerified(stream, "Revit input stream");
+        return ReadCore(root);
+    }
+
+    private RevitFileInfo ReadCore(RootStorage root)
+    {
         var diag = _options.DiagnosticOutput;
         using var diagnosticScope = DiagnosticSink.Use(diag);
         var sw = System.Diagnostics.Stopwatch.StartNew();
         void LogPhase(string name) { diag?.WriteLine($"[{sw.Elapsed.TotalSeconds:F1}s] {name}"); }
-
-        using var root = RootStorage.OpenRead(rvtPath);
 
         var elemTable = ElemTableReader.Read(root, out var elemWorksets, out _, out bool elemTableIsExact, out var ids,
             allowWideIds: root.TryOpenStorage("Partitions", out _),

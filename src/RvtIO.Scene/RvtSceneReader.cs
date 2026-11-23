@@ -51,15 +51,31 @@ public static class RvtSceneReader
         string key = options?.ModelKey ?? Path.GetFileName(path);
         if (key.Length == 0) throw new ArgumentException("The model key is empty.", nameof(options));
         var readDiagnostics = new RvtReadDiagnostics();
-        var document = RvtDocument.Open(path, new RvtReaderOptions
+        var document = RvtDocument.Open(path, ReaderOptions(readDiagnostics));
+        return Map(document, ElementMeshes.Extract(document, MeshOptions(options)), key, ReadDiagnostics(readDiagnostics));
+    }
+
+    /// <summary>Reads a scene and its diagnostics from a readable, seekable RVT stream with the same
+    /// reader options as <see cref="Read(string, RvtSceneOptions?)"/>. The stream remains open.</summary>
+    /// <param name="stream">The RVT input stream, read from its beginning.</param>
+    /// <param name="options">Scene options with a nonempty <see cref="RvtSceneOptions.ModelKey"/>.</param>
+    public static RvtSceneResult ReadStream(Stream stream, RvtSceneOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        string key = RequiredKey(options);
+        var readDiagnostics = new RvtReadDiagnostics();
+        var document = RvtDocument.OpenStream(stream, ReaderOptions(readDiagnostics));
+        return Map(document, ElementMeshes.Extract(document, MeshOptions(options)), key, ReadDiagnostics(readDiagnostics));
+    }
+
+    private static RvtReaderOptions ReaderOptions(RvtReadDiagnostics diagnostics)
+        => new()
         {
             R22Layout = true,
             SystemFamilyNameLocale = "ENU",
             SeparateFacesWithDistinctOpenings = true,
-            Diagnostics = readDiagnostics,
-        });
-        return Map(document, ElementMeshes.Extract(document, MeshOptions(options)), key, ReadDiagnostics(readDiagnostics));
-    }
+            Diagnostics = diagnostics,
+        };
 
     /// <summary>The scene diagnostics of a read: <c>read-cut</c> for each stream a reader limit cut, then for each stream read, in
     /// the order read, the members that failed to decode, were rebuilt by structural recovery or decoded without a matching
@@ -88,8 +104,8 @@ public static class RvtSceneReader
     }
 
     /// <summary>Turns an opened document into a scene.</summary>
-    /// <remarks>The diagnostics of the read are reported only by <see cref="Read(string, RvtSceneOptions?)"/>, which opens the
-    /// file; a caller who opens the document reads them from <see cref="RvtReaderOptions.Diagnostics"/>.</remarks>
+    /// <remarks>The path and stream reader methods report input diagnostics. A caller who opens the document reads them from
+    /// <see cref="RvtReaderOptions.Diagnostics"/>.</remarks>
     /// <param name="document">The document, opened by the caller; open a file of a release other than Revit 2022 with
     /// <see cref="RvtReaderOptions.R22Layout"/>, or its elements have no geometry.</param>
     /// <param name="options">The options; <see cref="RvtSceneOptions.ModelKey"/> is required, as a document has no file name.</param>

@@ -9,7 +9,7 @@ projects through `InternalsVisibleTo`.
 | Type | Use |
 |---|---|
 | `RvtDocument` | Opens a file (`Open`), saves a verified lossless copy (`SaveAs`), and gives the elements, project information, file metadata and category lookups. |
-| `RvtFileReader` | Lower level read (`Read`) that returns the `RevitFileInfo` behind a document. |
+| `RvtFileReader` | Lower level read that returns the `RevitFileInfo` behind a document. `Read` takes a path and `ReadStream` reads from the beginning of a readable, seekable stream and leaves it open. |
 | `RvtReaderOptions` | Options of a read, including `DiagnosticOutput`, `ResolveCurrentCopies` (keeps only the current copy of an element that several partition streams hold; default true, set it to false to decode every copy), `RaiseLimits` and `Diagnostics`. `RevitLocalizationDirectory` is `[Obsolete]` and ignored: the texts are built in. |
 | `RvtReadDiagnostics`, `StreamRecord`, `ReaderLimitHit` | What a read collects when `RvtReaderOptions.Diagnostics` is set: the partition and metadata streams read (stored and inflated byte sizes and member decode counts) and the streams cut by a limit. |
 | `ExportReport`, `SkipLog`, `GeometryQualityClass`, `ElementGeometryQuality` | The machine-readable report of a run (`ToJson`), the per-element geometry quality classification and totals, and the elements an export left out; see [the export report](export-report.md). |
