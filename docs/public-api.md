@@ -187,7 +187,7 @@ elements that the IFC leaves out. Curved surfaces are the dense polygons the rea
 
 | Type | Use |
 |---|---|
-| `RvtWriter` | Inspects the write-capability matrix (`InspectCapabilities`), writes lossless copies (`SaveAs`), and persists targeted stream and partition-record edits (`Rewrite`) for local `2020` to `2027` `.rvt` and `.rfa` files; see [writing and save-as](writing.md). |
+| `RvtWriter` | Inspects write capabilities (`InspectCapabilities`), writes lossless copies (`SaveAs`), and persists targeted stream and partition-record edits (`Rewrite`). For supported parameters in local Revit 2020–2027 files it provides single assignments (`SetParameter`, `SetFamilyParameter`) and atomic batches (`SetParameters`, `SetFamilyParameters`). See [writing and save-as](writing.md) for edit records, `long` IDs and supported clears. |
 | `RvtWriteCapabilities`, `RvtOperationSupport`, `RvtFileKind`, `RvtWriteOperation` | Capability classification by file kind (`Project`, `Family`), release (`2020` to `2027`), element ID width (`4` or `8` bytes), worksharing/cloud flags, and operation (`SaveAs`, `PagedStreamRewrite`, `PartitionRecordRewrite`). |
 | `RvtWriteRequest`, `RvtPagedStreamEdit`, `RvtPartitionRecordEdit`, `RvtWriteResult` | Edit specifications for `Formats/Latest`, `Global/*`, and `Partitions/<n>` records, and the verified write summary. |
 | `RvtWriteRefusedException` | Thrown with a stable `Kind` code when a file state or edit request is outside the supported write scope. |

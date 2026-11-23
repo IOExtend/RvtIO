@@ -107,6 +107,9 @@ public class WideBlockWalkerTests
         Assert.Equal(StoreId, captures["Base.m_pStore"].Integer);
         Assert.Equal(7, captures["Derived.m_short"].Integer);
         Assert.Equal(42, captures["Store.m_value"].Integer);
+        var backReference = captures["Derived.m_back"];
+        Assert.Equal(1, backReference.Integer);
+        Assert.Equal(1u, System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(block.AsSpan(backReference.ValueOffset)));
     }
 
     [Fact]

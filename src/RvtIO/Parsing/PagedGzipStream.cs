@@ -15,6 +15,7 @@ namespace RvtIO.Parsing;
 /// the segments start at stream offsets 64,896 + k * 65,249. Each one begins with a zero byte
 /// followed by a byte whose low nibble is zero, like the removable segments of partition pages
 /// (<see cref="ChunkDecompressor"/>). A short stream has no segment and is decoded unchanged.
+/// A terminal page can use all the lanes of a full page with data bits in the segment marker.
 /// The result is accepted only when the CRC-32 and length of the gzip trailer that follows the
 /// deflate data match, so a wrong page rule yields no data rather than wrong data.
 /// </summary>
@@ -57,9 +58,8 @@ internal static class PagedGzipStream
     /// not match its own CRC-32 and length.</summary>
     internal static byte[]? Decompress(byte[] raw)
     {
-        // The last page of a stream may end before its segment position (the member is complete and only padding
-        // follows, measured on Global/ElemTable of rmebasic21): the strict removal fails there, the tail-tolerant one
-        // keeps the padding as trailing bytes. The gzip CRC-32 and length below still prove the result.
+        // A terminal page can put padding at the expected segment marker. The gzip CRC-32 and
+        // length still prove the member is complete when the tail-tolerant removal is used.
         byte[]? body = RemoveSegments(raw) ?? RemoveSegments(raw, tolerateTail: true);
         if (body == null) return null;
         int start = IsGzipHeader(body, 0) ? 0 : IsGzipHeader(body, PrefixLength) ? PrefixLength : -1;
@@ -134,8 +134,9 @@ internal static class PagedGzipStream
         && data[offset] == 0x1F && data[offset + 1] == 0x8B && data[offset + 2] == 0x08;
 
     /// <summary>The stream without its page segments, or null when a segment position does
-    /// not hold a segment (wrong tag, or the stream ends inside one). With <paramref name="tolerateTail"/> the first
-    /// position after the first segment that holds none ends the removal and the rest of the stream is kept unchanged.</summary>
+    /// not hold a segment (wrong tag, or the stream ends inside one). With <paramref name="tolerateTail"/>,
+    /// an exact-length terminal page can be trimmed at the segment position without a segment marker.
+    /// After a verified segment, any shorter tail without a segment is kept unchanged.</summary>
     internal static byte[]? RemoveSegments(byte[] raw, bool tolerateTail = false)
     {
         var body = new MemoryStream(raw.Length);
@@ -143,9 +144,14 @@ internal static class PagedGzipStream
         for (long segment = PageDataLength; segment < raw.Length; segment += PageStride)
         {
             int start = (int)segment;
-            if (start + SegmentLength > raw.Length
-                || raw[start] != 0 || (raw[start + 1] & 0x0F) != 0)
+            int remaining = raw.Length - start;
+            if (remaining < SegmentLength || raw[start] != 0 || (raw[start + 1] & 0x0F) != 0)
             {
+                if (tolerateTail && remaining == SegmentLength)
+                {
+                    body.Write(raw, source, start - source);
+                    return body.ToArray();
+                }
                 if (!tolerateTail || source == 0) return null; // the first boundary of a multi-page stream always holds a segment
                 break;
             }

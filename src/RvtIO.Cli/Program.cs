@@ -88,6 +88,12 @@ internal static partial class Program
           save-as <source.rvt|source.rfa> [<output.rvt|output.rfa>] [--check] [--report <report.json>]
                                             (first argument) inspect the write-capability matrix (--check) or write a verified lossless
                                             copy of a local 2020-2027 project or family; exit code 5 when refused by the matrix
+          set-parameter <source.rvt> <output.rvt> <element-id> <parameter-id|built-in-name> <value>
+                                            replace a supported parameter in a local Revit 2020-2027 project
+          set-family-parameter <source.rfa> <output.rfa> <type-name> <parameter-id|built-in-name> <value>
+                                            replace a supported parameter on a type in a local Revit 2020-2027 family
+          edit-parameters <source.rvt|source.rfa> <output.rvt|output.rfa> <edits.json>
+                                            apply an ordered batch of supported parameter assignments and clears atomically
           coverage <file.rvt> [--report <report.json>] [--top <n>]
                                             (first argument) count the records of the partition streams that the class schema of the
                                             file walks to their last byte, per channel and class; writes nothing but the report
@@ -155,6 +161,9 @@ internal static partial class Program
         if (args[0].StartsWith("--schema-")) return RvtIO.Parsing.TfSchemaTools.Run(args, Console.Out, Console.Error);
         if (args[0] == "downgrade") return RvtIO.Cli.DowngradeCommand.Run(args[1..], Console.Out, Console.Error);
         if (args[0] == "save-as") return RvtIO.Cli.SaveAsCommand.Run(args[1..], Console.Out, Console.Error);
+        if (args[0] == "set-parameter") return RvtIO.Cli.SetParameterCommand.Run(args[1..], Console.Out, Console.Error);
+        if (args[0] == "set-family-parameter") return RvtIO.Cli.SetParameterCommand.Run(args[1..], Console.Out, Console.Error, familyFile: true);
+        if (args[0] == "edit-parameters") return RvtIO.Cli.SetParameterCommand.RunBatch(args[1..], Console.Out, Console.Error);
         if (args[0] == "coverage") return RvtIO.Cli.CoverageCommand.Run(args[1..], Console.Out, Console.Error);
         if (args[0] == "sheets") return RvtIO.Cli.SheetsCommand.Run(args[1..], Console.Out, Console.Error);
         if (args[0] == "print") return RvtIO.Cli.PrintCommand.Run(args[1..], Console.Out, Console.Error);

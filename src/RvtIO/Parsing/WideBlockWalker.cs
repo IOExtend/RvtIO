@@ -24,7 +24,8 @@ namespace RvtIO.Parsing;
 internal sealed partial class WideBlockWalker
 {
     internal readonly record struct Capture(string Key, CaptureKind Kind, long Integer, double Real, string? Text, bool AtRoot, int QueueIndex,
-        string DeclaringClass, string Field);
+        string DeclaringClass, string Field, int ValueOffset = -1, int QueuePosition = -1);
+
 
     internal enum CaptureKind { Integer, Real, Text, PointerClass }
 
@@ -169,7 +170,7 @@ internal sealed partial class WideBlockWalker
     /// behind it can be read, inside the payload, from exactly one start position and <paramref name="tailValid"/> (walk, index of the first
     /// object read again) accepts what was read there (RebarShape: the constraints of the edges lie behind the ESEntityCell of the shape;
     /// their values tell a real start from a misaligned one).</summary>
-    internal Walk Run(byte[] data, int offset, int size, int classId, Func<Walk, int, bool>? tailValid = null)
+    internal Walk Run(byte[] data, int offset, int size, int classId, Func<Walk, int, bool>? tailValid = null, bool rootOnly = false)
     {
         var walk = new Walk();
         var ctx = new Context(data, offset + 2, offset + size, walk);
@@ -178,9 +179,12 @@ internal sealed partial class WideBlockWalker
         {
             foreach (var (declaring, field) in Chain(classId)) { ctx.RootField = declaring.Name + "." + field.Name; ReadField(ctx, declaring, field, 0, null); }
             walk.RootRead = true;
-            ctx.AtRoot = false;
-            RunQueue(ctx, 0, ref failedAt);
-            walk.Exact = ctx.Pos == ctx.End;
+            if (!rootOnly)
+            {
+                ctx.AtRoot = false;
+                RunQueue(ctx, 0, ref failedAt);
+                walk.Exact = ctx.Pos == ctx.End;
+            }
         }
         catch (Fail failure)
         {
@@ -367,11 +371,12 @@ internal sealed partial class WideBlockWalker
         }
         if (hi == 5)
         {
+            int countAt = c.Pos;
             uint n = U32(c);
             if (n == 0xFFFFFFFF) n = 0;
             if (n > 5_000_000) throw new Fail("count " + n + " at " + declaring.Name + "." + f.Name);
             if (record is EntityFields countedValues) { ReadEntityArray(c, declaring, f, depth, countedValues, (int)n); return; }
-            if (key != null) c.Walk.Captures.Add(new(key + "#", CaptureKind.Integer, n, 0, null, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name));
+            if (key != null) c.Walk.Captures.Add(new(key + "#", CaptureKind.Integer, n, 0, null, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name, countAt));
             // The host type of an empty array is zero (the Revit 2022 walk keeps that zero as the first entry)
             if (key != null && n == 0 && declaring.Name == "Family" && f.Name == "m_refTypeIds")
                 c.Walk.Captures.Add(new(key + "@0", CaptureKind.Integer, 0, 0, null, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name));
@@ -399,16 +404,16 @@ internal sealed partial class WideBlockWalker
     {
         var walk = c.Walk;
         if (++c.Steps > StepBudget) throw new Fail("step budget");
-        void Note(CaptureKind kind, long i, double d, string? s)
+        void Note(CaptureKind kind, long i, double d, string? s, int valueOffset = -1)
         {
-            if (key != null) walk.Captures.Add(new(key, kind, i, d, s, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name));
+            if (key != null) walk.Captures.Add(new(key, kind, i, d, s, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name, valueOffset));
         }
         switch (f.Type)
         {
             case 1: case 2:
             {
                 int p = Take(c, 1);
-                Note(CaptureKind.Integer, c.D[p], 0, null);
+                Note(CaptureKind.Integer, c.D[p], 0, null, p);
                 if (record != null)
                     record[f.Name] = record is EntityFields && f.Type == 1
                         ? c.D[p] switch { 0 => false, 1 => true, _ => UnavailableEntityValue }
@@ -427,7 +432,7 @@ internal sealed partial class WideBlockWalker
             {
                 int p = Take(c, 4);
                 int v = BitConverter.ToInt32(c.D, p);
-                Note(CaptureKind.Integer, v, 0, null);
+                Note(CaptureKind.Integer, v, 0, null, p);
                 if (record != null) record[f.Name] = (long)v;
                 return;
             }
@@ -451,7 +456,7 @@ internal sealed partial class WideBlockWalker
             {
                 int p = Take(c, 8);
                 double v = BitConverter.ToDouble(c.D, p);
-                Note(CaptureKind.Real, 0, v, null);
+                Note(CaptureKind.Real, 0, v, null, p);
                 if (record != null) record[f.Name] = v;
                 return;
             }
@@ -479,7 +484,7 @@ internal sealed partial class WideBlockWalker
                 if (2L * len > c.End - c.Pos) throw new Fail("end of payload");
                 int p = Take(c, 2 * (int)len);
                 string s = Encoding.Unicode.GetString(c.D, p, 2 * (int)len);
-                Note(CaptureKind.Text, 0, 0, s);
+                Note(CaptureKind.Text, 0, 0, s, p - sizeof(uint));
                 if (record != null) record[f.Name] = s;
                 return;
             }
@@ -509,13 +514,15 @@ internal sealed partial class WideBlockWalker
         int lo = f.Mods & 15;
         if (lo == 3)
         {
+            int offset = c.Pos;
             uint back = U32(c);
-            if (key != null) walk.Captures.Add(new(key, CaptureKind.Integer, back, 0, null, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name));
+            if (key != null) walk.Captures.Add(new(key, CaptureKind.Integer, back, 0, null, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name, offset));
             if (record != null) record[f.Name] = (long)back;
             return;
         }
         if (lo is 1 or 2 or 4)
         {
+            int handleAt = c.Pos, queuePosition = walk.Queue.Count;
             uint handle = U32(c);
             int tag = 0;
             if (_entityLayoutOf != null && declaring.Name == "ESEntity" && f.Name == "m_blob" && QueueEntityPayload(c, handle, record as EntityFields)) return;
@@ -545,7 +552,8 @@ internal sealed partial class WideBlockWalker
                     walk.Queue.Add(tag);
                 }
             }
-            if (key != null) walk.Captures.Add(new(key, CaptureKind.PointerClass, handle == 0 ? 0 : tag == 0 ? -1 : tag, 0, null, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name));
+            if (key != null) walk.Captures.Add(new(key, CaptureKind.PointerClass, handle == 0 ? 0 : tag == 0 ? -1 : tag, 0, null,
+                c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name, handleAt, queuePosition));
             if (record != null) record[f.Name] = record is EntityFields ? UnavailableEntityValue : (long)tag;
             return;
         }
@@ -558,7 +566,7 @@ internal sealed partial class WideBlockWalker
                 long id = _idWidth == 8 ? BitConverter.ToInt64(c.D, p) : BitConverter.ToInt32(c.D, p);
                 if (record is EntityFields) { record[f.Name] = ExactEntityInteger(id); return; }
                 if (_ids != null) id = _ids.Key(id);
-                if (key != null) walk.Captures.Add(new(key, CaptureKind.Integer, id, 0, null, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name));
+                if (key != null) walk.Captures.Add(new(key, CaptureKind.Integer, id, 0, null, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name, p));
                 if (record != null) record[f.Name] = id;
                 return;
             }
@@ -586,6 +594,11 @@ internal sealed partial class WideBlockWalker
             if (key != null && _classes[reference].Name == "ForgeTypeId" && walk.Records is [.., (var recordClass, _, var forge)] && recordClass == reference
                 && forge.GetValueOrDefault("m_typeId") is string forgeText)
                 walk.Captures.Add(new(key, CaptureKind.Text, 0, 0, forgeText, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name));
+            if (key != null && c.Pos - structAt == 16
+                && _classes[reference] is { Name: "ExternalParamKey", Fields: [{ Name: "m_guidValue", Type: 14, Mods: 0, Ref: int guidClass }] }
+                && Class(guidClass) is { Name: "GUIDvalue", Fields: [{ Name: "m_guid", Type: 9, Mods: 0 }] })
+                walk.Captures.Add(new(key, CaptureKind.Text, 0, 0, new Guid(c.D.AsSpan(structAt, 16)).ToString(), c.AtRoot && depth == 0,
+                    c.QueueIndex, declaring.Name, f.Name));
             return;
         }
         {

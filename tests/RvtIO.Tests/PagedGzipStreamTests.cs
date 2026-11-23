@@ -44,6 +44,20 @@ public class PagedGzipStreamTests
     }
 
     [Fact]
+    public void MemberEndingBeforeTheMarkerOfAnExactLengthTerminalPageRequiresAValidTrailer()
+    {
+        byte[] payload = Payload(64_000);
+        byte[] member = Member(payload);
+        var raw = new byte[PagedGzipStream.PageStride];
+        member.CopyTo(raw, PagedGzipStream.PrefixLength);
+        raw[PagedGzipStream.PageDataLength] = 0x83;
+        Assert.Equal(payload, PagedGzipStream.Decompress(raw));
+
+        raw[PagedGzipStream.PrefixLength + member.Length - 1] ^= 1;
+        Assert.Null(PagedGzipStream.Decompress(raw));
+    }
+
+    [Fact]
     public void StreamWithoutItsFirstSegment_IsRejectedByTheMemberCrc()
     {
         byte[] raw = [.. new byte[PagedGzipStream.PrefixLength], .. Member(Payload(100_000))];
