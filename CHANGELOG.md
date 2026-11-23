@@ -8,6 +8,10 @@ API between minor releases.
 
 ### Added
 
+- Report progress while reading a Revit file: `RvtReadProgress` (phase, completed and total units),
+  `RvtReaderOptions.Progress` and `RvtSceneOptions.ReadProgress` (for `RvtSceneReader.Read(path)`). The reader calls
+  `IProgress<RvtReadProgress>.Report` synchronously on the reading thread, in phase order; see
+  [the public API](docs/public-api.md) for the phases.
 - Update verified Number and Slope parameters through existing associations between the two specs, including
   the release-specific rules for Number parameters bound in the project.
 

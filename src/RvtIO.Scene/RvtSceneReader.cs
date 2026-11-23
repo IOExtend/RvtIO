@@ -51,7 +51,7 @@ public static class RvtSceneReader
         string key = options?.ModelKey ?? Path.GetFileName(path);
         if (key.Length == 0) throw new ArgumentException("The model key is empty.", nameof(options));
         var readDiagnostics = new RvtReadDiagnostics();
-        var document = RvtDocument.Open(path, ReaderOptions(readDiagnostics));
+        var document = RvtDocument.Open(path, ReaderOptions(readDiagnostics, options));
         return Map(document, ElementMeshes.Extract(document, MeshOptions(options)), key, ReadDiagnostics(readDiagnostics));
     }
 
@@ -73,17 +73,18 @@ public static class RvtSceneReader
         ArgumentNullException.ThrowIfNull(options);
         string key = RequiredKey(options);
         var readDiagnostics = new RvtReadDiagnostics();
-        var document = RvtDocument.OpenStream(stream, ReaderOptions(readDiagnostics));
+        var document = RvtDocument.OpenStream(stream, ReaderOptions(readDiagnostics, options));
         return Map(document, ElementMeshes.Extract(document, MeshOptions(options)), key, ReadDiagnostics(readDiagnostics));
     }
 
-    private static RvtReaderOptions ReaderOptions(RvtReadDiagnostics diagnostics)
+    private static RvtReaderOptions ReaderOptions(RvtReadDiagnostics diagnostics, RvtSceneOptions? options)
         => new()
         {
             R22Layout = true,
             SystemFamilyNameLocale = "ENU",
             SeparateFacesWithDistinctOpenings = true,
             Diagnostics = diagnostics,
+            Progress = options?.ReadProgress,
         };
 
     /// <summary>The scene diagnostics of a read: <c>read-cut</c> for each stream a reader limit cut, then for each stream read, in

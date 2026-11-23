@@ -16,11 +16,18 @@ internal static partial class TfStreamWalker
 
     private const int MaxBlock = 1_100_000; // > any real block/record size we accept
 
-    public static void Walk(IReadOnlyList<byte[]> chunks, HashSet<uint> knownIds, BlockVisitor visit, RecordVisitor? visitRecord = null)
+    /// <summary>Walks the concatenated chunks in segments of at most <paramref name="segTarget"/> bytes (tests pass a small one to
+    /// reach the second segment). <paramref name="progress"/> gets the offset in the concatenated stream and its length.</summary>
+    public static void Walk(IReadOnlyList<byte[]> chunks, HashSet<uint> knownIds, BlockVisitor visit,
+        RecordVisitor? visitRecord = null, Action<long, long>? progress = null, long segTarget = 1_400_000_000)
     {
-        const long segTarget = 1_400_000_000;
+        // As in WalkStreaming: the carried overlap and two maximum-sized items must fit in a segment.
+        if (segTarget <= 3 * MaxBlock) throw new ArgumentOutOfRangeException(nameof(segTarget));
         long total = 0;
         foreach (var c in chunks) total += c.Length;
+        progress?.Invoke(0, total);
+        long segmentOffset = 0;
+        Action<int>? reportPosition = progress is null ? null : pos => progress(segmentOffset + pos, total);
 
         int i = 0;
         var carry = Array.Empty<byte>(); // overlap tail from the previous segment
@@ -46,7 +53,8 @@ internal static partial class TfStreamWalker
             // Blocks starting in the final MaxBlock bytes may be cut: the next segment
             // re-walks them via the carried overlap (skip them here unless last segment).
             int visitLimit = last ? seg.Length : Math.Max(0, seg.Length - MaxBlock);
-            WalkSegment(seg, knownIds, visit, visitLimit, visitRecord);
+            WalkSegment(seg, knownIds, visit, visitLimit, visitRecord, reportPosition);
+            segmentOffset += visitLimit;
             if (!last)
             {
                 int tail = Math.Min(MaxBlock, seg.Length);
@@ -54,15 +62,24 @@ internal static partial class TfStreamWalker
                 Buffer.BlockCopy(seg, seg.Length - tail, carry, 0, tail);
             }
         }
+        if (total > 0) progress?.Invoke(total, total);
     }
 
-    private static void WalkSegment(byte[] buf, HashSet<uint> knownIds, BlockVisitor visit, int visitLimit, RecordVisitor? visitRecord = null)
+    private static void WalkSegment(byte[] buf, HashSet<uint> knownIds, BlockVisitor visit,
+        int visitLimit, RecordVisitor? visitRecord = null, Action<int>? reportPosition = null)
     {
         int n = buf.Length;
         int pos = 0;
         bool aligned = false;
+        const int reportInterval = 1 << 20;
+        long nextReport = reportPosition is null ? long.MaxValue : reportInterval;
         while (pos + 12 <= n)
         {
+            if (pos >= nextReport && pos < visitLimit)
+            {
+                reportPosition!(pos);
+                nextReport = (long)pos + reportInterval;
+            }
             var it = ParseItem(buf, pos, n, knownIds);
             if (it.HasValue && !aligned)
             {

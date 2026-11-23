@@ -19,7 +19,9 @@ public static class CompactJsonExporter
     /// <summary>Reads a Revit file and writes its compact JSON properties collection to <paramref name="outputPath"/>.</summary>
     /// <param name="rvtPath">The .rvt or .rfa file to read.</param>
     /// <param name="outputPath">The JSON file to create or overwrite.</param>
-    /// <param name="readerOptions">Options of the read; null uses the defaults. Its DiagnosticOutput also receives the export report.</param>
+    /// <param name="readerOptions">Options of the read; null uses the defaults. Its DiagnosticOutput also receives the export report.
+    /// Its Progress gets the updates of the first read, which ends with <c>complete</c>. A file of a wide layout is then read again for
+    /// quantities and reports only <c>quantities</c>, and writing the JSON is not reported.</param>
     /// <param name="options">Options of the JSON output; null uses the defaults.</param>
     public static void Export(string rvtPath, string outputPath, RvtReaderOptions? readerOptions = null, CompactJsonExportOptions? options = null)
     {
