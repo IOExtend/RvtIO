@@ -26,9 +26,16 @@ needs `RvtSceneOptions.ModelKey`, because a document does not know its file name
 takes the meshes you extracted from that document yourself, for example with `ElementMeshes.Extract` and options of your
 own. Open a file of a release other than
 Revit 2022 with `R22Layout = true`, or its elements have no geometry and the result has the error `geometry-undecoded`.
-Only `Read(path)` reports the diagnostics of the read (`read-cut`, `failed-members`, `recovered-members`,
-`unverified-members`), as only it opens the file; if you open the document yourself, read them from the
-`RvtReaderOptions.Diagnostics` you opened it with.
+`Read(path)` and `ReadStream(stream, options)` report the diagnostics of the read (`read-cut`, `failed-members`,
+`recovered-members`, `unverified-members`), because they read the file themselves; if you open the document yourself, read
+them from the `RvtReaderOptions.Diagnostics` you opened it with.
+
+`ReadStream(stream, options)` reads from the beginning of a readable, seekable stream (whatever its position) with the same
+reader options as `Read(path)`. It needs `RvtSceneOptions.ModelKey`, because a stream has no file name. The stream is only
+read: the call never writes to it, shortens it or closes it, also when it is writable. A stream that is empty, is not a
+compound file, or is cut or damaged is an `RvtInputException`, as for a path read; a failure of the stream itself (an `IOException`, a cancellation) reaches
+you as the stream threw it, not as a damaged file. A null stream is an `ArgumentNullException`; an unreadable, non-seekable or
+closed one is an `ArgumentException`.
 
 Set `RvtSceneOptions.IncludeModelLinesAndReinforcement` to include straight model lines as line primitives and reinforcement with decoded bar paths as triangles. The native RVT-to-NWC tool enables this option.
 
@@ -53,7 +60,7 @@ rvtio project.rvt --ifc project.ifc --compact-json project.compact.json --scene 
 
 | Scene | From |
 |---|---|
-| `SceneModel.Key` | `RvtSceneOptions.ModelKey`, else the file name without its directory (`project.rvt`). This derivation does not change. |
+| `SceneModel.Key` | `RvtSceneOptions.ModelKey`, else, for `Read(path)`, the file name without its directory (`project.rvt`). `ReadStream` and the document overloads need `ModelKey`: a stream or a document has no file name. This derivation does not change. |
 | `SceneModel` | `SourceFormat` `rvt`, `SourceLengthUnit` `ft`, `Producer` `RvtIO.Scene <version>`. |
 | `SceneGridSystem`, `SceneGridLine` | One grid system named `Grids` when the model has decoded axes. Standalone straight axes use the element name and endpoints of the location curve, converted from feet to metres in the document's internal coordinates. Elevation is the start point's Z. |
 | `SceneGridPath` | One path and datum label per standalone circular arc or complete multi-segment grid. Points follow the stored segment order at model Z=0, as in Revit's grid curves. Arcs are sampled with at most 1 mm of chord error. Viewers place the label only at the two outer endpoints. |
@@ -87,10 +94,10 @@ The text a value is written with under a key is frozen with the key: changing it
 | Code | Severity | Meaning |
 |---|---|---|
 | `geometry-undecoded` | error | The geometry of the file was not decoded; open it with `R22Layout`. |
-| `read-cut` | error | A reader limit cut a stream while the file was read (`Read(path)` only); elements may be missing. |
-| `failed-members` | error | Gzip members of a stream failed to decode (`Read(path)` only); elements may be missing. One per stream. |
-| `recovered-members` | warning | Gzip members of a stream were rebuilt by structural recovery (`Read(path)` only); their elements may be incomplete or wrong. One per stream. |
-| `unverified-members` | warning | Gzip members of a stream decoded without a matching checksum, not counting the rebuilt ones (`Read(path)` only); their elements may be incomplete or wrong. One per stream. |
+| `read-cut` | error | A reader limit cut a stream while the file was read (`Read(path)` and `ReadStream` only); elements may be missing. |
+| `failed-members` | error | Gzip members of a stream failed to decode (`Read(path)` and `ReadStream` only); elements may be missing. One per stream. |
+| `recovered-members` | warning | Gzip members of a stream were rebuilt by structural recovery (`Read(path)` and `ReadStream` only); their elements may be incomplete or wrong. One per stream. |
+| `unverified-members` | warning | Gzip members of a stream decoded without a matching checksum, not counting the rebuilt ones (`Read(path)` and `ReadStream` only); their elements may be incomplete or wrong. One per stream. |
 | `undecoded` | warning | An element of such a file; it is in the scene without geometry. |
 | `no-geometry` | warning | An element whose geometry record has nothing that could be drawn; it is in the scene without geometry. |
 | `partial-geometry` | warning | Faces that could not be triangulated, or a placed symbol or Geometry node without a decoded polygon. |

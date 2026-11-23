@@ -588,6 +588,40 @@ public class RvtSceneReaderTests
     }
 
     [Fact]
+    public void StreamReadPreservesSceneDiagnosticsAndLeavesInputOpen()
+    {
+        string path = Path.Combine(Path.GetTempPath(), "rvtio-stream-" + Guid.NewGuid().ToString("N") + ".rvt");
+        try
+        {
+            CliExitCodeTests.WriteSyntheticRvt(path, [1, 2, 3]);
+            var options = new RvtSceneOptions { ModelKey = "model" };
+            var fromPath = RvtSceneReader.Read(path, options);
+
+            using var stream = File.OpenRead(path);
+            stream.Position = stream.Length;
+            var fromStream = RvtSceneReader.ReadStream(stream, options);
+
+            Assert.Equal(SceneJson.Write(fromPath.Document), SceneJson.Write(fromStream.Document));
+            Assert.Equal(fromPath.Diagnostics, fromStream.Diagnostics);
+            stream.Position = 0;
+            Assert.Equal(0xD0, stream.ReadByte());
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void InvalidCompoundStreamKeepsItsTypedErrorAndRemainsOpen()
+    {
+        using var stream = new MemoryStream([1, 2, 3]);
+        var exception = Assert.Throws<RvtInputException>(() =>
+            RvtSceneReader.ReadStream(stream, new RvtSceneOptions { ModelKey = "model" }));
+
+        Assert.Equal("not-a-compound-file", exception.Kind);
+        stream.Position = 0;
+        Assert.Equal(1, stream.ReadByte());
+    }
+
+    [Fact]
     public void MembersThatFailedToDecodeAreAnErrorOfTheirStream()
     {
         // A partition stream without a gzip header: one member, and it does not decode.

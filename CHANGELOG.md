@@ -12,6 +12,11 @@ API between minor releases.
   the release-specific rules for Number parameters bound in the project.
 
 - Edit verified project and family parameters in local Revit 2020–2027 files without Revit. The API and CLI support single assignments and atomic batches, including supported clears, measured values, references, and verified family and global formulas. See the [writing guide](docs/writing.md).
+- Read a document, a file model or a scene from a readable, seekable stream with `RvtDocument.OpenStream`,
+  `RvtFileReader.ReadStream` and `RvtSceneReader.ReadStream`. The stream is read from its beginning whatever its
+  position and is only read: it is never written to, shortened or closed, also when it is writable. Errors are the
+  `RvtInputException` kinds of a path read, and a failure of the stream itself is thrown as it was. A document opened from
+  a stream has no `SourcePath`, so `SaveAs` throws and printing leaves out the images it takes from the file.
 
 ### Changed
 
@@ -21,6 +26,7 @@ API between minor releases.
 
 - Avoid overflow when triangulating trimmed faces with 46,341 or more vertices after bridging.
 - Read `Global` and `Formats` streams whose last page has exactly the length of a full page and holds no segment marker at the segment position.
+- Use the saved section plane in model millimetres to clip PDF geometry and place detail windows.
 
 ## [0.6.3] - 2026-11-20
 

@@ -38,12 +38,38 @@ public partial class RvtFileReader
     public RevitFileInfo Read(string rvtPath)
     {
         RvtContainerCheck.Verify(rvtPath);
+        using var root = RootStorage.OpenRead(rvtPath);
+        return ReadCore(root);
+    }
+
+    /// <summary>Reads a Revit compound file from the beginning of a readable, seekable stream, whatever its position.
+    /// The stream is only read: it is never written to, shortened or closed, also when it is writable, and its position may change.</summary>
+    /// <remarks>A failure of the stream itself, such as an <see cref="IOException"/>, a cancellation or a stream closed while it is read,
+    /// is thrown as the stream threw it; it is not reported as a file that is cut or damaged. A stream that ends early is.
+    /// The result carries no file path: a document made from it with <see cref="RvtDocument.FromInfo"/> has no
+    /// <see cref="RvtDocument.SourcePath"/>, so <see cref="RvtDocument.SaveAs"/> throws <see cref="InvalidOperationException"/> for it
+    /// and printing cannot read the images it takes from the file.</remarks>
+    /// <param name="stream">The Revit file, which the caller keeps.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="stream"/> is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="stream"/> is not readable or not seekable, or is closed.</exception>
+    /// <exception cref="RvtInputException">The stream is empty, is not a compound file, or is cut or damaged.</exception>
+    /// <exception cref="RvtLimitException">A stream is longer than one array can hold, or a file with no project
+    /// partitions contains a source element ID above the range of document-local keys.</exception>
+    public RevitFileInfo ReadStream(Stream stream)
+    {
+        using var root = RvtContainerCheck.OpenVerified(stream, "Revit input stream", out var view);
+        var info = ReadCore(root);
+        // The decoders absorb a read that fails and go on with less data; such a result is not returned.
+        view.ThrowStreamFailure();
+        return info;
+    }
+
+    private RevitFileInfo ReadCore(RootStorage root)
+    {
         var diag = _options.DiagnosticOutput;
         using var diagnosticScope = DiagnosticSink.Use(diag);
         var sw = System.Diagnostics.Stopwatch.StartNew();
         void LogPhase(string name) { diag?.WriteLine($"[{sw.Elapsed.TotalSeconds:F1}s] {name}"); }
-
-        using var root = RootStorage.OpenRead(rvtPath);
 
         var elemTable = ElemTableReader.Read(root, out var elemWorksets, out _, out bool elemTableIsExact, out var ids,
             allowWideIds: root.TryOpenStorage("Partitions", out _),
@@ -2796,27 +2822,28 @@ public partial class RvtFileReader
         ParsingState state, List<(byte[] Segment, int Start, uint Size, uint Eid)> jobs)
     {
         if (jobs.Count == 0) return 0;
-        var decoded = new GRepData?[jobs.Count];
         bool slowDiag = Environment.GetEnvironmentVariable("RVTIO_GREP_SLOW") is { Length: > 0 };
-        Parallel.For(0, jobs.Count, index =>
-        {
-            var clock = System.Diagnostics.Stopwatch.StartNew();
-            decoded[index] = GRepParserV2.Parse(jobs[index].Segment, jobs[index].Start, jobs[index].Size);
-            if (slowDiag && (clock.ElapsedMilliseconds > 2000 || decoded[index]?.Faces.Count > 100000))
-                DiagnosticSink.WriteLine($"slow GRep eid={jobs[index].Eid} ms={clock.ElapsedMilliseconds} faces={decoded[index]?.Faces.Count}");
-        });
         int stored = 0;
-        for (int index = 0; index < jobs.Count; index++)
-        {
-            if (decoded[index] is { } geometry && !state.GrepBlocks.ContainsKey(jobs[index].Eid))
+        BlockParser.DecodeGRepBlocksInOrder(jobs.Count,
+            index =>
             {
-                state.GrepBlocks[jobs[index].Eid] = geometry;
-                stored++;
-            }
-            decoded[index] = null;
-        }
+                var job = jobs[index];
+                var clock = slowDiag ? System.Diagnostics.Stopwatch.StartNew() : null;
+                var geometry = GRepParserV2.Parse(job.Segment, job.Start, job.Size);
+                if (clock != null && (clock.ElapsedMilliseconds > 2000 || geometry?.Faces.Count > 100000))
+                    DiagnosticSink.WriteLine($"slow GRep eid={job.Eid} ms={clock.ElapsedMilliseconds} faces={geometry?.Faces.Count}");
+                return geometry;
+            },
+            (index, geometry) =>
+            {
+                if (StoreFirstDecodableGRep(state, jobs[index].Eid, geometry)) stored++;
+            });
         return stored;
     }
+
+    /// <summary>Stores a decoded block for an element that has none yet; the first decodable block of an element wins.</summary>
+    internal static bool StoreFirstDecodableGRep(ParsingState state, uint eid, GRepData? geometry) =>
+        geometry != null && state.GrepBlocks.TryAdd(eid, geometry);
 
     internal static void ParseBlocks(ParsingState state, TextWriter? diag)
     {

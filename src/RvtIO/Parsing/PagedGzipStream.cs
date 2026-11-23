@@ -133,6 +133,11 @@ internal static class PagedGzipStream
         data.Length >= offset + 18
         && data[offset] == 0x1F && data[offset + 1] == 0x8B && data[offset + 2] == 0x08;
 
+    /// <summary>True when a whole segment lies at <paramref name="start"/> of <paramref name="raw"/> and starts with its tag: a zero byte,
+    /// then a byte whose low nibble is zero. The one rule behind every reader of the page segments.</summary>
+    internal static bool HoldsSegment(ReadOnlySpan<byte> raw, long start) =>
+        start + SegmentLength <= raw.Length && raw[(int)start] == 0 && (raw[(int)start + 1] & 0x0F) == 0;
+
     /// <summary>The stream without its page segments, or null when a segment position does
     /// not hold a segment (wrong tag, or the stream ends inside one). With <paramref name="tolerateTail"/>,
     /// an exact-length terminal page can be trimmed at the segment position without a segment marker.
@@ -144,9 +149,9 @@ internal static class PagedGzipStream
         for (long segment = PageDataLength; segment < raw.Length; segment += PageStride)
         {
             int start = (int)segment;
-            int remaining = raw.Length - start;
-            if (remaining < SegmentLength || raw[start] != 0 || (raw[start + 1] & 0x0F) != 0)
+            if (!HoldsSegment(raw, start))
             {
+                int remaining = raw.Length - start;
                 if (tolerateTail && remaining == SegmentLength)
                 {
                     body.Write(raw, source, start - source);
