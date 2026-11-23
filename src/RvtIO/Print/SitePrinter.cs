@@ -209,7 +209,8 @@ public static partial class SitePrinter
         var propertyLines = new List<List<(double X, double Y)>>();
         foreach (var element in document.Elements)
         {
-            if (!IsPlaced(element) || element.SitePropertyCurve is not { Count: >= 2 } curve) continue;
+            if (PropertyLineHidden(hiddenCategories) || !IsPlaced(element) || element.SitePropertyCurve is not { Count: >= 2 } curve)
+                continue;
             var line = curve.Select(p => (X: p.X * FeetToMillimetres, Y: p.Y * FeetToMillimetres)).ToList();
             propertyLines.Add(line);
             foreach (var point in line) Grow(point.X, point.Y);
@@ -222,6 +223,11 @@ public static partial class SitePrinter
             && element.NativeIsSymbol != true && !element.RootClassIs("FamilySymbol") && hidden?.Contains(element.Id) != true
             && (element.CategoryId is not int category || hiddenCategories?.Contains(category) != true);
     }
+
+    /// <summary>True when the view hides the property boundaries. A segment carries its own category, but a view hides
+    /// the boundary through "Property Lines", the category the lines are inked with.</summary>
+    internal static bool PropertyLineHidden(HashSet<int>? hiddenCategories) =>
+        hiddenCategories?.Contains((int)BuiltInCategory.OST_SiteProperty) == true;
 
     /// <summary>The schedule key of a planting instance: the type mark (its ALL_MODEL_TYPE_MARK) and the
     /// common name (its ALL_MODEL_DESCRIPTION, the "Common Name" the planting schedule lists), read from its

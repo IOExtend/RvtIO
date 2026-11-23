@@ -258,8 +258,8 @@ public class PlanPrinterTests
         }
     }
 
-    [Fact]
-    public void DrawContent_UsesTheModelWallCutWhenThePlaneCrossesTheHostedOpening()
+    private static (RvtDocument Document, Element Wall, Dictionary<int, (double[] Offsets, int[] LevelIds)> Ranges)
+        WallWithHostedOpening()
     {
         var wall = Wall(20, 10, 0.5, 0.5, 11.5, 0.5, 1);
         wall.TypeId = 40;
@@ -289,6 +289,14 @@ public class PlanPrinterTests
             UnshadedHiddenLineViews = new HashSet<int> { 30 },
             PlanViewRanges = ranges,
         });
+        return (document, wall, ranges);
+        static GeoFace Face(List<double[]> vertices) => new() { OuterVertices = vertices, PlaneSurface = true };
+    }
+
+    [Fact]
+    public void DrawContent_UsesTheModelWallCutWhenThePlaneCrossesTheHostedOpening()
+    {
+        var (document, wall, ranges) = WallWithHostedOpening();
         var content = Assert.IsType<PlanPrinter.PlanContent>(PlanPrinter.CollectLevel(document, 10, 30));
         content.Gaps[wall.Id] = [(3.5 * 304.8, 6.5 * 304.8)];
         var pdf = new PdfDocument();
@@ -310,8 +318,29 @@ public class PlanPrinterTests
         string Line(double a, double b) => $"{Point(a)} m {Point(b)} l S";
         string Point(double x) => FormattableString.Invariant(
             $"{(20 + (x * 304.8 - content.MinX) / 100) * 72 / 25.4:0.####} {(20 - content.MinY / 100) * 72 / 25.4:0.####}");
-        static GeoFace Face(List<double[]> vertices) => new() { OuterVertices = vertices, PlaneSurface = true };
     }
+
+    [Fact]
+    public void DrawContent_ClipsTheModelWallCutToTheCropRectangle()
+    {
+        var (document, wall, _) = WallWithHostedOpening();
+        var content = Assert.IsType<PlanPrinter.PlanContent>(PlanPrinter.CollectLevel(document, 10, 30));
+        content.Gaps[wall.Id] = [(3.5 * 304.8, 6.5 * 304.8)];
+        var page = new PdfDocument().AddPage(PdfPageSize.A1.Landscape);
+        const double cropRight = 3 * 304.8;
+
+        // The crop reaches 3 ft into the first cut piece (0..4 ft) and misses the second (7..12 ft).
+        PlanPrinter.DrawContent(page, content, 100, 20, 20, document: document, planViewId: 30,
+            clipRect: (0, -100, cropRight, 400));
+
+        var fill = Assert.Single(page.Content.Split('\n'), line => line.EndsWith("h f", StringComparison.Ordinal));
+        double[] xs = [.. System.Text.RegularExpressions.Regex.Matches(fill, @"([\d.]+) [\d.]+ [ml]")
+            .Select(match => double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture))];
+        double pageRight = (20 + (cropRight - content.MinX) / 100) * 72 / 25.4;
+        Assert.True(xs.Length >= 3);
+        Assert.InRange(xs.Max(), pageRight - 0.01, pageRight + 0.01);
+    }
+
 
     [SkippableFact]
     public void SampleFile_PlanElevationMarksUseTheirSavedViewsAndCrop()
@@ -425,6 +454,145 @@ public class PlanPrinterTests
             Assert.InRange(Math.Min(line.Y1, line.Y2), 0, 310);
             Assert.InRange(Math.Max(line.Y1, line.Y2), 0, 310);
         });
+    }
+
+    [Theory]
+    [InlineData(false, false, true)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    public void CollectLevel_HiddenStairsDrawNoTreadOutline(bool hidden, bool categoryHidden, bool drawn)
+    {
+        const int view = 700, stairId = 801;
+        var stair = new Element
+        {
+            Id = stairId, CategoryId = (int)BuiltInCategory.OST_Stairs,
+            Geometry = new GeometryData
+            {
+                Faces = [new GeoFace { Normal = [0, 0, 1], OuterVertices = [[3, 0, 1], [4, 0, 1], [4, 1, 1], [3, 1, 1]] }],
+            },
+        };
+        Add(stair, BuiltInParameter.LEVEL_PARAM, StorageType.ElementId, 500);
+        var document = RvtDocument.FromInfo(new RevitFileInfo
+        {
+            Elements = { Level(500, "Level 1", 0), Wall(600, 500, 0, 0, 10, 0), stair },
+            ViewHiddenElements = new Dictionary<int, HashSet<int>> { [view] = hidden ? [stairId] : [] },
+            ViewHiddenCategories = new Dictionary<int, HashSet<int>>
+                { [view] = categoryHidden ? [(int)BuiltInCategory.OST_Stairs] : [] },
+        });
+
+        var content = Assert.IsType<PlanPrinter.PlanContent>(PlanPrinter.CollectLevel(document, 500, view));
+
+        Assert.Equal(drawn, content.StairLines is { Count: > 0 });
+    }
+
+    [Theory]
+    [InlineData(false, false, false, false, true)]
+    [InlineData(true, false, false, false, false)]
+    [InlineData(false, true, false, false, false)]
+    [InlineData(false, false, true, false, false)]
+    [InlineData(false, false, false, true, false)]
+    public void CollectLevel_HiddenRailingsDrawNoTopRailOutline(
+        bool railHidden, bool railCategoryHidden, bool ownerHidden, bool ownerCategoryHidden, bool drawn)
+    {
+        const int view = 700, railId = 810, ownerId = 811;
+        var rail = new Element
+        {
+            Id = railId, CategoryId = (int)BuiltInCategory.OST_RailingTopRail, SerializedOwningElementId = ownerId,
+            Geometry = new GeometryData
+            {
+                Faces = [new GeoFace { Normal = [0, 0, 1], OuterVertices = [[3, 0, 3], [5, 0, 3], [5, 0.5, 3], [3, 0.5, 3]] }],
+            },
+        };
+        Add(rail, BuiltInParameter.LEVEL_PARAM, StorageType.ElementId, 500);
+        var owner = new Element { Id = ownerId, CategoryId = (int)BuiltInCategory.OST_StairsRailing };
+        var document = RvtDocument.FromInfo(new RevitFileInfo
+        {
+            Elements = { Level(500, "Level 1", 0), Wall(600, 500, 0, 0, 10, 0), rail, owner },
+            ViewHiddenElements = new Dictionary<int, HashSet<int>>
+                { [view] = [.. (railHidden ? [railId] : Array.Empty<int>()), .. (ownerHidden ? [ownerId] : Array.Empty<int>())] },
+            ViewHiddenCategories = new Dictionary<int, HashSet<int>>
+            {
+                [view] =
+                [
+                    .. railCategoryHidden ? [(int)BuiltInCategory.OST_RailingTopRail] : Array.Empty<int>(),
+                    .. ownerCategoryHidden ? [(int)BuiltInCategory.OST_StairsRailing] : Array.Empty<int>(),
+                ],
+            },
+        });
+
+        var content = Assert.IsType<PlanPrinter.PlanContent>(PlanPrinter.CollectLevel(document, 500, view));
+
+        Assert.Equal(drawn, content.RailLines is { Count: > 0 });
+    }
+
+    // A flight that arrives on level 500 from below, with a stair path in the view and a top rail on its railing.
+    [Theory]
+    [InlineData(false, false, false, false, false, true)]
+    [InlineData(true, false, false, false, false, false)]
+    [InlineData(false, true, false, false, false, false)]
+    [InlineData(false, false, true, false, false, false)]
+    [InlineData(false, false, false, true, false, false)]
+    [InlineData(false, false, false, false, true, false)]
+    public void CollectLevel_HiddenRailingDropsItsTopRailFromAProjectedStair(
+        bool railHidden, bool railCategoryHidden, bool ownerHidden, bool ownerCategoryHidden, bool stairHidden, bool drawn)
+    {
+        const int view = 700, stairId = 801, runId = 802, railId = 810, ownerId = 811, railStyle = 73;
+        var treads = new[] { new TfBlockDeserializer.StairPlanLine(0, 0, 0, 1, -3), new(3, 0, 3, 1, 3) };
+        var plan = new TfBlockDeserializer.StairPlanInput(treads, [new(0, 0, 3, 0, 0)], [new(0, 1, 3, 1, 0)], []);
+        var run = new Element
+        {
+            Id = runId,
+            SerializedStairRunInput = new TfBlockDeserializer.StairRunInput(runId, stairId,
+                TfBlockDeserializer.StairRunStyle.Sketched, [], new TfBlockDeserializer.StairRunNumbers(-3, 3, 3, 0, 0, 1, 0), plan),
+        };
+        var stair = new Element
+        {
+            Id = stairId, CategoryId = (int)BuiltInCategory.OST_Stairs,
+            SerializedStairCore = [new StairComponentSource.CoreComponent(runId, 3708)],
+        };
+        Add(stair, BuiltInParameter.STAIRS_TOP_LEVEL_PARAM, StorageType.ElementId, 500);
+        Add(stair, BuiltInParameter.STAIRS_BASE_LEVEL_PARAM, StorageType.ElementId, 499);
+        var rail = new Element
+        {
+            Id = railId, CategoryId = (int)BuiltInCategory.OST_RailingTopRail, NativeRootClassName = "TopRail",
+            SerializedOwningElementId = ownerId, BoundingBox = [1, 0, 2.9, 2, 0.5, 3],
+            Geometry = new GeometryData
+            {
+                Faces = [new GeoFace { Normal = [0, 0, 1], OuterVertices = [[1, 0, 3], [2, 0, 3], [2, 0.5, 3], [1, 0.5, 3]] }],
+            },
+        };
+        var owner = new Element { Id = ownerId, CategoryId = (int)BuiltInCategory.OST_StairsRailing, SerializedRailingStairHostId = stairId };
+        var info = new RevitFileInfo
+        {
+            Elements = { Level(500, "Main", 0), Level(499, "Lower", -3), Wall(600, 500, 0, 0, 10, 0), stair, run, rail, owner },
+            PlanViewRanges = new Dictionary<int, (double[], int[])> { [view] = ([4, 8, 0], [500, 500, 500]) },
+            OpaquePlanViews = new HashSet<int> { view },
+            PlanStairPaths = new Dictionary<int, List<RevitFileInfo.PlanStairPath>>
+                { [view] = [new(900, stairId, 0.1, 0.5, null, 0, 0, 0)] },
+            GraphicsStylePens = new Dictionary<int, (int, int, int, int, int, int)>
+            {
+                [71] = ((int)BuiltInCategory.OST_StairsOutlines, -1, 1, 1, 0, -1),
+                [72] = ((int)BuiltInCategory.OST_StairsNosingLines, -1, 1, 1, 0, -1),
+                [railStyle] = ((int)BuiltInCategory.OST_RailingTopRail, -1, 1, 1, 0, -1),
+            },
+            ViewHiddenElements = new Dictionary<int, HashSet<int>>
+            {
+                [view] = [.. railHidden ? [railId] : Array.Empty<int>(), .. ownerHidden ? [ownerId] : Array.Empty<int>(),
+                    .. stairHidden ? [stairId] : Array.Empty<int>()],
+            },
+            ViewHiddenCategories = new Dictionary<int, HashSet<int>>
+            {
+                [view] = [.. railCategoryHidden ? [(int)BuiltInCategory.OST_RailingTopRail] : Array.Empty<int>(),
+                    .. ownerCategoryHidden ? [(int)BuiltInCategory.OST_StairsRailing] : Array.Empty<int>()],
+            },
+        };
+
+        var content = Assert.IsType<PlanPrinter.PlanContent>(PlanPrinter.CollectLevel(RvtDocument.FromInfo(info), 500, view));
+
+        // Without the stair being hidden the flight draws its outlines and nosings either way; the rail of the hidden
+        // railing is the part that goes.
+        Assert.Equal(!stairHidden, content.FixtureLines is { Count: > 0 });
+        Assert.Equal(drawn, content.FixtureLines?.Any(line => line.StyleId == railStyle) == true);
     }
 
     [Theory]
@@ -1043,7 +1211,7 @@ public class PlanPrinterTests
         Assert.Contains("[] 0 d", text);
     }
 
-    [Fact]
+    [SkippableFact]
     public void DrawContent_DrawsOneDimensionChainAboveTheWallFace()
     {
         // The reference plan draws a single dimension chain, 780 mm (22.1 pt at 1:100) above the outer
@@ -1054,7 +1222,9 @@ public class PlanPrinterTests
             Wall(600, 500, 0, 0, 40, 0),
             Grid(700, 0, -5, 0, 5), Grid(701, 10, -5, 10, 5), Grid(702, 20, -5, 20, 5));
         var content = PlanPrinter.CollectLevel(document, 500)!;
-        var pdf = new PdfDocument { Font = PdfFonts.TryFind(out _) };
+        // A dimension chain is measured with its label, so a plan printed without a font has none.
+        var font = PdfFonts.TryFind(out _) ?? throw new SkipException("No TrueType font was found on this machine.");
+        var pdf = new PdfDocument { Font = font };
         var page = pdf.AddPage(new PdfPageSize(1000, 1000));
         PlanPrinter.DrawContent(page, content, 100, 10, 10, 0.9, null, document);
         string text = Content(pdf);
@@ -1247,12 +1417,9 @@ public class PlanPrinterTests
         Assert.Contains("0.72 0.72 0.72 rg", content);
     }
 
-    [Theory]
-    [InlineData(1.0, false, true)]
-    [InlineData(5.0, false, false)]
-    [InlineData(1.0, true, true)]
-    [InlineData(5.0, true, false)]
-    public void Render_UsesTheDoorSymbolAtThePlanCut(double cut, bool directional, bool savedSymbol)
+    // A door in a wall with a plan symbol of its own. Directional: the symbol has no height range, and the door has no
+    // saved cutout and is placed by its bounds.
+    private static (Element Wall, Element Door) DoorWithPlanSymbol(bool directional)
     {
         var wall = Wall(100, 1, 0, 0, 10, 0, widthFeet: 1);
         var door = new Element
@@ -1288,6 +1455,17 @@ public class PlanPrinterTests
             door.OwnSingleFamilyCutout = null;
             door.BoundingBox = [4, -1, 0, 5, 1, 3];
         }
+        return (wall, door);
+    }
+
+    [Theory]
+    [InlineData(1.0, false, true)]
+    [InlineData(5.0, false, false)]
+    [InlineData(1.0, true, true)]
+    [InlineData(5.0, true, false)]
+    public void Render_UsesTheDoorSymbolAtThePlanCut(double cut, bool directional, bool savedSymbol)
+    {
+        var (wall, door) = DoorWithPlanSymbol(directional);
         var document = RvtDocument.FromInfo(new RevitFileInfo
         {
             Elements = { Level(1, "First", 0), wall, door },
@@ -1301,6 +1479,29 @@ public class PlanPrinterTests
         Assert.Equal(savedSymbol ? 2 : directional ? 0 : 1, Count(page.Content, " l S"));
         Assert.Equal(savedSymbol || !directional, page.Content.Contains(" c ", StringComparison.Ordinal));
         Assert.Equal(!savedSymbol && !directional, page.Content.Contains("0.4 G", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(false, false, true)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    public void CollectLevel_HiddenDoorDropsItsSavedPlanSymbolAndKeepsItsWallGap(bool hidden, bool categoryHidden, bool drawn)
+    {
+        const int view = 30;
+        var (wall, door) = DoorWithPlanSymbol(directional: false);
+        var document = RvtDocument.FromInfo(new RevitFileInfo
+        {
+            Elements = { Level(1, "First", 0), wall, door },
+            PlanViewRanges = new Dictionary<int, (double[], int[])> { [view] = ([1, 0, 0, 0, 0], [1, 1, 1, 1, 1]) },
+            ViewHiddenElements = new Dictionary<int, HashSet<int>> { [view] = hidden ? [door.Id] : [] },
+            ViewHiddenCategories = new Dictionary<int, HashSet<int>>
+                { [view] = categoryHidden ? [(int)BuiltInCategory.OST_Doors] : [] },
+        });
+
+        var plan = Assert.IsType<PlanPrinter.PlanContent>(PlanPrinter.CollectLevel(document, 1, view));
+
+        Assert.Equal(drawn, plan.DoorSymbols is { Count: > 0 });
+        Assert.Single(Assert.Contains(wall.Id, plan.Gaps));
     }
 
     [Theory]
@@ -1333,15 +1534,12 @@ public class PlanPrinterTests
         Assert.Equal(expected, content.OpeningLoops.Count > 0);
     }
 
-    [Theory]
-    [InlineData(BuiltInCategory.OST_Doors, false, false, true)]
-    [InlineData(BuiltInCategory.OST_Doors, true, false, false)]
-    [InlineData(BuiltInCategory.OST_Windows, false, false, true)]
-    [InlineData(BuiltInCategory.OST_Windows, false, true, false)]
-    public void CollectLevel_OnlyDrawsVisibleHostedOpeningGraphics(
-        BuiltInCategory category, bool hidden, bool categoryHidden, bool visible)
+    private static RvtDocument HostedOpening(BuiltInCategory category, bool hidden, bool categoryHidden,
+        out int viewId, out int hostId)
     {
-        const int viewId = 30, hostId = 100, openingId = 200;
+        viewId = 30;
+        hostId = 100;
+        const int openingId = 200;
         var opening = new Element
         {
             Id = openingId, CategoryId = (int)category,
@@ -1349,20 +1547,138 @@ public class PlanPrinterTests
                 new FamilyCutLoopData([[0, 0, 0], [2, 0, 0], [2, 0, 4], [0, 0, 4]], [0, 1, 0], 0)),
         };
         Add(opening, BuiltInParameter.ALL_MODEL_MARK, StorageType.String, "1");
-        var document = RvtDocument.FromInfo(new RevitFileInfo
+        return RvtDocument.FromInfo(new RevitFileInfo
         {
             Elements = [Level(1, "First", 0), Wall(hostId, 1, 0, 0, 10, 0), opening],
             ViewHiddenElements = new Dictionary<int, HashSet<int>> { [viewId] = hidden ? [openingId] : [] },
             ViewHiddenCategories = new Dictionary<int, HashSet<int>> { [viewId] = categoryHidden ? [(int)category] : [] },
         });
+    }
+
+    [Theory]
+    [InlineData(BuiltInCategory.OST_Doors, false, false, true)]
+    [InlineData(BuiltInCategory.OST_Doors, true, false, false)]
+    [InlineData(BuiltInCategory.OST_Doors, false, true, false)]
+    [InlineData(BuiltInCategory.OST_Windows, false, false, true)]
+    [InlineData(BuiltInCategory.OST_Windows, true, false, false)]
+    [InlineData(BuiltInCategory.OST_Windows, false, true, false)]
+    public void CollectLevel_HiddenOpeningKeepsItsWallGapAndDropsItsOwnGraphics(
+        BuiltInCategory category, bool hidden, bool categoryHidden, bool visible)
+    {
+        var document = HostedOpening(category, hidden, categoryHidden, out int viewId, out int hostId);
 
         var plan = Assert.IsType<PlanPrinter.PlanContent>(PlanPrinter.CollectLevel(document, 1, viewId));
 
-        Assert.Equal(visible, plan.Gaps.ContainsKey(hostId));
+        // The opening belongs to the wall, so it stays when its door or window is hidden; the frame, leaf, glass and
+        // tag of the insert itself go.
+        var gap = Assert.Single(Assert.Contains(hostId, plan.Gaps));
+        Assert.Equal(2 * 304.8, gap.From, 3);
+        Assert.Equal(4 * 304.8, gap.To, 3);
         Assert.Equal(visible, plan.OpeningLoops.Count > 0);
         Assert.Equal(visible, plan.Tags.Count > 0);
         Assert.Equal(visible && category == BuiltInCategory.OST_Doors, plan.DoorGaps.Count > 0);
         Assert.Equal(visible && category == BuiltInCategory.OST_Windows, plan.WindowGaps.Count > 0);
+    }
+
+    private static Element MarkedOpening(int id, BuiltInCategory category, double from, double to, string mark)
+    {
+        var opening = new Element
+        {
+            Id = id, CategoryId = (int)category,
+            OwnSingleFamilyCutout = (300 + id, 100, [1, 0, 0, 0, 1, 0, 0, 0, 1, from, 0, 0],
+                new FamilyCutLoopData([[0, 0, 0], [to - from, 0, 0], [to - from, 0, 4], [0, 0, 4]], [0, 1, 0], 0)),
+        };
+        Add(opening, BuiltInParameter.ALL_MODEL_MARK, StorageType.String, mark);
+        return opening;
+    }
+
+    // A saved tag of the view's own, or none, over a wall with a door D1 and a window W1; counts the texts drawn.
+    private static int OpeningTagTexts(bool savedDoorTag, bool doorsHidden, bool windowTagged = false)
+    {
+        const int viewId = 30;
+        var tags = new List<RevitFileInfo.PlanOpeningTag>();
+        if (savedDoorTag) tags.Add(new(200, 900, 2, 3));
+        if (windowTagged) tags.Add(new(201, 900, 6, 3));
+        var document = RvtDocument.FromInfo(new RevitFileInfo
+        {
+            Elements = [Level(1, "First", 0), Wall(100, 1, 0, 0, 10, 0),
+                MarkedOpening(200, BuiltInCategory.OST_Doors, 1, 3, "D1"),
+                MarkedOpening(201, BuiltInCategory.OST_Windows, 5, 7, "W1")],
+            ViewHiddenCategories = new Dictionary<int, HashSet<int>>
+                { [viewId] = doorsHidden ? [(int)BuiltInCategory.OST_Doors] : [] },
+            PlanOpeningTags = tags.Count == 0 ? null : new Dictionary<int, List<RevitFileInfo.PlanOpeningTag>> { [viewId] = tags },
+            PlanOpeningTagStyles = new Dictionary<int, RevitFileInfo.PlanOpeningTagStyle>
+            {
+                [900] = new(new TfBlockDeserializer.TitleBlockLabel(0, 0, 0, 0, 1, 1, 0, 0.01, 0.08, 1, 0,
+                    (int)BuiltInParameter.ALL_MODEL_MARK, "", ""), 10, [], []),
+            },
+        });
+        var font = PdfFonts.TryFind(out _) ?? throw new SkipException("No TrueType font was found on this machine.");
+        var pdf = new PdfDocument { Font = font };
+        PlanPrinter.DrawContent(pdf.AddPage(PdfPageSize.A3), PlanPrinter.CollectLevel(document, 1, viewId)!, 100, 20, 20,
+            0.9, null, document, planViewId: viewId);
+        return Count(Content(pdf), " Tj ET");
+    }
+
+    [SkippableFact]
+    public void DrawContent_OpeningMarksUseTheViewsSavedTagsAndKeepGeneratedOnesForAViewWithoutAny()
+    {
+        // No saved tag: the generated marks of both openings.
+        Assert.Equal(2, OpeningTagTexts(savedDoorTag: false, doorsHidden: false));
+        // A saved tag of the door stands for the view's own tags, so the untagged window gets no generated mark.
+        Assert.Equal(1, OpeningTagTexts(savedDoorTag: true, doorsHidden: false));
+        Assert.Equal(2, OpeningTagTexts(savedDoorTag: true, doorsHidden: false, windowTagged: true));
+    }
+
+    [SkippableFact]
+    public void DrawContent_HidingTheTaggedHostsDropsTheirTagsWithoutGeneratingMarksForTheRest()
+    {
+        // The door tag is not printed with its hidden category, and the visible window does not take a generated mark
+        // in its place: the view still has tags of its own.
+        Assert.Equal(0, OpeningTagTexts(savedDoorTag: true, doorsHidden: true));
+        // Only the window's saved tag remains.
+        Assert.Equal(1, OpeningTagTexts(savedDoorTag: true, doorsHidden: true, windowTagged: true));
+    }
+
+    [Theory]
+    [InlineData(BuiltInCategory.OST_Doors, true, false)]
+    [InlineData(BuiltInCategory.OST_Doors, false, true)]
+    [InlineData(BuiltInCategory.OST_Windows, true, false)]
+    [InlineData(BuiltInCategory.OST_Windows, false, true)]
+    public void DrawContent_HiddenOpeningStillBreaksTheWall(BuiltInCategory category, bool hidden, bool categoryHidden)
+    {
+        string Draw(bool hide, bool hideCategory)
+        {
+            var document = HostedOpening(category, hide, hideCategory, out int viewId, out _);
+            var content = PlanPrinter.CollectLevel(document, 1, viewId)!;
+            var pdf = new PdfDocument();
+            PlanPrinter.DrawContent(pdf.AddPage(PdfPageSize.A3), content, 100, 20, 20, 0.9, null, document, planViewId: viewId);
+            return Content(pdf);
+        }
+
+        string shown = Draw(false, false), hiddenContent = Draw(hidden, categoryHidden);
+
+        // The wall is drawn in two pieces either way, but only the visible insert adds its jambs, leaf or glass.
+        Assert.Equal(2, Count(shown, " h B"));
+        Assert.Equal(2, Count(hiddenContent, " h B"));
+        Assert.True(hiddenContent.Length < shown.Length);
+    }
+
+    [Theory]
+    [InlineData("A", true)]
+    [InlineData("Ж", false)]
+    public void DrawPlanGrids_WithoutAFontWritesOnlyANameTheStandardFontHolds(string name, bool drawn)
+    {
+        var document = Document(Level(1, "First", 0), Wall(100, 1, 0, 0, 10, 0));
+        var content = PlanPrinter.CollectLevel(document, 1)!;
+        var page = new PdfDocument().AddPage(PdfPageSize.A3);
+        var grid = new PlanPrinter.PlanGrid(0, name, 5, (0, 0), (0, 3000), true, false, null, null);
+
+        // The standard PDF font holds printable ASCII only; a grid named outside it keeps its bubble and line.
+        PlanPrinter.DrawPlanGrids(page, document, [grid], content, 100, 20, 20);
+
+        Assert.Equal(drawn, page.Content.Contains($"({name}) Tj", StringComparison.Ordinal));
+        Assert.Contains(" l S", page.Content);
     }
 
     [Fact]

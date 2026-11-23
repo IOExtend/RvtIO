@@ -70,7 +70,7 @@ internal static class PrintCommand
                         || !int.TryParse(args[i + 1], NumberStyles.None, CultureInfo.InvariantCulture, out int viewportId)
                         || viewportId <= 0 || !Coordinate(i + 2, out double x) || !Coordinate(i + 3, out double y)
                         || !Coordinate(i + 4, out double width) || width <= 0
-                        || !Coordinate(i + 5, out double height) || height <= 0
+                        || !Coordinate(i + 5, out double height) || height <= 0 || string.IsNullOrWhiteSpace(args[i + 6])
                         || !imageFiles.TryAdd(viewportId, (x, y, width, height, args[i + 6])))
                         return Usage(error, "--viewport-image requires a unique viewport ID, X Y WIDTH HEIGHT in mm, and a JPEG path.");
                     i += 6;
@@ -128,12 +128,13 @@ internal static class PrintCommand
                         return Usage(error, $"Viewport image {id} must be a JPEG no larger than 64 MiB.");
                     var bytes = new byte[(int)stream.Length];
                     stream.ReadExactly(bytes);
+                    // The header is read here so that a file that is not a JPEG is reported by name, without the
+                    // parameter name of the constructor.
+                    var (jpegWidth, jpegHeight, _) = PdfJpegImage.ReadHeader(bytes);
+                    if (jpegWidth <= 0 || jpegHeight <= 0)
+                        return Usage(error, $"Viewport image {id} ({input.Path}) is not a JPEG.");
                     images.Add(id, new SheetViewportImage(new PdfJpegImage(bytes),
                         input.X, input.Y, input.Width, input.Height));
-                }
-                catch (ArgumentException exception)
-                {
-                    return Usage(error, $"Invalid viewport image {id}: {exception.Message}");
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
                 {
@@ -250,8 +251,10 @@ internal static class PrintCommand
                     error.WriteLine("No numbered sheet was found; nothing to compose.");
                     return RvtExitCodes.DecodeError;
                 }
-                pdf = SheetComposer.RenderSheets(document, toCompose.Select(sheet => sheet.SheetId).ToList(),
-                    composeOptions);
+                var composeIds = toCompose.Select(sheet => sheet.SheetId).ToList();
+                if (SheetComposer.ViewportImageProblem(document, composeIds, composeOptions.ViewportImages) is { } problem)
+                    return Usage(error, problem);
+                pdf = SheetComposer.RenderSheets(document, composeIds, composeOptions);
             }
             else if (allViews)
             {
@@ -287,6 +290,8 @@ internal static class PrintCommand
                 var composedIds = selection.ComposedIds;
                 if (composeOptions.ViewportImages != null && sheetIds.Count > 0)
                     return Usage(error, "Viewport images require sheets with decoded viewports.");
+                if (SheetComposer.ViewportImageProblem(document, composedIds, composeOptions.ViewportImages) is { } imageProblem)
+                    return Usage(error, imageProblem);
                 pdf = sheetIds.Count == 0
                     ? SheetComposer.RenderSheets(document, composedIds, composeOptions)
                     : SheetPrinter.RenderSheets(document, sheetIds, new SheetPrintOptions { PaperSize = paper });
@@ -362,10 +367,6 @@ internal static class PrintCommand
             PdfPageSize page = pdf.Pages[0].Size;
             error.WriteLine($"[print] {pdf.Pages.Count} page(s), first {page.WidthMillimetres:0} x {page.HeightMillimetres:0} mm -> {outputPath}");
             return RvtExitCodes.Success;
-        }
-        catch (ArgumentException exception) when (imageFiles.Count > 0)
-        {
-            return Usage(error, exception.Message);
         }
         catch (InvalidOperationException exception)
         {

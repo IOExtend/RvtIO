@@ -33,6 +33,11 @@ public sealed class SheetComposeOptions
 }
 
 /// <summary>A rendered viewport and its bounds on a sheet, in millimetres.</summary>
+/// <param name="Image">The rendered graphics, drawn in place of the viewport's own content.</param>
+/// <param name="X">The left edge, from the lower left corner of the sheet.</param>
+/// <param name="Y">The bottom edge, from the lower left corner of the sheet.</param>
+/// <param name="Width">The width; positive and finite.</param>
+/// <param name="Height">The height; positive and finite.</param>
 public sealed record SheetViewportImage(IPdfImage Image, double X, double Y, double Width, double Height);
 
 /// <summary>A sheet that can be composed: the element id, its number and name, the page its title block spans and the
@@ -101,6 +106,9 @@ public static partial class SheetComposer
     /// <param name="sheetIds">The element ids of the sheets.</param>
     /// <param name="options">The paper and labels; null uses the defaults.</param>
     /// <exception cref="InvalidOperationException">An element id is not a sheet with a number.</exception>
+    /// <exception cref="ArgumentException"><see cref="SheetComposeOptions.ViewportImages"/> holds an entry that is not a
+    /// viewport of the selected sheets, has no image, or has bounds that are not finite with a positive width and
+    /// height.</exception>
     public static PdfDocument RenderSheets(RvtDocument document, IReadOnlyList<int> sheetIds,
         SheetComposeOptions? options = null)
     {
@@ -108,19 +116,8 @@ public static partial class SheetComposer
         ArgumentNullException.ThrowIfNull(sheetIds);
         options ??= new SheetComposeOptions();
         var pdf = new PdfDocument { Font = PdfFonts.TryFind(out _), Compress = true };
-        if (options.ViewportImages != null)
-        {
-            var selected = sheetIds.ToHashSet();
-            foreach (var (id, raster) in options.ViewportImages)
-            {
-                var viewport = document.GetElement(id);
-                if (viewport?.OwnerViewId is not int owner || !selected.Contains(owner) || viewport.ViewportViewId == null
-                    || raster?.Image == null || !double.IsFinite(raster.X) || !double.IsFinite(raster.Y)
-                    || !double.IsFinite(raster.Width) || !double.IsFinite(raster.Height)
-                    || raster.Width <= 0 || raster.Height <= 0)
-                    throw new ArgumentException($"Invalid render or bounds for viewport {id} on the selected sheets.", nameof(options));
-            }
-        }
+        if (ViewportImageProblem(document, sheetIds, options.ViewportImages) is { } problem)
+            throw new ArgumentException(problem, nameof(options));
         var plans = new Dictionary<int, PlanView>();
         foreach (var view in PlanPrinter.Views(document)) plans[view.ViewId] = view;
         foreach (int sheetId in sheetIds)
@@ -133,6 +130,27 @@ public static partial class SheetComposer
         }
         if (pdf.Pages.Count == 0) throw new InvalidOperationException("No sheet was given to compose.");
         return pdf;
+    }
+
+    /// <summary>Names the first entry of <paramref name="images"/> that cannot be drawn on the selected sheets, or null
+    /// when every entry can: the key is a viewport of one of the sheets, the entry has an image, and its bounds are
+    /// finite with a positive width and height.</summary>
+    internal static string? ViewportImageProblem(RvtDocument document, IReadOnlyList<int> sheetIds,
+        IReadOnlyDictionary<int, SheetViewportImage>? images)
+    {
+        if (images == null) return null;
+        var selected = sheetIds.ToHashSet();
+        foreach (var (id, raster) in images)
+        {
+            var viewport = document.GetElement(id);
+            if (viewport?.OwnerViewId is not int owner || !selected.Contains(owner) || viewport.ViewportViewId == null)
+                return $"Element {id} is not a viewport on the selected sheets.";
+            if (raster?.Image == null) return $"Viewport {id} has no image.";
+            if (!double.IsFinite(raster.X) || !double.IsFinite(raster.Y) || !double.IsFinite(raster.Width)
+                || !double.IsFinite(raster.Height) || raster.Width <= 0 || raster.Height <= 0)
+                return $"Viewport {id} needs finite image bounds with a positive width and height.";
+        }
+        return null;
     }
 
     private static void AddSheetPage(PdfDocument pdf, RvtDocument document, Element sheet,

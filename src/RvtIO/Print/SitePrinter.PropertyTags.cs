@@ -21,11 +21,15 @@ public static partial class SitePrinter
             || raw.SerializedFormatSettings is not { } formatting || page.Owner.Font is not { } font) return;
 
         var hidden = raw.ViewHiddenElements?.GetValueOrDefault(viewId);
+        // A tag follows its boundary: no tag is left standing where the view hides the lines.
+        var hiddenCategories = raw.ViewHiddenCategories?.GetValueOrDefault(viewId);
+        if (PropertyLineHidden(hiddenCategories)) return;
         bool russian = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "ru";
         foreach (var tag in tags)
         {
             if (hidden?.Contains(tag.ElementId) == true || !styles.TryGetValue(tag.SymbolId, out var labels)
-                || document.GetElement(tag.ElementId) is not { SitePropertyCurve: { Count: >= 2 } curve } segment)
+                || document.GetElement(tag.ElementId) is not { SitePropertyCurve: { Count: >= 2 } curve } segment
+                || segment.CategoryId is int category && hiddenCategories?.Contains(category) == true)
                 continue;
             var a = curve[0];
             var b = curve[^1];

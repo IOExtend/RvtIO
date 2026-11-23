@@ -55,21 +55,31 @@ public class SitePrinterTests
         return plant;
     }
 
-    [Theory]
-    [InlineData(false, false, false, true)]
-    [InlineData(true, false, false, false)]
-    [InlineData(false, true, false, false)]
-    [InlineData(false, false, true, false)]
-    public void Collect_UsesOnlyPlacedVisiblePropertyLines(bool hidden, bool categoryHidden, bool unplaced, bool visible)
+    // A boundary segment carries the category of the segment, while a view hides the boundary as "Property Lines".
+    private static Element PropertySegment(int id) => new()
     {
-        const int view = 10, category = (int)BuiltInCategory.OST_SiteProperty;
-        var property = new Element { Id = 20, CategoryId = category, SitePropertyCurve = [(0, 0), (5, 0)] };
+        Id = id, CategoryId = (int)BuiltInCategory.OST_SitePropertyLineSegment, SitePropertyCurve = [(0, 0), (5, 0)],
+    };
+
+    [Theory]
+    [InlineData(false, null, false, true)]
+    [InlineData(true, null, false, false)]
+    [InlineData(false, BuiltInCategory.OST_SitePropertyLineSegment, false, false)]
+    [InlineData(false, BuiltInCategory.OST_SiteProperty, false, false)]
+    [InlineData(false, BuiltInCategory.OST_Topography, false, true)]
+    [InlineData(false, null, true, false)]
+    public void Collect_UsesOnlyPlacedVisiblePropertyLines(bool hidden, BuiltInCategory? hiddenCategory, bool unplaced,
+        bool visible)
+    {
+        const int view = 10;
+        var property = PropertySegment(20);
         if (unplaced) property.SerializedUnplacedOwnerId = 30;
         var doc = RvtDocument.FromInfo(new RevitFileInfo
         {
             Elements = [property],
             ViewHiddenElements = new Dictionary<int, HashSet<int>> { [view] = hidden ? [property.Id] : [] },
-            ViewHiddenCategories = new Dictionary<int, HashSet<int>> { [view] = categoryHidden ? [category] : [] },
+            ViewHiddenCategories = new Dictionary<int, HashSet<int>>
+                { [view] = hiddenCategory is { } category ? [(int)category] : [] },
         });
 
         var site = SitePrinter.Collect(doc, view);
@@ -77,6 +87,45 @@ public class SitePrinterTests
             Assert.Single(site!.PropertyLines!);
         else
             Assert.Null(site);
+        // A view that hides nothing keeps the boundary, unless it is not placed at all.
+        Assert.Equal(!unplaced, SitePrinter.Collect(doc, view + 1) != null);
+    }
+
+    [SkippableTheory]
+    [InlineData(null, null, true)]
+    [InlineData(null, BuiltInCategory.OST_SiteProperty, false)]
+    [InlineData(null, BuiltInCategory.OST_SitePropertyLineSegment, false)]
+    [InlineData(20, null, false)]
+    public void DrawPropertyTags_FollowTheBoundaryTheViewShows(int? hiddenElement, BuiltInCategory? hiddenCategory,
+        bool drawn)
+    {
+        const int view = 10, symbol = 500;
+        var document = RvtDocument.FromInfo(new RevitFileInfo
+        {
+            Elements = [PropertySegment(20)],
+            ViewHiddenElements = new Dictionary<int, HashSet<int>>
+                { [view] = hiddenElement is { } element ? [element] : [] },
+            ViewHiddenCategories = new Dictionary<int, HashSet<int>>
+                { [view] = hiddenCategory is { } category ? [(int)category] : [] },
+            SitePropertyTags = new Dictionary<int, List<RevitFileInfo.PlanOpeningTag>>
+                { [view] = [new(20, symbol, 2, 0.1)] },
+            SitePropertyTagStyles = new Dictionary<int, IReadOnlyList<(TfBlockDeserializer.TitleBlockLabel Label, double FontPoints)>>
+            {
+                [symbol] = [(new(0, 0, 0, 0, 1, 1, 0, 0.01, 0.08, 1, 0, (int)BuiltInParameter.PROPERTY_SEGMENT_N_S, "", ""), 10)],
+            },
+            PropertyBearingFormat = (1, 1),
+            SharedTransform = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],
+            SharedTransformIsActiveLocation = true,
+            SerializedFormatSettings = new Compact.CompactFormatSettings(new TfBlockDeserializer.UnitOptions([], 1, 0, 1, 1),
+                new UnitSchemaEvaluator.UnitConversions([], []), new Dictionary<string, Compact.CompactSymbolLabel>()),
+        });
+        var site = SitePrinter.Collect(document)!;
+        var font = RvtIO.Pdf.PdfFonts.TryFind(out _) ?? throw new SkipException("No TrueType font was found on this machine.");
+        var page = new RvtIO.Pdf.PdfDocument { Font = font }.AddPage(RvtIO.Pdf.PdfPageSize.A3);
+
+        SitePrinter.DrawPropertyTags(page, document, view, null, site, 100, 20, 20);
+
+        Assert.Equal(drawn, page.Content.Contains(" Tj", StringComparison.Ordinal));
     }
 
     [Fact]

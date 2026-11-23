@@ -387,10 +387,12 @@ public static partial class PlanPrinter
         var tags = new List<(double MidX, double MidY, double Nx, double Ny, string Text, bool IsWindow)>();
         foreach (var insert in document.Elements)
         {
-            if (insert.CategoryId is not ((int)BuiltInCategory.OST_Doors or (int)BuiltInCategory.OST_Windows)
-                || IsHidden(insert)) continue;
+            if (insert.CategoryId is not ((int)BuiltInCategory.OST_Doors or (int)BuiltInCategory.OST_Windows)) continue;
+            // A hidden door or window leaves its opening in the wall: the opening is the wall's, and only what the
+            // insert itself draws (its leaf, glass, symbol and tag) is dropped.
+            bool hiddenInsert = IsHidden(insert);
             bool savedDoor = false;
-            if (cutHeight is double height
+            if (!hiddenInsert && cutHeight is double height
                 && insert.SerializedHostId is int planHost && wallById.ContainsKey(planHost)
                 && insert.OwnDoorPlanSymbols is { } display
                 && SelectDoorPlanSymbol(display.Symbols, display.Transform, height, insert.BoundingBox) is { } symbol)
@@ -424,6 +426,7 @@ public static partial class PlanPrinter
             if (to - from < 1) continue;
             if (!gaps.TryGetValue(wall.Id, out var list)) gaps[wall.Id] = list = new List<(double From, double To)>();
             list.Add((from, to));
+            if (hiddenInsert) continue;
             if (insert.CategoryId == (int)BuiltInCategory.OST_Windows) windowGaps.Add((wall.Id, from, to));
             else if (!savedDoor) doorGaps.Add((wall.Id, from, to));
             // The tag of a door is its mark, the tag of a window its type mark: both are placed beside the opening on
@@ -596,7 +599,7 @@ public static partial class PlanPrinter
                    SerializedOwningElementId: > 0, Geometry.Faces.Count: > 0 }
                    && !IsHidden(rail)
                let owner = rail.SerializedOwningElementId.GetValueOrDefault()
-               where hiddenElements?.Contains(owner) != true
+               where !(document.GetElement(owner) is { } ownerRailing ? IsHidden(ownerRailing) : hiddenElements?.Contains(owner) == true)
                let host = document.GetElement(owner)?.SerializedRailingStairHostId ?? 0
                where host > 0
                select (Host: host, Rail: rail)).ToLookup(item => item.Host, item => item.Rail)
@@ -719,9 +722,9 @@ public static partial class PlanPrinter
         const double annotation = 1000;
         minX -= annotation; minY -= annotation; maxX += annotation; maxY += annotation;
         var stairLines = new List<(double X1, double Y1, double X2, double Y2)>();
-        CollectStairLines(document, levelId, savedStairs, stairLines);
+        CollectStairLines(document, levelId, savedStairs, IsHidden, stairLines);
         var railLines = new List<(double X1, double Y1, double X2, double Y2)>();
-        CollectRailingLines(document, levelId, viewId, savedTopRails, railLines);
+        CollectRailingLines(document, levelId, viewId, savedTopRails, IsHidden, railLines);
 
         var colors = viewId is int planId ? document.RawData.ViewRoomColors?.GetValueOrDefault(planId) : null;
         return new PlanContent(walls, columns, grids, gaps, windowGaps, doorGaps, floorLoops, openingLoops, rooms,
@@ -749,13 +752,13 @@ public static partial class PlanPrinter
     /// <summary>The plan linework of a stair: the outlines of its horizontal faces (tread and landing tops) seen from
     /// above, which is what a plan draws as the tread courses between the stair's sides.</summary>
     private static void CollectStairLines(RvtDocument document, int levelId, HashSet<int> savedStairs,
-        List<(double X1, double Y1, double X2, double Y2)> lines)
+        Func<Element, bool> isHidden, List<(double X1, double Y1, double X2, double Y2)> lines)
     {
         var keys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var element in document.Elements)
         {
             if (element.CategoryId != (int)BuiltInCategory.OST_Stairs || savedStairs.Contains(element.Id)
-                || !OnLevel(element, levelId)) continue;
+                || isHidden(element) || !OnLevel(element, levelId)) continue;
             if (element.Geometry is not { Faces.Count: > 0 } geometry) continue;
             foreach (var face in geometry.Faces)
             {
@@ -783,7 +786,7 @@ public static partial class PlanPrinter
     /// stand below the plan's level but above its bottom clip), so an element outside the band is skipped; a
     /// view without a decoded range keeps only the rails of the plan's own level.</summary>
     private static void CollectRailingLines(RvtDocument document, int levelId, int? viewId, HashSet<int> savedTopRails,
-        List<(double X1, double Y1, double X2, double Y2)> lines)
+        Func<Element, bool> isHidden, List<(double X1, double Y1, double X2, double Y2)> lines)
     {
         double levelElevation = document.GetElement(levelId)?.LookupParameter(BuiltInParameter.LEVEL_ELEV)?.Value
             is double elevation ? elevation : 0;
@@ -802,7 +805,10 @@ public static partial class PlanPrinter
         foreach (var element in document.Elements)
         {
             if (element.CategoryId != (int)BuiltInCategory.OST_RailingTopRail || savedTopRails.Contains(element.Id)
-                || element.SerializedOwningElementId is int owner && savedTopRails.Contains(owner)) continue;
+                || isHidden(element)
+                || element.SerializedOwningElementId is int owner
+                    && (savedTopRails.Contains(owner) || document.GetElement(owner) is { } ownerRailing && isHidden(ownerRailing)))
+                continue;
             if (element.Geometry is not { Faces.Count: > 0 } geometry) continue;
             if (banded)
             {

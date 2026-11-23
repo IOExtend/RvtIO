@@ -74,6 +74,262 @@ public class PrintCommandTests
         Assert.Contains($"Cannot read viewport image {path}", error.ToString());
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ViewportImageWithBlankPath_IsUsageError(string path)
+    {
+        var error = new StringWriter();
+
+        Assert.Equal(RvtExitCodes.Usage, Run(error, "model.rvt", "out.pdf", "--all-sheets",
+            "--viewport-image", "199", "20", "30", "40", "50", path));
+        Assert.Contains("--viewport-image requires", error.ToString());
+    }
+
+    [Fact]
+    public void ViewportImageWithTooFewValues_IsUsageError()
+    {
+        var error = new StringWriter();
+
+        Assert.Equal(RvtExitCodes.Usage, Run(error, "model.rvt", "out.pdf", "--all-sheets",
+            "--viewport-image", "199", "20", "30", "40", "50"));
+        Assert.Contains("--viewport-image requires", error.ToString());
+    }
+
+    [Fact]
+    public void ViewportImageWithRepeatedId_IsUsageError()
+    {
+        var error = new StringWriter();
+
+        Assert.Equal(RvtExitCodes.Usage, Run(error, "model.rvt", "out.pdf", "--all-sheets",
+            "--viewport-image", "199", "20", "30", "40", "50", "first.jpg",
+            "--viewport-image", "199", "20", "30", "40", "50", "second.jpg"));
+        Assert.Contains("unique viewport ID", error.ToString());
+    }
+
+    [Theory]
+    [InlineData("0", "20", "30", "40", "50")]
+    [InlineData("-3", "20", "30", "40", "50")]
+    [InlineData("two", "20", "30", "40", "50")]
+    [InlineData("199", "NaN", "30", "40", "50")]
+    [InlineData("199", "20", "Infinity", "40", "50")]
+    [InlineData("199", "20", "30", "40", "0")]
+    [InlineData("199", "20", "30", "40", "-5")]
+    [InlineData("199", "20", "30", "40", "NaN")]
+    public void ViewportImageWithInvalidNumber_IsUsageError(string id, string x, string y, string width, string height)
+    {
+        var error = new StringWriter();
+
+        Assert.Equal(RvtExitCodes.Usage, Run(error, "model.rvt", "out.pdf", "--all-sheets",
+            "--viewport-image", id, x, y, width, height, "render.jpg"));
+        Assert.Contains("--viewport-image requires", error.ToString());
+    }
+
+    [Theory]
+    [InlineData("--all-views", true)]
+    [InlineData("--list-sheets", true)]
+    [InlineData("--list-views", true)]
+    [InlineData("--list-levels", true)]
+    [InlineData("--all-views", false)]
+    [InlineData("--level", false)]
+    public void ViewportImageWithoutSheetSelection_IsUsageError(string option, bool withAllSheets)
+    {
+        var error = new StringWriter();
+        var arguments = new List<string> { "model.rvt", "out.pdf" };
+        if (withAllSheets) arguments.Add("--all-sheets");
+        arguments.Add(option);
+        if (option == "--level") arguments.Add("Level 1");
+        arguments.AddRange(["--viewport-image", "199", "20", "30", "40", "50", "render.jpg"]);
+
+        Assert.Equal(RvtExitCodes.Usage, Run(error, arguments.ToArray()));
+        Assert.Contains("--viewport-image requires --sheet or --all-sheets.", error.ToString());
+    }
+
+    // The one-pixel JPEG of the writer tests: the command reads only the size from the header before it opens the model.
+    private static readonly byte[] OnePixelJpeg = Convert.FromBase64String(
+        "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwc"
+        + "KDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAA"
+        + "AAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==");
+
+    private static string ScratchFile(string name, byte[] bytes)
+    {
+        string path = TestFiles.Scratch(Guid.NewGuid().ToString("N") + "-" + name);
+        File.WriteAllBytes(path, bytes);
+        return path;
+    }
+
+    [Fact]
+    public void ViewportImageThatIsNotAJpeg_IsUsageErrorNamingTheFileWithoutParameterNames()
+    {
+        string image = ScratchFile("render.jpg", [1, 2, 3, 4, 5, 6, 7, 8]);
+        try
+        {
+            var error = new StringWriter();
+
+            int exit = Run(error, "model.rvt", "out.pdf", "--all-sheets", "--viewport-image", "199", "20", "30", "40", "50", image);
+
+            Assert.Equal(RvtExitCodes.Usage, exit);
+            Assert.Contains($"Viewport image 199 ({image}) is not a JPEG.", error.ToString());
+            Assert.DoesNotContain("(Parameter", error.ToString());
+        }
+        finally
+        {
+            File.Delete(image);
+        }
+    }
+
+    [Fact]
+    public void ViewportImageTooShortToBeAJpeg_IsUsageError()
+    {
+        string image = ScratchFile("short.jpg", [0xFF, 0xD8]);
+        try
+        {
+            var error = new StringWriter();
+
+            int exit = Run(error, "model.rvt", "out.pdf", "--all-sheets", "--viewport-image", "199", "20", "30", "40", "50", image);
+
+            Assert.Equal(RvtExitCodes.Usage, exit);
+            Assert.Contains("Viewport image 199 must be a JPEG no larger than 64 MiB.", error.ToString());
+        }
+        finally
+        {
+            File.Delete(image);
+        }
+    }
+
+    [Fact]
+    public void ViewportImageLargerThan64MiB_IsUsageError()
+    {
+        // The file is only extended, so no 64 MiB are written; the command refuses it from its length alone.
+        string image = TestFiles.Scratch(Guid.NewGuid().ToString("N") + "-large.jpg");
+        try
+        {
+            using (var stream = File.Create(image)) stream.SetLength(64L * 1024 * 1024 + 1);
+            var error = new StringWriter();
+
+            int exit = Run(error, "model.rvt", "out.pdf", "--all-sheets", "--viewport-image", "199", "20", "30", "40", "50", image);
+
+            Assert.Equal(RvtExitCodes.Usage, exit);
+            Assert.Contains("Viewport image 199 must be a JPEG no larger than 64 MiB.", error.ToString());
+        }
+        finally
+        {
+            File.Delete(image);
+        }
+    }
+
+    [Fact]
+    public void ViewportImageThatIsAFolder_ReportsInputError()
+    {
+        string folder = TestFiles.Scratch(Guid.NewGuid().ToString("N") + "-folder");
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var error = new StringWriter();
+
+            int exit = Run(error, "model.rvt", "out.pdf", "--all-sheets", "--viewport-image", "199", "20", "30", "40", "50", folder);
+
+            Assert.Equal(RvtExitCodes.InputError, exit);
+            Assert.Contains($"Cannot read viewport image {folder}", error.ToString());
+        }
+        finally
+        {
+            Directory.Delete(folder);
+        }
+    }
+
+    [Fact]
+    public void ViewportImageAsTheOutputPath_IsUsageErrorAndTheImageStaysIntact()
+    {
+        string image = ScratchFile("render.jpg", OnePixelJpeg);
+        try
+        {
+            var error = new StringWriter();
+
+            int exit = Run(error, "model.rvt", image, "--all-sheets", "--viewport-image", "199", "20", "30", "40", "50", image);
+
+            Assert.Equal(RvtExitCodes.Usage, exit);
+            Assert.Contains("The PDF output path is a viewport image input.", error.ToString());
+            Assert.Equal(OnePixelJpeg, File.ReadAllBytes(image));
+        }
+        finally
+        {
+            File.Delete(image);
+        }
+    }
+
+    [Fact]
+    public void ReadableViewportImage_LetsTheCommandGoOnToOpenTheModel()
+    {
+        string image = ScratchFile("render.jpg", OnePixelJpeg);
+        string model = ScratchFile("model.rvt", [1, 2, 3, 4, 5, 6, 7, 8]);
+        try
+        {
+            var error = new StringWriter();
+
+            int exit = Run(error, model, TestFiles.Scratch("never-written.pdf"), "--all-sheets",
+                "--viewport-image", "199", "20", "30", "40", "50", image);
+
+            Assert.Equal(RvtExitCodes.InputError, exit);
+            Assert.Contains($"Cannot read {Path.GetFileName(model)}", error.ToString());
+        }
+        finally
+        {
+            File.Delete(image);
+            File.Delete(model);
+        }
+    }
+
+    // The smallest projects of the fixture folder that have a numbered sheet: the command needs a decoded model to reach
+    // the check of the viewport images against the sheets it composes.
+    private static readonly Lazy<(string Path, string SheetNumber)?> SmallProject = new(FindSmallProjectWithASheet);
+
+    private static (string Path, string SheetNumber) SmallProjectWithASheet() =>
+        SmallProject.Value ?? throw new SkipException("No small private project with a numbered sheet is available.");
+
+    private static (string Path, string SheetNumber)? FindSmallProjectWithASheet()
+    {
+        var candidates = TestFiles.Roots()
+            .SelectMany(root => Directory.EnumerateFiles(root, "*.rvt", SearchOption.TopDirectoryOnly)
+                .Concat(Directory.EnumerateDirectories(root)
+                    .SelectMany(folder => Directory.EnumerateFiles(folder, "*.rvt", SearchOption.TopDirectoryOnly))))
+            .Where(path => new FileInfo(path).Length > 4096).OrderBy(path => new FileInfo(path).Length).Take(6);
+        foreach (string path in candidates)
+        {
+            RvtDocument document;
+            try { document = RvtDocument.Open(path); }
+            catch (RvtInputException) { continue; }
+            if (SheetComposer.Sheets(document).FirstOrDefault() is { } sheet) return (path, sheet.Number);
+        }
+        return null;
+    }
+
+    [SkippableTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ViewportImageForAnElementThatIsNoViewport_IsUsageErrorBeforeAnyPageIsComposed(bool allSheets)
+    {
+        var (model, sheetNumber) = SmallProjectWithASheet();
+        string image = ScratchFile("render.jpg", OnePixelJpeg);
+        string output = TestFiles.Scratch(Guid.NewGuid().ToString("N") + ".pdf");
+        try
+        {
+            var error = new StringWriter();
+            string[] selection = allSheets ? ["--all-sheets"] : ["--sheet", sheetNumber];
+
+            int exit = Run(error, [model, output, .. selection, "--viewport-image", "2000000000", "20", "30", "40", "50", image]);
+
+            Assert.Equal(RvtExitCodes.Usage, exit);
+            Assert.Contains("Element 2000000000 is not a viewport on the selected sheets.", error.ToString());
+            Assert.False(File.Exists(output));
+        }
+        finally
+        {
+            File.Delete(image);
+            if (File.Exists(output)) File.Delete(output);
+        }
+    }
+
     [Fact]
     public void WhereWithoutValue_IsUsageError()
     {

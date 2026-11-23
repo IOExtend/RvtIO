@@ -14,13 +14,20 @@ public static partial class PlanPrinter
 
         var hidden = document.RawData.ViewHiddenElements?.GetValueOrDefault(view);
         var hiddenCategories = document.RawData.ViewHiddenCategories?.GetValueOrDefault(view);
-        bool drawn = false;
+        bool ownTags = false;
         foreach (var tag in tags)
         {
             var element = document.GetElement(tag.ElementId);
-            if (element == null || hidden?.Contains(element.Id) == true
-                || element.CategoryId is int category && hiddenCategories?.Contains(category) == true
-                || !styles.TryGetValue(tag.SymbolId, out var style)) continue;
+            if (element == null) continue;
+            // The tag of a hidden host stays unprinted and still stands for the view's own tags: the generated marks
+            // are for a view that has none, not for the openings that remain untagged.
+            if (hidden?.Contains(element.Id) == true
+                || element.CategoryId is int category && hiddenCategories?.Contains(category) == true)
+            {
+                ownTags = true;
+                continue;
+            }
+            if (!styles.TryGetValue(tag.SymbolId, out var style)) continue;
             var label = style.Label;
             var owner = label.ParamId == (int)BuiltInParameter.ALL_MODEL_TYPE_MARK
                 ? document.GetElement(element.TypeId) : element;
@@ -31,9 +38,9 @@ public static partial class PlanPrinter
                 element.CategoryId == (int)BuiltInCategory.OST_Windows
                     ? (int)BuiltInCategory.OST_WindowTags : (int)BuiltInCategory.OST_DoorTags, 0.1);
             DrawTagSymbol(page, style, value, x, y, pen);
-            drawn = true;
+            ownTags = true;
         }
-        return drawn;
+        return ownTags;
     }
 
     internal static void DrawTagSymbol(PdfPage page, Model.RevitFileInfo.PlanOpeningTagStyle style, string value,

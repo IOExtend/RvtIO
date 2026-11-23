@@ -104,6 +104,12 @@ rvtio print model.rvt sheets.pdf --all-sheets --viewport-image ID X Y WIDTH HEIG
 The width and height use the same units. The API is `SheetComposeOptions.ViewportImages`. The supplied image
 replaces the generated model image. The analysis viewport title comes from the RVT in both cases.
 
+The option may repeat for different viewports. It needs `--sheet` or `--all-sheets`, and it is refused with
+`--all-views` and the listing options. The ID must be unique, the width and height positive, and the coordinates finite
+numbers. The file must be a JPEG of at most 64 MiB, and the viewport must be on one of the printed sheets. These
+problems exit with code 1 and a message that names the viewport, before any page is composed. A file that cannot be
+read exits with code 2 and `Cannot read viewport image <path>`. The PDF output path must not be one of the images.
+
 ## Rendering views
 
 A rendering view (a 3D view Revit rendered) prints its image: Revit stores the JPEG in the block of the image symbol's
@@ -138,6 +144,8 @@ Property boundaries fit their line pattern between the segment ends, with equal 
 segment tags use the saved anchor and family label offsets. Quadrant bearings in degrees, minutes and seconds
 use the active project location. The displayed distance of a curved segment is its chord length, and its label
 follows the tangent at the saved anchor. Distance labels use their family's explicit unit format.
+A site view that hides the Property Lines category, the segments' own category or a segment prints neither the
+boundaries nor their tags.
 
 Opaque hidden-line site views print roofs within their saved view range. The boundary and skylight openings
 come from the model face loops. The view projects planar glazing of visible hosted windows and clips the
@@ -616,6 +624,10 @@ instance placement. The plan's cut height selects the symbol's saved range. For 
 symbols, including doors in curtain walls, the cut must cross the placed door's vertical bounds.
 Wall openings come from the family's cut loop. The swing approximation covers cut-loop openings
 without a matching symbol.
+A door or window that the view hides, by element or by category, prints no leaf, glass, frame outline, symbol or mark, but its
+opening stays in the wall. The saved opening marks of hidden hosts are not printed, and a view that has saved marks of
+its own gets no generated mark for the openings left untagged. Hidden stairs and railings, by element or category,
+draw no tread or top-rail outline, and a top rail is hidden with its railing.
 Projected roof-opening outlines follow the plan's hidden-element list and saved vertical range.
 The printer checks the height of the loop after applying the instance transform, so a skylight above
 the range leaves the floor plan clear.

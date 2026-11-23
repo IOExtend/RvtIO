@@ -140,10 +140,11 @@ public class SheetComposerTests
         pdf.Save(stream);
         string content = PdfTestContent.Read(stream.ToArray());
 
-        Assert.Contains(" l S", content);
+        Assert.Contains(" h B", content);  // the walls of the plan
         Assert.Contains(" re S", content);
         if (PdfFonts.TryFind(out _) != null)
         {
+            Assert.Contains(" l S", content);  // the rule under the viewport title, which needs the font
             Assert.Contains("BT /F2", content);
             Assert.Contains(" Tj ET", content);
         }
@@ -586,6 +587,40 @@ public class SheetComposerTests
         Assert.Equal(Assert.Single(SheetComposer.Render(document, 100, options).Pages).Content, hidden);
     }
 
+    [SkippableFact]
+    public void Render_SavedTitleNamesTheScaleTheDrawingWasFittedTo()
+    {
+        var font = PdfFonts.TryFind(out _) ?? throw new SkipException("An embedded PDF font is required.");
+        var viewport = Viewport(700, 100, 400, 300, 300);
+        viewport.ViewportLabelOrigin = [0.25, 0.25, 0];
+        var label = new TfBlockDeserializer.TitleBlockLabel(0, 0, 0, 0, 1, 1, 0, 0.03, 0.3, 0, 0,
+            (int)BuiltInParameter.VIEWPORT_SCALE, "", "");
+        var document = RvtDocument.FromInfo(new RevitFileInfo
+        {
+            // A 200 m wall is 2000 mm at the view's 1:100, wider than the 648 mm the sheet leaves for a drawing.
+            Elements =
+            [
+                Sheet(100, "A101", "Plans"), TitleBlockType(300), TitleBlock(301, 100, 300),
+                View(400, "Level 1", 500), Level(500, "Level 1"), Wall(600, 500, 0, 0, 200000, 0), viewport,
+            ],
+            ViewportTitles = new Dictionary<int, RevitFileInfo.ViewportTitle> { [700] = new(800, true, false, null) },
+            ViewportTitleStyles = new Dictionary<int, RevitFileInfo.ViewportTitleStyle>
+            {
+                [800] = new([(label, 24, false)], [], [])
+            },
+        });
+        var content = PlanPrinter.CollectLevel(document, 500, 400)!;
+        double fitted = 100 * Math.Max((content.MaxX - content.MinX) / 100 / 648, (content.MaxY - content.MinY) / 100 / 584);
+        int printed = (int)Math.Round(fitted);
+        Assert.True(printed > 150, "The drawing must be reduced for the test to tell the scales apart.");
+        string Glyphs(string text) => "<" + string.Concat(text.Select(c => font.GlyphOf(c).ToString("X4"))) + "> Tj";
+
+        string pageContent = Assert.Single(SheetComposer.Render(document, 100).Pages).Content;
+
+        Assert.Contains(Glyphs($" 1 : {printed}"), pageContent);
+        Assert.DoesNotContain(Glyphs(" 1 : 100"), pageContent);
+    }
+
     [Fact]
     public void Render_DrawsTheSuppliedImageOnItsViewport()
     {
@@ -602,6 +637,96 @@ public class SheetComposerTests
         Assert.Same(image, Assert.Single(pages[0].Images));
         Assert.Empty(pages[1].Images);
         Assert.Throws<ArgumentException>(() => SheetComposer.RenderSheets(document, [101], options));
+    }
+
+    private static RvtDocument TwoSheetsWithViewports() => Document(
+        Sheet(100, "A101", "Plans"), Sheet(101, "A102", "Sections"),
+        Viewport(200, 100, 300, 50, 60), Viewport(201, 101, 300, 50, 60), View(300, "Analysis", 0));
+
+    private static readonly PdfRasterImage SuppliedImage = new(1, 1, [20, 40, 60]);
+
+    [Fact]
+    public void ViewportImageProblem_AcceptsAnImageForAViewportOfTheSelectedSheets()
+    {
+        var document = TwoSheetsWithViewports();
+        var images = new Dictionary<int, SheetViewportImage> { [200] = new(SuppliedImage, 20, 30, 40, 50) };
+
+        Assert.Null(SheetComposer.ViewportImageProblem(document, [100], images));
+        Assert.Null(SheetComposer.ViewportImageProblem(document, [100], null));
+        Assert.Null(SheetComposer.ViewportImageProblem(document, [100, 101], images));
+    }
+
+    [Theory]
+    [InlineData(999)]
+    [InlineData(300)]
+    [InlineData(201)]
+    public void RenderSheets_RefusesAnImageForAnElementThatIsNotAViewportOfTheSelectedSheets(int id)
+    {
+        var document = TwoSheetsWithViewports();
+        var options = new SheetComposeOptions
+        {
+            ViewportImages = new Dictionary<int, SheetViewportImage> { [id] = new(SuppliedImage, 20, 30, 40, 50) },
+        };
+
+        var exception = Assert.Throws<ArgumentException>(() => SheetComposer.RenderSheets(document, [100], options));
+
+        Assert.Equal("options", exception.ParamName);
+        Assert.Contains($"Element {id} is not a viewport on the selected sheets.", exception.Message);
+    }
+
+    [Fact]
+    public void RenderSheets_RefusesAnImageForAnElementOfTheSheetThatPlacesNoView()
+    {
+        // The element belongs to the selected sheet, but it is not a viewport: it places no view.
+        var document = Document(Sheet(100, "A101", "Plans"),
+            new Element { Id = 210, CategoryId = (int)BuiltInCategory.OST_Viewports, SerializedOwnerDbViewId = 100 });
+        var options = new SheetComposeOptions
+        {
+            ViewportImages = new Dictionary<int, SheetViewportImage> { [210] = new(SuppliedImage, 20, 30, 40, 50) },
+        };
+
+        var exception = Assert.Throws<ArgumentException>(() => SheetComposer.RenderSheets(document, [100], options));
+
+        Assert.Contains("Element 210 is not a viewport on the selected sheets.", exception.Message);
+    }
+
+    [Fact]
+    public void RenderSheets_RefusesAViewportWithoutAnImage()
+    {
+        var document = TwoSheetsWithViewports();
+        foreach (var entry in new SheetViewportImage?[] { null, new(null!, 20, 30, 40, 50) })
+        {
+            var options = new SheetComposeOptions
+            {
+                ViewportImages = new Dictionary<int, SheetViewportImage> { [200] = entry! },
+            };
+
+            var exception = Assert.Throws<ArgumentException>(() => SheetComposer.RenderSheets(document, [100], options));
+
+            Assert.Contains("Viewport 200 has no image.", exception.Message);
+        }
+    }
+
+    [Theory]
+    [InlineData(double.NaN, 30, 40, 50)]
+    [InlineData(20, double.PositiveInfinity, 40, 50)]
+    [InlineData(20, 30, 0, 50)]
+    [InlineData(20, 30, -40, 50)]
+    [InlineData(20, 30, double.NaN, 50)]
+    [InlineData(20, 30, 40, 0)]
+    [InlineData(20, 30, 40, -50)]
+    [InlineData(20, 30, 40, double.PositiveInfinity)]
+    public void RenderSheets_RefusesAnImageWithBoundsThatCannotBeDrawn(double x, double y, double width, double height)
+    {
+        var document = TwoSheetsWithViewports();
+        var options = new SheetComposeOptions
+        {
+            ViewportImages = new Dictionary<int, SheetViewportImage> { [200] = new(SuppliedImage, x, y, width, height) },
+        };
+
+        var exception = Assert.Throws<ArgumentException>(() => SheetComposer.RenderSheets(document, [100], options));
+
+        Assert.Contains("Viewport 200 needs finite image bounds with a positive width and height.", exception.Message);
     }
 
     [Theory]
