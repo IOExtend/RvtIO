@@ -231,7 +231,7 @@ Wide creation IDs are available as `Element.OriginalElementId`. The Revit Unique
 - Version 0.4.0 is a preview. The API can change before 1.0.
 - Geometry coverage is partial for some element kinds.
 - Revit 2027 support is partial.
-- There is no support for writing or modifying Revit files.
+- Parameter editing supports single assignments and atomic batches of verified assignments and clears in local Revit 2020–2027 projects and standalone families. See the [writing guide](docs/writing.md).
 - IFC output is limited to IFC2X3 coordination view.
 - Output was compared with an independent reference exporter on the tested samples. Byte equality with Revit's own IFC export is not claimed.
 

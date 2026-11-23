@@ -4,6 +4,7 @@ using System.Text;
 using System.Xml;
 using ICSharpCode.SharpZipLib.Checksum;
 using OpenMcdf;
+using RvtIO.BuiltIns;
 using RvtIO.Internal;
 using RvtIO.Parsing;
 using RvtIO.Writing;
@@ -110,6 +111,12 @@ public sealed record RvtPartitionRecordEdit(
     ReadOnlyMemory<byte> Body,
     int Block = 0);
 
+/// <summary>An RVT parameter assignment. A null value clears a supported shared parameter with HideWhenNoValue.</summary>
+public sealed record RvtParameterEdit(long ElementId, long ParameterId, string? Value);
+
+/// <summary>An RFA parameter assignment. A null value resets supported text to empty or material to By Category.</summary>
+public sealed record RvtFamilyParameterEdit(string FamilyTypeName, long ParameterId, string? Value);
+
 /// <summary>Set of stream and partition record edits to persist atomically into a new Revit container.</summary>
 public sealed class RvtWriteRequest
 {
@@ -138,7 +145,7 @@ public sealed class RvtWriteResult
     /// <summary>Number of container streams replaced during the write (<c>0</c> for an unchanged <see cref="RvtWriter.SaveAs"/>).</summary>
     public required int ReplacedStreamCount { get; init; }
 
-    /// <summary>Number of partition records rewritten across all <c>Partitions/&lt;n&gt;</c> streams.</summary>
+    /// <summary>Number of partition records replaced across all <c>Partitions/&lt;n&gt;</c> streams.</summary>
     public required int RewrittenRecordCount { get; init; }
 }
 
@@ -180,6 +187,83 @@ public static class RvtWriter
     public static RvtWriteResult SaveAs(string sourcePath, string outputPath) =>
         Rewrite(sourcePath, outputPath, new RvtWriteRequest());
 
+    /// <summary>Writes a new local RVT with one verified writable built-in parameter set.
+    /// The source and any existing output are preserved. See the writing guide for supported parameters and releases.</summary>
+    /// <exception cref="RvtWriteRefusedException">The parameter, element or source layout is outside the verified scope.</exception>
+    public static RvtWriteResult SetParameter(string sourcePath, string outputPath, long elementId, BuiltInParameter parameter, string value)
+        => SetParameter(sourcePath, outputPath, elementId, (int)parameter, value);
+
+    /// <summary>Writes a new local RVT with one verified writable parameter replaced. A positive
+    /// <paramref name="parameterId"/> identifies a parameter definition in the source project. Numeric values use invariant format.</summary>
+    /// <exception cref="RvtWriteRefusedException">The parameter, element, value or source layout is outside the verified scope.</exception>
+    public static RvtWriteResult SetParameter(string sourcePath, string outputPath, long elementId, int parameterId, string value)
+        => SetParameter(sourcePath, outputPath, elementId, (long)parameterId, value);
+
+    /// <inheritdoc cref="SetParameter(string,string,long,int,string)"/>
+    public static RvtWriteResult SetParameter(string sourcePath, string outputPath, long elementId, long parameterId, string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        return SetParameters(sourcePath, outputPath, [new(elementId, parameterId, value)]);
+    }
+
+    /// <summary>Applies an ordered batch of RVT parameter edits. The output is published only if every edit succeeds.</summary>
+    public static RvtWriteResult SetParameters(string sourcePath, string outputPath, IReadOnlyList<RvtParameterEdit> edits)
+    {
+        ArgumentNullException.ThrowIfNull(sourcePath);
+        ArgumentNullException.ThrowIfNull(outputPath);
+        ArgumentNullException.ThrowIfNull(edits);
+        if (!string.Equals(Path.GetExtension(sourcePath), ".rvt", StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(Path.GetExtension(outputPath), ".rvt", StringComparison.OrdinalIgnoreCase))
+            throw new RvtWriteRefusedException("unsupported-parameter-file", "Parameter edits require a source and output with the .rvt extension.");
+        if (edits.Count == 0)
+            throw new ArgumentException("At least one parameter edit is required.", nameof(edits));
+
+        var batch = edits.Select(edit =>
+        {
+            ArgumentNullException.ThrowIfNull(edit);
+            ParameterWriter.Validate(edit.ParameterId, edit.Value);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(edit.ElementId);
+            return new ParameterWriter.Edit(edit.ElementId, edit.ParameterId, edit.Value);
+        }).ToArray();
+        return RewriteCore(sourcePath, outputPath, new RvtWriteRequest(), parameterEdits: batch);
+    }
+
+    /// <summary>Writes a new local RFA with a verified writable parameter set on the named family type.
+    /// Use the source family's parameter definition ID or a supported built-in ID. Numeric values use invariant format.</summary>
+    /// <exception cref="RvtWriteRefusedException">The family, type, parameter or value is outside the verified scope.</exception>
+    public static RvtWriteResult SetFamilyParameter(string sourcePath, string outputPath, string familyTypeName, int parameterId, string value)
+        => SetFamilyParameter(sourcePath, outputPath, familyTypeName, (long)parameterId, value);
+
+    /// <inheritdoc cref="SetFamilyParameter(string,string,string,int,string)"/>
+    public static RvtWriteResult SetFamilyParameter(string sourcePath, string outputPath, string familyTypeName, long parameterId, string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        return SetFamilyParameters(sourcePath, outputPath, [new(familyTypeName, parameterId, value)]);
+    }
+
+    /// <summary>Applies an ordered batch of RFA parameter edits. The output is published only if every edit succeeds.</summary>
+    public static RvtWriteResult SetFamilyParameters(string sourcePath, string outputPath, IReadOnlyList<RvtFamilyParameterEdit> edits)
+    {
+        ArgumentNullException.ThrowIfNull(sourcePath);
+        ArgumentNullException.ThrowIfNull(outputPath);
+        ArgumentNullException.ThrowIfNull(edits);
+        if (!Path.GetExtension(sourcePath).Equals(".rfa", StringComparison.OrdinalIgnoreCase)
+            || !Path.GetExtension(outputPath).Equals(".rfa", StringComparison.OrdinalIgnoreCase))
+            throw new RvtWriteRefusedException("unsupported-parameter-file", "Family parameter edits require a source and output with the .rfa extension.");
+        if (edits.Count == 0)
+            throw new ArgumentException("At least one parameter edit is required.", nameof(edits));
+
+        var batch = edits.Select(edit =>
+        {
+            ArgumentNullException.ThrowIfNull(edit);
+            ArgumentException.ThrowIfNullOrWhiteSpace(edit.FamilyTypeName);
+            ArgumentOutOfRangeException.ThrowIfZero(edit.ParameterId);
+            StandaloneFamilyParameterWriter.Validate(edit.ParameterId, edit.Value);
+            return new StandaloneFamilyParameterWriter.Edit(edit.FamilyTypeName, edit.ParameterId, edit.Value);
+        }).ToArray();
+        return RewriteCore(sourcePath, outputPath, new RvtWriteRequest(), familyEdits: batch);
+    }
+
     /// <summary>Writes <paramref name="outputPath"/> from <paramref name="sourcePath"/> with the requested paged-stream and partition-record
     /// edits applied, preserving every other stream, block, channel, and record byte-for-byte.</summary>
     /// <exception cref="ArgumentNullException"><paramref name="sourcePath"/>, <paramref name="outputPath"/>, or <paramref name="request"/> is null.</exception>
@@ -189,6 +273,10 @@ public static class RvtWriter
     /// <exception cref="RvtLimitException">A stream exceeds the maximum single-array byte length.</exception>
     /// <exception cref="RvtWriteRefusedException">The source file state or edit request is outside the supported scope.</exception>
     public static RvtWriteResult Rewrite(string sourcePath, string outputPath, RvtWriteRequest request)
+        => RewriteCore(sourcePath, outputPath, request);
+
+    private static RvtWriteResult RewriteCore(string sourcePath, string outputPath, RvtWriteRequest request,
+        ParameterWriter.Edit[]? parameterEdits = null, StandaloneFamilyParameterWriter.Edit[]? familyEdits = null)
     {
         ArgumentNullException.ThrowIfNull(sourcePath);
         ArgumentNullException.ThrowIfNull(outputPath);
@@ -204,13 +292,22 @@ public static class RvtWriter
 
         Dictionary<string, byte[]>? replacements = null;
         RvtWriteCapabilities capabilities;
-        using (var sourceFile = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+        using var sourceFile = new FileStream(fullSource, FileMode.Open, FileAccess.Read, FileShare.Read);
         using (var root = RootStorage.Open(sourceFile, StorageModeFlags.LeaveOpen))
         {
-            var inspection = InspectRoot(root, sourcePath);
+            var inspection = InspectRoot(root, sourcePath, inspectImageLinks:
+                !SameDirectory(Path.GetDirectoryName(fullSource)!, Path.GetDirectoryName(fullOutput)!));
             capabilities = inspection.Capabilities;
 
             RequireSupported(capabilities, RvtWriteOperation.SaveAs);
+            bool editParameters = parameterEdits is not null || familyEdits is not null;
+            if (editParameters)
+            {
+                RequireSupported(capabilities, RvtWriteOperation.PartitionRecordRewrite);
+                var requiredKind = familyEdits is null ? RvtFileKind.Project : RvtFileKind.Family;
+                if (capabilities.FileKind != requiredKind)
+                    throw new RvtWriteRefusedException("unsupported-parameter-file", $"This edit requires a local Revit {requiredKind.ToString().ToLowerInvariant()}.");
+            }
             if (request.PagedStreamEdits.Count > 0)
                 RequireSupported(capabilities, RvtWriteOperation.PagedStreamRewrite);
             if (request.PartitionRecordEdits.Count > 0)
@@ -218,8 +315,21 @@ public static class RvtWriter
 
             ValidateExternalReferenceRelocation(root, inspection, fullSource, fullOutput);
 
+            var pending = new ParameterWriter.Pending();
+            if (editParameters)
+            {
+                var tags = inspection.FramingTags!.Value;
+                int idWidth = capabilities.ElementIdWidth!.Value;
+                foreach (var edit in parameterEdits ?? [])
+                    pending.Apply(ParameterWriter.Plan(root, tags, idWidth, edit, pending));
+                foreach (var edit in familyEdits ?? [])
+                    pending.Apply(StandaloneFamilyParameterWriter.Plan(root, tags, idWidth, edit, pending));
+                request = new RvtWriteRequest { PartitionRecordEdits = pending.Records.Values.ToArray() };
+            }
             if (request.PagedStreamEdits.Count > 0 || request.PartitionRecordEdits.Count > 0)
                 replacements = BuildReplacements(root, inspection, request);
+            foreach (var (path, bytes) in pending.Metadata)
+                (replacements ??= new(StringComparer.OrdinalIgnoreCase)).Add(inspection.CanonicalStreamPaths[path], bytes);
         }
 
         string outputKindHint = KindFromPath(fullOutput) is not RvtFileKind.Unknown ? fullOutput : sourcePath;
@@ -228,7 +338,7 @@ public static class RvtWriter
             : temporaryPath => VerifyOutputEligibility(temporaryPath, outputKindHint, capabilities, request);
 
         var containerResult = ContainerRewriter.Rewrite(
-            sourcePath,
+            fullSource,
             fullOutput,
             replacements ?? NoStreamReplacements,
             verifyEditedOutput);
@@ -249,7 +359,8 @@ public static class RvtWriter
         PartitionFraming.Tags? FramingTags,
         IReadOnlyDictionary<string, string> CanonicalStreamPaths,
         IReadOnlySet<ulong> PartitionRevitLinkIds,
-        bool HasPartitionPointClouds);
+        bool HasPartitionPointClouds,
+        IReadOnlyList<(ulong Id, LinkedImageReference.Location? Location)> ImageLinks);
 
     private static RvtWriteCapabilities InspectContainer(string containerPath, string? pathHint = null)
     {
@@ -299,7 +410,7 @@ public static class RvtWriter
             throw new RvtWriteRefusedException(support.RefusalCode!, support.Reason!);
     }
 
-    private static Inspection InspectRoot(RootStorage root, string sourcePath)
+    private static Inspection InspectRoot(RootStorage root, string sourcePath, bool inspectImageLinks = false)
     {
         bool hasBasicFileInfo = false;
         Dictionary<string, string> bfi;
@@ -371,6 +482,24 @@ public static class RvtWriter
         PartitionFraming.Tags? framingTags = formatsSchema is null ? null : PartitionFraming.TagsOf(formatsSchema);
         ushort? rvtLinkClassTag = FindClassTag(schemaDoc, "RvtLinkSymbol");
         ushort? pointCloudClassTag = FindClassTag(schemaDoc, "PointCloudType");
+        var imageLinks = new List<(ulong Id, LinkedImageReference.Location? Location)>();
+        Action<PartitionFraming.Record>? inspectImage = null;
+        if (inspectImageLinks && schemaDoc is not null && FindClassTag(schemaDoc, "ImageSymbol") is ushort imageTag)
+        {
+            var walker = new WideBlockWalker(schemaDoc, (declaring, field) =>
+                ImportedImageReference.CaptureKey(declaring, field) ?? LinkedImageReference.CaptureKey(declaring, field), []);
+            inspectImage = record =>
+            {
+                if (BinaryPrimitives.ReadUInt16LittleEndian(record.Body.Span) != imageTag)
+                    return;
+                byte[] body = record.Body.ToArray();
+                var image = walker.Run(body, 0, body.Length, imageTag, rootOnly: true);
+                if (image.RootRead && UserParameterWriter.Integer(image, "ImageSymbol.m_flags") == 0)
+                    return;
+                image = walker.Run(body, 0, body.Length, imageTag);
+                imageLinks.Add((record.Owner, LinkedImageReference.ReadLocation(walker, image)));
+            };
+        }
 
         (string Code, string Reason)? baseFailure = EvaluateBaseEligibility(
             fileKind,
@@ -406,6 +535,7 @@ public static class RvtWriter
                 idWidth,
                 rvtLinkClassTag,
                 pointCloudClassTag,
+                inspectImage,
                 out partitionRevitLinkIds,
                 out hasPartitionPointClouds);
         }
@@ -436,7 +566,8 @@ public static class RvtWriter
             framingTags,
             canonicalPaths,
             partitionRevitLinkIds,
-            hasPartitionPointClouds);
+            hasPartitionPointClouds,
+            imageLinks);
     }
 
     private static ushort? FindClassTag(SchemaDocument? schemaDoc, string className)
@@ -517,6 +648,7 @@ public static class RvtWriter
         int? idWidth,
         ushort? rvtLinkClassTag,
         ushort? pointCloudClassTag,
+        Action<PartitionFraming.Record>? inspectImage,
         out IReadOnlySet<ulong> partitionRevitLinkIds,
         out bool hasPartitionPointClouds)
     {
@@ -549,6 +681,7 @@ public static class RvtWriter
                     ushort classTag = BinaryPrimitives.ReadUInt16LittleEndian(record.Body.Span);
                     if (rvtLinkClassTag == classTag) revitLinkIds.Add(record.Owner);
                     if (pointCloudClassTag == classTag) sawPointCloud = true;
+                    inspectImage?.Invoke(record);
                 }
                 if (record.Channel == 101) return;
                 adler.Reset();
@@ -605,6 +738,14 @@ public static class RvtWriter
             throw new RvtWriteRefusedException(
                 "relative-reference-relocation",
                 "Saving to a different directory cannot verify external file paths of PointCloudType records, which are not listed in TransmissionData.");
+        }
+
+        foreach (var (id, location) in inspection.ImageLinks)
+        {
+            if (location is null)
+                throw new RvtWriteRefusedException("relative-reference-relocation", $"The external path of image {id} could not be verified.");
+            CheckRelativeReferenceTarget(location.Path, location.PathType, null, id.ToString(CultureInfo.InvariantCulture),
+                sourceDir, outputDir, sameDirectory);
         }
 
         if (!inspection.CanonicalStreamPaths.TryGetValue("TransmissionData", out string? tdPath))
