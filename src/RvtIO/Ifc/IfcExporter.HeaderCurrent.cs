@@ -32,7 +32,8 @@ public partial class IfcExporter
     };
 
     // Centimetre areas and volumes are the CENTI prefix on SQUARE_METRE and CUBIC_METRE, read as (0.01 m)^2 and (0.01 m)^3 with the values
-    // scaled to match. How other IFC readers apply a prefix to these units is not verified.
+    // scaled to match. A reader may instead apply the prefix to the area or volume unit itself (0.01 m2, 0.01 m3; IfcOpenShell 0.8.4 does)
+    // and then reads the areas 100 times and the volumes 10000 times too large. Only that reader was checked.
     private static int AddProjectAreaUnit(StepWriter w, IfcUnitFamily family) => family switch
     {
         IfcUnitFamily.Foot => AddConversionBasedUnit(w, "2,0,0,0,0,0,0", "AREA", "SQUARE FOOT", "IFCAREAMEASURE",

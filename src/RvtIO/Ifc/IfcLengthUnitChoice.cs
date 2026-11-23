@@ -11,7 +11,9 @@ public enum IfcUnitFamily
     Metre,
     /// <summary>Lengths are written in feet.</summary>
     Foot,
-    /// <summary>Lengths are written in centimetres. This family is opt-in.</summary>
+    /// <summary>Lengths are written in centimetres, areas and volumes in cm2 and cm3 under the CENTI prefix of SQUARE_METRE and CUBIC_METRE.
+    /// A reader that applies the prefix to the area or volume unit itself (IfcOpenShell 0.8.4 does) reads the areas 100 times and the
+    /// volumes 10000 times too large. This family is opt-in.</summary>
     Centimetre,
     /// <summary>Lengths are written in inches. This family is opt-in.</summary>
     Inch,

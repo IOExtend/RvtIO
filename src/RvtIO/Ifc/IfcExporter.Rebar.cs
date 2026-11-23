@@ -185,8 +185,8 @@ public partial class IfcExporter
         string Direction(double[] v) => R(w.Add("IFCDIRECTION", StepWriter.List(D(v[0]), D(v[1]), D(v[2]))));
         var curves = new List<int>();
         lengthFt = 0;
-        // The end parameter is the sum of the line lengths in file units plus the sum of the arc extents in degrees, which is the value
-        // the millimetre, metre and foot output has always carried (RebarReaderTests pins it). It is not the parameter span of the
+        // The end parameter is the sum of the line lengths in file units plus the sum of the arc extents in degrees. The millimetre, metre
+        // and foot output has always carried this value (RebarReaderTests pins the millimetre one). It is not the parameter span of the
         // composite curve, but there is no centimetre or inch reference to justify a second convention, so those units keep it.
         double endParameter = 0;
         foreach (var piece in pieces)
