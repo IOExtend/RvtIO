@@ -271,6 +271,23 @@ public class GRepPlanSymbolReaderTests
         Assert.Equal(new[] { 0.5, 0 }, lines.Select(line => line.Start[1]));
     }
 
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(0.25, false)]
+    public void ViewFacingLines_PairLinesOnlyWhenTheirOffsetIsAlongTheAxis(double depthOffset, bool paired)
+    {
+        // The axis runs along x here, so an offset of the second line along y is across the axis.
+        var frame = new Frame();
+        foreach (var (comparison, origin) in new[] { (6, new[] { 0.5, 0, 0 }), (7, new[] { 0, depthOffset, 0 }) })
+        {
+            int filter = frame.Filter();
+            frame.Direction(filter, comparison, [1, 0, 0]);
+            frame.ViewLine(filter, 11, 4, Line(origin, [0, 1, 0]));
+        }
+
+        Assert.Equal(paired, GRepParserV2.ReadViewFacingLines(frame.Cur) is not null);
+    }
+
     [Fact]
     public void ViewFacingLines_DoNotDependOnTheOrderTheSidesAreStored()
     {
