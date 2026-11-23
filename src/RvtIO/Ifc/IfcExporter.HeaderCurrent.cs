@@ -31,10 +31,10 @@ public partial class IfcExporter
         _ => siLength,
     };
 
-    // Centimetre areas and volumes are conversion-based units of the square and cubic metre, like the inch and foot units: a prefix on
-    // SQUARE_METRE or CUBIC_METRE is read as a prefix of the area or volume unit itself (0.01 m2) by some readers (IfcOpenShell 0.8.4)
-    // and as the square of the prefixed length by others, so it would make the areas 100 times and the volumes 10000 times wrong
-    // in one of them. The factors are the exact decimals 0.0001 and 0.000001, not G17 prints of the doubles.
+    // Centimetre areas and volumes are conversion-based units of the square and cubic metre, like the inch and foot units. A CENTI
+    // prefix on SQUARE_METRE or CUBIC_METRE is read by IfcOpenShell 0.8.4 as a prefix of the area or volume unit itself (0.01 m2,
+    // 0.01 m3), while the exporter meant the square and cube of the centimetre, so that reader was 100 and 10000 times off. The factors
+    // are written as the exact decimals: G17 prints the double 0.000001 as 9.9999999999999995E-07.
     private const string SquareMetresPerSquareCentimetreLiteral = "0.0001";
     private const string CubicMetresPerCubicCentimetreLiteral = "0.000001";
 

@@ -1624,7 +1624,7 @@ public partial class IfcExporter
     /// <summary>Column quantities. A column written as a prism carries its extrusion data:
     /// Length, CrossSectionArea (the profile), OuterSurfaceArea (the length times the perimeter) and GrossVolume (the length times
     /// the area), where the length and the perimeter are numbers of the length unit of the file: a file in millimetres has the two
-    /// 1e6 and 1000 times too large (millimetres taken as square and cubic metres), a file in metres or feet has them right;
+    /// 1e6 and 1000 times too large (millimetres taken as square and cubic metres), a file in metres, centimetres, feet or inches has them right;
     /// otherwise the cross section is the computed host area. NetVolume is the computed host volume, else the volume of the solids. A round column whose exact end
     /// faces are listed beside a tessellated side (see <see cref="RoundPrismCurrent"/>) has the extrusion data of its circle; a round
     /// column that is a vertical cylinder (see <see cref="RoundCylinderCurrent"/>) takes the volume and surface of the node that carries

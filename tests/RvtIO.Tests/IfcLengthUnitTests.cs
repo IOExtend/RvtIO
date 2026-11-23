@@ -218,6 +218,34 @@ public class IfcLengthUnitFamilyTests
     }
 
     [Fact]
+    public void CentimetreUnitAssignment_KeepsTheCentiMetreAndNamesTheSquareAndCubicCentimetre()
+    {
+        var w = new StepWriter();
+        int length = w.Add("IFCSIUNIT", "*,.LENGTHUNIT.,.CENTI.,.METRE.");
+        IfcExporter.CreateUnitAssignmentCurrent(w, length, IfcUnitFamily.Centimetre);
+        var text = new System.IO.StringWriter();
+        w.WriteTo(text, "f", "IFC2X3", "d", "a");
+        string file = text.ToString();
+        Assert.Contains("=IFCSIUNIT(*,.LENGTHUNIT.,.CENTI.,.METRE.);", file);
+        Assert.Contains(",'SQUARE CENTIMETRE',", file);
+        Assert.Contains(",'CUBIC CENTIMETRE',", file);
+        Assert.Contains("=IFCMEASUREWITHUNIT(IFCAREAMEASURE(0.0001),", file);
+        Assert.Contains("=IFCMEASUREWITHUNIT(IFCVOLUMEMEASURE(0.000001),", file);
+        Assert.DoesNotContain(".CENTI.,.SQUARE_METRE.", file);
+        Assert.DoesNotContain(".CENTI.,.CUBIC_METRE.", file);
+        IfcLengthUnitChoiceOptionTests.AssertValidIfcUnitGraph(file, requireProjectReference: false);
+        string assignmentArgs = Regex.Match(file, @"=IFCUNITASSIGNMENT\(\(([^)]*)\)\);").Groups[1].Value;
+        var assignedLines = assignmentArgs.Split(',')
+            .Select(r => Regex.Match(file, $@"(?m)^{Regex.Escape(r)}=([^\r\n]*);").Value).ToList();
+        Assert.DoesNotContain("", assignedLines);
+        // each of the four units exactly once, so the area and the volume are what the assignment lists
+        foreach (string unit in new[] { ".LENGTHUNIT.", ".PLANEANGLEUNIT.", ".AREAUNIT.", ".VOLUMEUNIT." })
+            Assert.Single(assignedLines, line => line.Contains(unit, StringComparison.Ordinal));
+        Assert.Single(assignedLines, line => line.Contains("'SQUARE CENTIMETRE'", StringComparison.Ordinal));
+        Assert.Single(assignedLines, line => line.Contains("'CUBIC CENTIMETRE'", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Millimetre_IsTheUnchangedShift() =>
         Assert.Equal(IfcLengthUnit.ToMillimetres("IFCVECTOR", "#9,0.3048"), IfcLengthUnit.ToFamily("IFCVECTOR", "#9,0.3048", IfcUnitFamily.Millimetre));
 
