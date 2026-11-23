@@ -25,10 +25,10 @@ public static class RvtContainerCheck
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { throw new RvtInputException("cannot-open", $"'{info.Name}' cannot be opened ({ex.GetType().Name}); the file may be in use or not readable.", ex); }
         using var _ = file;
-        using var root = OpenVerified(file, info.Name);
+        using var root = OpenVerified(file, info.Name, surfaceStreamFailures: false);
     }
 
-    internal static RootStorage OpenVerified(Stream stream, string name)
+    internal static RootStorage OpenVerified(Stream stream, string name, bool surfaceStreamFailures = true)
     {
         ArgumentNullException.ThrowIfNull(stream);
         if (!stream.CanRead || !stream.CanSeek)
@@ -37,10 +37,17 @@ public static class RvtContainerCheck
             throw new RvtInputException("empty-file", $"'{name}' is empty.");
         stream.Position = 0;
 
+        // OpenMcdf trims a writable stream when it closes the root, so it gets a read-only view: the caller's stream is neither
+        // changed nor closed, whatever its access. A failure of the stream itself is not damage of the file and is thrown as it was
+        // (when asked to: the file path keeps reporting it as an input error).
+        var view = new ReadOnlyStreamView(stream);
         RootStorage root;
-        try { root = RootStorage.Open(stream, StorageModeFlags.LeaveOpen); }
+        try { root = RootStorage.Open(view, StorageModeFlags.LeaveOpen); }
         catch (Exception ex) when (ex is not OutOfMemoryException)
-        { throw new RvtInputException("not-a-compound-file", $"'{name}' is not a Revit file: its compound file header or directory cannot be read ({ex.Message}). The file may be cut or damaged.", ex); }
+        {
+            if (surfaceStreamFailures) view.ThrowStreamFailure();
+            throw new RvtInputException("not-a-compound-file", $"'{name}' is not a Revit file: its compound file header or directory cannot be read ({ex.Message}). The file may be cut or damaged.", ex);
+        }
 
         try
         {
@@ -53,6 +60,7 @@ public static class RvtContainerCheck
         {
             root.Dispose();
             if (ex is OutOfMemoryException or RvtLimitException) throw;
+            if (surfaceStreamFailures) view.ThrowStreamFailure();
             string where = ex is EndOfStreamException eos && eos.Data["stream"] is string entryName ? $" in stream '{entryName}'" : "";
             throw new RvtInputException("truncated-or-damaged",
                 $"'{name}' is cut or damaged: the compound file ends early{where} ({ex.Message}).", ex);

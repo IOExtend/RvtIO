@@ -56,9 +56,18 @@ public static class RvtSceneReader
     }
 
     /// <summary>Reads a scene and its diagnostics from a readable, seekable RVT stream with the same
-    /// reader options as <see cref="Read(string, RvtSceneOptions?)"/>. The stream remains open.</summary>
-    /// <param name="stream">The RVT input stream, read from its beginning.</param>
-    /// <param name="options">Scene options with a nonempty <see cref="RvtSceneOptions.ModelKey"/>.</param>
+    /// reader options as <see cref="Read(string, RvtSceneOptions?)"/>. The stream is read from its beginning, whatever its position,
+    /// and only read: it is never written to, shortened or closed, also when it is writable.</summary>
+    /// <remarks>A failure of the stream itself, such as an <see cref="IOException"/> or a cancellation, is thrown as the stream threw
+    /// it; it is not reported as a file that is cut or damaged.</remarks>
+    /// <param name="stream">The RVT input stream, which the caller keeps.</param>
+    /// <param name="options">Scene options with a nonempty <see cref="RvtSceneOptions.ModelKey"/>: a stream has no file name to take it from.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="stream"/> or <paramref name="options"/> is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="stream"/> is not readable or not seekable, or is closed, or
+    /// <see cref="RvtSceneOptions.ModelKey"/> is null or empty.</exception>
+    /// <exception cref="RvtInputException">The stream is empty, is not a compound file, or is cut or damaged.</exception>
+    /// <exception cref="RvtLimitException">A stream is longer than one array can hold, or a file with no project
+    /// partitions contains a source element ID above the range of document-local keys.</exception>
     public static RvtSceneResult ReadStream(Stream stream, RvtSceneOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -119,8 +128,9 @@ public static class RvtSceneReader
 
     /// <summary>Turns an opened document into a scene with meshes the caller extracted from it, for example with
     /// <see cref="ElementMeshes.Extract(RvtDocument, ElementMeshOptions?)"/> and options of its own.</summary>
-    /// <remarks>The diagnostics of the read are reported only by <see cref="Read(string, RvtSceneOptions?)"/>, which opens the
-    /// file; a caller who opens the document reads them from <see cref="RvtReaderOptions.Diagnostics"/>.</remarks>
+    /// <remarks>The diagnostics of the read are reported only by <see cref="Read(string, RvtSceneOptions?)"/> and
+    /// <see cref="ReadStream(Stream, RvtSceneOptions)"/>, which open the file; a caller who opens the document reads them from
+    /// <see cref="RvtReaderOptions.Diagnostics"/>.</remarks>
     /// <param name="document">The document the meshes come from; the element facts are read from it.</param>
     /// <param name="meshes">The meshes of the drawable elements of <paramref name="document"/>.</param>
     /// <param name="options">The options; <see cref="RvtSceneOptions.ModelKey"/> is required, as a document has no file name.</param>

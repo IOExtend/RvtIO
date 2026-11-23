@@ -22,7 +22,7 @@ public class RvtDocument
     /// <summary>Project metadata (Revit version, build, file path).</summary>
     public FileMetadata Metadata => _info.Metadata;
 
-    /// <summary>Full local file path when opened via <see cref="Open"/>; null when created via <see cref="FromInfo"/>.</summary>
+    /// <summary>Full local file path when opened via <see cref="Open"/>; null when opened via <see cref="OpenStream"/> or created via <see cref="FromInfo"/>.</summary>
     public string? SourcePath => _sourcePath;
 
     /// <summary>Project information (name, number, client, address, etc.).</summary>
@@ -330,8 +330,20 @@ public class RvtDocument
         return new RvtDocument(info, Path.GetFullPath(rvtPath));
     }
 
-    /// <summary>Opens a Revit document from the beginning of a readable, seekable stream.
-    /// The caller retains ownership of the stream.</summary>
+    /// <summary>Opens a Revit document from the beginning of a readable, seekable stream, whatever its position.
+    /// The caller keeps the stream: it is only read, never written to, shortened or closed, also when it is writable.</summary>
+    /// <remarks>A document opened from a stream has no <see cref="SourcePath"/>. <see cref="SaveAs"/> throws
+    /// <see cref="InvalidOperationException"/> for it, and printing cannot read the images it takes from the file at that path: the title
+    /// block logo is left out, a rendering view placed on a sheet draws no image, and a rendering view printed on its own is drawn as the
+    /// isometric massing of the model. A failure of the stream itself, such as an <see cref="IOException"/> or a cancellation, is thrown
+    /// as the stream threw it; it is not reported as a file that is cut or damaged.</remarks>
+    /// <param name="stream">The Revit file, which the caller keeps.</param>
+    /// <param name="options">The options of the read; null uses the defaults.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="stream"/> is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="stream"/> is not readable or not seekable, or is closed.</exception>
+    /// <exception cref="RvtInputException">The stream is empty, is not a compound file, or is cut or damaged.</exception>
+    /// <exception cref="RvtLimitException">A stream is longer than one array can hold, or a file with no project
+    /// partitions contains a source element ID above the range of document-local keys.</exception>
     public static RvtDocument OpenStream(Stream stream, RvtReaderOptions? options = null)
         => new(new RvtFileReader(options).ReadStream(stream));
 
@@ -365,7 +377,7 @@ public class RvtDocument
     }
 
     /// <summary>Writes a verified lossless copy of this document's backing file to <paramref name="outputPath"/>.</summary>
-    /// <exception cref="InvalidOperationException">This document was constructed via <see cref="FromInfo"/> and has no backing file path.</exception>
+    /// <exception cref="InvalidOperationException">This document was opened via <see cref="OpenStream"/> or constructed via <see cref="FromInfo"/> and has no backing file path.</exception>
     /// <exception cref="RvtWriteRefusedException">The backing file is outside the supported write-capability matrix.</exception>
     public RvtWriteResult SaveAs(string outputPath)
     {

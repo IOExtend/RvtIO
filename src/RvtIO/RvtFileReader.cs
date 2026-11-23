@@ -42,8 +42,16 @@ public partial class RvtFileReader
         return ReadCore(root);
     }
 
-    /// <summary>Reads a Revit compound file from the beginning of a readable, seekable stream.
-    /// The stream remains open and its position may change.</summary>
+    /// <summary>Reads a Revit compound file from the beginning of a readable, seekable stream, whatever its position.
+    /// The stream is only read: it is never written to, shortened or closed, also when it is writable, and its position may change.</summary>
+    /// <remarks>A failure of the stream itself, such as an <see cref="IOException"/>, a cancellation or a closed stream, is thrown as
+    /// the stream threw it; it is not reported as a file that is cut or damaged. A stream that ends early is.</remarks>
+    /// <param name="stream">The Revit file, which the caller keeps.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="stream"/> is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="stream"/> is not readable or not seekable, or is closed.</exception>
+    /// <exception cref="RvtInputException">The stream is empty, is not a compound file, or is cut or damaged.</exception>
+    /// <exception cref="RvtLimitException">A stream is longer than one array can hold, or a file with no project
+    /// partitions contains a source element ID above the range of document-local keys.</exception>
     public RevitFileInfo ReadStream(Stream stream)
     {
         using var root = RvtContainerCheck.OpenVerified(stream, "Revit input stream");
