@@ -31,16 +31,21 @@ public partial class IfcExporter
         _ => siLength,
     };
 
-    // Centimetre areas and volumes are the CENTI prefix on SQUARE_METRE and CUBIC_METRE, read as (0.01 m)^2 and (0.01 m)^3 with the values
-    // scaled to match. A reader may instead apply the prefix to the area or volume unit itself (0.01 m2, 0.01 m3; IfcOpenShell 0.8.4 does)
-    // and then reads the areas 100 times and the volumes 10000 times too large. Only that reader was checked.
+    // Centimetre areas and volumes are conversion-based units of the square and cubic metre, like the inch and foot units: a prefix on
+    // SQUARE_METRE or CUBIC_METRE is read as a prefix of the area or volume unit itself (0.01 m2) by some readers (IfcOpenShell 0.8.4)
+    // and as the square of the prefixed length by others, so it would make the areas 100 times and the volumes 10000 times wrong
+    // in one of them. The factors are the exact decimals 0.0001 and 0.000001, not G17 prints of the doubles.
+    private const string SquareMetresPerSquareCentimetreLiteral = "0.0001";
+    private const string CubicMetresPerCubicCentimetreLiteral = "0.000001";
+
     private static int AddProjectAreaUnit(StepWriter w, IfcUnitFamily family) => family switch
     {
         IfcUnitFamily.Foot => AddConversionBasedUnit(w, "2,0,0,0,0,0,0", "AREA", "SQUARE FOOT", "IFCAREAMEASURE",
             StepWriter.Real(IfcLengthUnit.SquareMetresPerSquareFoot, "G17"), w.Add("IFCSIUNIT", "*,.AREAUNIT.,$,.SQUARE_METRE.")),
         IfcUnitFamily.Inch => AddConversionBasedUnit(w, "2,0,0,0,0,0,0", "AREA", "SQUARE INCH", "IFCAREAMEASURE",
             StepWriter.Real(IfcLengthUnit.SquareMetresPerSquareInch, "G17"), w.Add("IFCSIUNIT", "*,.AREAUNIT.,$,.SQUARE_METRE.")),
-        IfcUnitFamily.Centimetre => w.Add("IFCSIUNIT", "*,.AREAUNIT.,.CENTI.,.SQUARE_METRE."),
+        IfcUnitFamily.Centimetre => AddConversionBasedUnit(w, "2,0,0,0,0,0,0", "AREA", "SQUARE CENTIMETRE", "IFCAREAMEASURE",
+            SquareMetresPerSquareCentimetreLiteral, w.Add("IFCSIUNIT", "*,.AREAUNIT.,$,.SQUARE_METRE.")),
         _ => w.Add("IFCSIUNIT", "*,.AREAUNIT.,$,.SQUARE_METRE."),
     };
 
@@ -50,7 +55,8 @@ public partial class IfcExporter
             StepWriter.Real(IfcLengthUnit.CubicMetresPerCubicFoot, "G17"), w.Add("IFCSIUNIT", "*,.VOLUMEUNIT.,$,.CUBIC_METRE.")),
         IfcUnitFamily.Inch => AddConversionBasedUnit(w, "3,0,0,0,0,0,0", "VOLUME", "CUBIC INCH", "IFCVOLUMEMEASURE",
             StepWriter.Real(IfcLengthUnit.CubicMetresPerCubicInch, "G17"), w.Add("IFCSIUNIT", "*,.VOLUMEUNIT.,$,.CUBIC_METRE.")),
-        IfcUnitFamily.Centimetre => w.Add("IFCSIUNIT", "*,.VOLUMEUNIT.,.CENTI.,.CUBIC_METRE."),
+        IfcUnitFamily.Centimetre => AddConversionBasedUnit(w, "3,0,0,0,0,0,0", "VOLUME", "CUBIC CENTIMETRE", "IFCVOLUMEMEASURE",
+            CubicMetresPerCubicCentimetreLiteral, w.Add("IFCSIUNIT", "*,.VOLUMEUNIT.,$,.CUBIC_METRE.")),
         _ => w.Add("IFCSIUNIT", "*,.VOLUMEUNIT.,$,.CUBIC_METRE."),
     };
 
@@ -60,7 +66,7 @@ public partial class IfcExporter
 
     /// <summary>A unit is created when the first measure of its kind is made; the created ones are assigned, in creation order,
     /// in <c>IfcProject.UnitsInContext</c> at the end of the export. The default project units are millimetre, degree, square metre
-    /// and cubic metre. Metric units are written as <c>IfcSIUnit</c>, imperial units as <c>IfcConversionBasedUnit</c>, and
+    /// and cubic metre. Metric units are written as <c>IfcSIUnit</c>, imperial units and the centimetre area and volume as <c>IfcConversionBasedUnit</c>, and
     /// the degree as <c>IfcConversionBasedUnit</c> of the radian with the factor <see cref="DegreeInRadiansCurrent"/>.
     /// All four are always present, so they are written up front; the assignment lists the defaults until the final order is known.</summary>
     internal static UnitAssignmentCurrent CreateUnitAssignmentCurrent(StepWriter w, int lengthUnitId, IfcUnitFamily family = IfcUnitFamily.Millimetre)

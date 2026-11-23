@@ -431,8 +431,18 @@ public class IfcLengthUnitChoiceOptionTests
 
             string cm = outputs[IfcUnitFamily.Centimetre];
             Assert.Contains("=IFCSIUNIT(*,.LENGTHUNIT.,.CENTI.,.METRE.);", cm);
-            Assert.Contains("=IFCSIUNIT(*,.AREAUNIT.,.CENTI.,.SQUARE_METRE.);", cm);
-            Assert.Contains("=IFCSIUNIT(*,.VOLUMEUNIT.,.CENTI.,.CUBIC_METRE.);", cm);
+            // not a prefix on the area or volume unit: readers differ in whether they apply it to the unit or to the length
+            Assert.DoesNotContain(".CENTI.,.SQUARE_METRE.", cm);
+            Assert.DoesNotContain(".CENTI.,.CUBIC_METRE.", cm);
+            Assert.Contains("=IFCSIUNIT(*,.AREAUNIT.,$,.SQUARE_METRE.);", cm);
+            Assert.Contains("=IFCSIUNIT(*,.VOLUMEUNIT.,$,.CUBIC_METRE.);", cm);
+            Assert.Contains(",'SQUARE CENTIMETRE',", cm);
+            Assert.Contains(",'CUBIC CENTIMETRE',", cm);
+            // the exact decimals, which a G17 print of the double would not give
+            Assert.Contains("=IFCMEASUREWITHUNIT(IFCAREAMEASURE(0.0001),", cm);
+            Assert.Contains("=IFCMEASUREWITHUNIT(IFCVOLUMEMEASURE(0.000001),", cm);
+            AssertConversionFactor(cm, "IFCAREAMEASURE", 0.0001);
+            AssertConversionFactor(cm, "IFCVOLUMEMEASURE", 0.000001);
             string inch = outputs[IfcUnitFamily.Inch];
             Assert.Contains(",'INCH',", inch);
             Assert.Contains(",'SQUARE INCH',", inch);
@@ -483,11 +493,8 @@ public class IfcLengthUnitChoiceOptionTests
         finally { Directory.Delete(dir, recursive: true); }
     }
 
-    private static void AssertConversionFactor(string ifc, string measure, double expected)
-    {
-        var match = Assert.Single(Regex.Matches(ifc, $@"=IFCMEASUREWITHUNIT\({measure}\(([^)]+)\),"));
-        Assert.Equal(expected, double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture), 15);
-    }
+    private static void AssertConversionFactor(string ifc, string measure, double expected) =>
+        Assert.Equal(expected, DeclaredFactor(ifc, measure), 15);
 
     /// <summary>The length, area and volume unit each family assigns, as <see cref="AssignedUnits"/> describes them.</summary>
     private static readonly Dictionary<IfcUnitFamily, (string Length, string Area, string Volume)> AssignedUnitsOfFamily = new()
@@ -495,7 +502,7 @@ public class IfcLengthUnitChoiceOptionTests
         [IfcUnitFamily.Millimetre] = ("IFCSIUNIT .MILLI. .METRE.", "IFCSIUNIT $ .SQUARE_METRE.", "IFCSIUNIT $ .CUBIC_METRE."),
         [IfcUnitFamily.Metre] = ("IFCSIUNIT $ .METRE.", "IFCSIUNIT $ .SQUARE_METRE.", "IFCSIUNIT $ .CUBIC_METRE."),
         [IfcUnitFamily.Foot] = ("IFCCONVERSIONBASEDUNIT 'FOOT'", "IFCCONVERSIONBASEDUNIT 'SQUARE FOOT'", "IFCCONVERSIONBASEDUNIT 'CUBIC FOOT'"),
-        [IfcUnitFamily.Centimetre] = ("IFCSIUNIT .CENTI. .METRE.", "IFCSIUNIT .CENTI. .SQUARE_METRE.", "IFCSIUNIT .CENTI. .CUBIC_METRE."),
+        [IfcUnitFamily.Centimetre] = ("IFCSIUNIT .CENTI. .METRE.", "IFCCONVERSIONBASEDUNIT 'SQUARE CENTIMETRE'", "IFCCONVERSIONBASEDUNIT 'CUBIC CENTIMETRE'"),
         [IfcUnitFamily.Inch] = ("IFCCONVERSIONBASEDUNIT 'INCH'", "IFCCONVERSIONBASEDUNIT 'SQUARE INCH'", "IFCCONVERSIONBASEDUNIT 'CUBIC INCH'"),
     };
 
@@ -1167,6 +1174,12 @@ public class IfcLengthUnitChoiceOptionTests
         List<double[]> Points, List<double> StoreyElevations, List<double> Depths, List<double> Lengths,
         List<double> Areas, List<double> Volumes, double Precision);
 
+    private static double DeclaredFactor(string ifc, string measure)
+    {
+        var match = Assert.Single(Regex.Matches(ifc, $@"=IFCMEASUREWITHUNIT\({measure}\(([^)]+)\),"));
+        return double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+    }
+
     private static PhysicalMetrics ExtractPhysicalMetricsInSi(string ifc, IfcUnitFamily family)
     {
         double lengthToMetres = family switch
@@ -1178,10 +1191,10 @@ public class IfcLengthUnitChoiceOptionTests
             IfcUnitFamily.Inch => 0.0254,
             _ => throw new ArgumentOutOfRangeException(nameof(family)),
         };
-        // Centimetres read as (0.01 m)^2 and (0.01 m)^3 for the CENTI prefix on SQUARE_METRE and CUBIC_METRE. That is the exporter's own
-        // assumption, repeated here, so these checks cannot tell whether another IFC reader applies the prefix the same way.
-        double areaToSqMetres = family is IfcUnitFamily.Millimetre or IfcUnitFamily.Metre ? 1.0 : lengthToMetres * lengthToMetres;
-        double volumeToCuMetres = family is IfcUnitFamily.Millimetre or IfcUnitFamily.Metre ? 1.0 : areaToSqMetres * lengthToMetres;
+        // The area and volume of the families with their own units are what the file declares: the factor of its conversion-based
+        // unit to the square and cubic metre, so a wrong declaration shows as a difference from the millimetre output.
+        double areaToSqMetres = family is IfcUnitFamily.Millimetre or IfcUnitFamily.Metre ? 1.0 : DeclaredFactor(ifc, "IFCAREAMEASURE");
+        double volumeToCuMetres = family is IfcUnitFamily.Millimetre or IfcUnitFamily.Metre ? 1.0 : DeclaredFactor(ifc, "IFCVOLUMEMEASURE");
 
         var points = new List<double[]>();
         var elevations = new List<double>();
