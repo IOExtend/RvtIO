@@ -7,6 +7,39 @@ namespace RvtIO.Tests;
 /// <summary>Truncated and mutated partition streams are rejected with a reason: no exception escapes, no run takes long.</summary>
 public class PartitionFramingFuzzTests
 {
+    [Fact]
+    public void Walk_ReadsGzipMembersAcrossPageTailsAndRejectsCorruptTails()
+    {
+        var id = CoverageCensusTests.Id;
+        var tags = new PartitionFraming.Tags(id("ContentMarker"), id("ContentKey"), id("SegmentMarker"),
+            id("SegmentCheckback"), id("SignatureMarker"));
+        var body = new byte[2 * PagedGzipStream.PageDataLength];
+        new Random(42).NextBytes(body);
+        byte[] payload = CoverageCensusTests.Partition(CoverageCensusTests.Block(false, CoverageCensusTests.R(1001, body)));
+        using var paged = new MemoryStream();
+        for (int offset = 0; offset < payload.Length;)
+        {
+            int count = Math.Min(PagedGzipStream.PageDataLength, payload.Length - offset);
+            paged.Write(payload, offset, count);
+            offset += count;
+            if (offset < payload.Length) paged.Write(new byte[PagedGzipStream.SegmentLength]);
+        }
+
+        byte[] raw = paged.ToArray();
+        var channels = new List<int>();
+        Assert.True(PartitionFraming.Walk(raw, tags, 4, record =>
+        {
+            Assert.True(body.AsSpan().SequenceEqual(record.Body.Span));
+            channels.Add(record.Channel);
+        }, out var failure, out _), failure);
+        Assert.Equal(new[] { 101, 102, 103 }, channels);
+
+        raw[PagedGzipStream.PageDataLength] = 1;
+        Assert.False(PartitionFraming.Walk(raw, tags, 4, _ => { }, out failure, out _));
+        Assert.Equal("page-framing", failure);
+    }
+
+
     [SkippableFact]
     public void MutatedAndTruncatedStreamsAreRejectedWithoutAnException()
     {

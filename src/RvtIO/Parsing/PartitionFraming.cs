@@ -90,9 +90,7 @@ internal static class PartitionFraming
         blocks = 0;
         try
         {
-            var bytes = RemoveTails(raw);
-            Require(bytes != null, "page-framing");
-            var input = new Cursor(bytes!);
+            var input = new Cursor(raw, paged: true);
             Require(input.U32() == 9 && input.U32() == 0, "format");
             var keys = new HashSet<string>();
             long inflated = 0; // output of all finished chains
@@ -227,15 +225,33 @@ internal static class PartitionFraming
         if (!condition) throw new InvalidDataException(reason);
     }
 
-    private sealed class Cursor(ReadOnlyMemory<byte> bytes)
+    private sealed class Cursor(ReadOnlyMemory<byte> bytes, bool paged = false)
     {
+        private readonly int length = paged ? PayloadLength(bytes.Span) : bytes.Length;
+
         internal int Position { get; private set; }
-        internal int Remaining => bytes.Length - Position;
+        internal int Remaining => length - Position;
         internal ReadOnlySpan<byte> Bytes(int count)
         {
             Require(count >= 0 && count <= Remaining, "bounds");
-            var value = bytes.Span.Slice(Position, count);
+            int start = Position;
             Position += count;
+            if (count == 0) return [];
+            if (!paged) return bytes.Span.Slice(start, count);
+
+            int inPage = start % PagedGzipStream.PageDataLength;
+            int available = PagedGzipStream.PageDataLength - inPage;
+            if (count <= available) return bytes.Span.Slice(PhysicalOffset(start), count);
+
+            // The inflater needs one contiguous gzip member. Only values spanning a page tail need a copy.
+            var value = new byte[count];
+            for (int copied = 0; copied < count;)
+            {
+                int offset = start + copied;
+                int take = Math.Min(count - copied, PagedGzipStream.PageDataLength - offset % PagedGzipStream.PageDataLength);
+                bytes.Span.Slice(PhysicalOffset(offset), take).CopyTo(value.AsSpan(copied));
+                copied += take;
+            }
             return value;
         }
         internal ushort U16() => BinaryPrimitives.ReadUInt16LittleEndian(Bytes(2));
@@ -245,6 +261,24 @@ internal static class PartitionFraming
         {
             Require(count >= 0 && count <= Remaining, "signature-bounds");
             Position += (int)count;
+        }
+
+        private static int PhysicalOffset(int logicalOffset) => logicalOffset
+            + logicalOffset / PagedGzipStream.PageDataLength * PagedGzipStream.SegmentLength;
+
+        private static int PayloadLength(ReadOnlySpan<byte> raw)
+        {
+            int tails = 0;
+            for (long offset = PagedGzipStream.PageDataLength; offset < raw.Length; offset += PagedGzipStream.PageStride)
+            {
+                long remaining = raw.Length - offset;
+                // A complete tail at the very end is allowed to have a different tag, as in RemoveTails.
+                Require(remaining == PagedGzipStream.SegmentLength ||
+                    (remaining > PagedGzipStream.SegmentLength && raw[(int)offset] == 0
+                        && (raw[(int)offset + 1] & 0x0F) == 0), "page-framing");
+                tails++;
+            }
+            return raw.Length - tails * PagedGzipStream.SegmentLength;
         }
     }
 }
