@@ -2810,11 +2810,14 @@ public partial class RvtFileReader
             },
             (index, geometry) =>
             {
-                if (geometry != null && state.GrepBlocks.TryAdd(jobs[index].Eid, geometry))
-                    stored++;
+                if (StoreFirstDecodableGRep(state, jobs[index].Eid, geometry)) stored++;
             });
         return stored;
     }
+
+    /// <summary>Stores a decoded block for an element that has none yet; the first decodable block of an element wins.</summary>
+    internal static bool StoreFirstDecodableGRep(ParsingState state, uint eid, GRepData? geometry) =>
+        geometry != null && state.GrepBlocks.TryAdd(eid, geometry);
 
     internal static void ParseBlocks(ParsingState state, TextWriter? diag)
     {
