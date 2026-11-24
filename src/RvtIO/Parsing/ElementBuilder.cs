@@ -4308,13 +4308,7 @@ internal static partial class ElementBuilder
         {
             if (b.BipId == 0 && !b.Value.HasValue) continue;
             BipNames.Lookup.TryGetValue(b.BipId, out string? bipName);
-            var param = new Parameter
-            {
-                Id = b.BipId,
-                StorageType = BipHelpers.BipStorageType(bipName),
-                IsReadOnly = BipHelpers.IsBipReadOnly(bipName),
-                Definition = new Definition { Id = b.BipId, BuiltInParameter = bipName, Name = bipName },
-            };
+            var param = BipHelpers.MakeBipParam(b.BipId, bipName, BipHelpers.BipStorageType(bipName), null);
             if (param.StorageType == StorageType.Double && state.ElemBipDoubles.TryGetValue(eid, out var dblMap) && dblMap.TryGetValue(b.BipId, out double dv))
                 param.Value = dv;
             else if ((param.StorageType == StorageType.Integer || param.StorageType == StorageType.ElementId)
@@ -8757,16 +8751,12 @@ internal static partial class ElementBuilder
         foreach (var b in rec.BipParams)
         {
             if (b.BipId == 0 || !seenIds.Add(b.BipId)) continue;
-            var param = new Parameter
-            {
-                Id = b.BipId,
-                StorageType = b.BipId < 0 ? BipHelpers.BipStorageType(b.BipName) : StorageType.None,
-            };
+            var param = b.BipId < 0
+                ? BipHelpers.MakeBipParam(b.BipId, b.BipName, BipHelpers.BipStorageType(b.BipName), null)
+                : new Parameter { Id = b.BipId, StorageType = StorageType.None };
 
             if (b.BipId < 0)
             {
-                param.Definition = new Definition { Id = b.BipId, BuiltInParameter = b.BipName, Name = b.BipName };
-                param.IsReadOnly = BipHelpers.IsBipReadOnly(b.BipName);
                 bool resolvedStored = false;
                 if (param.StorageType == StorageType.Double
                     && state.ElemBipDoubles.TryGetValue(elemId, out var bipDoubleVals)

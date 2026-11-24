@@ -5,15 +5,26 @@ namespace RvtIO.Parsing;
 
 internal static class BipHelpers
 {
-    public static Parameter MakeBipParam(int bipId, string bipName, StorageType storageType, object value, bool hasNoRevitValue = false) => new()
+    private static class BuiltInDefinitions
     {
-        Id = bipId,
-        StorageType = storageType,
-        Value = value,
-        HasNoRevitValue = hasNoRevitValue,
-        IsReadOnly = IsBipReadOnly(bipName),
-        Definition = new Definition { Id = bipId, BuiltInParameter = bipName, Name = bipName },
-    };
+        internal static readonly Dictionary<int, Parameter.BuiltInDefinition> ById = BipNames.Lookup.ToDictionary(
+            entry => entry.Key, entry => new Parameter.BuiltInDefinition(entry.Key, entry.Value));
+    }
+
+    public static Parameter MakeBipParam(int bipId, string? bipName, StorageType storageType, object? value,
+        bool hasNoRevitValue = false)
+    {
+        var parameter = bipName != null && BuiltInDefinitions.ById.TryGetValue(bipId, out var template)
+            && bipName == template.Name
+            ? new Parameter(template)
+            : new Parameter(new Definition { Id = bipId, BuiltInParameter = bipName, Name = bipName });
+        parameter.Id = bipId;
+        parameter.StorageType = storageType;
+        parameter.Value = value;
+        parameter.HasNoRevitValue = hasNoRevitValue;
+        parameter.IsReadOnly = IsBipReadOnly(bipName);
+        return parameter;
+    }
 
     public static StorageType BipStorageType(string? bipName)
     {

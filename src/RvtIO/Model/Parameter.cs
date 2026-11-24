@@ -46,6 +46,8 @@ namespace RvtIO.Model
 
         internal Parameter(BuiltInDefinition definition) => _definition = definition;
 
+        internal Parameter(Definition definition) => _definition = definition;
+
         /// <summary>GUID of shared/external parameters (parsed from ForgeId). Null for built-in params.
         /// Invariant per definition id - serialized once in the document's ParameterDefinitions table.</summary>
         [JsonIgnore]
