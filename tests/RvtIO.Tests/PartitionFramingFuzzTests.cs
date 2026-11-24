@@ -210,6 +210,84 @@ public class PartitionFramingFuzzTests
     }
 
     [Fact]
+    public void StreamWalkCanSeekToAPartitionBlockBeyondTenGiB()
+    {
+        var tags = FramingTags();
+        const uint signatureBytes = 3_000_000_000;
+        const uint secondaryCount = 3_900_000_000;
+        using var head = new MemoryStream();
+        using var writer = new BinaryWriter(head);
+        writer.Write(9UL);
+        writer.Write(tags.ContentMarker);
+        writer.Write(0UL);
+        writer.Write(tags.SegmentMarker);
+        writer.Write(new byte[16]);
+        writer.Write(tags.SignatureMarker);
+        writer.Write(signatureBytes);
+        long secondaryAt = head.Length + signatureBytes;
+        long nextBlock = secondaryAt + sizeof(uint) + 2L * secondaryCount;
+        Assert.True(nextBlock > 10L * 1024 * 1024 * 1024);
+
+        using var trailer = new MemoryStream();
+        using var tail = new BinaryWriter(trailer);
+        tail.Write(tags.ContentMarker);
+        tail.Write(uint.MaxValue);
+        tail.Write(tags.ContentKey);
+        tail.Write(0U);
+        tail.Write(new byte[16]);
+        tail.Write(tags.SegmentMarker);
+        tail.Write(new byte[16]);
+        tail.Write(tags.SignatureMarker);
+        tail.Write(0UL);
+        tail.Write(tags.ContentMarker);
+        tail.Write(0U);
+        tail.Write(uint.MaxValue);
+
+        long end = nextBlock + trailer.Length;
+        using var input = new SparsePartitionStream(Physical(end - 1) + 1);
+        input.Set(0, head.ToArray());
+        input.Set(secondaryAt, BitConverter.GetBytes(secondaryCount));
+        input.Set(nextBlock, trailer.ToArray());
+        Assert.True(PartitionFraming.WalkStream(input, tags, 4, _ => Assert.Fail("Unexpected record"), out var failure, out int blocks), failure);
+        Assert.Equal(2, blocks);
+        Assert.InRange(input.LargestRead, 1, PagedGzipStream.PageDataLength);
+    }
+
+    private static long Physical(long logical)
+        => logical + logical / PagedGzipStream.PageDataLength * PagedGzipStream.SegmentLength;
+
+    private sealed class SparsePartitionStream(long length) : Stream
+    {
+        private readonly Dictionary<long, byte> contents = [];
+        public override long Length => length;
+        public override long Position { get; set; }
+        public override bool CanRead => true;
+        public override bool CanSeek => true;
+        public override bool CanWrite => false;
+        internal int LargestRead { get; private set; }
+
+        internal void Set(long offset, byte[] bytes)
+        {
+            for (int i = 0; i < bytes.Length; i++) contents[Physical(offset + i)] = bytes[i];
+        }
+
+        public override int Read(Span<byte> buffer)
+        {
+            int count = (int)Math.Min(buffer.Length, Length - Position);
+            LargestRead = Math.Max(LargestRead, count);
+            for (int i = 0; i < count; i++) buffer[i] = contents.GetValueOrDefault(Position + i);
+            Position += count;
+            return count;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() { }
+        public override void SetLength(long value) => throw new NotSupportedException();
+    }
+
+    [Fact]
     public void Walk_RejectsAStreamThatEndsInsideAPageTail()
     {
         byte[] clean = PaddedLargeStream();

@@ -28,7 +28,7 @@ internal static class RecordRouting
         /// <summary>SHA-256 over all items (the three channels in file order) of one element in one partition stream.</summary>
         internal Dictionary<(ulong Owner, int Partition), byte[]> Digests { get; } = [];
         /// <summary>Stored length of each partition stream: the reader decompresses the longest first.</summary>
-        internal Dictionary<int, int> StreamLengths { get; } = [];
+        internal Dictionary<int, long> StreamLengths { get; } = [];
         internal List<Item> Items { get; } = [];
         internal Dictionary<int, List<int>> SegmentLengths { get; } = [];
         internal int KeyedRecords { get; set; }
@@ -78,7 +78,7 @@ internal static class RecordRouting
         {
             foreach (var hasher in hashers.Values) hasher.Dispose();
         }
-        census.StreamLengths[partition] = raw?.Length ?? checked((int)stream!.Length);
+        census.StreamLengths[partition] = raw?.LongLength ?? stream!.Length;
         census.SegmentLengths[partition] = lengths;
         census.KeyedRecords += keyed;
         foreach (var (owner, offset, length) in holders)

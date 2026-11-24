@@ -162,7 +162,7 @@ internal static class PartitionFraming
                         uint bodySize = records.U32();
                         Require(bodySize <= int.MaxValue, "record-length");
                         if (!final && records.Remaining < (long)bodySize + 4) break;
-                        int bodyAt = records.Position;
+                        int bodyAt = (int)records.Position;
                         records.Bytes((int)bodySize);
                         Require(records.U32() == bodySize, "record-footer");
                         actualCount++;
@@ -170,9 +170,10 @@ internal static class PartitionFraming
                         // the channel census only counts real owners; the id -1 record is the chain terminator of the block
                         bool terminator = owner == (idWidth == 8 ? ulong.MaxValue : uint.MaxValue);
                         if (!terminator) owners[index - 101].Add(owner);
+                        int finish = (int)records.Position;
                         onRecord(new Record(blocks, key, (int)index, owner, extra, memory.Slice(bodyAt, (int)bodySize),
-                            memory.Slice(committed, records.Position - committed), inflated + committed));
-                        committed = records.Position;
+                            memory.Slice(committed, finish - committed), inflated + committed));
+                        committed = finish;
                     }
                     inflated += committed;
                     // A record may straddle many members; retain only its unfinished suffix between members.
@@ -250,11 +251,11 @@ internal static class PartitionFraming
     {
         private readonly ReadOnlyMemory<byte> bytes;
         private readonly bool paged;
-        private readonly int length;
+        private readonly long length;
         private readonly Stream? stream;
         private readonly byte[]? page;
         private readonly byte[] scalar = new byte[16];
-        private int pageStart = -1;
+        private long pageStart = -1;
 
         internal Cursor(ReadOnlyMemory<byte> bytes, bool paged = false)
         {
@@ -268,10 +269,10 @@ internal static class PartitionFraming
             this.stream = stream;
             paged = true;
             page = new byte[PagedGzipStream.PageDataLength];
-            int rawLength = checked((int)stream.Length);
-            int tails = 0;
+            long rawLength = stream.Length;
+            long tails = 0;
             Span<byte> tag = stackalloc byte[2];
-            for (long offset = PagedGzipStream.PageDataLength; offset < rawLength; offset += PagedGzipStream.PageStride)
+            for (long offset = PagedGzipStream.PageDataLength; offset < rawLength;)
             {
                 long remaining = rawLength - offset;
                 Require(remaining >= PagedGzipStream.SegmentLength, "page-framing");
@@ -282,12 +283,14 @@ internal static class PartitionFraming
                     Require(tag[0] == 0 && (tag[1] & 0x0f) == 0, "page-framing");
                 }
                 tails++;
+                if (remaining <= PagedGzipStream.PageStride) break;
+                offset += PagedGzipStream.PageStride;
             }
             length = rawLength - tails * PagedGzipStream.SegmentLength;
         }
 
-        internal int Position { get; private set; }
-        internal int Remaining => length - Position;
+        internal long Position { get; private set; }
+        internal long Remaining => length - Position;
         internal ReadOnlySpan<byte> Bytes(int count)
         {
             if (stream == null) return Take(count).Span;
@@ -302,7 +305,7 @@ internal static class PartitionFraming
         internal ReadOnlyMemory<byte> Take(int count)
         {
             Require(count >= 0 && count <= Remaining, "bounds");
-            int start = Position;
+            long start = Position;
             Position += count;
             if (count == 0) return default;
             if (stream != null)
@@ -311,19 +314,19 @@ internal static class PartitionFraming
                 ReadPaged(start, result);
                 return result;
             }
-            if (!paged) return bytes.Slice(start, count);
+            if (!paged) return bytes.Slice((int)start, count);
 
-            int inPage = start % PagedGzipStream.PageDataLength;
+            int inPage = (int)(start % PagedGzipStream.PageDataLength);
             int available = PagedGzipStream.PageDataLength - inPage;
-            if (count <= available) return bytes.Slice(PhysicalOffset(start), count);
+            if (count <= available) return bytes.Slice((int)PhysicalOffset(start), count);
 
             // The inflater needs one contiguous gzip member. Only values spanning a page tail need a copy.
             var value = new byte[count];
             for (int copied = 0; copied < count;)
             {
-                int offset = start + copied;
-                int take = Math.Min(count - copied, PagedGzipStream.PageDataLength - offset % PagedGzipStream.PageDataLength);
-                bytes.Span.Slice(PhysicalOffset(offset), take).CopyTo(value.AsSpan(copied));
+                long offset = start + copied;
+                int take = Math.Min(count - copied, PagedGzipStream.PageDataLength - (int)(offset % PagedGzipStream.PageDataLength));
+                bytes.Span.Slice((int)PhysicalOffset(offset), take).CopyTo(value.AsSpan(copied));
                 copied += take;
             }
             return value;
@@ -334,22 +337,22 @@ internal static class PartitionFraming
         internal void Skip(long count)
         {
             Require(count >= 0 && count <= Remaining, "signature-bounds");
-            Position += (int)count;
+            Position += count;
         }
 
-        private static int PhysicalOffset(int logicalOffset) => logicalOffset
+        private static long PhysicalOffset(long logicalOffset) => logicalOffset
             + logicalOffset / PagedGzipStream.PageDataLength * PagedGzipStream.SegmentLength;
 
-        private void ReadPaged(int offset, Span<byte> target)
+        private void ReadPaged(long offset, Span<byte> target)
         {
             while (!target.IsEmpty)
             {
-                int inside = offset % PagedGzipStream.PageDataLength;
-                int start = offset - inside;
+                int inside = (int)(offset % PagedGzipStream.PageDataLength);
+                long start = offset - inside;
                 if (pageStart != start)
                 {
                     stream!.Position = PhysicalOffset(start);
-                    stream.ReadExactly(page.AsSpan(0, Math.Min(page!.Length, length - start)));
+                    stream.ReadExactly(page.AsSpan(0, (int)Math.Min(page!.Length, length - start)));
                     pageStart = start;
                 }
                 int count = Math.Min(target.Length, page!.Length - inside);
