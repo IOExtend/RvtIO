@@ -6,7 +6,8 @@ internal static partial class ElementBuilder
 {
     // shortcut: curved axes retain the geometry fallback until their own symbol curve metrics are decoded.
     internal static void ApplyMullionSymbolLength(
-        IReadOnlyList<Element> elements, IReadOnlyDictionary<uint, TfBlockDeserializer.NativeParams> nativeParams)
+        IReadOnlyList<Element> elements, IReadOnlyDictionary<uint, TfBlockDeserializer.NativeParams> nativeParams,
+        Action<Element>? archiveParameters = null)
     {
         foreach (var element in elements)
         {
@@ -28,6 +29,7 @@ internal static partial class ElementBuilder
             if (!complete || !double.IsFinite(length) || length <= 0) continue;
             SetParam(element, -1004005, "CURVE_ELEM_LENGTH", StorageType.Double, length);
             element.Parameters.First(parameter => parameter.Id == -1004005).IsApproximate = false;
+            archiveParameters?.Invoke(element);
         }
     }
 }

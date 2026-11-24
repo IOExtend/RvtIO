@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Reflection;
 using IOScene;
 using RvtIO.BuiltIns;
 using RvtIO.Meshes;
@@ -76,6 +77,140 @@ public class RvtSceneReaderTests
         scratch.ArchiveParameters(first);
         Assert.Same(second.ReadParameters, first.ReadParameters);
         Assert.NotSame(first.Parameters, second.Parameters);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TypeReferenceScanSkipsOnlyTheInstanceBeingResolved(bool paged)
+    {
+        var levelA = new Element { Id = 10, TypeId = 400, CategoryId = -2000240 };
+        var levelB = new Element { Id = 11, TypeId = 400, CategoryId = -2000240 };
+        levelA.Parameters.Add(new Parameter { Id = -1007102, Value = 4d, StorageType = StorageType.Double });
+        var wall = new Element { Id = 12, TypeId = 400, CategoryId = -2000011, BoundingBox = [0, 0, 9, 1, 1, 12] };
+        var nextWall = new Element { Id = 13, TypeId = 400, CategoryId = -2000011, BoundingBox = [0, 0, 10, 1, 1, 12] };
+        var type = new Element { Id = 400 };
+        type.SetReferences(Enumerable.Range(1000, 64).Prepend(levelB.Id).Prepend(levelA.Id), editable: !paged);
+        var info = new RevitFileInfo { Elements = [levelA, levelB, wall, nextWall, type] };
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        if (paged)
+        {
+            scratch.ArchiveGeometry(type);
+            scratch.ArchiveParameters(levelA);
+        }
+        var state = new RvtIO.Internal.ParsingState
+        {
+            KeepExportProvenance = !paged,
+            ArchiveSceneParameters = paged ? scratch.ArchiveParameters : null,
+        };
+
+        typeof(ElementBuilder).GetMethod("EnrichTypeLevelBips", BindingFlags.Static | BindingFlags.NonPublic)!
+            .Invoke(null, [info, state]);
+
+        Assert.Equal(levelB.Id, FamilyLevel(levelA));
+        Assert.Equal(levelA.Id, FamilyLevel(levelB));
+        Assert.Equal(levelA.Id, FamilyLevel(wall));
+        Assert.Equal(5d, Elevation(wall));
+        Assert.Equal(6d, Elevation(nextWall));
+
+        static int FamilyLevel(Element element) =>
+            Assert.IsType<int>(Assert.Single(element.ReadParameters, parameter => parameter.Id == -1001352).Value);
+        static double Elevation(Element element) =>
+            Assert.IsType<double>(Assert.Single(element.ReadParameters, parameter => parameter.Id == -1001360).Value);
+    }
+
+    [Fact]
+    public void CurveLengthsKeepStoredAndDerivedValuesOnParameterPages()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var derived = new Element { Id = 1, Location = new LocationCurve { Length = 3 } };
+        var stored = new Element
+        {
+            Id = 2,
+            Location = new LocationCurve { Length = 3 },
+            Parameters =
+            [
+                new Parameter { Id = -1004005, StorageType = StorageType.Double, Value = 5d },
+            ],
+        };
+        scratch.ArchiveParameters(derived);
+        scratch.ArchiveParameters(stored);
+
+        ElementBuilder.AddCurveLengths(new RevitFileInfo { Elements = [derived, stored] }, scratch.ArchiveParameters);
+
+        static double Length(Element element)
+        {
+            Assert.IsNotType<List<Parameter>>(element.ReadParameters);
+            return Assert.IsType<double>(Assert.Single(element.ReadParameters, parameter => parameter.Id == -1004005).Value);
+        }
+        Assert.Equal(3d, Length(derived));
+        Assert.Equal(5d, Length(stored));
+    }
+
+    [Fact]
+    public void RoomAndSheetPassesArchiveTheirEditsBeforeTheNextPass()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var room = new Element { Id = 1, CategoryId = -2000160, Name = "Office", SerializedRoomPhaseId = 0 };
+        var sheet = new Element { Id = 2, CategoryId = -2003100, References = [3] };
+        var view = new Element { Id = 3, CategoryId = -2000279 };
+        var info = new RevitFileInfo { Elements = [room, sheet, view] };
+        var index = info.Elements.ToDictionary(element => element.Id);
+        var state = new RvtIO.Internal.ParsingState
+        {
+            ArchiveSceneParameters = scratch.ArchiveParameters,
+            SheetInfo = { [2] = ("A-01", "2026-11-24") },
+            ViewNames = { [3] = "Plan" },
+        };
+
+        ElementBuilder.ApplyRoomParams(info, scratch.ArchiveParameters, index);
+        typeof(ElementBuilder).GetMethod("ApplySheetParams", BindingFlags.Static | BindingFlags.NonPublic)!
+            .Invoke(null, [info, state, index]);
+
+        Assert.Equal("Office", Value(room, -1006900));
+        Assert.Equal(0, Value(room, -1012112));
+        Assert.Equal("A-01", Value(sheet, -1007401));
+        Assert.Equal("A-01", Value(view, -1006601));
+        Assert.Equal("Plan", Value(view, -1005112));
+
+        static object? Value(Element element, int id)
+        {
+            Assert.IsNotType<List<Parameter>>(element.ReadParameters);
+            return Assert.Single(element.ReadParameters, parameter => parameter.Id == id).Value;
+        }
+    }
+
+    [Fact]
+    public void DetailCurveFlagsAreUpdatedOnParameterPages()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var modelCurve = new Element { Id = 1, SerializedOwnerDbViewId = 0 };
+        var detailCurve = new Element
+        {
+            Id = 2,
+            SerializedOwnerDbViewId = 42,
+            Parameters = [new Parameter { Id = -1004011, StorageType = StorageType.Integer, Value = 0 }],
+        };
+        var other = new Element { Id = 3, SerializedOwnerDbViewId = 42 };
+        var data = new RevitFileInfo { Elements = [modelCurve, detailCurve, other] };
+        scratch.ArchiveParameters(detailCurve);
+
+        ElementBuilder.ApplyDetailCurveFlag(data, new Dictionary<uint, ushort> { [1] = 838, [2] = 838, [3] = 839 },
+            scratch.ArchiveParameters);
+
+        Assert.Equal(0, Flag(modelCurve));
+        Assert.Equal(1, Flag(detailCurve));
+        Assert.Empty(other.ReadParameters);
+
+        static int Flag(Element element)
+        {
+            Assert.IsNotType<List<Parameter>>(element.ReadParameters);
+            return Assert.IsType<int>(Assert.Single(element.ReadParameters, parameter => parameter.Id == -1004011).Value);
+        }
     }
 
     [Fact]

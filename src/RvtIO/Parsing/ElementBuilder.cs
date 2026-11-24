@@ -1623,11 +1623,11 @@ internal static partial class ElementBuilder
     /// Offset (SCHEDULE_BASE_LEVEL_OFFSET_PARAM and FAMILY_BASE_LEVEL_OFFSET_PARAM) is the base
     /// offset.
     /// </summary>
-    internal static void ApplyStructuralColumnParams(RevitFileInfo info)
+    internal static void ApplyStructuralColumnParams(RevitFileInfo info, Action<Element>? archiveParameters = null)
     {
         var byId = new Dictionary<int, Element>();
         foreach (var e in info.Elements) byId.TryAdd(e.Id, e);
-        foreach (var e in info.Elements)
+        foreach (var e in ElementsWithParameterEdits(info.Elements, archiveParameters))
         {
             if (e.CategoryId is not (-2001330 or -2000100) || e.NativeMasterSymbolId == null || e.FamilyLevelRefs is not { } refs) continue;
             SetParam(e, -1002065, "SCHEDULE_BASE_LEVEL_OFFSET_PARAM", StorageType.Double, refs.BaseOffset);
@@ -1645,7 +1645,7 @@ internal static partial class ElementBuilder
                 ? elevation : null;
     }
 
-    internal static void ApplyFramingSymbolLength(RevitFileInfo info)
+    internal static void ApplyFramingSymbolLength(RevitFileInfo info, Action<Element>? archiveParameters = null)
     {
         var byId = new Dictionary<int, Element>();
         foreach (var e in info.Elements) byId.TryAdd(e.Id, e);
@@ -1654,23 +1654,27 @@ internal static partial class ElementBuilder
             if (e.CategoryId != -2001320 || e.NativeMasterSymbolId == null || e.InstanceSymbolId is not int symbolId
                 || !byId.TryGetValue(symbolId, out var symbol) || symbol.SymbolFramingLength is not double length) continue;
             SetParam(e, -1001375, "INSTANCE_LENGTH_PARAM", StorageType.Double, length);
+            archiveParameters?.Invoke(e);
         }
     }
 
-    internal static void ApplyHeadHeight(RevitFileInfo info)
+    internal static void ApplyHeadHeight(RevitFileInfo info, Action<Element>? archiveParameters = null)
     {
         var byId = new Dictionary<int, Element>();
         foreach (var e in info.Elements) byId.TryAdd(e.Id, e);
         foreach (var e in info.Elements)
         {
             if (e.CategoryId is not (-2000014 or -2000023) || e.NativeMasterSymbolId is not int typeId) continue;
-            if (e.Parameters.FirstOrDefault(p => p.Id == -1001361)?.Value is not double sill) continue;
+            if (e.ReadParameters.FirstOrDefault(p => p.Id == -1001361)?.Value is not double sill) continue;
             bool estimated = e.BoundingBoxDimensionParamIds?.Contains(-1001300) == true;
-            object? height = (estimated ? null : e.Parameters.FirstOrDefault(p => p.Id == -1001300)?.Value)
+            object? height = (estimated ? null : e.ReadParameters.FirstOrDefault(p => p.Id == -1001300)?.Value)
                 ?? (byId.TryGetValue(typeId, out var type) && type.BoundingBoxDimensionParamIds?.Contains(-1001300) != true
                     ? type.Parameters.FirstOrDefault(p => p.Id == -1001300)?.Value : null);
             if (height is double h)
+            {
                 SetParam(e, -1001362, "INSTANCE_HEAD_HEIGHT_PARAM", StorageType.Double, sill + h);
+                archiveParameters?.Invoke(e);
+            }
         }
     }
 
@@ -2265,7 +2269,8 @@ internal static partial class ElementBuilder
     /// "Detail Line" (CURVE_IS_DETAIL) of a curve element is 1 exactly when the curve is owned by a
     /// view (Element.m_ownerDBViewId set).
     /// </summary>
-    internal static void ApplyDetailCurveFlag(RevitFileInfo info, IReadOnlyDictionary<uint, ushort>? classByElement)
+    internal static void ApplyDetailCurveFlag(RevitFileInfo info, IReadOnlyDictionary<uint, ushort>? classByElement,
+        Action<Element>? archiveParameters = null)
     {
         if (classByElement == null) return;
         foreach (var e in info.Elements)
@@ -2273,10 +2278,11 @@ internal static partial class ElementBuilder
             if (e.SerializedOwnerDbViewId is not int ownerView
                 || !classByElement.TryGetValue((uint)e.Id, out var cls) || cls != 838) continue; // CurveElem
             SetParam(e, -1004011, "CURVE_IS_DETAIL", StorageType.Integer, ownerView > 0 ? 1 : 0);
+            archiveParameters?.Invoke(e);
         }
     }
 
-    internal static void ApplyCrossSectionRotation(RevitFileInfo info)
+    internal static void ApplyCrossSectionRotation(RevitFileInfo info, Action<Element>? archiveParameters = null)
     {
         var byId = new Dictionary<int, Element>();
         foreach (var e in info.Elements) byId.TryAdd(e.Id, e);
@@ -2287,6 +2293,7 @@ internal static partial class ElementBuilder
                 && byId.TryGetValue(host, out var hostElement) && hostElement.Category == "OST_StructuralTruss";
             if (trussMember) e.Parameters.RemoveAll(p => p.Id == -1001586);
             else SetParam(e, -1001586, "STRUCTURAL_BEND_DIR_ANGLE", StorageType.Double, rotation);
+            archiveParameters?.Invoke(e);
         }
     }
 
@@ -2317,7 +2324,7 @@ internal static partial class ElementBuilder
     /// Connection) exist when the family's Symbolic Representation is 1 (from project settings) and
     /// carry the stored m_connectionType ids.
     /// </summary>
-    internal static void ApplyStructuralConnectionParams(RevitFileInfo info)
+    internal static void ApplyStructuralConnectionParams(RevitFileInfo info, Action<Element>? archiveParameters = null)
     {
         var byId = new Dictionary<int, Element>();
         foreach (var e in info.Elements) byId.TryAdd(e.Id, e);
@@ -2338,6 +2345,7 @@ internal static partial class ElementBuilder
                 SetParam(e, -1018804, "STRUCT_CONNECTION_COLUMN_BASE", StorageType.ElementId, connections.First);
                 SetParam(e, -1018803, "STRUCT_CONNECTION_COLUMN_TOP", StorageType.ElementId, connections.Second);
             }
+            archiveParameters?.Invoke(e);
         }
     }
 
@@ -2351,7 +2359,7 @@ internal static partial class ElementBuilder
         -1150188, // ROOM_PLENUM_LIGHTING_PARAM
     ];
 
-    internal static void ApplyRoomBuildingTypeLoads(RevitFileInfo info)
+    internal static void ApplyRoomBuildingTypeLoads(RevitFileInfo info, Action<Element>? archiveParameters = null)
     {
         var settings = info.Elements.Where(e => e.EnergyBuildingTypeId != null).ToList();
         if (settings.Count != 1) return;
@@ -2370,22 +2378,24 @@ internal static partial class ElementBuilder
             }
             if (values.TryGetValue(-1114239, out double sensible) && values.TryGetValue(-1114189, out double latent))
                 SetParam(room, -1114188, "ROOM_PEOPLE_TOTAL_HEAT_GAIN_PER_PERSON_PARAM", StorageType.Double, sensible + latent);
+            archiveParameters?.Invoke(room);
         }
     }
 
-    internal static void ApplyRoomLevelParams(RevitFileInfo info)
+    internal static void ApplyRoomLevelParams(RevitFileInfo info, Action<Element>? archiveParameters = null)
     {
         var byId = new Dictionary<int, Element>();
         foreach (var e in info.Elements) byId.TryAdd(e.Id, e);
         foreach (var e in info.Elements)
         {
             if (e.CategoryId is not (-2000160 or -2003200)) continue; // OST_Rooms, OST_Areas
-            if (e.Parameters.FirstOrDefault(p => p.Id == -1006916)?.Value is not int levelId || levelId <= 0
+            if (e.ReadParameters.FirstOrDefault(p => p.Id == -1006916)?.Value is not int levelId || levelId <= 0
                 || !byId.TryGetValue(levelId, out var level) || !level.IsNativeLevel) continue;
             if (level.Parameters.FirstOrDefault(p => p.Id == -1007101)?.Value is string levelName && levelName.Length > 0)
                 SetParam(e, -1007101, "LEVEL_NAME", StorageType.String, levelName);
             if (level.Parameters.FirstOrDefault(p => p.Id == -1006939)?.Value is double computationHeight)
                 SetParam(e, -1006928, "ROOM_COMPUTATION_HEIGHT", StorageType.Double, computationHeight);
+            archiveParameters?.Invoke(e);
         }
     }
 
@@ -2798,17 +2808,22 @@ internal static partial class ElementBuilder
     /// Synthesize room identity/relationship parameters from already decoded data. Exact ROOM_NAME
     /// is applied before this pass; geometric quantities remain omitted.
     /// </summary>
-    internal static void ApplyRoomParams(RevitFileInfo info)
+    internal static void ApplyRoomParams(RevitFileInfo info, Action<Element>? archiveParameters = null,
+        IReadOnlyDictionary<int, Element>? elementIndex = null)
     {
-        var byId = new Dictionary<int, Element>();
-        foreach (var e in info.Elements) byId[e.Id] = e;
+        if (elementIndex == null)
+        {
+            var byId = new Dictionary<int, Element>();
+            foreach (var e in info.Elements) byId[e.Id] = e;
+            elementIndex = byId;
+        }
 
         foreach (var e in info.Elements)
         {
             if (e.CategoryId != -2000160) continue; // OST_Rooms
             var existing = new HashSet<int>();
             int phase = -1;
-            foreach (var p in e.Parameters)
+            foreach (var p in e.ReadParameters)
             {
                 existing.Add(p.Id);
                 if (p.Id == -1012100 && p.Value is int ph) phase = ph; // PHASE_CREATED (if present)
@@ -2828,11 +2843,11 @@ internal static partial class ElementBuilder
             if (e.ReadReferences != null)
                 foreach (var r in e.ReadReferences)
                 {
-                    if (!byId.TryGetValue(r, out var re)) continue;
+                    if (!elementIndex.TryGetValue(r, out var re)) continue;
                     if (levelId < 0 && re.CategoryId == -2000240) levelId = r;
                     if (phase < 0 && re.CategoryId == -2000112) phase = r;
                 }
-            if (levelId <= 0 && e.Parameters.FirstOrDefault(p => p.Id is -1001952 or -1002062 && p.Value is int id && id > 0)?.Value is int paramLevelId)
+            if (levelId <= 0 && e.ReadParameters.FirstOrDefault(p => p.Id is -1001952 or -1002062 && p.Value is int id && id > 0)?.Value is int paramLevelId)
                 levelId = paramLevelId;
             if (levelId > 0)
             {
@@ -2849,6 +2864,7 @@ internal static partial class ElementBuilder
                 Add(-1012113, "ROOM_PHASE", StorageType.ElementId, roomPhase);
                 Add(-1012112, "ROOM_PHASE_ID", StorageType.ElementId, roomPhase);
             }
+            archiveParameters?.Invoke(e);
             // ROOM_VOLUME / ROOM_PERIMETER / ROOM_HEIGHT are deliberately not emitted:
             // volume/perimeter/height are computed by Revit at runtime and are not persisted
             // anywhere in the file.
@@ -2866,15 +2882,14 @@ internal static partial class ElementBuilder
     /// Sheet / placement parameters. Sheets (OST_Sheets, -2003100) with decoded 0x03E3 info get
     /// SHEET_NUMBER + SHEET_ISSUE_DATE.
     /// </summary>
-    private static void ApplySheetParams(RevitFileInfo info, ParsingState? state)
+    private static void ApplySheetParams(RevitFileInfo info, ParsingState? state, IReadOnlyDictionary<int, Element> byId)
     {
         if (state == null) return;
-        var byId = new Dictionary<int, Element>();
-        foreach (var e in info.Elements) byId[e.Id] = e;
+        var archiveParameters = state.ArchiveSceneParameters;
 
         void Add(Element e, int id, string name, object val)
         {
-            foreach (var p in e.Parameters) if (p.Id == id) return;
+            if (e.ReadParameters.Any(parameter => parameter.Id == id)) return;
             e.Parameters.Add(BipHelpers.MakeBipParam(id, name, StorageType.String, val));
         }
 
@@ -2888,6 +2903,7 @@ internal static partial class ElementBuilder
             if (!string.IsNullOrEmpty(si.IssueDate))
                 Add(e, -1006322, "SHEET_ISSUE_DATE", si.IssueDate);
             Add(e, -1006601, "VIEWER_SHEET_NUMBER", si.Number);
+            archiveParameters?.Invoke(e);
         }
 
         // 2. Views referenced directly BY a sheet are placed on it (e.g. ImageViews).
@@ -2901,7 +2917,11 @@ internal static partial class ElementBuilder
                     && re.CategoryId is int rc && ViewCategories.Contains(rc) && rc != -2003100)
                 {
                     placed.Add(r);
-                    if (num != null) Add(re, -1006601, "VIEWER_SHEET_NUMBER", num);
+                    if (num != null)
+                    {
+                        Add(re, -1006601, "VIEWER_SHEET_NUMBER", num);
+                        archiveParameters?.Invoke(re);
+                    }
                 }
         }
 
@@ -2917,9 +2937,17 @@ internal static partial class ElementBuilder
                     && re.CategoryId is int rc && ViewCategories.Contains(rc) && rc != -2003100)
                 {
                     placed.Add(r);
-                    if (num != null) Add(re, -1006601, "VIEWER_SHEET_NUMBER", num);
+                    if (num != null)
+                    {
+                        Add(re, -1006601, "VIEWER_SHEET_NUMBER", num);
+                        archiveParameters?.Invoke(re);
+                    }
                 }
-            if (num != null) Add(e, -1006601, "VIEWER_SHEET_NUMBER", num);
+            if (num != null)
+            {
+                Add(e, -1006601, "VIEWER_SHEET_NUMBER", num);
+                archiveParameters?.Invoke(e);
+            }
             placed.Add(e.Id);
         }
 
@@ -2930,6 +2958,7 @@ internal static partial class ElementBuilder
             if (c is -2003100 or -2000515 || placed.Contains(e.Id)) continue;
             Add(e, -1006601, "VIEWER_SHEET_NUMBER", "---");
             Add(e, -1006602, "VIEWER_DETAIL_NUMBER", "-");
+            archiveParameters?.Invoke(e);
         }
 
         // 5. VIEW_NAME from the name-field signature in the view's own block; viewports report the
@@ -2950,6 +2979,7 @@ internal static partial class ElementBuilder
             if (nm == null) continue;
             Add(e, -1005112, "VIEW_NAME", nm);
             if (string.IsNullOrEmpty(e.Name) || e.Name != nm) e.Name = nm;
+            archiveParameters?.Invoke(e);
         }
     }
 
@@ -4324,7 +4354,7 @@ internal static partial class ElementBuilder
     /// Emit CURVE_ELEM_LENGTH from the element's decoded location curve length (walls, model/sketch
     /// lines) when the binary body didn't already provide it.
     /// </summary>
-    internal static void AddCurveLengths(RevitFileInfo info)
+    internal static void AddCurveLengths(RevitFileInfo info, Action<Element>? archiveParameters = null)
     {
         foreach (var e in info.Elements)
         {
@@ -4338,16 +4368,12 @@ internal static partial class ElementBuilder
                 len = Math.Max(bb[3] - bb[0], Math.Max(bb[4] - bb[1], bb[5] - bb[2]));
                 approximate = true;
             }
-            if (len <= 1e-9) continue;
+            if (len <= 1e-9 || e.ReadParameters.Any(parameter => parameter.Id == -1004005)) continue;
 
-            bool has = false;
-            foreach (var p in e.Parameters) if (p.Id == -1004005) { has = true; break; }
-            if (!has)
-            {
-                var param = BipHelpers.MakeBipParam(-1004005, "CURVE_ELEM_LENGTH", StorageType.Double, len);
-                param.IsApproximate = approximate;
-                e.Parameters.Add(param);
-            }
+            var param = BipHelpers.MakeBipParam(-1004005, "CURVE_ELEM_LENGTH", StorageType.Double, len);
+            param.IsApproximate = approximate;
+            e.Parameters.Add(param);
+            archiveParameters?.Invoke(e);
         }
     }
 
@@ -6565,7 +6591,7 @@ internal static partial class ElementBuilder
         }
         AddCategoryAndFamilyParams(rvtInfo, state?.ArchiveSceneParameters);
         passCompleted?.Invoke();
-        AddCurveLengths(rvtInfo);
+        AddCurveLengths(rvtInfo, archiveParameters);
         ApplyMaterialAppearance(rvtInfo, state);
         ApplyHvacSpaceTypeParams(rvtInfo, state);
         if (state != null) ApplySerializedRoomNames(rvtInfo.Elements, state.RoomNameSource);
@@ -6575,8 +6601,8 @@ internal static partial class ElementBuilder
         if (state != null) ApplySerializedSpaceBoundaries(
             rvtInfo.Elements, state.RoomNameSource, state.SpaceBoundarySource, state.SpaceLiteralBoundaries,
             state.SeparateFacesWithDistinctOpenings);
-        ApplyRoomParams(rvtInfo);
-        ApplySheetParams(rvtInfo, state);
+        ApplyRoomParams(rvtInfo, archiveParameters, idToElem);
+        ApplySheetParams(rvtInfo, state, idToElem);
         ApplyTextNotes(rvtInfo, state);
         ApplyViewports(rvtInfo, state);
         ApplyViewPlanes(rvtInfo, state);
@@ -6597,15 +6623,15 @@ internal static partial class ElementBuilder
         ApplyHostIdParam(rvtInfo, state?.ElemClassIdx, state?.ArchiveSceneParameters);
         ApplyInstanceOriginOffsets(rvtInfo, state?.ArchiveSceneParameters);
         ApplyInstanceElevationFromLevel(rvtInfo, state?.ArchiveSceneParameters);
-        ApplyStructuralColumnParams(rvtInfo);
-        ApplyRoomLevelParams(rvtInfo);
-        ApplyFramingSymbolLength(rvtInfo);
-        if (state != null) ApplyMullionSymbolLength(rvtInfo.Elements, state.NativeParams);
-        ApplyRoomBuildingTypeLoads(rvtInfo);
-        ApplyHeadHeight(rvtInfo);
-        ApplyStructuralConnectionParams(rvtInfo);
-        ApplyCrossSectionRotation(rvtInfo);
-        ApplyDetailCurveFlag(rvtInfo, state?.ElemClassIdx);
+        ApplyStructuralColumnParams(rvtInfo, archiveParameters);
+        ApplyRoomLevelParams(rvtInfo, archiveParameters);
+        ApplyFramingSymbolLength(rvtInfo, archiveParameters);
+        if (state != null) ApplyMullionSymbolLength(rvtInfo.Elements, state.NativeParams, archiveParameters);
+        ApplyRoomBuildingTypeLoads(rvtInfo, archiveParameters);
+        ApplyHeadHeight(rvtInfo, archiveParameters);
+        ApplyStructuralConnectionParams(rvtInfo, archiveParameters);
+        ApplyCrossSectionRotation(rvtInfo, archiveParameters);
+        ApplyDetailCurveFlag(rvtInfo, state?.ElemClassIdx, archiveParameters);
         passCompleted?.Invoke();
         ApplyStoredPhases(rvtInfo, state?.ElemClassIdx,
             state?.ProjectPhaseOrderSource is { BlockCount: 1, PhaseIds: { } phaseOrder } ? phaseOrder : null,
@@ -8133,9 +8159,21 @@ internal static partial class ElementBuilder
             if (e.ReadReferences != null) foreach (var r in e.ReadReferences) yield return r;
         }
         var typePhases = new Dictionary<int, int?>();
-        var typeRefSets = new Dictionary<int, HashSet<int>>();
+        var referencedByOwnType = new HashSet<int>();
         var typeScans = new Dictionary<(int TypeId, bool IsWall), RefScan>();
+        var levelElevations = new Dictionary<int, double?>();
         var present = new HashSet<int>();
+
+        double? LevelElevation(int levelId)
+        {
+            if (levelElevations.TryGetValue(levelId, out var elevation)) return elevation;
+            // This pass derives offsets and leaves stored level elevations alone.
+            elevation = elemById.GetValueOrDefault(levelId)?.ReadParameters
+                .FirstOrDefault(parameter => parameter.Id == -1007102)?.Value as double?;
+            levelElevations.Add(levelId, elevation);
+            return elevation;
+        }
+
         void Accumulate(ref RefScan scan, int rid, int ownerId, bool isWall)
         {
             if (rid == ownerId || rid <= 0) return;
@@ -8167,13 +8205,16 @@ internal static partial class ElementBuilder
                 if (!typeScans.TryGetValue((e.TypeId, isWall), out var typeScan))
                 {
                     typeScan = new RefScan { FirstLevelId = -1 };
-                    foreach (var r in t.ReadReferences) Accumulate(ref typeScan, r, int.MinValue, isWall);
+                    foreach (var r in t.ReadReferences)
+                    {
+                        Accumulate(ref typeScan, r, int.MinValue, isWall);
+                        // Only an instance referenced by its own type needs a scan that skips itself.
+                        if (elemById.TryGetValue(r, out var instance) && instance.TypeId == e.TypeId)
+                            referencedByOwnType.Add(r);
+                    }
                     typeScans[(e.TypeId, isWall)] = typeScan;
                 }
-                // A type reference equal to the instance's own id is skipped in the full scan.
-                if (!typeRefSets.TryGetValue(e.TypeId, out var typeRefSet))
-                    typeRefSets[e.TypeId] = typeRefSet = new HashSet<int>(t.ReadReferences);
-                if (typeRefSet.Contains(e.Id)) typeScan = RescanSkipping(t.ReadReferences, e.Id, isWall);
+                if (referencedByOwnType.Contains(e.Id)) typeScan = RescanSkipping(t.ReadReferences, e.Id, isWall);
                 scan = typeScan;
             }
             if (e.ReadReferences != null) foreach (var r in e.ReadReferences) Accumulate(ref scan, r, e.Id, isWall);
@@ -8354,9 +8395,7 @@ internal static partial class ElementBuilder
             // INSTANCE_ELEVATION_PARAM: instance elevation relative to its level. bbox.MinZ -
             // level.elev. (LEVEL_ELEV is propagated through ElemBipDoubles as BIP -1007102.)
             // Override existing -1 sentinel.
-            if (GeometryBox(e) is { Length: 6 } && firstLevelId > 0
-                && elemById.TryGetValue(firstLevelId, out var lvlEl)
-                && lvlEl.Parameters.FirstOrDefault(p => p.Id == -1007102)?.Value is double lvlElev)
+            if (GeometryBox(e) is { Length: 6 } && firstLevelId > 0 && LevelElevation(firstLevelId) is double lvlElev)
             {
                 // Only when the level's elevation actually resolved - assuming 0 for an unresolved
                 // level produced garbage elevations (= raw bbox z).
@@ -8389,12 +8428,7 @@ internal static partial class ElementBuilder
             // (extracted in BlockParser) is authoritative.
             if (e.Transform?.Origin is { Length: 3 } org)
             {
-                double lvlElev2 = 0;
-                if (firstLevelId > 0 && elemById.TryGetValue(firstLevelId, out var lvlForSill))
-                {
-                    var lp2 = lvlForSill.Parameters.FirstOrDefault(p => p.Id == -1007102);
-                    if (lp2?.Value is double lv2) lvlElev2 = lv2;
-                }
+                double lvlElev2 = firstLevelId > 0 ? LevelElevation(firstLevelId) ?? 0 : 0;
                 double computedSill = Math.Round(org[2] - lvlElev2, 12);
                 var sillExisting = e.Parameters.FirstOrDefault(p => p.Id == -1001361);
                 if (sillExisting == null)
@@ -8403,37 +8437,16 @@ internal static partial class ElementBuilder
                     sillExisting.Value = computedSill; // free instance: stored value is a 0 placeholder
             }
 
-            // Wall- and instance-common ANALYTICAL_* BIPs propagated from the structural material.
-            // For walls, ANALYTICAL_THERMAL_RESISTANCE = thickness /
-            // ANALYTICAL_HEAT_TRANSFER_COEFFICIENT.
-            if (materialId.HasValue && elemById.TryGetValue(materialId.Value, out var matElem))
+            // Legacy thermal estimates for walls with a structural material.
+            if (isWall && materialId is int structuralMaterial && elemById.ContainsKey(structuralMaterial))
             {
-                // Propagate well-known material doubles to instance as ANALYTICAL_* BIPs. Most
-                // materials have these as PHY_MATERIAL_PARAM_* via reference propagation; we just
-                // copy them here under the canonical ANALYTICAL_* names.
-                double? thermalMass = null, thickness = null;
-                foreach (var mp in matElem.Parameters)
-                {
-                    if (mp.Value is not double mv) continue;
-                    if (mp.Id == -1140309) thermalMass = mv * 1e6; // unit weight scaled - approximation
-                }
-                if (isWall)
-                {
-                    var widthP = e.Parameters.FirstOrDefault(p => p.Id == -1001000);
-                    if (widthP?.Value is double w) thickness = w;
-                }
-                // Legacy thermal estimates: retain their values for compatibility, but do not label
-                // them as exact own RVT parameters.
-                if (isWall)
-                {
-                    EnsureBip(e, -1005430, "ANALYTICAL_HEAT_TRANSFER_COEFFICIENT", StorageType.Double, 3.4866666666666668, isApproximate: true);
-                    EnsureBip(e, -1005436, "ANALYTICAL_ROUGHNESS", StorageType.Integer, 3, isApproximate: true);
-                    EnsureBip(e, -1005435, "ANALYTICAL_ABSORPTANCE", StorageType.Double, 0.7, isApproximate: true);
-                    EnsureBip(e, -1005434, "ANALYTICAL_THERMAL_MASS", StorageType.Double, 453330.0, isApproximate: true);
-                    if (thickness.HasValue)
-                        EnsureBip(e, -1005431, "ANALYTICAL_THERMAL_RESISTANCE", StorageType.Double,
-                            thickness.Value / 3.4866666666666668, isApproximate: true);
-                }
+                EnsureBip(e, -1005430, "ANALYTICAL_HEAT_TRANSFER_COEFFICIENT", StorageType.Double, 3.4866666666666668, isApproximate: true);
+                EnsureBip(e, -1005436, "ANALYTICAL_ROUGHNESS", StorageType.Integer, 3, isApproximate: true);
+                EnsureBip(e, -1005435, "ANALYTICAL_ABSORPTANCE", StorageType.Double, 0.7, isApproximate: true);
+                EnsureBip(e, -1005434, "ANALYTICAL_THERMAL_MASS", StorageType.Double, 453330.0, isApproximate: true);
+                if (e.ReadParameters.FirstOrDefault(parameter => parameter.Id == -1001000)?.Value is double thickness)
+                    EnsureBip(e, -1005431, "ANALYTICAL_THERMAL_RESISTANCE", StorageType.Double,
+                        thickness / 3.4866666666666668, isApproximate: true);
             }
 
             // Each slot remains available to the later passes that fill in stored values.
