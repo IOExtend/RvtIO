@@ -1145,7 +1145,7 @@ namespace RvtIO.Model
         public Parameter? LookupParameter(string name)
         {
             foreach (var p in Parameters)
-                if (p.Definition?.Name == name) return p;
+                if (p.DefinitionName == name) return p;
             return null;
         }
 
@@ -1167,7 +1167,7 @@ namespace RvtIO.Model
         {
             var result = new List<Parameter>();
             foreach (var p in Parameters)
-                if (p.Definition?.Name == name) result.Add(p);
+                if (p.DefinitionName == name) result.Add(p);
             return result;
         }
 
@@ -1182,7 +1182,7 @@ namespace RvtIO.Model
             {
                 foreach (var p in Parameters)
                 {
-                    if (p.Definition?.Name is "ELEM_TYPE_PARAM" && p.Value is int id && id > 0)
+                    if (p.DefinitionName is "ELEM_TYPE_PARAM" && p.Value is int id && id > 0)
                         return id;
                 }
                 return -1;

@@ -13,6 +13,7 @@ namespace RvtIO.Model
         internal Parameter ShallowCopy(object? value)
         {
             var copy = (Parameter)MemberwiseClone();
+            copy._definition = Definition;
             if (!Equals(copy._value, value))
                 copy.HasResolvedZeroElementId = false;
             copy._value = value;
@@ -20,6 +21,14 @@ namespace RvtIO.Model
         }
 
         private object? _value;
+        private object? _definition;
+
+        internal sealed record BuiltInDefinition(int Id, string Name);
+
+        /// <summary>Creates an empty parameter with its own mutable definition.</summary>
+        public Parameter() => _definition = new Definition();
+
+        internal Parameter(BuiltInDefinition definition) => _definition = definition;
 
         /// <summary>GUID of shared/external parameters (parsed from ForgeId). Null for built-in params.
         /// Invariant per definition id - serialized once in the document's ParameterDefinitions table.</summary>
@@ -36,7 +45,15 @@ namespace RvtIO.Model
         /// <summary>Definition (name/BIP). Invariant per <see cref="Id"/>; hoisted into the
         /// document-level ParameterDefinitions table for JSON, so it is not serialized inline.</summary>
         [JsonIgnore]
-        public Definition Definition { get; set; } = new();
+        public Definition Definition
+        {
+            get => _definition is BuiltInDefinition template
+                ? (Definition)(_definition = new Definition { Id = template.Id, Name = template.Name, BuiltInParameter = template.Name })
+                : (Definition)_definition!;
+            set => _definition = value;
+        }
+
+        internal string? DefinitionName => _definition is BuiltInDefinition template ? template.Name : ((Definition?)_definition)?.Name;
 
         /// <summary>Storage type. Invariant per definition id - lives in ParameterDefinitions.</summary>
         [JsonIgnore]

@@ -38,7 +38,8 @@ internal static class RecordParser
         return false;
     }
 
-    public static void ParseChunk(byte[] chunk, ParsingState state, PartitionChunks? source = null, int segment = 0)
+    public static void ParseChunk(byte[] chunk, ParsingState state, PartitionChunks? source = null, int segment = 0,
+        ElementRecordFieldStore? fieldStore = null)
     {
         int pos = 0;
         bool aligned = false;
@@ -74,6 +75,7 @@ internal static class RecordParser
                     BlockParser.ExtractFamilyInstanceTransform(body, 0, body.Length, elemId, state.FamilyInstanceTransforms, state.Records);
                     if (source?.StoredBlock(segment, pos + 12, body.Length) is { } stored)
                         rec.RetainBodyInScratch(stored);
+                    if (fieldStore != null) rec.ArchiveFields(fieldStore);
                 }
                 pos = next;
                 aligned = true;
@@ -85,7 +87,8 @@ internal static class RecordParser
     }
 
     /// <summary>Parse R25 records: [elemId:4][zero:4][hash:4][bodySize:4][body][bodySize:4]</summary>
-    public static void ParseChunkR25(byte[] chunk, ParsingState state, PartitionChunks? source = null, int segment = 0)
+    public static void ParseChunkR25(byte[] chunk, ParsingState state, PartitionChunks? source = null, int segment = 0,
+        ElementRecordFieldStore? fieldStore = null)
     {
         int pos = 0;
         bool aligned = false;
@@ -114,6 +117,7 @@ internal static class RecordParser
                     state.Records[elemId] = rec;
                     if (source?.StoredBlock(segment, pos + 16, body.Length) is { } stored)
                         rec.RetainBodyInScratch(stored);
+                    if (fieldStore != null) rec.ArchiveFields(fieldStore);
                 }
                 pos = next;
                 aligned = true;
@@ -225,7 +229,7 @@ internal static class RecordParser
                     if (ElementIdEncoding.IsSupported(refId) && refId != 0xFFFFFFFF && pad == 0 && refId != rec.ElemId)
                     {
                         if (!rec.References.Contains(refId))
-                            rec.References.Add(refId);
+                            rec.EditFields().References.Add(refId);
                     }
                     off += 8;
                 }
@@ -240,7 +244,7 @@ internal static class RecordParser
             if (ElementIdEncoding.IsSupported(refId) && pad == 0 && refId != rec.ElemId && refId != 0xFFFFFFFF)
             {
                 if (!rec.References.Contains(refId))
-                    rec.References.Add(refId);
+                    rec.EditFields().References.Add(refId);
             }
         }
 
@@ -316,7 +320,7 @@ internal static class RecordParser
             for (int i = 0; i < count; i++)
             {
                 uint refId = BitConverter.ToUInt32(body, refStart + i * 4);
-                if (refId > 0 && refId < 0xFFFFFF00) rec.References.Add(refId);
+                if (refId > 0 && refId < 0xFFFFFF00) rec.EditFields().References.Add(refId);
             }
             refStart += count * 4;
             if (refStart + 4 > body.Length) break;
@@ -376,13 +380,14 @@ internal static class RecordParser
                 break;
             }
 
-            rec.EntryValues.Add(rawValue);
+            var fields = rec.EditFields();
+            fields.EntryValues.Add(rawValue);
 
             if (paramKey == -1)
             {
                 if (rawValue != -1 && (fieldType == 3 || fieldType == 4))
                 {
-                    rec.BipParams.Add(new BipEntry(0, null, fieldType, rawValue));
+                    fields.BipParams.Add(new BipEntry(0, null, fieldType, rawValue));
                 }
                 continue;
             }
@@ -399,8 +404,8 @@ internal static class RecordParser
             int? intVal = rawValue;
             // ft=205 entries mark user params as writable (non-readonly)
             if (fieldType == 205 && paramKey > 0)
-                rec.WritableParamIds.Add(paramKey);
-            rec.BipParams.Add(new BipEntry(paramKey, bipName, fieldType, intVal));
+                fields.WritableParamIds.Add(paramKey);
+            fields.BipParams.Add(new BipEntry(paramKey, bipName, fieldType, intVal));
         }
 
         // Do not infer geometry from bytes following class id 0x0548

@@ -32,6 +32,7 @@ outside the layout grammar can still require a whole partition in memory. The re
 memory.
 
 With a scratch factory, `ReadStream` can validate and decode an exactly framed partition stream larger than one array.
+The reader also stores decoded element-record references and field vectors on pages in that stream during a scratch-backed read.
 The array-size limit still applies to other streams and to compressed partitions that require the recovery scanner.
 
 `RvtReaderOptions.Progress` observes one `RvtFileReader.Read` or `ReadStream`. The reader calls `IProgress<RvtReadProgress>.Report`

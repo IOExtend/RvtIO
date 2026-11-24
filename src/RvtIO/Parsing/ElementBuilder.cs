@@ -7996,6 +7996,32 @@ internal static partial class ElementBuilder
         public int FirstLevelId;
     }
 
+    private static readonly (Parameter.BuiltInDefinition Definition, StorageType Type, object Value, bool ReadOnly)[] CommonBipDefaults =
+    [
+        CommonBipDefault(-1010103, "ALL_MODEL_DESCRIPTION", StorageType.String, ""),
+        CommonBipDefault(-1010104, "ALL_MODEL_URL", StorageType.String, ""),
+        CommonBipDefault(-1010105, "ALL_MODEL_TYPE_COMMENTS", StorageType.String, ""),
+        CommonBipDefault(-1010106, "ALL_MODEL_INSTANCE_COMMENTS", StorageType.String, ""),
+        CommonBipDefault(-1010108, "ALL_MODEL_MANUFACTURER", StorageType.String, ""),
+        CommonBipDefault(-1010109, "ALL_MODEL_MODEL", StorageType.String, ""),
+        CommonBipDefault(-1001203, "ALL_MODEL_MARK", StorageType.String, ""),
+        CommonBipDefault(-1140422, "KEYNOTE_PARAM", StorageType.String, ""),
+        CommonBipDefault(-1002500, "UNIFORMAT_CODE", StorageType.String, ""),
+        CommonBipDefault(-1002501, "UNIFORMAT_DESCRIPTION", StorageType.String, ""),
+        CommonBipDefault(-1002502, "OMNICLASS_CODE", StorageType.String, ""),
+        CommonBipDefault(-1002503, "OMNICLASS_DESCRIPTION", StorageType.String, ""),
+        CommonBipDefault(-1152384, "ALL_MODEL_TYPE_IMAGE", StorageType.ElementId, -1),
+        CommonBipDefault(-1002002, "ALL_MODEL_FAMILY_NAME", StorageType.String, ""),
+        CommonBipDefault(-1002001, "SYMBOL_NAME_PARAM", StorageType.String, ""),
+        CommonBipDefault(-1001405, "WINDOW_TYPE_ID", StorageType.String, ""),
+        CommonBipDefault(-1001206, "FIRE_RATING", StorageType.String, ""),
+        CommonBipDefault(-1005556, "STRUCTURAL_FAMILY_CODE_NAME", StorageType.String, ""),
+        CommonBipDefault(-1001205, "ALL_MODEL_COST", StorageType.Double, 0.0),
+    ];
+
+    private static (Parameter.BuiltInDefinition Definition, StorageType Type, object Value, bool ReadOnly) CommonBipDefault(
+        int id, string name, StorageType type, object value) => (new(id, name), type, value, BipHelpers.IsBipReadOnly(name));
+
     private static void EnrichTypeLevelBips(RevitFileInfo rvtInfo, ParsingState? state)
     {
         if (state == null) return;
@@ -8011,6 +8037,7 @@ internal static partial class ElementBuilder
         var typePhases = new Dictionary<int, int?>();
         var typeRefSets = new Dictionary<int, HashSet<int>>();
         var typeScans = new Dictionary<(int TypeId, bool IsWall), RefScan>();
+        var present = new HashSet<int>();
         void Accumulate(ref RefScan scan, int rid, int ownerId, bool isWall)
         {
             if (rid == ownerId || rid <= 0) return;
@@ -8311,27 +8338,22 @@ internal static partial class ElementBuilder
                 }
             }
 
-            // Common string/scalar defaults Revit always returns. Unset String params read back
-            // from Revit as an empty string "" (has_value=true), NOT a -1 sentinel.
-            EnsureBip(e, -1010103, "ALL_MODEL_DESCRIPTION", StorageType.String, "", hasNoRevitValue: true);
-            EnsureBip(e, -1010104, "ALL_MODEL_URL", StorageType.String, "", hasNoRevitValue: true);
-            EnsureBip(e, -1010105, "ALL_MODEL_TYPE_COMMENTS", StorageType.String, "", hasNoRevitValue: true);
-            EnsureBip(e, -1010106, "ALL_MODEL_INSTANCE_COMMENTS", StorageType.String, "", hasNoRevitValue: true);
-            EnsureBip(e, -1010108, "ALL_MODEL_MANUFACTURER", StorageType.String, "", hasNoRevitValue: true);
-            EnsureBip(e, -1010109, "ALL_MODEL_MODEL", StorageType.String, "", hasNoRevitValue: true);
-            EnsureBip(e, -1001203, "ALL_MODEL_MARK", StorageType.String, "", hasNoRevitValue: true);
-            EnsureBip(e, -1140422, "KEYNOTE_PARAM", StorageType.String, "", hasNoRevitValue: true);
-            EnsureBip(e, -1002500, "UNIFORMAT_CODE", StorageType.String, "", hasNoRevitValue: true);
-            EnsureBip(e, -1002501, "UNIFORMAT_DESCRIPTION", StorageType.String, "", hasNoRevitValue: true);
-            EnsureBip(e, -1002502, "OMNICLASS_CODE", StorageType.String, "", hasNoRevitValue: true);
-            EnsureBip(e, -1002503, "OMNICLASS_DESCRIPTION", StorageType.String, "", hasNoRevitValue: true);
-            EnsureBip(e, -1152384, "ALL_MODEL_TYPE_IMAGE", StorageType.ElementId, -1, hasNoRevitValue: true);
-            EnsureBip(e, -1002002, "ALL_MODEL_FAMILY_NAME", StorageType.String, "", hasNoRevitValue: true);
-            EnsureBip(e, -1002001, "SYMBOL_NAME_PARAM", StorageType.String, "", hasNoRevitValue: true);
-            EnsureBip(e, -1001405, "WINDOW_TYPE_ID", StorageType.String, "", hasNoRevitValue: true);
-            EnsureBip(e, -1001206, "FIRE_RATING", StorageType.String, "", hasNoRevitValue: true);
-            EnsureBip(e, -1005556, "STRUCTURAL_FAMILY_CODE_NAME", StorageType.String, "", hasNoRevitValue: true);
-            EnsureBip(e, -1001205, "ALL_MODEL_COST", StorageType.Double, 0.0, hasNoRevitValue: true); // (a.k.a. legacy DOOR_COST)
+            // Each slot remains available to the later passes that fill in stored values.
+            // The scene only needs its mutable definition when a pass or the adapter reads it.
+            present.Clear();
+            foreach (var parameter in e.Parameters) present.Add(parameter.Id);
+            foreach (var (definition, storage, value, isReadOnly) in CommonBipDefaults)
+            {
+                if (present.Contains(definition.Id)) continue;
+                var parameter = state.KeepExportProvenance
+                    ? BipHelpers.MakeBipParam(definition.Id, definition.Name, storage, value, hasNoRevitValue: true)
+                    : new Parameter(definition)
+                    {
+                        Id = definition.Id, StorageType = storage, Value = value,
+                        IsReadOnly = isReadOnly, HasNoRevitValue = true,
+                    };
+                e.Parameters.Add(parameter);
+            }
         }
     }
 
@@ -8817,7 +8839,7 @@ internal static partial class ElementBuilder
                 param.ForgeId = forgeId;
                 param.Guid = paramGuid;
                 param.Definition = new Definition { Id = b.BipId, Name = displayName };
-                param.IsReadOnly = !rec.WritableParamIds.Contains(b.BipId);
+                param.IsReadOnly = !rec.IsWritable(b.BipId);
                 if (state.ElemBipDoubles.TryGetValue(elemId, out var userDblVals)
                     && userDblVals.TryGetValue(b.BipId, out double userDbl))
                 { param.StorageType = StorageType.Double; param.Value = userDbl; }
@@ -8855,7 +8877,7 @@ internal static partial class ElementBuilder
                 Id = (int)paramDefId,
                 StorageType = StorageType.String,
                 Value = strVal,
-                IsReadOnly = !rec.WritableParamIds.Contains((int)paramDefId),
+                IsReadOnly = !rec.IsWritable((int)paramDefId),
                 ForgeId = forgeId,
                 Guid = paramGuid,
                 Definition = new Definition { Id = (int)paramDefId, Name = displayName },

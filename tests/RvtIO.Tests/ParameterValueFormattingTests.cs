@@ -6,6 +6,25 @@ namespace RvtIO.Tests;
 public class ParameterValueFormattingTests
 {
     [Fact]
+    public void DeferredBuiltInDefinitionRetainsIndependentMutabilityAndCloneSemantics()
+    {
+        var definition = new Parameter.BuiltInDefinition(-1001203, "ALL_MODEL_MARK");
+        var first = new Parameter(definition) { Id = definition.Id, StorageType = StorageType.String, Value = "", HasNoRevitValue = true };
+        var second = new Parameter(definition) { Id = definition.Id, StorageType = StorageType.String, Value = "", HasNoRevitValue = true };
+        var clone = first.ShallowCopy("A-01");
+
+        Assert.Same(first.Definition, clone.Definition);
+        Assert.False(first.HasRevitValue);
+        second.Value = "";
+        Assert.True(second.HasRevitValue);
+        first.Definition.Name = "Marker";
+        Assert.Equal("Marker", clone.Definition.Name);
+        Assert.Equal("ALL_MODEL_MARK", second.Definition.Name);
+        Assert.Equal("ALL_MODEL_MARK", second.Definition.BuiltInParameter);
+        Assert.Equal(definition.Id, second.Definition.Id);
+    }
+
+    [Fact]
     public void Parameter_AsValueString_CaseInsensitiveAndBipFallback()
     {
         var paramLength = new Parameter

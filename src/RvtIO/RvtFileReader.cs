@@ -1849,6 +1849,7 @@ public partial class RvtFileReader
     {
         var records = new PartitionChunks(chunks.Store);
         var other = new PartitionChunks(chunks.Store);
+        var fields = chunks.Store is { } backing ? new ElementRecordFieldStore(backing) : null;
         for (int i = 0; i < chunks.Count; i++)
         {
             var chunk = chunks[i];
@@ -1861,9 +1862,9 @@ public partial class RvtFileReader
             {
                 records.Add(chunks.Reference(i));
                 if (isR25)
-                    RecordParser.ParseChunkR25(chunk, state, chunks, i);
+                    RecordParser.ParseChunkR25(chunk, state, chunks, i, fields);
                 else
-                    RecordParser.ParseChunk(chunk, state, chunks, i);
+                    RecordParser.ParseChunk(chunk, state, chunks, i, fields);
             }
             else
             {
@@ -1871,6 +1872,7 @@ public partial class RvtFileReader
             }
         }
 
+        fields?.Seal();
         state.RecordChunks = records;
         state.NonRecordChunks = other;
         var extraCount = state.Records.Keys.Count(k => !state.ElemTable.ContainsKey(k));
@@ -3664,8 +3666,8 @@ public partial class RvtFileReader
 
                 // 2. Resolve unit category from spec type or BIP name
                 string? unitCat = specType != null ? GetUnitCategory(specType) : null;
-                if (unitCat == null && param.Definition?.Name != null)
-                    unitCat = GetUnitCategoryFromBipName(param.Definition.Name);
+                if (unitCat == null && param.DefinitionName is { } name)
+                    unitCat = GetUnitCategoryFromBipName(name);
 
                 if (unitCat == null) continue;
 

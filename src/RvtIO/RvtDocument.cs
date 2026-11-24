@@ -99,7 +99,7 @@ public class RvtDocument
         {
             foreach (var p in e.Parameters)
             {
-                if (p.Definition?.Name is "ELEM_TYPE_PARAM" or "ELEM_FAMILY_AND_TYPE_PARAM"
+                if (p.DefinitionName is "ELEM_TYPE_PARAM" or "ELEM_FAMILY_AND_TYPE_PARAM"
                     && p.Value is int typeId && typeId > 0)
                 {
                     _typeElementIds.Add(typeId);

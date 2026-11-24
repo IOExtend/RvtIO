@@ -128,7 +128,7 @@ public class BasicWallTypeSerializationTests
         var (element, state) = BodyFallback(1);
         var p = element.Parameters[0];
         var native = state.NativeParams[100];
-        var body = state.Records[100].BipParams;
+        var body = state.Records[100].EditFields().BipParams;
         switch (mutation)
         {
             case "duplicate_root": state.BasicWallTypeFunctions[100] = (2, 1); break;
