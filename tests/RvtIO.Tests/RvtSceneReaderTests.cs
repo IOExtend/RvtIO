@@ -294,6 +294,39 @@ public class RvtSceneReaderTests
     }
 
     [Fact]
+    public void FirstModelResolutionPassKeepsTypesAndElevationsOnParameterPages()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var type = new Element { Id = 5001, Name = "Type", CategoryId = -2000011, Category = "OST_Walls" };
+        var instance = new Element
+        {
+            Id = 5002, CategoryId = -2000011, Category = "OST_Walls", BoundingBox = [0, 0, 12, 1, 1, 13],
+            Parameters =
+            [
+                new() { Id = -1002050, StorageType = StorageType.ElementId, Value = type.Id },
+                new() { Id = -1007102, StorageType = StorageType.Double, Value = 10.0 },
+            ],
+        };
+        scratch.ArchiveParameters(instance);
+        var info = new RevitFileInfo { Elements = [type, instance] };
+        int passes = 0;
+
+        ElementBuilder.PostProcess(info, new RvtIO.Internal.ParsingState
+        {
+            ArchiveSceneParameters = scratch.ArchiveParameters,
+        }, passCompleted: () =>
+        {
+            if (++passes != 1) return;
+            Assert.Equal(type.Id, instance.TypeId);
+            Assert.IsNotType<List<Parameter>>(instance.ReadParameters);
+            Assert.Equal(2.0, instance.ReadParameters.First(p => p.Id == -1001360).Value);
+        });
+
+        Assert.True(passes > 0);
+    }
+
+    [Fact]
     public void WorksharingOwnersUseTheEmittedCategoryWithoutRetainingParameterLists()
     {
         using var stream = new MemoryStream();

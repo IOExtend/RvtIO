@@ -1344,14 +1344,12 @@ internal static partial class ElementBuilder
     /// Resolve ELEM_TYPE_PARAM / ELEM_FAMILY_AND_TYPE_PARAM / SYMBOL_ID_PARAM to the real type
     /// element id for instances whose binary body didn't carry it.
     /// </summary>
-    private static void ResolveTypeParams(RevitFileInfo info)
+    private static void ResolveTypeParams(RevitFileInfo info, IReadOnlyDictionary<int, Element> byId,
+        Action<Element>? archiveParameters)
     {
-        var byId = new Dictionary<int, Element>();
-        foreach (var e in info.Elements) byId[e.Id] = e;
-
         // Weak (automatic) dimensions reference their dim style FIRST - a small built-in element id
         // (e.g. 277), below the >1000 cutoff of the voting heuristic underneath.
-        foreach (var e in info.Elements)
+        foreach (var e in ElementsWithParameterEdits(info.Elements, archiveParameters))
         {
             if (e.CategoryId != -2000261 || e.ReadReferences is not { Count: > 0 }) continue;
             int t = e.ReadReferences[0];
@@ -1389,7 +1387,7 @@ internal static partial class ElementBuilder
             }
         }
 
-        foreach (var e in info.Elements)
+        foreach (var e in ElementsWithParameterEdits(info.Elements, archiveParameters))
         {
             if (e.ReadReferences == null || e.ReadReferences.Count == 0 || TypeParamOf(e) > 0) continue;
 
@@ -5805,6 +5803,7 @@ internal static partial class ElementBuilder
     public static void PostProcess(RevitFileInfo rvtInfo, ParsingState? state = null, TextWriter? diag = null,
         Action? passCompleted = null)
     {
+        var archiveParameters = state?.ArchiveSceneParameters;
         ApplyGridDatums(rvtInfo, state);
         rvtInfo.GraphicsStyles = state?.GraphicsStyles
             .Where(pair => pair.Value is { BlockCount: 1, MaterialId: not null })
@@ -5961,7 +5960,7 @@ internal static partial class ElementBuilder
                 }
 
                 // Width from WALL_ATTR_WIDTH_PARAM (in feet -> mm)
-                var widthParam = e.Parameters.FirstOrDefault(p => p.Id == -1001000);
+                var widthParam = e.ReadParameters.FirstOrDefault(p => p.Id == -1001000);
                 double widthFt = widthParam?.Value is double dw ? dw : 0;
                 int widthMm = (int)Math.Round(widthFt * 304.8);
 
@@ -5974,7 +5973,7 @@ internal static partial class ElementBuilder
         }
 
         // Attach CompoundStructure layers to wall type elements
-        if (state?.CompoundLayers.Count > 0)
+        if (state is { KeepExportProvenance: true } && state.CompoundLayers.Count > 0)
         {
             foreach (var (eid, layers) in state.CompoundLayers)
             {
@@ -6000,7 +5999,7 @@ internal static partial class ElementBuilder
             {
                 if (e.Layers != null && e.Layers.Count > 0) continue;
                 if (e.Category != null && !layerHostCats.Contains(e.Category)) continue;
-                var tp = e.Parameters.FirstOrDefault(p => p.Id == -1002050);
+                var tp = e.ReadParameters.FirstOrDefault(p => p.Id == -1002050);
                 if (tp?.Value is int typeId && layersByElemId.TryGetValue(typeId, out var typeLayers))
                 { e.Layers = typeLayers; continue; }
                 // An element whose own record names its type takes the layers of that type only: its References also
@@ -6039,7 +6038,7 @@ internal static partial class ElementBuilder
             int? resolved = null;
             foreach (int paramId in typeParameterIds)
             {
-                var p = e.Parameters.FirstOrDefault(pp => pp.Id == paramId);
+                var p = e.ReadParameters.FirstOrDefault(pp => pp.Id == paramId);
                 if (p?.Value is int v && v > 0 && idToElem.TryGetValue(v, out var paramTarget)
                     && (paramTarget.CategoryId == e.CategoryId || !e.CategoryId.HasValue))
                 { resolved = v; break; }
@@ -6064,15 +6063,15 @@ internal static partial class ElementBuilder
         }
         // Also overwrite ELEM_TYPE_PARAM / SYMBOL_ID_PARAM / ELEM_FAMILY_AND_TYPE_PARAM values when
         // the resolved TypeId differs from the stored garbage (e.g. 528 Tf-class index)
-        foreach (var e in rvtInfo.Elements)
+        foreach (var e in ElementsWithParameterEdits(rvtInfo.Elements, archiveParameters))
         {
             if (e.TypeId <= 0 || !idToElem.ContainsKey(e.TypeId)) continue;
             foreach (int paramId in typeParameterIds)
             {
-                var p = e.Parameters.FirstOrDefault(pp => pp.Id == paramId);
+                var p = e.ReadParameters.FirstOrDefault(pp => pp.Id == paramId);
                 if (p == null) continue;
                 if (p.Value is int v && v > 0 && idToElem.ContainsKey(v)) continue; // already valid
-                p.Value = e.TypeId;
+                e.Parameters.First(pp => pp.Id == paramId).Value = e.TypeId;
             }
         }
         // Rebuild idToName after TypeId fix
@@ -6096,7 +6095,7 @@ internal static partial class ElementBuilder
             }
             else if (string.IsNullOrEmpty(e.Name))
             {
-                var typeParam = e.Parameters.FirstOrDefault(p => p.Id == -1002050);
+                var typeParam = e.ReadParameters.FirstOrDefault(p => p.Id == -1002050);
                 if (typeParam?.Value is int tpId && idToName.TryGetValue(tpId, out var tpName))
                     e.Name = tpName;
             }
@@ -6124,17 +6123,17 @@ internal static partial class ElementBuilder
 
         // Fix computed WALL_USER_HEIGHT_PARAM: stored value in 0xFFFF blocks is the type default
         // which often equals wall width.
-        foreach (var e in rvtInfo.Elements)
+        foreach (var e in ElementsWithParameterEdits(rvtInfo.Elements, archiveParameters))
         {
             if (e.Category != "OST_Walls" || GeometryBox(e) is not { Length: 6 }) continue;
-            var hp = e.Parameters.FirstOrDefault(p => p.Id == -1001105); // WALL_USER_HEIGHT_PARAM
-            var wp = e.Parameters.FirstOrDefault(p => p.Id == -1001000); // WALL_ATTR_WIDTH_PARAM
+            var hp = e.ReadParameters.FirstOrDefault(p => p.Id == -1001105); // WALL_USER_HEIGHT_PARAM
+            var wp = e.ReadParameters.FirstOrDefault(p => p.Id == -1001000); // WALL_ATTR_WIDTH_PARAM
             if (hp?.Value is double storedH && wp?.Value is double storedW && storedW > 0)
             {
                 double dz = GeometryBox(e)![5] - GeometryBox(e)![2];
                 // Only fix if stored height equals stored width (type default leak) AND dz differs
                 if (Math.Abs(storedH - storedW) < 0.001 && dz > 0.01 && Math.Abs(dz - storedH) > 0.01)
-                    hp.Value = dz;
+                    e.Parameters.First(p => p.Id == -1001105).Value = dz;
             }
         }
 
@@ -6442,6 +6441,7 @@ internal static partial class ElementBuilder
                         IsReadOnly = BipHelpers.IsBipReadOnly(bipName),
                         Definition = new Definition { Id = BIP_LEVEL_ELEV, BuiltInParameter = bipName, Name = bipName }
                     });
+                    archiveParameters?.Invoke(levelElem);
                 }
             }
         }
@@ -6454,19 +6454,19 @@ internal static partial class ElementBuilder
             const int BIP_INST_ELEV = -1001360;
             BipNames.Lookup.TryGetValue(BIP_INST_ELEV, out string? instElevName);
 
-            foreach (var e in rvtInfo.Elements)
+            foreach (var e in ElementsWithParameterEdits(rvtInfo.Elements, archiveParameters))
             {
-                var existing = e.Parameters.FirstOrDefault(p => p.Id == BIP_INST_ELEV);
+                var existing = e.ReadParameters.FirstOrDefault(p => p.Id == BIP_INST_ELEV);
                 if (existing?.Value is double) continue; // already a real double value
 
-                var le = e.Parameters.FirstOrDefault(p => p.Id == BIP_LEVEL_ELEV2);
+                var le = e.ReadParameters.FirstOrDefault(p => p.Id == BIP_LEVEL_ELEV2);
                 if (le?.Value is not double levelElev) continue;
                 if (GeometryBox(e) is not double[] bb || bb.Length < 6) continue;
 
                 double instElev = bb[2] - levelElev; // MinZ - level elevation
 
                 if (existing != null)
-                    existing.Value = instElev; // update the null entry
+                    e.Parameters.First(p => p.Id == BIP_INST_ELEV).Value = instElev; // update the null entry
                 else
                     e.Parameters.Add(new Parameter
                     {
@@ -6497,7 +6497,7 @@ internal static partial class ElementBuilder
             }
         }
 
-        ResolveTypeParams(rvtInfo);
+        ResolveTypeParams(rvtInfo, idToElem, archiveParameters);
         ApplyDetailLines(rvtInfo, state);
         ApplyBlockSignatureCategories(rvtInfo, state);
         passCompleted?.Invoke();
@@ -8558,9 +8558,9 @@ internal static partial class ElementBuilder
             double wallLength = wallAlongX ? dx : dy;
             double wallWidth = wallAlongX ? dy : dx;
 
-            foreach (var p in elem.Parameters)
+            foreach (var p in elem.ReadParameters)
             {
-                if (p.Definition?.Name == "WALL_ATTR_WIDTH_PARAM"
+                if (p.DefinitionName == "WALL_ATTR_WIDTH_PARAM"
                     && p.StorageType == StorageType.Double && p.Value is double wFt)
                 {
                     if (wFt > 0.001 && wFt < wallLength)
