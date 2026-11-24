@@ -202,6 +202,7 @@ public partial class RvtFileReader
             ElemWorksets = elemWorksets,
             AllKnownIds = new HashSet<uint>(elemTable.Keys),
             Chunks = chunks,
+            NativeParams = new(chunks.Store),
             OwnPartitionWallParts = ownPartitionWallParts,
             TfClassSchemas = tfSchemas ?? new(),
             LocalUsername = fileMetadata.GetValueOrDefault("Username"),
@@ -2445,11 +2446,13 @@ public partial class RvtFileReader
     /// <summary>The drive curve of a family instance in a file with its own schema: the field walk of the root block names no pointer
     /// target, so its GLine (CurveDriver.m_pCrv: origin, direction, end parameters) is read by the Revit 2022 tail walk over the
     /// rewritten block (the rewrite keeps the bytes of that object). Only the keys the field walk cannot give are added.</summary>
-    internal static void AddDriveCurveFromRewrittenBlock(TfBlockDeserializer.NativeParams target, TfBlockDeserializer.NativeParams? tail)
+    internal static bool AddDriveCurveFromRewrittenBlock(TfBlockDeserializer.NativeParams target, TfBlockDeserializer.NativeParams? tail)
     {
-        if (tail == null) return;
+        if (tail == null) return false;
+        bool changed = false;
         foreach (var (key, value) in tail.DoubleFields)
-            if (key.StartsWith("87:m_pCrv.", StringComparison.Ordinal)) target.DoubleFields.TryAdd(key, value);
+            if (key.StartsWith("87:m_pCrv.", StringComparison.Ordinal)) changed |= target.DoubleFields.TryAdd(key, value);
+        return changed;
     }
 
     /// <summary>Hands <see cref="StairComponentSource.Record"/> the channel-102 records of the project's own block, one root object per
@@ -2606,8 +2609,9 @@ public partial class RvtFileReader
             if (typeId <= 0
                 || state.WalkedElementClassRoots.GetValueOrDefault((uint)typeId) is not { BlockCount: 1, ClassId: 1020 })
                 continue;
-            if (native == null) state.NativeParams.Add(owner, native = new());
+            native ??= new();
             native.Fields[typeField] = typeId;
+            state.NativeParams[owner] = native;
         }
     }
 
@@ -2732,8 +2736,10 @@ public partial class RvtFileReader
                         gridDatum.Origin, gridDatum.YVector);
                 }
             }
-            else if (state.R22View && rootClassBlock && TfBlockDeserializer.IsSubclassOf(cls, 1794) && state.NativeParams.TryGetValue(eid, out var fieldNp))
-                AddDriveCurveFromRewrittenBlock(fieldNp, TfBlockDeserializer.ExtractParams(seg, bs, (uint)ds, cls));
+            else if (state.R22View && rootClassBlock && TfBlockDeserializer.IsSubclassOf(cls, 1794)
+                && state.NativeParams.TryGetValue(eid, out var fieldNp)
+                && AddDriveCurveFromRewrittenBlock(fieldNp, TfBlockDeserializer.ExtractParams(seg, bs, (uint)ds, cls)))
+                state.NativeParams[eid] = fieldNp;
             if (cls == 480) // BasePoint: internal + shared positions
             {
                 var coordinates = TfBlockDeserializer.ExtractBasePointCoordinates(

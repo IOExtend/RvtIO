@@ -415,7 +415,7 @@ internal class ParsingState
 
     /// <summary>Native parameter stores per element, deserialized from the Element base
     /// class m_pParamValueSet* containers (schema-driven).</summary>
-    public Dictionary<uint, TfBlockDeserializer.NativeParams> NativeParams { get; set; } = new();
+    public NativeParameterStore NativeParams { get; init; } = new(null);
     /// <summary>Elements whose NativeParams came from a block of their own ElemTable class (the element root).</summary>
     public HashSet<uint> NativeParamsFromRootClass { get; } = new();
 
