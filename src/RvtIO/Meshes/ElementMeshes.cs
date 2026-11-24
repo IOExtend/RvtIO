@@ -45,7 +45,8 @@ public static class ElementMeshes
         ExtractCore(document, options, null);
 
     internal static MeshSet ExtractCore(RvtDocument document, ElementMeshOptions? options,
-        Func<IReadOnlyList<TriangleMesh>, IReadOnlyList<TriangleMesh>>? store)
+        Func<IReadOnlyList<TriangleMesh>, IReadOnlyList<TriangleMesh>>? store,
+        IProgress<(int Completed, int Total)>? progress = null)
     {
         ArgumentNullException.ThrowIfNull(document);
         options ??= new ElementMeshOptions();
@@ -115,8 +116,15 @@ public static class ElementMeshes
         }
 
         var elements = new List<ElementMesh>();
+        var clock = progress == null ? null : System.Diagnostics.Stopwatch.StartNew();
+        progress?.Report((0, drawable.Count));
         foreach (var (element, body) in drawable)
         {
+            if (clock?.ElapsedMilliseconds >= 500 && elements.Count > 0)
+            {
+                progress!.Report((elements.Count, drawable.Count));
+                clock.Restart();
+            }
             if (options.IncludeModelLinesAndReinforcement && IsStairContainer(element, body, drawableIds))
             {
                 elements.Add(new ElementMesh
@@ -175,6 +183,7 @@ public static class ElementMeshes
                 UntriangulatedFaces = failed,
             });
         }
+        if (drawable.Count > 0) progress?.Report((drawable.Count, drawable.Count));
         if (options.IncludeDatumGeometry)
         {
             var existing = elements.Select(element => element.ElementId).ToHashSet();

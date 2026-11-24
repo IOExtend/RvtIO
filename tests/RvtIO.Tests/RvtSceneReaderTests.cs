@@ -858,7 +858,7 @@ public class RvtSceneReaderTests
     public void PathReaderForwardsProgressAndCountsWithoutChangingScene()
     {
         byte[] extraPartition = [1, 2, 3];
-        var progress = new ReadProgressLog();
+        var progress = new ProgressLog<RvtReadProgress>();
         var baseline = ReadSyntheticFile(extraPartition, new RvtSceneOptions { ModelKey = "model" });
         var result = ReadSyntheticFile(extraPartition, new RvtSceneOptions { ModelKey = "model", ReadProgress = progress });
 
@@ -904,10 +904,10 @@ public class RvtSceneReaderTests
         try
         {
             CliExitCodeTests.WriteSyntheticRvt(path, [1, 2, 3]);
-            var fromPath = new ReadProgressLog();
+            var fromPath = new ProgressLog<RvtReadProgress>();
             RvtSceneReader.Read(path, new RvtSceneOptions { ModelKey = "model", ReadProgress = fromPath });
 
-            var fromStream = new ReadProgressLog();
+            var fromStream = new ProgressLog<RvtReadProgress>();
             using var stream = File.OpenRead(path);
             RvtSceneReader.ReadStream(stream, new RvtSceneOptions { ModelKey = "model", ReadProgress = fromStream });
 
@@ -944,9 +944,11 @@ public class RvtSceneReaderTests
         var baseline = RvtSceneReader.Read(path);
         string temporary = Path.Combine(Path.GetTempPath(), "rvtio-scratch-" + Guid.NewGuid().ToString("N"));
         using var input = File.OpenRead(path);
+        var meshProgress = new ProgressLog<(int Completed, int Total)>();
         var options = new RvtSceneOptions
         {
             ModelKey = Path.GetFileName(path),
+            MeshProgress = meshProgress,
             CreatePartitionScratch = () => new FileStream(temporary, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None,
                 bufferSize: 64 * 1024, FileOptions.DeleteOnClose),
         };
@@ -961,6 +963,11 @@ public class RvtSceneReaderTests
         Assert.NotEmpty(baseline.Document.Instances);
         Assert.Equal(baseline.Diagnostics, result.Diagnostics);
         Assert.Equal(SceneJson.Write(baseline.Document), SceneJson.Write(result.Document));
+        int total = meshProgress.Updates[0].Total;
+        Assert.True(total > 0);
+        Assert.Equal((0, total), meshProgress.Updates[0]);
+        Assert.Equal((total, total), meshProgress.Updates[^1]);
+        Assert.All(meshProgress.Updates, update => Assert.Equal(total, update.Total));
         Assert.False(File.Exists(temporary));
         Assert.True(input.CanRead);
     }
@@ -977,10 +984,23 @@ public class RvtSceneReaderTests
         Assert.Equal(1, stream.ReadByte());
     }
 
-    private sealed class ReadProgressLog : IProgress<RvtReadProgress>
+    [Fact]
+    public void EmptySceneReportsZeroDrawableElements()
     {
-        public List<RvtReadProgress> Updates { get; } = [];
-        public void Report(RvtReadProgress value) => Updates.Add(value);
+        var meshProgress = new ProgressLog<(int Completed, int Total)>();
+        RvtSceneReader.Read(RvtDocument.FromInfo(new RevitFileInfo()), new RvtSceneOptions
+        {
+            ModelKey = "empty",
+            MeshProgress = meshProgress,
+        });
+
+        Assert.Equal((0, 0), Assert.Single(meshProgress.Updates));
+    }
+
+    private sealed class ProgressLog<T> : IProgress<T>
+    {
+        public List<T> Updates { get; } = [];
+        public void Report(T value) => Updates.Add(value);
     }
 
     [Fact]

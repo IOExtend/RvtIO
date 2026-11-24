@@ -52,7 +52,8 @@ public static class RvtSceneReader
         if (key.Length == 0) throw new ArgumentException("The model key is empty.", nameof(options));
         var readDiagnostics = new RvtReadDiagnostics();
         var document = RvtDocument.Open(path, ReaderOptions(readDiagnostics, options));
-        return Map(document, ElementMeshes.Extract(document, MeshOptions(options)), key, ReadDiagnostics(readDiagnostics));
+        var meshes = ElementMeshes.ExtractCore(document, MeshOptions(options), null, options?.MeshProgress);
+        return Map(document, meshes, key, ReadDiagnostics(readDiagnostics));
     }
 
     /// <summary>Reads a scene and its diagnostics from a readable, seekable RVT stream with the same
@@ -109,7 +110,7 @@ public static class RvtSceneReader
             readerOptions.ArchiveSceneParameters = scratch.ArchiveParameters;
         }
         var document = RvtDocument.OpenStream(stream, readerOptions);
-        var meshes = ElementMeshes.ExtractCore(document, MeshOptions(options), scratch == null ? null : scratch.Store);
+        var meshes = ElementMeshes.ExtractCore(document, MeshOptions(options), scratch == null ? null : scratch.Store, options.MeshProgress);
         return Map(document, meshes, key, ReadDiagnostics(readDiagnostics), scratch);
     }
 
@@ -161,7 +162,8 @@ public static class RvtSceneReader
     public static RvtSceneResult Read(RvtDocument document, RvtSceneOptions? options)
     {
         ArgumentNullException.ThrowIfNull(document);
-        return Map(document, ElementMeshes.Extract(document, MeshOptions(options)), RequiredKey(options));
+        var meshes = ElementMeshes.ExtractCore(document, MeshOptions(options), null, options?.MeshProgress);
+        return Map(document, meshes, RequiredKey(options));
     }
 
     /// <summary>Turns an opened document into a scene with meshes the caller extracted from it, for example with

@@ -40,7 +40,9 @@ closed one is an `ArgumentException`.
 Set `RvtSceneOptions.ReadProgress` to observe the reader phases and work counts during `Read(path)`; it is the
 `RvtReaderOptions.Progress` of that read (see [the public API](public-api.md)), including its guarantees on order and thread.
 Pass an `IProgress<RvtReadProgress>` of your own when order matters, as `Progress<T>` can deliver updates late and out of order.
-The final reader update, `complete`, marks the end of the file read. Mesh extraction and scene mapping follow it and report nothing.
+The final reader update, `complete`, marks the end of the file read. Set `RvtSceneOptions.MeshProgress` to receive completed
+and total drawable element counts during mesh extraction. Updates are reported on the calling thread. An empty drawable set
+reports `(0, 0)` once. Scene mapping follows mesh extraction.
 
 `RvtSceneOptions.CreatePartitionScratch` passes a scratch stream factory to the file reader for path and stream reads. Use it to
 read inflated partitions through private temporary storage as described in the [public API](public-api.md).

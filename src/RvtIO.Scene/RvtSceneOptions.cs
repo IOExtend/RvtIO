@@ -13,6 +13,10 @@ public sealed class RvtSceneOptions
     /// order and thread; the last update, <c>complete</c>, ends the file read, and the meshes and the scene are built after it.</summary>
     public IProgress<RvtReadProgress>? ReadProgress { get; set; }
 
+    /// <summary>Receives completed and total drawable element counts during mesh extraction, on the calling thread.
+    /// Starts at zero and ends when the drawable elements are processed, before mapping them into the scene.</summary>
+    public IProgress<(int Completed, int Total)>? MeshProgress { get; set; }
+
     /// <summary>Opens scratch storage for inflated partitions when the scene reader opens a file.
     /// The factory follows the contract of <see cref="RvtReaderOptions.CreatePartitionScratch"/>.</summary>
     public Func<Stream>? CreatePartitionScratch { get; set; }
