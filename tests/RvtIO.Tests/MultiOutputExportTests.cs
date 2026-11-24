@@ -214,7 +214,7 @@ public class MultiOutputExportTests
     }
 
     [Fact]
-    public void CopiedElementCanReplaceDrawingAndStairFactsIndependently()
+    public void CopiedElementCanReplaceDrawingStairAndWallFactsIndependently()
     {
         var original = new RvtIO.Model.Element
         {
@@ -223,24 +223,37 @@ public class MultiOutputExportTests
             SerializedStairTypeId = 42,
             SerializedStairTypeLinkIsResolved = true,
             SerializedStairCopyLevelIds = [10, 20],
+            OwnWallCutoutInstanceIds = [30, 40],
+            SerializedWallFlipped = false,
+            IsSerializedStackedWallType = true,
         };
         var copy = original.ShallowCopy();
 
         Assert.Same(original.ViewOrigin, copy.ViewOrigin);
         Assert.Same(original.SerializedStairCopyLevelIds, copy.SerializedStairCopyLevelIds);
+        Assert.Same(original.OwnWallCutoutInstanceIds, copy.OwnWallCutoutInstanceIds);
         copy.Text = null;
         copy.ViewOrigin = null;
         copy.SerializedStairTypeId = 17;
         copy.SerializedStairTypeLinkIsResolved = false;
+        copy.OwnWallCutoutInstanceIds = null;
+        copy.SerializedWallFlipped = true;
+        copy.IsSerializedStackedWallType = false;
 
         Assert.Equal("Original", original.Text);
         Assert.Equal([1d, 2d, 3d], original.ViewOrigin);
         Assert.Equal(42, original.SerializedStairTypeId);
         Assert.True(original.SerializedStairTypeLinkIsResolved);
+        Assert.Equal([30, 40], original.OwnWallCutoutInstanceIds);
+        Assert.False(original.SerializedWallFlipped);
+        Assert.True(original.IsSerializedStackedWallType);
         Assert.Null(copy.Text);
         Assert.Null(copy.ViewOrigin);
         Assert.Equal(17, copy.SerializedStairTypeId);
         Assert.False(copy.SerializedStairTypeLinkIsResolved);
+        Assert.Null(copy.OwnWallCutoutInstanceIds);
+        Assert.True(copy.SerializedWallFlipped);
+        Assert.False(copy.IsSerializedStackedWallType);
     }
 
     [Fact]

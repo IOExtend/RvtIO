@@ -74,12 +74,41 @@ namespace RvtIO.Model
             internal StairAndRailingData ShallowCopy() => (StairAndRailingData)MemberwiseClone();
         }
 
+        private WallData? _wall;
+
+        private sealed class WallData
+        {
+            internal IReadOnlyList<int>? OwnWallCutoutInstanceIds;
+            internal IReadOnlyList<Parsing.TfBlockDeserializer.OwnWallCutoutStep>? OwnWallCutoutSteps;
+            internal double[][]? OwnWallAxisLine;
+            internal double[][]? OwnWallTrimmedAxis;
+            internal int? OwnWallCrossSection;
+            internal Parsing.TfBlockDeserializer.OwnWallHelperInput? OwnWallHelper;
+            internal double? ValidatedWallTypeThicknessFeet;
+            internal GeometryData? OwnPrimaryPlanarBody;
+            internal double[]? OwnWallSide0NormalCurrent;
+            internal GeometryData? OwnCurrentCutPairBodyCurrent;
+            internal bool? SerializedWallFlipped;
+            internal bool? SerializedWallJoinedToTop;
+            internal IReadOnlyList<Parsing.TfBlockDeserializer.WallEndJoin>? SerializedWallEndJoins;
+            internal int? SerializedCurtainWallFunction;
+            internal string? SerializedCurtainWallTypeName;
+            internal string? SerializedBasicWallTypeName;
+            internal bool IsSerializedStackedWallType;
+            internal int? SerializedBasicWallTypeFunction;
+            internal int? SerializedCurtainHostId;
+            internal int[]? SerializedCurtainPanelOrder;
+
+            internal WallData ShallowCopy() => (WallData)MemberwiseClone();
+        }
+
         /// <summary>A copy that shares member values with this element; the caller replaces what it changes.</summary>
         internal Element ShallowCopy()
         {
             var copy = (Element)MemberwiseClone();
             copy._drawing = _drawing?.ShallowCopy();
             copy._stairAndRailing = _stairAndRailing?.ShallowCopy();
+            copy._wall = _wall?.ShallowCopy();
             return copy;
         }
 
@@ -533,25 +562,67 @@ namespace RvtIO.Model
 
         /// <summary>Own phase-4 cutout instance IDs in source order, not inferred inverse hosts.</summary>
         [JsonIgnore]
-        internal IReadOnlyList<int>? OwnWallCutoutInstanceIds { get; set; }
+        internal IReadOnlyList<int>? OwnWallCutoutInstanceIds
+        {
+            get => _wall?.OwnWallCutoutInstanceIds;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).OwnWallCutoutInstanceIds = value;
+            }
+        }
 
         [JsonIgnore]
-        internal IReadOnlyList<Parsing.TfBlockDeserializer.OwnWallCutoutStep>? OwnWallCutoutSteps { get; set; }
+        internal IReadOnlyList<Parsing.TfBlockDeserializer.OwnWallCutoutStep>? OwnWallCutoutSteps
+        {
+            get => _wall?.OwnWallCutoutSteps;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).OwnWallCutoutSteps = value;
+            }
+        }
 
         [JsonIgnore]
-        internal double[][]? OwnWallAxisLine { get; set; }
+        internal double[][]? OwnWallAxisLine
+        {
+            get => _wall?.OwnWallAxisLine;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).OwnWallAxisLine = value;
+            }
+        }
 
         /// <summary>The location line of a straight own wall, bounded by its trimmed curve: start and end
         /// point, feet. Null when the side faces of the wall are not both known.</summary>
         [JsonIgnore]
-        internal double[][]? OwnWallTrimmedAxis { get; set; }
+        internal double[][]? OwnWallTrimmedAxis
+        {
+            get => _wall?.OwnWallTrimmedAxis;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).OwnWallTrimmedAxis = value;
+            }
+        }
 
         [JsonIgnore]
-        internal int? OwnWallCrossSection { get; set; }
+        internal int? OwnWallCrossSection
+        {
+            get => _wall?.OwnWallCrossSection;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).OwnWallCrossSection = value;
+            }
+        }
 
         /// <summary>Profile helper of the own wall root; null when the root is not readable or not unique.</summary>
         [JsonIgnore]
-        internal Parsing.TfBlockDeserializer.OwnWallHelperInput? OwnWallHelper { get; set; }
+        internal Parsing.TfBlockDeserializer.OwnWallHelperInput? OwnWallHelper
+        {
+            get => _wall?.OwnWallHelper;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).OwnWallHelper = value;
+            }
+        }
 
         /// <summary>Exact BaseRailing.m_stairsRailingAttrId stored by this occurrence.</summary>
         [JsonIgnore]
@@ -812,21 +883,56 @@ namespace RvtIO.Model
         /// <summary>Own basic-wall type getter, bound through the exact occurrence type link.
         /// Separate from legacy Layers and propagated parameters; internal feet.</summary>
         [JsonIgnore]
-        internal double? ValidatedWallTypeThicknessFeet { get; set; }
+        internal double? ValidatedWallTypeThicknessFeet
+        {
+            get => _wall?.ValidatedWallTypeThicknessFeet;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).ValidatedWallTypeThicknessFeet = value;
+            }
+        }
 
         // Kept separate until the writer has completed the host/void contract.
         [JsonIgnore]
-        internal GeometryData? OwnPrimaryPlanarBody { get; set; }
+        internal GeometryData? OwnPrimaryPlanarBody
+        {
+            get => _wall?.OwnPrimaryPlanarBody;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).OwnPrimaryPlanarBody = value;
+            }
+        }
 
         [System.Text.Json.Serialization.JsonIgnore]
-        internal double[]? OwnWallSide0NormalCurrent { get; set; }
+        internal double[]? OwnWallSide0NormalCurrent
+        {
+            get => _wall?.OwnWallSide0NormalCurrent;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).OwnWallSide0NormalCurrent = value;
+            }
+        }
 
         [System.Text.Json.Serialization.JsonIgnore]
-        internal GeometryData? OwnCurrentCutPairBodyCurrent { get; set; }
+        internal GeometryData? OwnCurrentCutPairBodyCurrent
+        {
+            get => _wall?.OwnCurrentCutPairBodyCurrent;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).OwnCurrentCutPairBodyCurrent = value;
+            }
+        }
 
         /// <summary>VWall.m_isFlipped read from the wall's own native record; null when not decoded.</summary>
         [JsonIgnore]
-        internal bool? SerializedWallFlipped { get; set; }
+        internal bool? SerializedWallFlipped
+        {
+            get => _wall?.SerializedWallFlipped;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).SerializedWallFlipped = value;
+            }
+        }
 
         /// <summary>GroupMembership.m_groupId of the element: the model group instance it belongs to.</summary>
         [JsonIgnore]
@@ -950,7 +1056,14 @@ namespace RvtIO.Model
         /// <summary>Whether the wall's own root carries a top attachment
         /// (JoinToRoofGStep with m_baseOrTop = 1); null when unvalidated.</summary>
         [JsonIgnore]
-        internal bool? SerializedWallJoinedToTop { get; set; }
+        internal bool? SerializedWallJoinedToTop
+        {
+            get => _wall?.SerializedWallJoinedToTop;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).SerializedWallJoinedToTop = value;
+            }
+        }
 
         /// <summary>The export id of the element: its episode GUID with the last
         /// 32 bits XORed with the original element id (Global/History and Global/ElemTable);
@@ -976,7 +1089,14 @@ namespace RvtIO.Model
         /// <summary>Control joins of the wall's own driver: per end (0 start, 1 end) the joined
         /// element and its joined end; null when the wall block is not read exactly.</summary>
         [JsonIgnore]
-        internal IReadOnlyList<Parsing.TfBlockDeserializer.WallEndJoin>? SerializedWallEndJoins { get; set; }
+        internal IReadOnlyList<Parsing.TfBlockDeserializer.WallEndJoin>? SerializedWallEndJoins
+        {
+            get => _wall?.SerializedWallEndJoins;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).SerializedWallEndJoins = value;
+            }
+        }
 
         /// <summary>Exact StairsElement.m_actualNumberOfRisers occurrence value.</summary>
         [JsonIgnore]
@@ -1014,7 +1134,14 @@ namespace RvtIO.Model
         /// <summary>Exact WallType.m_function serialized by this element's own
         /// NewCurtainWallType root block (0=Interior, 1=Exterior, ...).</summary>
         [JsonIgnore]
-        internal int? SerializedCurtainWallFunction { get; set; }
+        internal int? SerializedCurtainWallFunction
+        {
+            get => _wall?.SerializedCurtainWallFunction;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).SerializedCurtainWallFunction = value;
+            }
+        }
 
         /// <summary>FUNCTION_PARAM stored by this FamilySymbol's own FamilyParams prefix (the first
         /// matching NamedParam, its separate integer member), accepted only for a unique root block
@@ -1074,16 +1201,37 @@ namespace RvtIO.Model
         /// <summary>Own unique NewCurtainWallType SymbolInfo name, not a mark or an
         /// occurrence-name fallback. Kept separate from public identity/name fields.</summary>
         [JsonIgnore]
-        internal string? SerializedCurtainWallTypeName { get; set; }
+        internal string? SerializedCurtainWallTypeName
+        {
+            get => _wall?.SerializedCurtainWallTypeName;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).SerializedCurtainWallTypeName = value;
+            }
+        }
 
         /// <summary>Own unique BasicWallType SymbolInfo name, independent of public name fallbacks.</summary>
         [JsonIgnore]
-        internal string? SerializedBasicWallTypeName { get; set; }
+        internal string? SerializedBasicWallTypeName
+        {
+            get => _wall?.SerializedBasicWallTypeName;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).SerializedBasicWallTypeName = value;
+            }
+        }
 
         /// <summary>Own unique StackedWallType root. Such a type's placed parent wall is
         /// a container, not a separate IFC wall product; its component walls remain sources.</summary>
         [JsonIgnore]
-        internal bool IsSerializedStackedWallType { get; set; }
+        internal bool IsSerializedStackedWallType
+        {
+            get => _wall?.IsSerializedStackedWallType ?? false;
+            set
+            {
+                if (value || _wall != null) (_wall ??= new()).IsSerializedStackedWallType = value;
+            }
+        }
 
         /// <summary>Element name (first useful string found near this element in the binary stream).</summary>
         public string? Name { get; set; }
@@ -1367,7 +1515,14 @@ namespace RvtIO.Model
 
         /// <summary>WallType.m_function from a unique validated own BasicWallType root.</summary>
         [JsonIgnore]
-        internal int? SerializedBasicWallTypeFunction { get; set; }
+        internal int? SerializedBasicWallTypeFunction
+        {
+            get => _wall?.SerializedBasicWallTypeFunction;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).SerializedBasicWallTypeFunction = value;
+            }
+        }
 
         /// <summary>IDs of directly referenced elements.</summary>
         public List<int>? References
@@ -1482,7 +1637,14 @@ namespace RvtIO.Model
         /// <summary>Own direct CurtainCellFamRef/MullionFamRef membership, distinct from
         /// the host which this instance can cut. Attached only from a unique native root.</summary>
         [JsonIgnore]
-        internal int? SerializedCurtainHostId { get; set; }
+        internal int? SerializedCurtainHostId
+        {
+            get => _wall?.SerializedCurtainHostId;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).SerializedCurtainHostId = value;
+            }
+        }
 
         /// <summary>The geometry of an instance whose own Faces are all unfilled (a void or cut helper, see
         /// <see cref="ProductRules.HasOnlyUnfilledFaces"/>) while its computed symbol has filled ones: the symbol's geometry placed by the
@@ -1495,7 +1657,14 @@ namespace RvtIO.Model
         /// drivers one after the other): the order they are exported in. Null for any other element and for a wall whose
         /// root did not decode exactly.</summary>
         [JsonIgnore]
-        internal int[]? SerializedCurtainPanelOrder { get; set; }
+        internal int[]? SerializedCurtainPanelOrder
+        {
+            get => _wall?.SerializedCurtainPanelOrder;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).SerializedCurtainPanelOrder = value;
+            }
+        }
 
         /// <summary>Exact host-of-host m_hostId reached through this element's own
         /// serialized m_hostId and the raw NativeParams record of that direct host.
