@@ -38,7 +38,7 @@ internal static class RecordParser
         return false;
     }
 
-    public static void ParseChunk(byte[] chunk, ParsingState state)
+    public static void ParseChunk(byte[] chunk, ParsingState state, PartitionChunks? source = null, int segment = 0)
     {
         int pos = 0;
         bool aligned = false;
@@ -72,6 +72,8 @@ internal static class RecordParser
                     state.Records[elemId] = rec;
                     // Extract after storing record (needs references for SymbolId validation)
                     BlockParser.ExtractFamilyInstanceTransform(body, 0, body.Length, elemId, state.FamilyInstanceTransforms, state.Records);
+                    if (source?.StoredBlock(segment, pos + 12, body.Length) is { } stored)
+                        rec.RetainBodyInScratch(stored);
                 }
                 pos = next;
                 aligned = true;
@@ -83,7 +85,7 @@ internal static class RecordParser
     }
 
     /// <summary>Parse R25 records: [elemId:4][zero:4][hash:4][bodySize:4][body][bodySize:4]</summary>
-    public static void ParseChunkR25(byte[] chunk, ParsingState state)
+    public static void ParseChunkR25(byte[] chunk, ParsingState state, PartitionChunks? source = null, int segment = 0)
     {
         int pos = 0;
         bool aligned = false;
@@ -110,6 +112,8 @@ internal static class RecordParser
                     BlockParser.ExtractBlockStrings(body, 0, body.Length, elemId, state.ElemStrings);
                     BlockParser.ExtractBlockDoubles(body, 0, body.Length, elemId, state.ElemDoubles);
                     state.Records[elemId] = rec;
+                    if (source?.StoredBlock(segment, pos + 16, body.Length) is { } stored)
+                        rec.RetainBodyInScratch(stored);
                 }
                 pos = next;
                 aligned = true;

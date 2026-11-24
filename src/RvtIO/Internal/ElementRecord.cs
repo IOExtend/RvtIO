@@ -1,11 +1,26 @@
+using RvtIO.Parsing;
+
 namespace RvtIO.Internal;
 
 internal record BipEntry(int BipId, string? BipName, int FieldType, int? Value);
 
 internal record ElementRecord
 {
+    private byte[]? _body;
+    private PartitionChunks.Block? _storedBody;
+
     public uint ElemId { get; set; }
-    public byte[] Body { get; set; } = Array.Empty<byte>();
+    public byte[] Body
+    {
+        get => _body ?? _storedBody?.Read().Data ?? Array.Empty<byte>();
+        set { _body = value; _storedBody = null; }
+    }
+
+    internal void RetainBodyInScratch(PartitionChunks.Block stored)
+    {
+        _storedBody = stored;
+        _body = null;
+    }
     public List<uint> References { get; set; } = new();
     public List<BipEntry> BipParams { get; set; } = new();
     public double[]? Geometry { get; set; }

@@ -1819,9 +1819,9 @@ public partial class RvtFileReader
             {
                 records.Add(chunks.Reference(i));
                 if (isR25)
-                    RecordParser.ParseChunkR25(chunk, state);
+                    RecordParser.ParseChunkR25(chunk, state, chunks, i);
                 else
-                    RecordParser.ParseChunk(chunk, state);
+                    RecordParser.ParseChunk(chunk, state, chunks, i);
             }
             else
             {
