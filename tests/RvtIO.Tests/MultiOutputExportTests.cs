@@ -214,6 +214,36 @@ public class MultiOutputExportTests
     }
 
     [Fact]
+    public void CopiedElementCanReplaceDrawingAndStairFactsIndependently()
+    {
+        var original = new RvtIO.Model.Element
+        {
+            Text = "Original",
+            ViewOrigin = [1, 2, 3],
+            SerializedStairTypeId = 42,
+            SerializedStairTypeLinkIsResolved = true,
+            SerializedStairCopyLevelIds = [10, 20],
+        };
+        var copy = original.ShallowCopy();
+
+        Assert.Same(original.ViewOrigin, copy.ViewOrigin);
+        Assert.Same(original.SerializedStairCopyLevelIds, copy.SerializedStairCopyLevelIds);
+        copy.Text = null;
+        copy.ViewOrigin = null;
+        copy.SerializedStairTypeId = 17;
+        copy.SerializedStairTypeLinkIsResolved = false;
+
+        Assert.Equal("Original", original.Text);
+        Assert.Equal([1d, 2d, 3d], original.ViewOrigin);
+        Assert.Equal(42, original.SerializedStairTypeId);
+        Assert.True(original.SerializedStairTypeLinkIsResolved);
+        Assert.Null(copy.Text);
+        Assert.Null(copy.ViewOrigin);
+        Assert.Equal(17, copy.SerializedStairTypeId);
+        Assert.False(copy.SerializedStairTypeLinkIsResolved);
+    }
+
+    [Fact]
     public void MultiOutput_RvtDocumentFromInfo_DoesNotMutateSourceInfo()
     {
         var info = new RvtIO.Model.RevitFileInfo

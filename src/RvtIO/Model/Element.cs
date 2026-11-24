@@ -26,8 +26,62 @@ namespace RvtIO.Model
         private object? _serializedAreaScheme;
         private object? _serializedMepSystem;
 
-        /// <summary>A copy that shares all members with this element; the caller replaces what it changes.</summary>
-        internal Element ShallowCopy() => (Element)MemberwiseClone();
+        // Most parsed records carry neither drawing fields nor stair or railing data.
+        private DrawingData? _drawing;
+
+        private sealed class DrawingData
+        {
+            internal string? Text;
+            internal double[]? TextPosition;
+            internal double? TextFontSizePoints;
+            internal int? ViewportScale;
+            internal int? ImageWidth;
+            internal int? ImageHeight;
+            internal double[]? ViewOrigin;
+            internal double[]? ViewHorizontalDirection;
+            internal double[]? ViewVerticalDirection;
+            internal double[]? ViewDirection;
+            internal int? ViewportViewId;
+            internal double[]? ViewportOffset;
+
+            internal DrawingData ShallowCopy() => (DrawingData)MemberwiseClone();
+        }
+
+        private StairAndRailingData? _stairAndRailing;
+
+        private sealed class StairAndRailingData
+        {
+            internal int? SerializedBaseRailingSymbolId;
+            internal int? SerializedStairsRailingAttrId;
+            internal double? SerializedRailingTopHeightFeet;
+            internal int? SerializedStairTypeId;
+            internal int? SerializedStairBaseLevelId;
+            internal bool SerializedStairTypeLinkIsResolved;
+            internal ushort? SerializedStairsTypeClassId;
+            internal Internal.StairComponentSource.CoreComponent[]? SerializedStairCore;
+            internal int[]? SerializedStairCopyLevelIds;
+            internal Parsing.TfBlockDeserializer.StairRunInput? SerializedStairRunInput;
+            internal string? ValidatedStairOccurrenceName;
+            internal List<Parameter>? SerializedStairNameParameters;
+            internal int? SerializedRailingStairHostId;
+            internal double? SerializedStairsTypeMinInsideTreadFeet;
+            internal double? SerializedStairRunTypeNosingFeet;
+            internal int? SerializedActualNumberOfRisers;
+            internal double? SerializedActualRiserHeightFeet;
+            internal double? SerializedActualTreadDepthFeet;
+            internal string? ValidatedStairComponentTypeName;
+
+            internal StairAndRailingData ShallowCopy() => (StairAndRailingData)MemberwiseClone();
+        }
+
+        /// <summary>A copy that shares member values with this element; the caller replaces what it changes.</summary>
+        internal Element ShallowCopy()
+        {
+            var copy = (Element)MemberwiseClone();
+            copy._drawing = _drawing?.ShallowCopy();
+            copy._stairAndRailing = _stairAndRailing?.ShallowCopy();
+            return copy;
+        }
 
         /// <summary>The document-local element key used by the existing 32-bit APIs. Use <see cref="ElementId"/>
         /// for the ID as stored in the RVT.</summary>
@@ -313,58 +367,149 @@ namespace RvtIO.Model
         /// <summary>The plain text of a text note, decoded from the RTF string Revit stores for it; null for every other
         /// element and for a text note whose block was not decoded.</summary>
         [JsonIgnore]
-        public string? Text { get; set; }
+        public string? Text
+        {
+            get => _drawing?.Text;
+            set
+            {
+                if (value != null || _drawing != null) (_drawing ??= new()).Text = value;
+            }
+        }
 
         /// <summary>The position of a text note in the coordinates of its view (feet), [x, y, z]; null when not
         /// decoded.</summary>
         [JsonIgnore]
-        public double[]? TextPosition { get; set; }
+        public double[]? TextPosition
+        {
+            get => _drawing?.TextPosition;
+            set
+            {
+                if (value != null || _drawing != null) (_drawing ??= new()).TextPosition = value;
+            }
+        }
 
         /// <summary>The font size of the text note in points, when the stored RTF declares one.</summary>
         [JsonIgnore]
-        public double? TextFontSizePoints { get; set; }
+        public double? TextFontSizePoints
+        {
+            get => _drawing?.TextFontSizePoints;
+            set
+            {
+                if (value != null || _drawing != null) (_drawing ??= new()).TextFontSizePoints = value;
+            }
+        }
 
         /// <summary>The view scale of a viewport (the denominator), decoded from the viewport record; null when the
         /// reader did not decode it.</summary>
         [JsonIgnore]
-        public int? ViewportScale { get; set; }
+        public int? ViewportScale
+        {
+            get => _drawing?.ViewportScale;
+            set
+            {
+                if (value != null || _drawing != null) (_drawing ??= new()).ViewportScale = value;
+            }
+        }
 
         /// <summary>The pixel width of an image symbol, when the reader decoded it.</summary>
         [JsonIgnore]
-        public int? ImageWidth { get; set; }
+        public int? ImageWidth
+        {
+            get => _drawing?.ImageWidth;
+            set
+            {
+                if (value != null || _drawing != null) (_drawing ??= new()).ImageWidth = value;
+            }
+        }
 
         /// <summary>The pixel height of an image symbol, when the reader decoded it.</summary>
         [JsonIgnore]
-        public int? ImageHeight { get; set; }
+        public int? ImageHeight
+        {
+            get => _drawing?.ImageHeight;
+            set
+            {
+                if (value != null || _drawing != null) (_drawing ??= new()).ImageHeight = value;
+            }
+        }
 
         /// <summary>The origin of a view's plane (feet), [x, y, z]; null when the reader did not decode it.</summary>
         [JsonIgnore]
-        public double[]? ViewOrigin { get; set; }
+        public double[]? ViewOrigin
+        {
+            get => _drawing?.ViewOrigin;
+            set
+            {
+                if (value != null || _drawing != null) (_drawing ??= new()).ViewOrigin = value;
+            }
+        }
 
         /// <summary>The horizontal axis of a view's plane, a unit vector; null when not decoded.</summary>
         [JsonIgnore]
-        public double[]? ViewHorizontalDirection { get; set; }
+        public double[]? ViewHorizontalDirection
+        {
+            get => _drawing?.ViewHorizontalDirection;
+            set
+            {
+                if (value != null || _drawing != null) (_drawing ??= new()).ViewHorizontalDirection = value;
+            }
+        }
 
         /// <summary>The vertical axis of a view's plane, a unit vector; null when not decoded.</summary>
         [JsonIgnore]
-        public double[]? ViewVerticalDirection { get; set; }
+        public double[]? ViewVerticalDirection
+        {
+            get => _drawing?.ViewVerticalDirection;
+            set
+            {
+                if (value != null || _drawing != null) (_drawing ??= new()).ViewVerticalDirection = value;
+            }
+        }
 
         /// <summary>The direction a view looks at, a unit vector; null when not decoded.</summary>
         [JsonIgnore]
-        public double[]? ViewDirection { get; set; }
+        public double[]? ViewDirection
+        {
+            get => _drawing?.ViewDirection;
+            set
+            {
+                if (value != null || _drawing != null) (_drawing ??= new()).ViewDirection = value;
+            }
+        }
 
         /// <summary>For a viewport: the element id of the view it displays; null when the reader did not decode it.</summary>
         [JsonIgnore]
-        public int? ViewportViewId { get; set; }
+        public int? ViewportViewId
+        {
+            get => _drawing?.ViewportViewId;
+            set
+            {
+                if (value != null || _drawing != null) (_drawing ??= new()).ViewportViewId = value;
+            }
+        }
 
         /// <summary>For a viewport: the offset of the displayed view on the sheet (feet), [x, y, z]; null when not
         /// decoded.</summary>
         [JsonIgnore]
-        public double[]? ViewportOffset { get; set; }
+        public double[]? ViewportOffset
+        {
+            get => _drawing?.ViewportOffset;
+            set
+            {
+                if (value != null || _drawing != null) (_drawing ??= new()).ViewportOffset = value;
+            }
+        }
 
         /// <summary>Exact BaseRailing.m_baseRailingSymbolId stored by this occurrence.</summary>
         [JsonIgnore]
-        internal int? SerializedBaseRailingSymbolId { get; set; }
+        internal int? SerializedBaseRailingSymbolId
+        {
+            get => _stairAndRailing?.SerializedBaseRailingSymbolId;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedBaseRailingSymbolId = value;
+            }
+        }
 
         /// <summary>Own unique InstanceInfo.m_symbolId resolving to a FamilySymbol
         /// with known semantic kind/owner prefix. The original symbol,
@@ -410,31 +555,73 @@ namespace RvtIO.Model
 
         /// <summary>Exact BaseRailing.m_stairsRailingAttrId stored by this occurrence.</summary>
         [JsonIgnore]
-        internal int? SerializedStairsRailingAttrId { get; set; }
+        internal int? SerializedStairsRailingAttrId
+        {
+            get => _stairAndRailing?.SerializedStairsRailingAttrId;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedStairsRailingAttrId = value;
+            }
+        }
 
         /// <summary>Exact BaseRailingAttr.m_topRailHeight reached through
         /// <see cref="SerializedStairsRailingAttrId"/>, in Revit internal feet.</summary>
         [JsonIgnore]
-        internal double? SerializedRailingTopHeightFeet { get; set; }
+        internal double? SerializedRailingTopHeightFeet
+        {
+            get => _stairAndRailing?.SerializedRailingTopHeightFeet;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedRailingTopHeightFeet = value;
+            }
+        }
 
         /// <summary>Exact StairsElement.m_typeId from this occurrence's unique complete
         /// class-3681 root, after resolving one unique class-3742 StairsType target.</summary>
         [JsonIgnore]
-        internal int? SerializedStairTypeId { get; set; }
+        internal int? SerializedStairTypeId
+        {
+            get => _stairAndRailing?.SerializedStairTypeId;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedStairTypeId = value;
+            }
+        }
 
         /// <summary>Exact StairsElement.m_baseLevelId of the same class-3681 root (STAIRS_BASE_LEVEL_PARAM).</summary>
         [JsonIgnore]
-        internal int? SerializedStairBaseLevelId { get; set; }
+        internal int? SerializedStairBaseLevelId
+        {
+            get => _stairAndRailing?.SerializedStairBaseLevelId;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedStairBaseLevelId = value;
+            }
+        }
 
         /// <summary>True only while <see cref="SerializedStairTypeId"/> resolves to the
         /// unique materialized stair type validated by its own exact class-3742 root.</summary>
         [JsonIgnore]
-        internal bool SerializedStairTypeLinkIsResolved { get; set; }
+        internal bool SerializedStairTypeLinkIsResolved
+        {
+            get => _stairAndRailing?.SerializedStairTypeLinkIsResolved ?? false;
+            set
+            {
+                if (value || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedStairTypeLinkIsResolved = value;
+            }
+        }
 
         /// <summary>Exact raw Tf class of this materialized StairsType target. Kept after
         /// public TypeId normalization so the exporter can revalidate the raw boundary.</summary>
         [JsonIgnore]
-        internal ushort? SerializedStairsTypeClassId { get; set; }
+        internal ushort? SerializedStairsTypeClassId
+        {
+            get => _stairAndRailing?.SerializedStairsTypeClassId;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedStairsTypeClassId = value;
+            }
+        }
 
         /// <summary>Own semantic class from a single validated Element base prefix;
         /// not the first geometry frame or the public normalized TypeId.</summary>
@@ -526,30 +713,72 @@ namespace RvtIO.Model
         /// <summary>Own helper core, reciprocally owned and equal to the native typed
         /// inverse ownership set. Ordering is not an API naming ordinal.</summary>
         [JsonIgnore]
-        internal Internal.StairComponentSource.CoreComponent[]? SerializedStairCore { get; set; }
+        internal Internal.StairComponentSource.CoreComponent[]? SerializedStairCore
+        {
+            get => _stairAndRailing?.SerializedStairCore;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedStairCore = value;
+            }
+        }
         /// <summary>Levels a multistory stair is repeated on, in stored order.</summary>
         [JsonIgnore]
-        internal int[]? SerializedStairCopyLevelIds { get; set; }
+        internal int[]? SerializedStairCopyLevelIds
+        {
+            get => _stairAndRailing?.SerializedStairCopyLevelIds;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedStairCopyLevelIds = value;
+            }
+        }
 
         /// <summary>Single complete own run graph's native style and cached API path
         /// directions, with independent semantic class and reciprocal ElemRec owner.</summary>
         [JsonIgnore]
-        internal Parsing.TfBlockDeserializer.StairRunInput? SerializedStairRunInput { get; set; }
+        internal Parsing.TfBlockDeserializer.StairRunInput? SerializedStairRunInput
+        {
+            get => _stairAndRailing?.SerializedStairRunInput;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedStairRunInput = value;
+            }
+        }
 
         /// <summary>Native IDS_STAIR instance name from the saved locale's resource,
         /// admitted only for a complete own native stair/type/core. Not the type Name.</summary>
         [JsonIgnore]
-        internal string? ValidatedStairOccurrenceName { get; set; }
+        internal string? ValidatedStairOccurrenceName
+        {
+            get => _stairAndRailing?.ValidatedStairOccurrenceName;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).ValidatedStairOccurrenceName = value;
+            }
+        }
 
         /// <summary>Own complete parameter-store scope for native instance naming;
         /// null is unvalidated, an empty list is validated absence. Never public heuristics.</summary>
         [JsonIgnore]
-        internal List<Parameter>? SerializedStairNameParameters { get; set; }
+        internal List<Parameter>? SerializedStairNameParameters
+        {
+            get => _stairAndRailing?.SerializedStairNameParameters;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedStairNameParameters = value;
+            }
+        }
 
         /// <summary>Own single class-485 BaseRailing.m_stairsId, separately from
         /// ElemRec ownership, registered lists, and the adjustment start component.</summary>
         [JsonIgnore]
-        internal int? SerializedRailingStairHostId { get; set; }
+        internal int? SerializedRailingStairHostId
+        {
+            get => _stairAndRailing?.SerializedRailingStairHostId;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedRailingStairHostId = value;
+            }
+        }
 
         /// <summary>Material.m_name from this material's own single MaterialElem root.</summary>
         [JsonIgnore]
@@ -635,11 +864,25 @@ namespace RvtIO.Model
 
         /// <summary>StairsType.m_minTreadWidthOnInsideBoundary in feet (own stairs type root).</summary>
         [JsonIgnore]
-        internal double? SerializedStairsTypeMinInsideTreadFeet { get; set; }
+        internal double? SerializedStairsTypeMinInsideTreadFeet
+        {
+            get => _stairAndRailing?.SerializedStairsTypeMinInsideTreadFeet;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedStairsTypeMinInsideTreadFeet = value;
+            }
+        }
 
         /// <summary>StairsRunType.m_nosingLength in feet (own stairs run type root).</summary>
         [JsonIgnore]
-        internal double? SerializedStairRunTypeNosingFeet { get; set; }
+        internal double? SerializedStairRunTypeNosingFeet
+        {
+            get => _stairAndRailing?.SerializedStairRunTypeNosingFeet;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedStairRunTypeNosingFeet = value;
+            }
+        }
 
         /// <summary>Family instance connectors in stored order: Connector.m_nIndex, the stored hvac (2381) or
         /// piping (2382) connector calculation direction and its system type (null when the domains are mixed
@@ -737,15 +980,36 @@ namespace RvtIO.Model
 
         /// <summary>Exact StairsElement.m_actualNumberOfRisers occurrence value.</summary>
         [JsonIgnore]
-        internal int? SerializedActualNumberOfRisers { get; set; }
+        internal int? SerializedActualNumberOfRisers
+        {
+            get => _stairAndRailing?.SerializedActualNumberOfRisers;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedActualNumberOfRisers = value;
+            }
+        }
 
         /// <summary>Exact StairsElement.m_actualRiserHeight in Revit internal feet.</summary>
         [JsonIgnore]
-        internal double? SerializedActualRiserHeightFeet { get; set; }
+        internal double? SerializedActualRiserHeightFeet
+        {
+            get => _stairAndRailing?.SerializedActualRiserHeightFeet;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedActualRiserHeightFeet = value;
+            }
+        }
 
         /// <summary>Exact StairsElement.m_actualTreadDepth in Revit internal feet.</summary>
         [JsonIgnore]
-        internal double? SerializedActualTreadDepthFeet { get; set; }
+        internal double? SerializedActualTreadDepthFeet
+        {
+            get => _stairAndRailing?.SerializedActualTreadDepthFeet;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedActualTreadDepthFeet = value;
+            }
+        }
 
         /// <summary>Exact WallType.m_function serialized by this element's own
         /// NewCurtainWallType root block (0=Interior, 1=Exterior, ...).</summary>
@@ -948,7 +1212,14 @@ namespace RvtIO.Model
         /// <summary>THIS stair component type's own SymbolInfo name, independent of
         /// the public Name/TypeId propagation. Never a borrowed level or occurrence name.</summary>
         [JsonIgnore]
-        internal string? ValidatedStairComponentTypeName { get; set; }
+        internal string? ValidatedStairComponentTypeName
+        {
+            get => _stairAndRailing?.ValidatedStairComponentTypeName;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).ValidatedStairComponentTypeName = value;
+            }
+        }
 
         /// <summary>THIS CorniceAttr type's own SymbolInfo name. Never a borrowed
         /// public Name; used only with its original system family for IFC type naming.</summary>
