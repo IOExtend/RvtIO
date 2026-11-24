@@ -253,6 +253,28 @@ public class OwnElementClassTests
         Assert.Equal(storeSegments ? known.Length + discovered.Length : 0, scratch.Length);
     }
 
+    [Fact]
+    public void FramedScheduleRecoveryKeepsTheSourceRecordLocation()
+    {
+        byte[] schedule = Frame(1012);
+        using var scratch = new MemoryStream();
+        var segments = new PartitionChunks(new PartitionChunks.Backing(scratch));
+        segments.Add(schedule[..15]);
+        segments.Add(schedule[15..]);
+        var item = new PartitionFraming.ProjectItem(102, 123, 0, schedule.Length);
+        var frame = new PartitionFraming.Framed(segments, [item], 4);
+        var state = new ParsingState { AllKnownIds = [123], FramedPartitions = [frame] };
+        var deferred = new List<(PartitionFraming.Framed Frame, PartitionFraming.ProjectItem Item, ushort Class, uint Owner)>();
+
+        RvtFileReader.RecordFramedRoots(state, deferred);
+
+        var source = Assert.Single(deferred);
+        Assert.Same(frame, source.Frame);
+        Assert.Equal(item, source.Item);
+        Assert.Equal((1012, 123u), ((int)source.Class, source.Owner));
+        Assert.Equal(schedule.Length, scratch.Length);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

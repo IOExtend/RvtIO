@@ -2459,7 +2459,7 @@ public partial class RvtFileReader
     /// of loaded families and byte runs inside other items, and each one counted as a second root of the element. The location line of a
     /// wall (<see cref="RecordWallLocationLine"/>) is read from its root record once every root is counted.</summary>
     internal static void RecordFramedRoots(ParsingState state,
-        List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner)>? unanchoredTypeRoots = null)
+        List<(PartitionFraming.Framed Frame, PartitionFraming.ProjectItem Item, ushort Class, uint Owner)>? unanchoredTypeRoots = null)
     {
         var roots = new List<(PartitionFraming.Framed Frame, PartitionFraming.ProjectItem Item, ushort Class, uint Owner)>();
         foreach (var frame in state.FramedPartitions!)
@@ -2490,7 +2490,7 @@ public partial class RvtFileReader
                 || classId is 1005 or 3524 && partition is int partWithType
                     && (state.IncrementRoutedPartitions?.TryGetValue(owner, out int currentTypePartition) != true
                         || partWithType == currentTypePartition)))
-                unanchoredTypeRoots?.Add((data, start, size, classId, owner));
+                unanchoredTypeRoots?.Add((frame, record, classId, owner));
             if (classId == 3471)
             {
                 RecordRoomNameSource(state, data, start, size, classId, owner);
@@ -2544,10 +2544,7 @@ public partial class RvtFileReader
                 if (classId == 1794 && state.CurrentFramedCategories.GetValueOrDefault(owner) == -2000150
                     && (state.IncrementRoutedPartitions?.TryGetValue(owner, out int currentPartition) != true
                         || frame.Partition == currentPartition))
-                {
-                    var (data, start, _) = frame.Bytes(record);
-                    unanchoredTypeRoots.Add((data, start, (uint)(record.Length - 16), classId, owner));
-                }
+                    unanchoredTypeRoots.Add((frame, record, classId, owner));
     }
 
     /// <summary>Hands <see cref="BlockParser.ParseBlock"/> the channel-102 and 103 records of the project's own block (the root objects and the
@@ -2579,7 +2576,7 @@ public partial class RvtFileReader
             }
     }
     private static void RecoverFramedScheduleTypes(ParsingState state,
-        List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner)> roots)
+        List<(PartitionFraming.Framed Frame, PartitionFraming.ProjectItem Item, ushort Class, uint Owner)> roots)
     {
         const string typeField = "m_dbViewTypeId";
         foreach (var schedule in roots.Where(root => root.Class == 1012).GroupBy(root => root.Owner))
@@ -2593,8 +2590,10 @@ public partial class RvtFileReader
 
             // Without pruning, the remaining project copies must agree on the stored reference.
             int typeId = 0;
-            foreach (var (data, start, size, classId, _) in schedule)
+            foreach (var (frame, item, classId, _) in schedule)
             {
+                var (data, start, _) = frame.Bytes(item);
+                uint size = (uint)(item.Length - 16);
                 if (!TfBlockDeserializer.TryExtractOwnElementClass(data, start, size, classId, out int ownId)
                     || ownId != owner
                     || TfBlockDeserializer.ExtractParams(data, start, size, classId) is not { } fields
@@ -2630,7 +2629,7 @@ public partial class RvtFileReader
         var walkGReps = new List<(PartitionChunks.Block Block, uint Size, uint Eid)>();
         // the roots the class and stair sources count: the records of the project's block when every stream is read by its framing
         bool framedRoots = state.ReadsFramedRecords;
-        List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner)>? unanchoredTypeRoots =
+        List<(PartitionFraming.Framed Frame, PartitionFraming.ProjectItem Item, ushort Class, uint Owner)>? unanchoredTypeRoots =
             framedRoots ? [] : null;
         if (framedRoots) RecordFramedRoots(state, unanchoredTypeRoots);
         TfStreamWalker.Walk(state.Chunks, state.AllKnownIds, (seg, bs, ds, cls, eid) =>
@@ -2802,12 +2801,15 @@ public partial class RvtFileReader
         {
             RecoverFramedScheduleTypes(state, unanchoredTypeRoots);
             // Pruning can leave an element's own record where the sequential scan cannot anchor.
-            foreach (var (data, start, size, classId, owner) in unanchoredTypeRoots)
+            foreach (var (frame, item, classId, owner) in unanchoredTypeRoots)
             {
                 if (classId == 1012 || state.NativeParamsFromRootClass.Contains(owner)
                     || !state.WalkedElementClassRoots.TryGetValue(owner, out var root)
-                    || root.BlockCount != 1 || root.ClassId != classId
-                    || TfBlockDeserializer.ExtractParams(data, start, size, classId) is not { } parameters
+                    || root.BlockCount != 1 || root.ClassId != classId)
+                    continue;
+                var (data, start, _) = frame.Bytes(item);
+                uint size = (uint)(item.Length - 16);
+                if (TfBlockDeserializer.ExtractParams(data, start, size, classId) is not { } parameters
                     || NativeTypePointers.Of(classId, parameters) is not int typeId || !state.AllKnownIds.Contains((uint)typeId))
                     continue;
                 if (classId == 3524)
