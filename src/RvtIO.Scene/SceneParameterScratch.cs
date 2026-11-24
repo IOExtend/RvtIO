@@ -6,7 +6,7 @@ using RvtIO.Parsing;
 
 namespace RvtIO.Scene;
 
-/// <summary>Keeps finalized element parameters in scratch while the scene is tessellated and mapped.</summary>
+/// <summary>Keeps element parameters in scratch between construction, resolution and tessellation passes.</summary>
 internal sealed class SceneParameterScratch(PartitionChunks.Backing storage)
 {
     private const int DefinitionLimit = 4096;
@@ -28,7 +28,7 @@ internal sealed class SceneParameterScratch(PartitionChunks.Backing storage)
 
     internal void Archive(Element element) => element.ArchiveParameters(Store);
 
-    private IReadOnlyList<Parameter>? Store(List<Parameter> parameters)
+    private IReadOnlyList<Parameter>? Store(List<Parameter> parameters, IReadOnlyList<Parameter>? previous)
     {
         if (parameters.Any(parameter => parameter.Value is not (null or int or double or string or bool)))
             return null;
@@ -64,10 +64,16 @@ internal sealed class SceneParameterScratch(PartitionChunks.Backing storage)
             writer.Write(parameter.NativeElementId.HasValue);
             if (parameter.NativeElementId is long id) writer.Write(id);
         }
-        var block = storage.Add(output.GetBuffer().AsSpan(0, checked((int)output.Length)));
+        var encoded = output.GetBuffer().AsSpan(0, checked((int)output.Length));
+        // Read-only passes may have materialized the editable list. Reuse its page
+        // when the next checkpoint produces exactly the same bytes.
+        var archived = previous is ParameterList prior && ReferenceEquals(prior.Owner, this)
+            && prior.Count == parameters.Count && encoded.SequenceEqual(storage.Read(prior.Block))
+            ? prior
+            : new ParameterList(this, storage.Add(encoded), parameters.Count);
         output.SetLength(0);
         if (output.Capacity > 128 * 1024) output.Capacity = 64 * 1024;
-        return new ParameterList(this, block, parameters.Count);
+        return archived;
     }
 
     private Parameter[] Read(PartitionChunks.Chunk block, int count)
@@ -151,6 +157,8 @@ internal sealed class SceneParameterScratch(PartitionChunks.Backing storage)
     private sealed class ParameterList(SceneParameterScratch store, PartitionChunks.Chunk block, int count)
         : IReadOnlyList<Parameter>
     {
+        internal SceneParameterScratch Owner => store;
+        internal PartitionChunks.Chunk Block => block;
         public int Count => count;
         public Parameter this[int index] => store.Read(block, count)[index];
         public IEnumerator<Parameter> GetEnumerator() => ((IEnumerable<Parameter>)store.Read(block, count)).GetEnumerator();

@@ -193,7 +193,8 @@ public class RvtSceneReaderTests
         var first = new Element { Parameters = [reference, text, distance, missing], SerializedCreatedPhaseId = 0 };
         var second = new Element { Parameters = [new Parameter { Id = -1002050, Value = 7 }] };
         var original = first.Parameters;
-        scratch.ArchiveParameters([first, second]);
+        scratch.ArchiveParameters(first);
+        scratch.ArchiveParameters(second);
 
         var archived = first.ReadParameters;
         Assert.NotSame(original, archived);
@@ -215,9 +216,19 @@ public class RvtSceneReaderTests
         Assert.True(ProductRules.HasProjectPhaseReference(first));
         Assert.Same(archived, first.ReadParameters);
 
+        long persisted = stream.Length;
+        Assert.Equal(4, first.Parameters.Count);
+        scratch.ArchiveParameters(first);
+        Assert.Equal(persisted, stream.Length);
+        Assert.Same(archived, first.ReadParameters);
+
         first.Parameters.RemoveAt(3);
-        Assert.Equal(3, first.ReadParameters.Count);
         Assert.Same(first.Parameters, first.ReadParameters);
+        first.Parameters[1].Value = "Resolved later";
+        scratch.ArchiveParameters(first);
+        Assert.True(stream.Length > persisted);
+        Assert.Equal(3, first.ReadParameters.Count);
+        Assert.Equal("Resolved later", first.ReadParameters[1].Value);
     }
 
     [Fact]

@@ -6,6 +6,7 @@ namespace RvtIO.Internal;
 internal class ParsingState
 {
     internal bool KeepExportProvenance { get; init; } = true;
+    internal Action<Model.Element>? ArchiveSceneParameters { get; init; }
     public Dictionary<uint, OwnPartitionParts.WallParts>? OwnPartitionWallParts { get; set; }
     public Dictionary<uint, int> OwnWallSide0Ids { get; } = new();
     /// <summary>Face-history table of the first BaseWallGStep of the current own wall root (see

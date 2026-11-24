@@ -1016,11 +1016,8 @@ namespace RvtIO.Model
         {
             get
             {
-                if (_storedParameters != null)
-                {
+                if (_parameters == null && _storedParameters != null)
                     _parameters = _storedParameters.ToList();
-                    _storedParameters = null;
-                }
                 return _parameters!;
             }
             set
@@ -1030,11 +1027,16 @@ namespace RvtIO.Model
             }
         }
 
-        internal IReadOnlyList<Parameter> ReadParameters => _storedParameters ?? _parameters!;
+        internal IReadOnlyList<Parameter> ReadParameters => _parameters ?? _storedParameters!;
 
-        internal void ArchiveParameters(Func<List<Parameter>, IReadOnlyList<Parameter>?> store)
+        internal void ArchiveParameters(Func<List<Parameter>, IReadOnlyList<Parameter>?, IReadOnlyList<Parameter>?> store)
         {
-            if (_parameters is not { Count: > 0 } parameters || store(parameters) is not { } archived) return;
+            if (_parameters == null) return;
+            if (_parameters.Count == 0 || store(_parameters, _storedParameters) is not { } archived)
+            {
+                _storedParameters = null;
+                return;
+            }
             _storedParameters = archived;
             _parameters = null;
         }

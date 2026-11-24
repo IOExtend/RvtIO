@@ -204,6 +204,7 @@ public partial class RvtFileReader
             Chunks = chunks,
             NativeParams = new(chunks.Store),
             KeepExportProvenance = _options.ArchiveSceneGeometry == null,
+            ArchiveSceneParameters = _options.ArchiveSceneParameters,
             OwnPartitionWallParts = ownPartitionWallParts,
             TfClassSchemas = tfSchemas ?? new(),
             LocalUsername = fileMetadata.GetValueOrDefault("Username"),
@@ -790,14 +791,19 @@ public partial class RvtFileReader
         long elementsBuilt = 0;
         int archivedElements = 0;
         var archiveGeometry = _options.ArchiveSceneGeometry;
+        var archiveParameters = _options.ArchiveSceneParameters;
         var buildClock = progress == null ? null : System.Diagnostics.Stopwatch.StartNew();
         if (elementJobs > 0) progress?.Report(new("build-model", 0, elementJobs));
 
         void ElementBuilt()
         {
-            if (archiveGeometry != null)
+            if (archiveGeometry != null || archiveParameters != null)
                 while (archivedElements < rvtInfo.Elements.Count)
-                    archiveGeometry(rvtInfo.Elements[archivedElements++]);
+                {
+                    var element = rvtInfo.Elements[archivedElements++];
+                    archiveGeometry?.Invoke(element);
+                    archiveParameters?.Invoke(element);
+                }
             if (buildClock == null) return;
             if (++elementsBuilt == elementJobs || buildClock.ElapsedMilliseconds >= 500)
             {
@@ -925,7 +931,7 @@ public partial class RvtFileReader
             diag?.WriteLine($"Framed type references: {typeLinks} corrected");
         }
         rvtInfo.ElementIds = ids;
-        rvtInfo.AttachSourceElementIds();
+        rvtInfo.AttachSourceElementIds(archiveParameters);
         var (exportIds, replacedUniqueIds) = ElementBuilder.ApplyExportIds(rvtInfo.Elements, state);
         diag?.WriteLine($"Element export ids: episodes={state.HistoryEpisodeGuids.Count}/{state.EpisodeTableX?.ToString() ?? "?"}, "
             + $"records={state.ElemRecHistories?.Count.ToString() ?? "unavailable"}, elements={exportIds}, "
@@ -956,7 +962,7 @@ public partial class RvtFileReader
 
         LogPhase("Done");
         diag?.WriteLine($"Output: {rvtInfo.Elements.Count} elements, " +
-            $"{rvtInfo.Elements.Count(e => e.Parameters.Count > 0)} with params, " +
+            $"{rvtInfo.Elements.Count(e => e.ReadParameters.Count > 0)} with params, " +
             $"{rvtInfo.Elements.Count(e => e.Geometry != null)} with geometry");
         int sketchOwners = rvtInfo.Elements.Count(e => e.SketchLoops != null);
         if (sketchOwners > 0)
@@ -3712,11 +3718,12 @@ public partial class RvtFileReader
 
     private static void ResolveParameterUnits(RevitFileInfo rvtInfo, ParsingState state)
     {
-        int resolved = 0;
         foreach (var elem in rvtInfo.Elements)
         {
-            foreach (var param in elem.Parameters)
+            int index = -1;
+            foreach (var param in elem.ReadParameters)
             {
+                index++;
                 if (param.StorageType != StorageType.Double) continue;
 
                 string? specType = null;
@@ -3732,12 +3739,15 @@ public partial class RvtFileReader
 
                 if (unitCat == null) continue;
 
-                param.SpecType = specType;
                 var (symbol, factor) = GetUnitDisplay(unitCat);
-                param.UnitSymbol = symbol;
-                param.ConversionFactor = factor;
-                resolved++;
+                if (param.SpecType == specType && param.UnitSymbol == symbol && param.ConversionFactor == factor)
+                    continue;
+                var editable = elem.Parameters[index];
+                editable.SpecType = specType;
+                editable.UnitSymbol = symbol;
+                editable.ConversionFactor = factor;
             }
+            state.ArchiveSceneParameters?.Invoke(elem);
         }
     }
 

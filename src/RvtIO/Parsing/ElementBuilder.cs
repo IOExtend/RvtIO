@@ -1331,7 +1331,7 @@ internal static partial class ElementBuilder
     /// </summary>
     private static int TypeParamOf(Element e)
     {
-        foreach (var p in e.Parameters)
+        foreach (var p in e.ReadParameters)
             if (p.Id is -1002050 or -1002052 or -1002000 && p.Value is int v && v > 1000)
                 return v;
         return -1;
@@ -1436,7 +1436,7 @@ internal static partial class ElementBuilder
     {
         foreach (var e in info.Elements)
         {
-            if (e.Parameters.Any(p => p.Id == -1013200)) continue;
+            if (e.ReadParameters.Any(p => p.Id == -1013200)) continue;
             var option = e.Parameters.FirstOrDefault(p => p.Id == -1013201);
             if (option?.Value is int id && id is -1 or -4)
                 e.Parameters.Add(BipHelpers.MakeBipParam(-1013200, "DESIGN_OPTION_PARAM", StorageType.String, "Main Model"));
@@ -2263,10 +2263,10 @@ internal static partial class ElementBuilder
         foreach (var e in info.Elements)
         {
             if (e.SerializedCreatedPhaseId is int created && IsPhase(created)
-                && e.Parameters.Any(p => p.Id == -1012100))
+                && e.ReadParameters.Any(p => p.Id == -1012100))
                 SetParam(e, -1012100, "PHASE_CREATED", StorageType.ElementId, created);
             if (e.SerializedDemolishedPhaseId is int demolished && (demolished == -1 || IsPhase(demolished))
-                && e.Parameters.Any(p => p.Id == -1012101))
+                && e.ReadParameters.Any(p => p.Id == -1012101))
                 SetParam(e, -1012101, "PHASE_DEMOLISHED", StorageType.ElementId, demolished);
         }
     }
@@ -2459,7 +2459,7 @@ internal static partial class ElementBuilder
                 // empirical block registry: the export reports unhosted defaults for them (they
                 // used to take this branch before the registry categorized them).
                 AddBipIfMissing(e, -1002108, "HOST_ID_PARAM", -1);
-                if (e.Parameters.All(p => p.Id != -1001370))
+                if (e.ReadParameters.All(p => p.Id != -1001370))
                     e.Parameters.Add(BipHelpers.MakeBipParam(-1001370, "INSTANCE_OFFSET_POS_PARAM", StorageType.Integer, 0, hasNoRevitValue: true));
             }
 
@@ -2537,7 +2537,7 @@ internal static partial class ElementBuilder
         // comes from the native record or the holder vote below) keeps that transparency.
         foreach (var (finishId, finish) in state.MaterialFinishes)
             if (!state.MaterialAppearances.ContainsKey(finishId) && byId.TryGetValue((int)finishId, out var finished)
-                && finished.CategoryId == -2000700 && !finished.Parameters.Any(parameter => parameter.Id == -1002551))
+                && finished.CategoryId == -2000700 && !finished.ReadParameters.Any(parameter => parameter.Id == -1002551))
                 finished.Parameters.Add(BipHelpers.MakeBipParam(-1002551, "MATERIAL_PARAM_TRANSPARENCY", StorageType.Integer, finish.Transparency));
 
         // Fallback for OST_Materials elements without a decoded appearance: link through the record
@@ -2970,7 +2970,7 @@ internal static partial class ElementBuilder
 
             void Add(int id, string name, double val)
             {
-                if (val > 1e-9 && !e.Parameters.Any(p => p.Id == id))
+                if (val > 1e-9 && !e.ReadParameters.Any(p => p.Id == id))
                     e.Parameters.Add(BipHelpers.MakeBipParam(id, name, StorageType.Double, val));
             }
 
@@ -3033,7 +3033,7 @@ internal static partial class ElementBuilder
 
             e.CategoryId = curveCat;
             e.Category = BuiltInCategoryNames.Lookup.TryGetValue(curveCat, out var ccn) ? ccn : "OST_Lines";
-            var existing = new HashSet<int>(e.Parameters.Select(p => p.Id));
+            var existing = new HashSet<int>(e.ReadParameters.Select(p => p.Id));
             void Add(int id, string name, StorageType st, object val)
             {
                 if (!existing.Contains(id)) e.Parameters.Add(BipHelpers.MakeBipParam(id, name, st, val));
@@ -3078,7 +3078,7 @@ internal static partial class ElementBuilder
             if (!state.AnalyticalNodeOwners.Contains((uint)e.Id)) continue;
             e.CategoryId = -2009645;
             e.Category = "OST_AnalyticalNodes";
-            var existing = new HashSet<int>(e.Parameters.Select(p => p.Id));
+            var existing = new HashSet<int>(e.ReadParameters.Select(p => p.Id));
             if (!existing.Contains(-1140362))
                 e.Parameters.Add(BipHelpers.MakeBipParam(-1140362, "ELEM_CATEGORY_PARAM", StorageType.ElementId, -2009645));
             if (!existing.Contains(-1140363))
@@ -3676,6 +3676,7 @@ internal static partial class ElementBuilder
                 Apply(-1005147, StorageType.ElementId, fsp); // VIEW_FIXED_SKETCH_PLANE
             if (np.Fields.TryGetValue("m_bUseTrueNorth", out int tn))
                 Apply(-1005168, StorageType.Integer, tn); // PLAN_VIEW_NORTH
+            state.ArchiveSceneParameters?.Invoke(e);
         }
         Parameter.ResolveZeroElementIds(info, state);
     }
@@ -5808,7 +5809,7 @@ internal static partial class ElementBuilder
             }
 
             // ELEM_TYPE_PARAM from record body
-            var typeParam = e.Parameters.FirstOrDefault(p => p.Id == -1002050);
+            var typeParam = e.ReadParameters.FirstOrDefault(p => p.Id == -1002050);
             if (typeParam?.Value is int tpId && idToCategory.TryGetValue(tpId, out var tpCat))
             {
                 e.CategoryId = tpCat.catId;
@@ -6126,7 +6127,7 @@ internal static partial class ElementBuilder
             if (isReal) realTotal++;
             // Symbol id: the element's own id if IT has a name entry with a parent, otherwise its
             // ELEM_TYPE_PARAM target.
-            var typeParam = e.Parameters.FirstOrDefault(p => p.Id == -1002050);
+            var typeParam = e.ReadParameters.FirstOrDefault(p => p.Id == -1002050);
             bool hasTypeParam = typeParam?.Value is int htp && htp > 0;
             int symbolId = typeParam?.Value is int tid && tid > 0 ? tid : e.Id;
             if (isReal && hasTypeParam) realHasTypeParam++;
@@ -6175,7 +6176,7 @@ internal static partial class ElementBuilder
                 continue;
             }
 
-            var famParam = e.Parameters.FirstOrDefault(p => p.Id == -1002051);
+            var famParam = e.ReadParameters.FirstOrDefault(p => p.Id == -1002051);
             if (famParam?.Value is int famId && famId > 0)
             {
                 if (state.ElementNameTable.TryGetValue((uint)famId, out var tblName))
@@ -6194,7 +6195,7 @@ internal static partial class ElementBuilder
             // Fallback: look at type element's ELEM_FAMILY_PARAM
             if (typeParam?.Value is int typeId && typeId > 0 && idToElem.TryGetValue(typeId, out var typeElem))
             {
-                var typeFam = typeElem.Parameters.FirstOrDefault(p => p.Id == -1002051);
+                var typeFam = typeElem.ReadParameters.FirstOrDefault(p => p.Id == -1002051);
                 if (typeFam?.Value is int typeFamId && typeFamId > 0 && idToName.TryGetValue(typeFamId, out var typeFamName))
                 {
                     e.FamilyName = typeFamName; viaTypeElement++;
@@ -6287,7 +6288,7 @@ internal static partial class ElementBuilder
         {
             if (e.CategoryId == -2000220) continue;
             if (state.ElementNameTable.ContainsKey((uint)e.Id)) continue; // has own name
-            var tp = e.Parameters.FirstOrDefault(p => p.Id == -1002050);
+            var tp = e.ReadParameters.FirstOrDefault(p => p.Id == -1002050);
             if (tp?.Value is int tid && tid > 0 && tid != e.Id
                 && state.ElementNameTable.TryGetValue((uint)tid, out var typeName))
                 e.Name = typeName;
@@ -6321,27 +6322,34 @@ internal static partial class ElementBuilder
         }
         foreach (var e in rvtInfo.Elements)
         {
-            foreach (var p in e.Parameters)
+            int index = -1;
+            foreach (var p in e.ReadParameters)
             {
-                if (p.Id > 0 && string.IsNullOrEmpty(p.Definition?.Name)
+                index++;
+                if (p.Id > 0 && string.IsNullOrEmpty(p.DefinitionName)
                     && paramDefNames.TryGetValue(p.Id, out var paramName))
                 {
-                    p.Definition ??= new Definition();
-                    p.Definition.Id = p.Id;
-                    p.Definition.Name = paramName;
+                    var editable = e.Parameters[index];
+                    editable.Definition ??= new Definition();
+                    editable.Definition.Id = p.Id;
+                    editable.Definition.Name = paramName;
                 }
             }
+            state.ArchiveSceneParameters?.Invoke(e);
         }
 
         // Fix SYMBOL_ID_PARAM: record body stores it as -1 (null) for instances; SYMBOL_ID_PARAM
         // should always equal ELEM_TYPE_PARAM for FamilyInstances.
         foreach (var e in rvtInfo.Elements)
         {
-            var symParam = e.Parameters.FirstOrDefault(p => p.Id == -1002000);
+            var symParam = e.ReadParameters.FirstOrDefault(p => p.Id == -1002000);
             if (symParam?.Value is not int sv || sv > 0) continue; // already valid
-            var typeParam = e.Parameters.FirstOrDefault(p => p.Id == -1002050);
+            var typeParam = e.ReadParameters.FirstOrDefault(p => p.Id == -1002050);
             if (typeParam?.Value is int tv && tv > 0)
-                symParam.Value = tv;
+            {
+                e.Parameters.First(p => p.Id == -1002000).Value = tv;
+                state.ArchiveSceneParameters?.Invoke(e);
+            }
         }
 
         // Infer Level element elevations (LEVEL_ELEV = -1007102) via cross-reference: Elements on a
@@ -6352,7 +6360,7 @@ internal static partial class ElementBuilder
             const int OST_LEVELS = -2000240;
 
             var levelElemIdSet = new HashSet<int>(rvtInfo.Elements
-                .Where(e => e.Parameters.Any(p => p.Id == BIP_ELEM_CATEGORY && p.Value is int c && c == OST_LEVELS))
+                .Where(e => e.ReadParameters.Any(p => p.Id == BIP_ELEM_CATEGORY && p.Value is int c && c == OST_LEVELS))
                 .Select(e => e.Id));
 
             if (levelElemIdSet.Count > 0)
@@ -6361,7 +6369,7 @@ internal static partial class ElementBuilder
 
                 foreach (var e in rvtInfo.Elements)
                 {
-                    var le = e.Parameters.FirstOrDefault(p => p.Id == BIP_LEVEL_ELEV);
+                    var le = e.ReadParameters.FirstOrDefault(p => p.Id == BIP_LEVEL_ELEV);
                     if (le?.Value is not double elev) continue;
                     if (e.References == null) continue;
 
@@ -6380,7 +6388,7 @@ internal static partial class ElementBuilder
                     if (!inferredLevelElevs.TryGetValue(levelId, out double elev)) continue;
                     var levelElem = idToElem.GetValueOrDefault(levelId);
                     if (levelElem == null) continue;
-                    if (levelElem.Parameters.Any(p => p.Id == BIP_LEVEL_ELEV)) continue; // already set
+                    if (levelElem.ReadParameters.Any(p => p.Id == BIP_LEVEL_ELEV)) continue; // already set
 
                     BipNames.Lookup.TryGetValue(BIP_LEVEL_ELEV, out string? bipName);
                     levelElem.Parameters.Add(new Parameter
@@ -6849,7 +6857,7 @@ internal static partial class ElementBuilder
             else if (useHeader && e.NativeHeaderCategoryId is int header && header != -1) cat = header;
             else if (!state.ElemClassIdx.TryGetValue((uint)e.Id, out var cls)
                 || !TfClassRegistry.HighPurityClassCategory.TryGetValue(cls, out cat)) continue;
-            if (e.CategoryId == cat && (e.Id != 0 || e.Parameters.Any(p => p.Id == -1140362))) continue;
+            if (e.CategoryId == cat && (e.Id != 0 || e.ReadParameters.Any(p => p.Id == -1140362))) continue;
             e.CategoryId = cat;
             if (nameByCat.TryGetValue(cat, out var nm) || BuiltInCategoryNames.Lookup.TryGetValue(cat, out nm)) e.Category = nm;
             var cp = e.Parameters.FirstOrDefault(p => p.Id == -1140362);
@@ -6942,9 +6950,9 @@ internal static partial class ElementBuilder
                 if (foot > 1e-6 && (net < 0.3 * foot || net > 1.05 * foot)) continue;
             }
 
-            if (e.Parameters.All(p => p.Id != -1012805))
+            if (e.ReadParameters.All(p => p.Id != -1012805))
                 e.Parameters.Add(BipHelpers.MakeBipParam(-1012805, "HOST_AREA_COMPUTED", StorageType.Double, net));
-            if (outerP > 0 && e.Parameters.All(p => p.Id != -1001953))
+            if (outerP > 0 && e.ReadParameters.All(p => p.Id != -1001953))
                 e.Parameters.Add(BipHelpers.MakeBipParam(-1001953, "HOST_PERIMETER_COMPUTED", StorageType.Double, outerP));
 
             // Volume = net x type thickness (sum of compound layers of the type).
@@ -6952,7 +6960,7 @@ internal static partial class ElementBuilder
                 && state.CompoundLayers.TryGetValue((uint)e.TypeId, out var layers) && layers.Count > 0)
             {
                 double thick = layers.Sum(l => l.ThicknessFt);
-                if (thick > 0 && e.Parameters.All(p => p.Id != -1012806))
+                if (thick > 0 && e.ReadParameters.All(p => p.Id != -1012806))
                     e.Parameters.Add(BipHelpers.MakeBipParam(-1012806, "HOST_VOLUME_COMPUTED", StorageType.Double, net * thick));
             }
         }
@@ -6963,7 +6971,7 @@ internal static partial class ElementBuilder
         if (floor is not { CategoryId: -2000032, RootClassName: "Floor", SerializedSystemTypeId: > 0 }
             || floor.CuttingElementIds is { Count: > 0 }
             || floor.CutOutSteps?.Any(step => step.Cutout) == true
-            || floor.Parameters.Any(p => p.Id == -1012805)
+            || floor.ReadParameters.Any(p => p.Id == -1012805)
             || BrepMeasures.MeasuredPlanarPrism(floor.Geometry) is not ({ InnerPerimeter: 0 } prism, _)) return;
 
         floor.Parameters.Add(BipHelpers.MakeBipParam(-1012805, "HOST_AREA_COMPUTED", StorageType.Double, prism.ProfileArea));
@@ -6975,9 +6983,9 @@ internal static partial class ElementBuilder
             || BrepMeasures.MeasuredPlanarPrism(floor.Geometry) is not ({ InnerPerimeter: > 0 } prism, var volume)) return;
 
         // The closed body includes the inserted opening that the host sketch omits.
-        if (floor.Parameters.All(p => p.Id != -1012805))
+        if (floor.ReadParameters.All(p => p.Id != -1012805))
             floor.Parameters.Add(BipHelpers.MakeBipParam(-1012805, "HOST_AREA_COMPUTED", StorageType.Double, prism.ProfileArea));
-        if (floor.Parameters.All(p => p.Id != -1012806))
+        if (floor.ReadParameters.All(p => p.Id != -1012806))
             floor.Parameters.Add(BipHelpers.MakeBipParam(-1012806, "HOST_VOLUME_COMPUTED", StorageType.Double, volume));
     }
 
@@ -7015,7 +7023,7 @@ internal static partial class ElementBuilder
             string? val = EditedByUserCats.Contains(c) ? user
                 : EditedByEmptyCats.Contains(c) ? "" : null;
             if (val == null) continue;
-            if (e.Parameters.All(p => p.Id != -1002067))
+            if (e.ReadParameters.All(p => p.Id != -1002067))
                 e.Parameters.Add(BipHelpers.MakeBipParam(-1002067, "EDITED_BY", StorageType.String, val));
         }
     }
@@ -7032,12 +7040,12 @@ internal static partial class ElementBuilder
             if (state.DetailCurveStyles.TryGetValue(eid, out int d) && d > 0) sty = d;
             else if (state.CurveGeometry.TryGetValue(eid, out var g) && g.GStyle > 0) sty = g.GStyle;
             if (state.CurveGeometry.TryGetValue(eid, out var cgl) && cgl.Length > 1e-9
-                && e.Parameters.All(p => p.Id != -1004005))
+                && e.ReadParameters.All(p => p.Id != -1004005))
                 e.Parameters.Add(BipHelpers.MakeBipParam(-1004005, "CURVE_ELEM_LENGTH", StorageType.Double, cgl.Length));
             if (sty <= 0) continue;
-            if (e.Parameters.All(p => p.Id != -1006210))
+            if (e.ReadParameters.All(p => p.Id != -1006210))
                 e.Parameters.Add(BipHelpers.MakeBipParam(-1006210, "BUILDING_CURVE_GSTYLE", StorageType.ElementId, sty));
-            if (e.Parameters.All(p => p.Id != -1006211))
+            if (e.ReadParameters.All(p => p.Id != -1006211))
                 e.Parameters.Add(BipHelpers.MakeBipParam(-1006211, "BUILDING_CURVE_GSTYLE_PLUS_INVISIBLE", StorageType.ElementId, sty));
         }
     }
@@ -7050,7 +7058,7 @@ internal static partial class ElementBuilder
         var analyticalCats = new HashSet<int> { -2009640, -2009641, -2009642, -2009643, -2009644, -2009646, -2009649 };
         void AddIfMissing(Element e, int id, string name, int val)
         {
-            if (e.Parameters.All(p => p.Id != id))
+            if (e.ReadParameters.All(p => p.Id != id))
                 e.Parameters.Add(BipHelpers.MakeBipParam(id, name, StorageType.Integer, val));
         }
         foreach (var e in info.Elements)
@@ -7072,13 +7080,13 @@ internal static partial class ElementBuilder
                     AddIfMissing(e, -1152343, "ANALYTICAL_MODEL_MANUALLY_ADJUSTED", 0);
                     AddIfMissing(e, -1009523, "ANALYTICAL_MODEL_SKETCH_PROJECTION", -6);
                     AddIfMissing(e, -1009522, "ANALYTICAL_MODEL_SKETCH_ALIGNMENT_METHOD", 0);
-                    if (e.Parameters.All(p => p.Id != -1006008))
+                    if (e.ReadParameters.All(p => p.Id != -1006008))
                         e.Parameters.Add(BipHelpers.MakeBipParam(-1006008, "CURVE_HEIGHT_OFFSET", StorageType.Double, 0.0));
-                    if (e.Parameters.All(p => p.Id != -1006015))
+                    if (e.ReadParameters.All(p => p.Id != -1006015))
                         e.Parameters.Add(BipHelpers.MakeBipParam(-1006015, "CURVE_PARAM_STEEL_CANTILEVER", StorageType.Double, 0.0));
-                    if (e.Parameters.All(p => p.Id != -1006014))
+                    if (e.ReadParameters.All(p => p.Id != -1006014))
                         e.Parameters.Add(BipHelpers.MakeBipParam(-1006014, "CURVE_PARAM_CONCRETE_CANTILEVER", StorageType.Double, 0.0));
-                    if (e.Parameters.All(p => p.Id != -1006016))
+                    if (e.ReadParameters.All(p => p.Id != -1006016))
                         e.Parameters.Add(BipHelpers.MakeBipParam(-1006016, "ROOF_SLOPE", StorageType.Double, 1.0 / 12.0));
                 }
                 continue;
@@ -7095,7 +7103,7 @@ internal static partial class ElementBuilder
                 AddIfMissing(e, -1006441, "SPOT_ELEV_RELATIVE_BASE", -1);
                 void AddStr(int id, string name)
                 {
-                    if (e.Parameters.All(p => p.Id != id))
+                    if (e.ReadParameters.All(p => p.Id != id))
                         e.Parameters.Add(BipHelpers.MakeBipParam(id, name, StorageType.String, "", hasNoRevitValue: true));
                 }
                 AddStr(-1006479, "SPOT_ELEV_SINGLE_OR_UPPER_SUFFIX");
@@ -7112,7 +7120,7 @@ internal static partial class ElementBuilder
                         if (p.Id is -1002050 or -1002000 or -1002051 or -1002052)
                         { p.Value = 1412; p.StorageType = StorageType.ElementId; }
                     foreach (int pid in new[] { -1002050, -1002000, -1002051, -1002052 })
-                        if (e.Parameters.All(p => p.Id != pid))
+                        if (e.ReadParameters.All(p => p.Id != pid))
                             e.Parameters.Add(BipHelpers.MakeBipParam(pid, "", StorageType.ElementId, 1412));
                     e.TypeId = 1412;
                 }
@@ -7126,9 +7134,9 @@ internal static partial class ElementBuilder
                 AddIfMissing(e, -1001713, "RELATED_TO_MASS", 0);
                 AddIfMissing(e, -1019100, "WALL_CROSS_SECTION", 1);
                 AddIfMissing(e, -1001007, "WALL_ATTR_ROOM_BOUNDING", 1);
-                if (e.Parameters.All(p => p.Id != -1012828))
+                if (e.ReadParameters.All(p => p.Id != -1012828))
                     e.Parameters.Add(BipHelpers.MakeBipParam(-1012828, "WALL_TOP_EXTENSION_DIST_PARAM", StorageType.Double, 0.0));
-                if (e.Parameters.All(p => p.Id != -1012829))
+                if (e.ReadParameters.All(p => p.Id != -1012829))
                     e.Parameters.Add(BipHelpers.MakeBipParam(-1012829, "WALL_BOTTOM_EXTENSION_DIST_PARAM", StorageType.Double, 0.0));
             }
             else if (c == -2000032 || c == -2000035)
@@ -7157,7 +7165,7 @@ internal static partial class ElementBuilder
         {
             if (e.CategoryId != -2009645 || e.Id <= 0) continue;
             if (!state.ElemClassIdx.TryGetValue((uint)e.Id, out var cls)) continue;
-            if (e.Parameters.Any(p => p.Id == -1001597)) continue;
+            if (e.ReadParameters.Any(p => p.Id == -1001597)) continue;
             int outd = e.References?.Count ?? 0;
             incoming.TryGetValue(e.Id, out int ind);
             int? status = null;
@@ -7508,11 +7516,15 @@ internal static partial class ElementBuilder
     {
         foreach (var e in rvtInfo.Elements)
         {
-            foreach (var p in e.Parameters)
+            int index = -1;
+            foreach (var original in e.ReadParameters)
             {
-                if (string.IsNullOrEmpty(p.ForgeId) && p.Id > 0 && state != null
-                    && state.ForgeParamDefs.TryGetValue((uint)p.Id, out var def))
+                index++;
+                var p = original;
+                if (string.IsNullOrEmpty(original.ForgeId) && original.Id > 0 && state != null
+                    && state.ForgeParamDefs.TryGetValue((uint)original.Id, out var def))
                 {
+                    p = e.Parameters[index];
                     p.ForgeId = def.ForgeId;
                     if (string.IsNullOrEmpty(p.Definition?.Name) && !string.IsNullOrEmpty(def.DisplayName))
                     {
@@ -7540,23 +7552,27 @@ internal static partial class ElementBuilder
                     || (p.Value is int piv && piv == -1);
                 if (isStringSpec && p.StorageType != StorageType.String)
                 {
+                    p = e.Parameters[index];
                     p.StorageType = StorageType.String;
                     p.Value = "";
                     if (wasNoRevitValue) p.HasNoRevitValue = true;
                 }
                 else if (isBoolSpec && p.StorageType != StorageType.Integer)
                 {
+                    p = e.Parameters[index];
                     p.StorageType = StorageType.Integer;
                     p.Value = 0;
                     if (wasNoRevitValue) p.HasNoRevitValue = true;
                 }
                 else if (isNumericSpec && p.StorageType == StorageType.String)
                 {
+                    p = e.Parameters[index];
                     p.StorageType = StorageType.Double;
                     p.Value = 0.0;
                     if (wasNoRevitValue) p.HasNoRevitValue = true;
                 }
             }
+            state?.ArchiveSceneParameters?.Invoke(e);
         }
     }
 
@@ -7781,7 +7797,7 @@ internal static partial class ElementBuilder
         {
             if (e.TypeId <= 0 || !elemById.TryGetValue(e.TypeId, out var typeElem)) continue;
             if (typeElem.References == null) continue;
-            var existing = new HashSet<int>(e.Parameters.Select(p => p.Id));
+            var existing = new HashSet<int>(e.ReadParameters.Select(p => p.Id));
             foreach (var defId in typeElem.References)
             {
                 if (defId <= 0 || existing.Contains(defId) || !state.IsParameterElement((uint)defId)) continue;
@@ -8086,7 +8102,7 @@ internal static partial class ElementBuilder
 
         void EnsureBip(Element e, int id, string name, StorageType st, object value, bool isApproximate = false, bool hasNoRevitValue = false)
         {
-            if (e.Parameters.Any(p => p.Id == id)) return;
+            if (e.ReadParameters.Any(p => p.Id == id)) return;
             var parameter = BipHelpers.MakeBipParam(id, name, st, value, hasNoRevitValue: hasNoRevitValue);
             parameter.IsApproximate = isApproximate;
             e.Parameters.Add(parameter);
@@ -8186,7 +8202,7 @@ internal static partial class ElementBuilder
                 // STRUCTURAL_ANALYTICAL_MODEL (-1001552): walls default to 1 when structural
                 // significant
                 var samParam = e.Parameters.FirstOrDefault(p => p.Id == -1001552);
-                bool isStructural = e.Parameters.Any(p => p.Id == -1001596 && p.Value is int i && i == 1);
+                bool isStructural = e.ReadParameters.Any(p => p.Id == -1001596 && p.Value is int i && i == 1);
                 if (samParam == null)
                     EnsureBip(e, -1001552, "STRUCTURAL_ANALYTICAL_MODEL", StorageType.Integer, isStructural ? 1 : 0);
                 else if (samParam.Value is int iv && iv == 0 && isStructural) samParam.Value = 1;
@@ -8350,6 +8366,7 @@ internal static partial class ElementBuilder
                     };
                 e.Parameters.Add(parameter);
             }
+            state.ArchiveSceneParameters?.Invoke(e);
         }
     }
 

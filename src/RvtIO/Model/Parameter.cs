@@ -264,8 +264,10 @@ namespace RvtIO.Model
 
         /// <summary>Marks <see cref="HasResolvedZeroElementId"/> on each parameter whose <c>0</c> element-id
         /// value resolves to a real target element with id <c>0</c> in its domain.</summary>
-        internal static void ResolveZeroElementIds(RevitFileInfo info, RvtIO.Internal.ParsingState? state = null)
+        internal static void ResolveZeroElementIds(RevitFileInfo info, RvtIO.Internal.ParsingState? state = null,
+            Action<Element>? archiveParameters = null)
         {
+            archiveParameters ??= state?.ArchiveSceneParameters;
             bool hasZeroPhase = HasZeroProjectPhase(info, state);
             bool hasZeroDimStyle = HasZeroDimensionStyle(info, state);
             if (state != null)
@@ -275,18 +277,16 @@ namespace RvtIO.Model
             }
             foreach (var element in info.Elements)
             {
-                foreach (var parameter in element.Parameters)
+                int index = -1;
+                foreach (var parameter in element.ReadParameters)
                 {
-                    if (parameter.StorageType == StorageType.ElementId && parameter.Value is int eid && eid == 0)
-                    {
-                        parameter.HasResolvedZeroElementId =
-                            IsValidZeroElementIdTarget(element, parameter.Id, hasZeroPhase, hasZeroDimStyle);
-                    }
-                    else if (parameter.HasResolvedZeroElementId)
-                    {
-                        parameter.HasResolvedZeroElementId = false;
-                    }
+                    index++;
+                    bool resolves = parameter.StorageType == StorageType.ElementId && parameter.Value is int eid && eid == 0
+                        && IsValidZeroElementIdTarget(element, parameter.Id, hasZeroPhase, hasZeroDimStyle);
+                    if (parameter.HasResolvedZeroElementId != resolves)
+                        element.Parameters[index].HasResolvedZeroElementId = resolves;
                 }
+                archiveParameters?.Invoke(element);
             }
         }
 

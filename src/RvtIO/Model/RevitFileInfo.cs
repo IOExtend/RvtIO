@@ -42,7 +42,7 @@ namespace RvtIO.Model
         [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
         public IReadOnlyDictionary<int, string>? SourceElementIds => ElementIds?.SourceIdsAsText();
 
-        internal void AttachSourceElementIds()
+        internal void AttachSourceElementIds(Action<Element>? archiveParameters = null)
         {
             if (ElementIds is not { } ids) return;
             long? WhenRemapped(int key)
@@ -55,9 +55,18 @@ namespace RvtIO.Model
                 element.NativeId = WhenRemapped(element.Id);
                 element.NativeTypeId = WhenRemapped(element.TypeId);
                 element.NativeHostId = element.HostId is int host ? WhenRemapped(host) : null;
-                foreach (var parameter in element.Parameters)
+                int index = -1;
+                foreach (var parameter in element.ReadParameters)
+                {
+                    index++;
                     if (parameter.StorageType == StorageType.ElementId && parameter.Value is int key)
-                        parameter.NativeElementId = WhenRemapped(key);
+                    {
+                        long? sourceId = WhenRemapped(key);
+                        if (parameter.NativeElementId != sourceId)
+                            element.Parameters[index].NativeElementId = sourceId;
+                    }
+                }
+                archiveParameters?.Invoke(element);
             }
         }
 

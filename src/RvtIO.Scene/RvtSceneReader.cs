@@ -71,7 +71,7 @@ public static class RvtSceneReader
     public static RvtSceneResult ReadStream(Stream stream, RvtSceneOptions options) =>
         ReadStreamCore(stream, options, null);
 
-    /// <summary>Reads a scene and keeps its triangle buffers and intermediate data in a separate temporary stream.
+    /// <summary>Reads a scene and keeps its triangle buffers, intermediate faces and element parameters in a separate temporary stream.
     /// The caller owns that stream and keeps it open until the scene is no longer needed.</summary>
     /// <param name="stream">The readable, seekable RVT input.</param>
     /// <param name="options">The options of the read, including the required model key.</param>
@@ -103,9 +103,12 @@ public static class RvtSceneReader
                 return partitionScratch;
             };
         var scratch = triangleScratch == null ? null : new SceneMeshScratch(triangleScratch);
-        if (scratch != null) readerOptions.ArchiveSceneGeometry = scratch.ArchiveGeometry;
+        if (scratch != null)
+        {
+            readerOptions.ArchiveSceneGeometry = scratch.ArchiveGeometry;
+            readerOptions.ArchiveSceneParameters = scratch.ArchiveParameters;
+        }
         var document = RvtDocument.OpenStream(stream, readerOptions);
-        scratch?.ArchiveParameters(document.Elements);
         var meshes = ElementMeshes.ExtractCore(document, MeshOptions(options), scratch == null ? null : scratch.Store);
         return Map(document, meshes, key, ReadDiagnostics(readDiagnostics), scratch);
     }
