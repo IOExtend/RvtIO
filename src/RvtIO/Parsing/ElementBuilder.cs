@@ -1369,17 +1369,20 @@ internal static partial class ElementBuilder
 
         // For each candidate id, how many distinct elements of each category reference it. A type
         // element is referenced predominantly by its instances (one category).
-        var refCat = new Dictionary<int, Dictionary<int, int>>();
+        var categoryVotes = new Dictionary<(int Reference, int Category), int>();
+        var referenceVotes = new Dictionary<int, int>();
+        var seenRefs = new HashSet<int>();
         foreach (var e in info.Elements)
         {
             if (e.References == null || !e.CategoryId.HasValue) continue;
             int c = e.CategoryId.Value;
-            var seenRefs = new HashSet<int>();
+            seenRefs.Clear();
             foreach (var r in e.References)
             {
                 if (r <= 1000 || !seenRefs.Add(r)) continue;
-                if (!refCat.TryGetValue(r, out var cc)) refCat[r] = cc = new Dictionary<int, int>();
-                cc.TryGetValue(c, out int n); cc[c] = n + 1;
+                var key = (r, c);
+                categoryVotes[key] = categoryVotes.GetValueOrDefault(key) + 1;
+                referenceVotes[r] = referenceVotes.GetValueOrDefault(r) + 1;
             }
         }
 
@@ -1398,20 +1401,16 @@ internal static partial class ElementBuilder
             {
                 int C = e.CategoryId.Value;
                 int bestScore = -1;
-                var seen = new HashSet<int>();
+                seenRefs.Clear();
                 foreach (var r in e.References)
                 {
-                    if (r <= 1000 || r == e.Id || !seen.Add(r)) continue;
+                    if (r <= 1000 || r == e.Id || !seenRefs.Add(r)) continue;
                     // candidate's own category must be compatible (null or same) - excludes
                     // levels/phases.
                     if (byId.TryGetValue(r, out var re) && re.CategoryId.HasValue && re.CategoryId != C) continue;
 
-                    int n = 0, tot = 0;
-                    if (refCat.TryGetValue(r, out var cc))
-                    {
-                        cc.TryGetValue(C, out n);
-                        foreach (var v in cc.Values) tot += v;
-                    }
+                    int n = categoryVotes.GetValueOrDefault((r, C));
+                    int tot = referenceVotes.GetValueOrDefault(r);
                     double frac = tot > 0 ? (double)n / tot : 0;
                     bool qualifies = (n >= 2 && frac >= 0.6) || seed.Contains(r);
                     if (!qualifies) continue;
