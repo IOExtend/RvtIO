@@ -57,6 +57,33 @@ public class ScaledInstanceComponentTests
         Assert.Equal(expected, GRepParserV2.IsHiddenInstanceVariant(flags));
     }
 
+    [Fact]
+    public void ScratchGRep_ReplaysTheWinningBlockWithItsMergedInstances()
+    {
+        const uint owner = 9516707;
+        var bytes = SymbolBlock();
+        uint size = BitConverter.ToUInt32(bytes, 8);
+        var backing = new PartitionChunks.Backing(new MemoryStream());
+        var scratch = new PartitionChunks(backing);
+        var stored = new PartitionChunks.Block(bytes, 0, bytes.Length, backing);
+        var state = new ParsingState { Chunks = scratch };
+        var job = new BlockParser.PendingGRep([], owner, 0, size, IsFamilyCut: false) { Stored = stored };
+        var decoded = Assert.IsType<GRepData>(GRepParserV2.Parse(bytes, 0, size));
+        BlockParser.ApplyPendingGRep(state, job, decoded);
+        BlockParser.ApplyPendingGRep(state, job, new GRepData
+        {
+            Instances = [new GRepInstance { SymbolElemId = 42 }],
+        });
+
+        var restored = state.GrepBlocks[owner];
+        Assert.NotSame(decoded, restored);
+        Assert.Equal(decoded.BoundingBox, restored.BoundingBox);
+        Assert.Equal(9988502, restored.SymbolElemId);
+        Assert.Equal(decoded.InstanceTransform, restored.InstanceTransform);
+        Assert.Equal(new uint[] { 9988502, 42 }, state.GrepBlocks.ReferencedSymbols());
+        Assert.Equal(new[] { 9988502, 42 }, restored.Instances.Select(instance => instance.SymbolElemId));
+    }
+
     [Theory]
     [InlineData(new double[] { 1, 0, 0, 0, 1, 0, 0, 0, 1 }, true)]
     [InlineData(new double[] { 0, -1, 0, 1, 0, 0, 0, 0, 1 }, true)]

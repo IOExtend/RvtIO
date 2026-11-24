@@ -46,13 +46,16 @@ internal static class BlockParser
     /// element, any other block is merged into the element's geometry.</summary>
     internal static void ApplyPendingGRep(ParsingState state, PendingGRep job, GRepData? geometry)
     {
+        if (geometry == null) return;
+        var stored = job.Stored;
+        if (stored == null && state.PartitionScratch is { } backing)
+            stored = new PartitionChunks.Block(job.Chunk, job.Start, checked((int)job.Size + 16), backing);
         if (job.IsFamilyCut)
         {
-            if (!state.FamilyCutGreps.ContainsKey(job.Eid)
-                && geometry is { } familyCut && IsAuthoredFamilyComplexCutter(familyCut))
-                state.FamilyCutGreps[job.Eid] = familyCut;
+            if (!state.FamilyCutGreps.ContainsKey(job.Eid) && IsAuthoredFamilyComplexCutter(geometry))
+                state.FamilyCutGreps.Set(job.Eid, geometry, stored, job.Size);
         }
-        else ApplyGRepBlock(state, job.Eid, geometry);
+        else ApplyGRepBlock(state.GrepBlocks, job.Eid, geometry, stored, job.Size);
     }
 
     /// <summary>Decodes <paramref name="count"/> blocks and applies each result on the calling thread in index order.
@@ -444,65 +447,33 @@ internal static class BlockParser
     }
 
     /// <summary>Merges one decoded GRep block into the element's geometry (arrival-order rules).</summary>
-    private static void ApplyGRepBlock(ParsingState state, uint eid, Internal.GRepData? gdV2)
+    private static void ApplyGRepBlock(GRepBlockStore blocks, uint eid, GRepData candidate,
+        PartitionChunks.Block? stored, uint size)
     {
-                    
-                    // Edge UV pairs are mapped to world via the face Planes (scanned from
-                    // the block tail): a real tessellated BRep. Use it whenever it produced
-                    // >=2 world faces; else keep the pattern scan.
-                    var gd = gdV2;
-                    // GInstance reference (family instances): carry the symbol id + placement
-                    // regardless of which decoder supplied the faces - the element's real
-                    // geometry is the SYMBOL's, transformed (IfcMappedItem architecture).
-                    if (gdV2 is { Instances.Count: > 0 })
-                    {
-                        gd ??= new Internal.GRepData();
-                        MergeGRepInstances(gd, gdV2);
-                    }
-                    if (gd != null)
-                    {
-                        if (!state.GrepBlocks.TryGetValue(eid, out var existing))
-                        {
-                            state.GrepBlocks[eid] = gd;
-                        }
-                        else
-                        {
-                            // Separate GRep blocks may store the resolved display mesh beside an
-                            // explicit GInstance mapped representation. They are alternatives, not
-                            // additive geometry: combining their faces duplicates all or part of
-                            // the symbol body. The serialized GInstance is authoritative because it
-                            // identifies both the source symbol and its exact placement transform.
-                            bool? preferCandidateMapped = PreferExplicitMappedRepresentation(existing, gd);
-                            if (preferCandidateMapped.HasValue)
-                            {
-                                if (preferCandidateMapped.Value) state.GrepBlocks[eid] = gd;
-                                return;
-                            }
+        MergeGRepInstances(candidate, candidate.Instances);
+        if (!blocks.TryGetRank(eid, out var existing))
+        {
+            blocks.Set(eid, candidate, stored, size);
+            return;
+        }
 
-                            // Tiebreakers (in priority order):
-                            //   1. Upgrade if existing has no faces and new one does
-                            //   2. Prefer world-coordinate transform
-                            //   3. Prefer non-axis-aligned faces (world-oriented)
-                            // Don't naively pick "more faces" - different blocks describe different
-                            // aspects (e.g. an analytical model vs the actual wall) and the larger
-                            // block may not be the structural geometry.
-                            bool replace = false;
-                            int VertCount(Internal.GRepData g) =>
-                                g.Faces.Sum(fc => fc.Vertices?.Count ?? 0);
-                            int gv = VertCount(gd), ev = VertCount(existing);
-                            // Real tessellated geometry (more actual polygon vertices) always wins.
-                            if (gv > ev + 2) replace = true;
-                            else if (existing.Faces.Count == 0 && gd.Faces.Count > 0) replace = true;
-                            else if (gd.Transform != null && existing.Transform == null) replace = true;
-                            else if (HasNonAxisAlignedFaces(gd) && !HasNonAxisAlignedFaces(existing)) replace = true;
-                            if (replace)
-                            {
-                                MergeGRepInstances(gd, existing);
-                                state.GrepBlocks[eid] = gd;
-                            }
-                            else MergeGRepInstances(existing, gd);
-                        }
-                    }
+        var rank = GRepBlockStore.Rank.From(candidate);
+        // An explicit mapped representation is authoritative over a resolved display mesh.
+        if (existing.Mapped != rank.Mapped)
+        {
+            if (rank.Mapped) blocks.Set(eid, candidate, stored, size);
+            return;
+        }
+
+        if (rank.VertexCount > existing.VertexCount + 2
+            || existing.FaceCount == 0 && rank.FaceCount > 0
+            || rank.Transformed && !existing.Transformed
+            || rank.Angled && !existing.Angled)
+        {
+            MergeGRepInstances(candidate, blocks.Instances(eid));
+            blocks.Set(eid, candidate, stored, size);
+        }
+        else blocks.MergeInstances(eid, candidate.Instances);
     }
 
     /// <summary>A partial family cutter needs its serialized dummy-host closure plane.
@@ -516,49 +487,25 @@ internal static class BlockParser
         return hasClosurePlane || geometry.Solids.Any(solid => solid.IsClosed);
     }
 
-    /// <summary>
-    /// Returns which of two separate GRep blocks to keep when exactly one is an explicit
-    /// mapped representation. A null result means both blocks have the same representation
-    /// kind and the ordinary geometry-quality comparison must decide between them.
-    /// </summary>
-    internal static bool? PreferExplicitMappedRepresentation(GRepData existing, GRepData candidate)
+    internal static void MergeGRepInstances(GRepData target, IReadOnlyList<GRepInstance> source)
     {
-        bool existingMapped = existing.Instances.Count > 0;
-        bool candidateMapped = candidate.Instances.Count > 0;
-        return existingMapped == candidateMapped ? null : candidateMapped;
+        MergeGRepInstances(target.Instances, source);
+        if (target.Instances.Count == 0) return;
+        target.SymbolElemId = target.Instances[0].SymbolElemId;
+        target.InstanceTransform = target.Instances[0].Transform;
     }
 
-    private static void MergeGRepInstances(GRepData target, GRepData source)
+    internal static void MergeGRepInstances(List<GRepInstance> target, IReadOnlyList<GRepInstance> source)
     {
-        foreach (var instance in source.Instances)
-            if (!target.Instances.Any(x => x.SymbolElemId == instance.SymbolElemId
+        if (ReferenceEquals(target, source)) return;
+        foreach (var instance in source)
+            if (!target.Any(x => x.SymbolElemId == instance.SymbolElemId
                 && x.Transform.SequenceEqual(instance.Transform)))
-                target.Instances.Add(new GRepInstance
+                target.Add(new GRepInstance
                 {
                     SymbolElemId = instance.SymbolElemId,
                     Transform = (double[])instance.Transform.Clone(),
                 });
-        var primary = target.Instances.FirstOrDefault();
-        if (primary != null)
-        {
-            target.SymbolElemId = primary.SymbolElemId;
-            target.InstanceTransform = primary.Transform;
-        }
-    }
-
-    /// <summary>
-    /// Check if any face in the GRep data has non-axis-aligned direction vectors,
-    /// which indicates the geometry is in world coordinates (not wall-local).
-    /// </summary>
-    private static bool HasNonAxisAlignedFaces(GRepData gd)
-    {
-        foreach (var face in gd.Faces)
-        {
-            double ax = Math.Abs(face.XVector[0]), ay = Math.Abs(face.XVector[1]);
-            if (ax > 0.01 && ay > 0.01)
-                return true;
-        }
-        return false;
     }
 
     public static void ExtractBlockStrings(byte[] d, int start, int end, uint eid, Dictionary<uint, List<string>> elemStrings)

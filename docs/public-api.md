@@ -25,9 +25,10 @@ returns or throws. Use private temporary storage outside managed memory to reduc
 segments are kept in memory.
 
 Exact framing is validated in both modes. Layout translation reads the partition by item and writes completed chunks to scratch
-when configured. Raw element record bodies can be read back from those same chunks. Recovery of damaged framing and bytes outside
-the layout grammar can still require a whole partition in memory. The decoded document and its geometry are built in memory after
-the partition passes.
+when configured. Raw element record bodies can be read back from those same chunks. With scratch storage, the geometry block
+index keeps references and decodes the selected blocks again when building the document. Recovery of damaged framing and bytes
+outside the layout grammar can still require a whole partition in memory. The returned document and its geometry are built in
+memory.
 
 With a scratch factory, `ReadStream` can validate and decode an exactly framed partition stream larger than one array.
 The array-size limit still applies to other streams and to compressed partitions that require the recovery scanner.

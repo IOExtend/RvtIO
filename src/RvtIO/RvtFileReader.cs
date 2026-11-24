@@ -782,15 +782,13 @@ public partial class RvtFileReader
         // Referenced family symbols are retained as block-only definition elements. They
         // are not exported as standalone IFC products, but callers need their geometry to
         // resolve GeometryData.Instances without reaching into parser internals.
-        var referencedSyms = new HashSet<uint>();
-        foreach (var g in state.GrepBlocks.Values)
-            foreach (var instance in g.Instances)
-                if (instance.SymbolElemId > 0) referencedSyms.Add((uint)instance.SymbolElemId);
-        foreach (var kv in state.GrepBlocks)
-            if ((state.WideSchema == null || state.R22View) && (kv.Value.Faces.Count >= 4 || referencedSyms.Contains(kv.Key))
-                && !state.ElemTable.ContainsKey(kv.Key)
-                && !state.Records.ContainsKey(kv.Key))
-                state.BlockOnlyIds.Add(kv.Key);
+        if (state.WideSchema == null || state.R22View)
+        {
+            var referencedSyms = state.GrepBlocks.ReferencedSymbols().ToHashSet();
+            foreach (uint id in state.GrepBlocks.BlockOnlyCandidates(referencedSyms))
+                if (!state.ElemTable.ContainsKey(id) && !state.Records.ContainsKey(id))
+                    state.BlockOnlyIds.Add(id);
+        }
         // FamilySymbol.m_complexCutGeoms can be the only decoded block for a definition.
         // Keep that definition in the model so an instance's exact serialized SymbolId can
         // resolve the cutter without relying on category/name/reference inference.
@@ -2843,10 +2841,8 @@ public partial class RvtFileReader
         // This single targeted pass owns spatial-cache multiplicity. Do not also record
         // these blocks in the anchored/per-chunk passes or stop after the first success.
         foreach (var id in state.RoomNameSource.Keys) missingIds.Add(id);
-        foreach (var g in state.GrepBlocks.Values)
-            foreach (var instance in g.Instances)
-                if (instance.SymbolElemId > 0 && !state.GrepBlocks.ContainsKey((uint)instance.SymbolElemId))
-                    missingIds.Add((uint)instance.SymbolElemId);
+        foreach (uint symbol in state.GrepBlocks.ReferencedSymbols())
+            if (!state.GrepBlocks.ContainsKey(symbol)) missingIds.Add(symbol);
         foreach (var id in state.AllKnownIds)
             if (!state.GrepBlocks.ContainsKey(id)) missingIds.Add(id);
         foreach (var id in state.Records.Keys)
@@ -2927,14 +2923,16 @@ public partial class RvtFileReader
             },
             (index, geometry) =>
             {
-                if (StoreFirstDecodableGRep(state, jobs[index].Eid, geometry)) stored++;
+                var job = jobs[index];
+                if (StoreFirstDecodableGRep(state, job.Eid, geometry, job.Block, job.Size)) stored++;
             });
         return stored;
     }
 
     /// <summary>Stores a decoded block for an element that has none yet; the first decodable block of an element wins.</summary>
-    internal static bool StoreFirstDecodableGRep(ParsingState state, uint eid, GRepData? geometry) =>
-        geometry != null && state.GrepBlocks.TryAdd(eid, geometry);
+    internal static bool StoreFirstDecodableGRep(ParsingState state, uint eid, GRepData? geometry,
+        PartitionChunks.Block? block = null, uint size = 0) =>
+        geometry != null && state.GrepBlocks.TryAdd(eid, geometry, state.PartitionScratch != null ? block : null, size);
 
     internal static void ParseBlocks(ParsingState state, TextWriter? diag, IProgress<RvtReadProgress>? progress = null)
     {

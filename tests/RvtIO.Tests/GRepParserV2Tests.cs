@@ -69,9 +69,15 @@ public class GRepParserV2Tests
             Transform = [1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 20, 30],
         });
 
-        Assert.True(BlockParser.PreferExplicitMappedRepresentation(resolved, mapped));
-        Assert.False(BlockParser.PreferExplicitMappedRepresentation(mapped, resolved));
-        Assert.Null(BlockParser.PreferExplicitMappedRepresentation(mapped, mapped));
+        foreach (bool mappedFirst in new[] { false, true })
+        {
+            var state = new ParsingState();
+            var job = new BlockParser.PendingGRep([], 7, 0, 0, IsFamilyCut: false);
+            BlockParser.ApplyPendingGRep(state, job, mappedFirst ? mapped : resolved);
+            BlockParser.ApplyPendingGRep(state, job, mappedFirst ? resolved : mapped);
+            Assert.Same(mapped, state.GrepBlocks[7]);
+            Assert.Empty(state.GrepBlocks[7].Faces);
+        }
     }
 
     [Theory]

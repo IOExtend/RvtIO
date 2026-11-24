@@ -155,7 +155,7 @@ internal class ParsingState
     public Dictionary<uint, Dictionary<uint, string>> ElemParamStrings { get; set; } = new();
     public Dictionary<uint, Dictionary<int, int>> ElemBipInts { get; set; } = new();
     public Dictionary<uint, BaseElementFields> ElemBaseFields { get; set; } = new();
-    public Dictionary<uint, GRepData> GrepBlocks { get; set; } = new();
+    public GRepBlockStore GrepBlocks { get; set; } = new();
     internal Dictionary<uint, (int BlockCount, TfBlockDeserializer.OwnRailingQuantityInput? Input)> RailingQuantityInputs { get; } = new();
 
     /// <summary>While set, the symbols placed from <see cref="GrepBlocks"/> are taken at the Coarse detail level.</summary>
@@ -168,7 +168,7 @@ internal class ParsingState
 
     /// <summary>FamilySymbol.m_complexCutGeoms decoded as an exact family-local BRep.
     /// Kept separate from the symbol's visible GRep because it is a void operand.</summary>
-    public Dictionary<uint, GRepData> FamilyCutGreps { get; } = new();
+    public GRepBlockStore FamilyCutGreps { get; } = new();
     /// <summary>FamilySymbol InsertableObj cut profiles decoded from m_pCutLoops,
     /// m_cutDirs and m_cutIndices. These are distinct from m_complexCutGeoms.</summary>
     public Dictionary<uint, List<Model.FamilyCutLoopData>> FamilyCutLoops { get; } = new();

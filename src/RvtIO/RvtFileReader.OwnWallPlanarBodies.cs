@@ -59,7 +59,12 @@ public partial class RvtFileReader
             if (normals[index] is { } normal) state.OwnWallSide0Normals[jobs[index].Owner] = normal;
             if (trimmed[index] is { } range) state.OwnWallTrimmedRanges[jobs[index].Owner] = range;
             if (groups[index] is { } faces) state.OwnCurrentWallFaceGroups[jobs[index].Owner] = faces;
-            if (nativeBodies[index] is { } native) state.GrepBlocks[jobs[index].Owner] = native;
+            if (nativeBodies[index] is { } native)
+            {
+                var job = jobs[index];
+                state.GrepBlocks.Set(job.Owner, native, state.PartitionScratch != null ? job.Block : null,
+                    job.Size, nativeWallBody: true);
+            }
         }
     }
 
