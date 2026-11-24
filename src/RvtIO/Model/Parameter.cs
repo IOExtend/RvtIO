@@ -265,6 +265,24 @@ namespace RvtIO.Model
             return false;
         }
 
+        [Flags]
+        internal enum ZeroReferenceKinds : byte
+        {
+            None = 0,
+            Resolved = 1,
+            Phase = 2,
+            DimensionStyle = 4,
+        }
+
+        internal ZeroReferenceKinds ClassifyZeroReference()
+        {
+            var kinds = HasResolvedZeroElementId ? ZeroReferenceKinds.Resolved : ZeroReferenceKinds.None;
+            if (StorageType != StorageType.ElementId || Value is not int id || id != 0) return kinds;
+            if (IsPhaseElementIdParameter(Id)) kinds |= ZeroReferenceKinds.Phase;
+            if (IsTypeElementIdParameter(Id)) kinds |= ZeroReferenceKinds.DimensionStyle;
+            return kinds;
+        }
+
         /// <summary>Marks <see cref="HasResolvedZeroElementId"/> on each parameter whose <c>0</c> element-id
         /// value resolves to a real target element with id <c>0</c> in its domain.</summary>
         internal static void ResolveZeroElementIds(RevitFileInfo info, RvtIO.Internal.ParsingState? state = null,
@@ -278,8 +296,12 @@ namespace RvtIO.Model
                 info.SerializedHasZeroProjectPhase = hasZeroPhase;
                 info.SerializedHasZeroDimensionStyle = hasZeroDimStyle;
             }
+            var relevant = ZeroReferenceKinds.Resolved;
+            if (hasZeroPhase) relevant |= ZeroReferenceKinds.Phase;
+            if (hasZeroDimStyle) relevant |= ZeroReferenceKinds.DimensionStyle;
             foreach (var element in info.Elements)
             {
+                if (element.ArchivedZeroReferences is { } kinds && (kinds & relevant) == 0) continue;
                 int index = -1;
                 foreach (var parameter in element.ReadParameters)
                 {

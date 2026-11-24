@@ -52,6 +52,74 @@ public class RvtSceneReaderTests
         Assert.Equal(keepExportProvenance ? 3 : 0, state.ElemScanStrings.Count);
     }
 
+    [Fact]
+    public void ArchivedTypeReferencesUseTheFirstValidParameterAndTrackEdits()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var element = new Element
+        {
+            Parameters =
+            [
+                TypeParameter("ELEM_TYPE_PARAM", -1),
+                TypeParameter("ELEM_FAMILY_AND_TYPE_PARAM", 7),
+                TypeParameter("ELEM_TYPE_PARAM", 10),
+                TypeParameter("ELEM_TYPE_PARAM", 12),
+            ],
+        };
+
+        scratch.ArchiveParameters(element);
+        Assert.Equal(10, element.FamilyTypeId);
+        Assert.Equal(7, element.GetTypeReferenceId(includeFamilyAndType: true));
+
+        element.Parameters[1].Value = 0;
+        element.Parameters[2].Definition!.Name = "Unrelated";
+        Assert.Equal(12, element.FamilyTypeId);
+        Assert.Equal(12, element.GetTypeReferenceId(includeFamilyAndType: true));
+
+        scratch.ArchiveParameters(element);
+        Assert.Equal(12, element.FamilyTypeId);
+        Assert.Equal(12, element.GetTypeReferenceId(includeFamilyAndType: true));
+        Assert.IsNotType<List<Parameter>>(element.ReadParameters);
+
+        static Parameter TypeParameter(string name, int value) => new()
+        {
+            Definition = new Definition { Name = name },
+            StorageType = StorageType.ElementId,
+            Value = value,
+        };
+    }
+
+    [Fact]
+    public void ArchivedZeroReferencesAreResolvedAndClearedAsTargetsChange()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var element = new Element
+        {
+            Parameters =
+            [
+                new Parameter { Id = (int)BuiltInParameter.PHASE_CREATED, StorageType = StorageType.ElementId, Value = 0 },
+                new Parameter { Id = 99, StorageType = StorageType.ElementId, Value = 0, HasResolvedZeroElementId = true },
+            ],
+        };
+        var info = new RevitFileInfo { Elements = [element], SerializedHasZeroProjectPhase = true };
+        scratch.ArchiveParameters(element);
+
+        Parameter.ResolveZeroElementIds(info, archiveParameters: scratch.ArchiveParameters);
+
+        Assert.True(element.ReadParameters[0].HasResolvedZeroElementId);
+        Assert.False(element.ReadParameters[1].HasResolvedZeroElementId);
+        Assert.IsNotType<List<Parameter>>(element.ReadParameters);
+
+        info.SerializedHasZeroProjectPhase = false;
+        Parameter.ResolveZeroElementIds(info, archiveParameters: scratch.ArchiveParameters);
+
+        Assert.All(element.ReadParameters, parameter => Assert.False(parameter.HasResolvedZeroElementId));
+        Assert.Equal(Parameter.ZeroReferenceKinds.Phase, element.ArchivedZeroReferences);
+        Assert.IsNotType<List<Parameter>>(element.ReadParameters);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

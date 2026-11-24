@@ -1300,6 +1300,16 @@ namespace RvtIO.Model
 
         internal IReadOnlyList<Parameter> ReadParameters => _parameters ?? _storedParameters!;
 
+        internal interface IArchivedParameters : IReadOnlyList<Parameter>
+        {
+            int FamilyTypeId { get; }
+            int FamilyAndTypeReferenceId { get; }
+            Parameter.ZeroReferenceKinds ZeroReferences { get; }
+        }
+
+        internal Parameter.ZeroReferenceKinds? ArchivedZeroReferences =>
+            _parameters == null && _storedParameters is IArchivedParameters archived ? archived.ZeroReferences : null;
+
         internal void ArchiveParameters(Func<List<Parameter>, IReadOnlyList<Parameter>?, IReadOnlyList<Parameter>?> store)
         {
             if (_parameters == null) return;
@@ -1547,17 +1557,22 @@ namespace RvtIO.Model
         /// Returns -1 if no type reference found.
         /// </summary>
         [JsonIgnore]
-        public int FamilyTypeId
+        public int FamilyTypeId => GetTypeReferenceId(includeFamilyAndType: false);
+
+        internal int GetTypeReferenceId(bool includeFamilyAndType)
         {
-            get
-            {
-                foreach (var p in ReadParameters)
-                {
-                    if (p.DefinitionName is "ELEM_TYPE_PARAM" && p.Value is int id && id > 0)
-                        return id;
-                }
-                return -1;
-            }
+            if (_parameters == null && _storedParameters is IArchivedParameters archived)
+                return includeFamilyAndType ? archived.FamilyAndTypeReferenceId : archived.FamilyTypeId;
+            return FindTypeReferenceId(ReadParameters, includeFamilyAndType);
+        }
+
+        internal static int FindTypeReferenceId(IReadOnlyList<Parameter> parameters, bool includeFamilyAndType)
+        {
+            foreach (var parameter in parameters)
+                if (parameter.Value is int id && id > 0 && (parameter.DefinitionName is "ELEM_TYPE_PARAM"
+                    || includeFamilyAndType && parameter.DefinitionName is "ELEM_FAMILY_AND_TYPE_PARAM"))
+                    return id;
+            return -1;
         }
 
         /// <summary>

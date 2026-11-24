@@ -37,8 +37,10 @@ internal sealed class SceneParameterScratch(PartitionChunks.Backing storage)
 
         using var writer = new BinaryWriter(output, Encoding.UTF8, leaveOpen: true);
         Span<byte> guidBytes = stackalloc byte[16];
+        var zeroReferences = Parameter.ZeroReferenceKinds.None;
         foreach (var parameter in parameters)
         {
+            zeroReferences |= parameter.ClassifyZeroReference();
             writer.Write(parameter.Id);
             writer.Write7BitEncodedInt((int)parameter.StorageType);
             ParameterFlags flags = 0;
@@ -69,7 +71,7 @@ internal sealed class SceneParameterScratch(PartitionChunks.Backing storage)
         var encoded = output.GetBuffer().AsSpan(0, checked((int)output.Length));
         var archived = previous is ParameterList prior && ReferenceEquals(prior.Owner, this)
             ? prior : new ParameterList(this);
-        archived.Save(encoded, parameters.Count);
+        archived.Save(encoded, parameters, zeroReferences);
         output.SetLength(0);
         if (output.Capacity > 128 * 1024) output.Capacity = 64 * 1024;
         return archived;
@@ -153,22 +155,25 @@ internal sealed class SceneParameterScratch(PartitionChunks.Backing storage)
         };
     }
 
-    private sealed class ParameterList(SceneParameterScratch store) : IReadOnlyList<Parameter>
+    private sealed class ParameterList(SceneParameterScratch store) : Element.IArchivedParameters
     {
         private PartitionChunks.Chunk? block;
         private int capacity;
         internal SceneParameterScratch Owner => store;
         public int Count { get; private set; }
+        public int FamilyTypeId { get; private set; }
+        public int FamilyAndTypeReferenceId { get; private set; }
+        public Parameter.ZeroReferenceKinds ZeroReferences { get; private set; }
         public Parameter this[int index] => store.Read(block!, Count)[index];
         public IEnumerator<Parameter> GetEnumerator() => ((IEnumerable<Parameter>)store.Read(block!, Count)).GetEnumerator();
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
-        internal void Save(ReadOnlySpan<byte> data, int count)
+        internal void Save(ReadOnlySpan<byte> data, List<Parameter> parameters, Parameter.ZeroReferenceKinds zeroReferences)
         {
             if (block != null && data.Length <= capacity)
             {
                 // An unchanged edit keeps its previous block and decoded cache entry.
-                if (Count == count && data.SequenceEqual(store.backing.Read(block))) return;
+                if (Count == parameters.Count && data.SequenceEqual(store.backing.Read(block))) return;
                 block = store.backing.Overwrite(block, data, capacity);
             }
             else
@@ -178,7 +183,10 @@ internal sealed class SceneParameterScratch(PartitionChunks.Backing storage)
                 block = store.backing.Add(data, nextCapacity);
                 capacity = nextCapacity;
             }
-            Count = count;
+            Count = parameters.Count;
+            FamilyTypeId = Element.FindTypeReferenceId(parameters, includeFamilyAndType: false);
+            FamilyAndTypeReferenceId = Element.FindTypeReferenceId(parameters, includeFamilyAndType: true);
+            ZeroReferences = zeroReferences;
         }
     }
 

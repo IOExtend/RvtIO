@@ -97,15 +97,8 @@ public class RvtDocument
         _typeElementIds = new HashSet<int>();
         foreach (var e in info.Elements)
         {
-            foreach (var p in e.ReadParameters)
-            {
-                if (p.DefinitionName is "ELEM_TYPE_PARAM" or "ELEM_FAMILY_AND_TYPE_PARAM"
-                    && p.Value is int typeId && typeId > 0)
-                {
-                    _typeElementIds.Add(typeId);
-                    break;
-                }
-            }
+            int typeId = e.GetTypeReferenceId(includeFamilyAndType: true);
+            if (typeId > 0) _typeElementIds.Add(typeId);
         }
 
         SynthesizeMissingParams(archiveParameters);
