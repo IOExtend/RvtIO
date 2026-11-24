@@ -77,6 +77,7 @@ internal sealed class PartitionChunks(PartitionChunks.Backing? backing = null) :
         private readonly int start;
         private readonly Backing? backing;
         private readonly Chunk? stored;
+        private readonly int length;
 
         internal Block(byte[] data, int start, int length, Backing? backing)
         {
@@ -92,12 +93,27 @@ internal sealed class PartitionChunks(PartitionChunks.Backing? backing = null) :
             }
         }
 
-        internal (byte[] Data, int Start) Read() => data != null ? (data, start) : (backing!.Read(stored!), 0);
+        internal Block(Backing backing, Chunk stored, int start, int length)
+        {
+            this.backing = backing;
+            this.stored = stored;
+            this.start = start;
+            this.length = length;
+        }
+
+        internal (byte[] Data, int Start) Read()
+        {
+            if (data != null) return (data, start);
+            var bytes = backing!.Read(stored!);
+            return (length == 0 ? bytes : bytes.AsSpan(start, length).ToArray(), 0);
+        }
     }
 
     private readonly List<Chunk> entries = [];
     internal Backing? Store => backing;
     internal Chunk Reference(int index) => entries[index];
+    internal Block? StoredBlock(int index, int start, int length)
+        => backing != null && entries[index].Memory == null ? new Block(backing, entries[index], start, length) : null;
     internal void Add(Chunk chunk) => entries.Add(chunk);
     internal void Add(byte[] data) => Add(backing?.Add(data) ?? new Chunk(data.Length, data, 0));
     internal void AddRange(PartitionChunks chunks) => entries.AddRange(chunks.entries);

@@ -51,7 +51,11 @@ internal static class PartitionFraming
         /// <summary>Where the bytes of the item are: in its segment when it lies in one, else in a copy (an item can run into the next segment
         /// of its chain); Copied tells which.</summary>
         internal (byte[] Data, int Start, bool Copied) Bytes(ProjectItem item)
+            => Bytes(item, out _);
+
+        internal (byte[] Data, int Start, bool Copied) Bytes(ProjectItem item, out PartitionChunks.Block? stored)
         {
+            stored = null;
             if (starts == null)
             {
                 var at = new long[Segments.Count];
@@ -60,14 +64,19 @@ internal static class PartitionFraming
             }
             int s = Array.BinarySearch(starts, item.Offset);
             if (s < 0) s = ~s - 1;
-            while (s < starts.Length - 1 && starts[s + 1] <= item.Offset && Segments[s].Length == 0) s++;
+            while (s < starts.Length - 1 && starts[s + 1] <= item.Offset && PartitionChunks.LengthAt(Segments, s) == 0) s++;
             int from = (int)(item.Offset - starts[s]);
-            if (from + (long)item.Length <= Segments[s].Length) return (Segments[s], from, false);
+            if (from + (long)item.Length <= PartitionChunks.LengthAt(Segments, s))
+            {
+                stored = (Segments as PartitionChunks)?.StoredBlock(s, from, item.Length);
+                return (Segments[s], from, false);
+            }
             var copy = new byte[item.Length];
             for (int done = 0; done < item.Length; s++, from = 0)
             {
-                int n = Math.Min(item.Length - done, Segments[s].Length - from);
-                Buffer.BlockCopy(Segments[s], from, copy, done, n);
+                var segment = Segments[s];
+                int n = Math.Min(item.Length - done, segment.Length - from);
+                Buffer.BlockCopy(segment, from, copy, done, n);
                 done += n;
             }
             return (copy, 0, true);

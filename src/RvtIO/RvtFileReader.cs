@@ -2547,7 +2547,7 @@ public partial class RvtFileReader
             foreach (var record in frame!.Items)
             {
                 if (record.Channel == 101 || record.Length < 18 || record.Owner > uint.MaxValue || record.Owner == 0 && !state.AllKnownIds.Contains(0)) continue;
-                var (data, start, copied) = frame.Bytes(record);
+                var (data, start, copied) = frame.Bytes(record, out var storedRecord);
                 uint eid = (uint)record.Owner;
                 int queued = pending.Count;
                 BlockParser.ParseBlock(data, start, eid, (uint)(record.Length - 16), state.AllKnownIds.Contains(eid), state, collectBlockOnlyIds, pending);
@@ -2560,7 +2560,7 @@ public partial class RvtFileReader
                     for (int i = queued; i < pending.Count; i++)
                     {
                         var job = pending[i];
-                        var stored = new PartitionChunks.Block(job.Chunk, job.Start, (int)job.Size + 16, backing);
+                        var stored = storedRecord ?? new PartitionChunks.Block(job.Chunk, job.Start, (int)job.Size + 16, backing);
                         pending[i] = job with { Chunk = [], Stored = stored };
                     }
             }

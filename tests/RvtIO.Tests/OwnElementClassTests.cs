@@ -228,8 +228,10 @@ public class OwnElementClassTests
         Assert.DoesNotContain(999u, state.BlockOnlyIds);
     }
 
-    [Fact]
-    public void TheGeometryOfARecordThatRunsIntoTheNextSegmentOrIsOverTheSizeLimit_IsNotDecoded()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TheGeometryOfARecordThatRunsIntoTheNextSegmentOrIsOverTheSizeLimit_IsNotDecoded(bool storeSegments)
     {
         byte[] crossing = Frame(0x07D7), whole = Frame(0x07D7);
         BitConverter.GetBytes(456u).CopyTo(whole, 0);
@@ -241,10 +243,15 @@ public class OwnElementClassTests
         BitConverter.GetBytes((ushort)0x07D7).CopyTo(large, 12);
         BitConverter.GetBytes(size).CopyTo(large, 16 + (int)size - 4);
         byte[] stream = [.. crossing, .. whole, .. large];
+        using var scratch = new MemoryStream();
+        var segments = new PartitionChunks(storeSegments ? new PartitionChunks.Backing(scratch) : null);
+        segments.Add(stream[..10]);
+        segments.Add(stream[10..]);
         var state = new ParsingState
         {
             AllKnownIds = [123, 456, 789],
-            FramedPartitions = [new PartitionFraming.Framed([stream[..10], stream[10..]],
+            Chunks = segments,
+            FramedPartitions = [new PartitionFraming.Framed(segments,
                 [new(103, 123, 0, crossing.Length), new(103, 456, crossing.Length, whole.Length),
                  new(103, 789, crossing.Length + whole.Length, large.Length)], 4)],
         };
@@ -254,6 +261,15 @@ public class OwnElementClassTests
 
         Assert.Equal(3, state.BlockClassInventory[0x07D7].Count);
         Assert.Equal([456u], pending.Select(p => p.Eid));
+        if (storeSegments)
+        {
+            Assert.Equal(stream.Length, scratch.Length);
+            var job = Assert.Single(pending);
+            Assert.Empty(job.Chunk);
+            var (data, start) = job.Stored!.Value.Read();
+            Assert.Equal(0, start);
+            Assert.Equal(whole, data);
+        }
     }
 
     // TESTFILE.rvt is saved in five increments; reading it with and without the removal of the superseded copies changes the records around
