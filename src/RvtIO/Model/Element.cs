@@ -14,6 +14,18 @@ namespace RvtIO.Model
     /// <summary>A Revit element: an instance or a type, with its identity, parameters and geometry.</summary>
     public class Element
     {
+        // Specialized tuples are absent on most elements. Boxing the present values
+        // keeps the empty fields reference-sized while preserving shallow-copy semantics.
+        private object? _curveDriverLineZ;
+        private object? _curveDriverLineDirection;
+        private object? _familyLevelRefs;
+        private object? _mediumSolidTotals;
+        private object? _columnAttachment;
+        private object? _instanceOriginXY;
+        private object? _ownSingleFamilyCutout;
+        private object? _serializedAreaScheme;
+        private object? _serializedMepSystem;
+
         /// <summary>A copy that shares all members with this element; the caller replaces what it changes.</summary>
         internal Element ShallowCopy() => (Element)MemberwiseClone();
 
@@ -81,14 +93,22 @@ namespace RvtIO.Model
 
         /// <summary>Start/end z of the FamInstCurveDriver drive curve (CurveDriver.m_pCrv GLine), project coordinates (feet).</summary>
         [JsonIgnore]
-        internal (double StartZ, double EndZ)? CurveDriverLineZ { get; set; }
+        internal (double StartZ, double EndZ)? CurveDriverLineZ
+        {
+            get => ((double StartZ, double EndZ)?)_curveDriverLineZ;
+            set => _curveDriverLineZ = value;
+        }
 
         /// <summary>The circular drive curve owned by this curve element, in internal coordinates.</summary>
         internal LocationCurve? NativeModelArc { get; set; }
 
         /// <summary>Unit direction of the straight drive curve (CurveDriver.m_pCrv GLine dirVec); absent for an arc driver.</summary>
         [JsonIgnore]
-        internal (double X, double Y, double Z)? CurveDriverLineDirection { get; set; }
+        internal (double X, double Y, double Z)? CurveDriverLineDirection
+        {
+            get => ((double X, double Y, double Z)?)_curveDriverLineDirection;
+            set => _curveDriverLineDirection = value;
+        }
 
         /// <summary>Length of the straight drive curve (CurveDriver.m_pCrv GLine: the end-parameter span times the stored direction vector), feet.</summary>
         [JsonIgnore]
@@ -112,7 +132,11 @@ namespace RvtIO.Model
 
         /// <summary>FamilyInstance.m_refs FamilyLevelRef pair as stored: base (first) and top (second) level and offset.</summary>
         [JsonIgnore]
-        internal (int BaseLevel, double BaseOffset, int TopLevel, double TopOffset)? FamilyLevelRefs { get; set; }
+        internal (int BaseLevel, double BaseOffset, int TopLevel, double TopOffset)? FamilyLevelRefs
+        {
+            get => ((int BaseLevel, double BaseOffset, int TopLevel, double TopOffset)?)_familyLevelRefs;
+            set => _familyLevelRefs = value;
+        }
 
         /// <summary>Parameters set by the NativeFieldParameters table with their validated presence domains, the
         /// parameter's state before the table set it (null: it did not exist) and the value the table left.</summary>
@@ -159,7 +183,11 @@ namespace RvtIO.Model
         /// <summary>The volume (cubic metres) and surface (square metres) of the taken solids of a column at the Medium level when it
         /// differs from the Fine one; null when the element has no alternatives or its Medium solids have no surface integrals.</summary>
         [JsonIgnore]
-        internal (double Volume, double Area)? MediumSolidTotals { get; set; }
+        internal (double Volume, double Area)? MediumSolidTotals
+        {
+            get => ((double Volume, double Area)?)_mediumSolidTotals;
+            set => _mediumSolidTotals = value;
+        }
 
         /// <summary>EnergyDataSettings.m_buildingTypeId as stored (the project's HVAC load building type).</summary>
         [JsonIgnore]
@@ -175,7 +203,11 @@ namespace RvtIO.Model
 
         /// <summary>The attachment record of a column end (AttachInfo 699): <c>IsTop</c> is m_baseOrTop = 1.</summary>
         [JsonIgnore]
-        internal (bool IsTop, double Offset, int Justification)? ColumnAttachment { get; set; }
+        internal (bool IsTop, double Offset, int Justification)? ColumnAttachment
+        {
+            get => ((bool IsTop, double Offset, int Justification)?)_columnAttachment;
+            set => _columnAttachment = value;
+        }
 
         /// <summary>FamilyInstance.m_useOffsetPos as stored: whether the instance keeps its offset when its grid moves.</summary>
         [JsonIgnore]
@@ -183,7 +215,11 @@ namespace RvtIO.Model
 
         /// <summary>FamilyInstance.m_instOrigin x and y as stored (project coordinates, feet).</summary>
         [JsonIgnore]
-        internal (double X, double Y)? InstanceOriginXY { get; set; }
+        internal (double X, double Y)? InstanceOriginXY
+        {
+            get => ((double X, double Y)?)_instanceOriginXY;
+            set => _instanceOriginXY = value;
+        }
 
         /// <summary>FamilyInstance.m_bVertical as stored.</summary>
         [JsonIgnore]
@@ -344,7 +380,11 @@ namespace RvtIO.Model
         /// <summary>One active own computed-symbol cut with paired InstanceInfo transform;
         /// only a unique, non-inplace family with no nested instances is admitted.</summary>
         [JsonIgnore]
-        internal (int SymbolId, int HostId, double[] Transform, FamilyCutLoopData Loop)? OwnSingleFamilyCutout { get; set; }
+        internal (int SymbolId, int HostId, double[] Transform, FamilyCutLoopData Loop)? OwnSingleFamilyCutout
+        {
+            get => ((int SymbolId, int HostId, double[] Transform, FamilyCutLoopData Loop)?)_ownSingleFamilyCutout;
+            set => _ownSingleFamilyCutout = value;
+        }
 
         /// <summary>Own phase-4 cutout instance IDs in source order, not inferred inverse hosts.</summary>
         [JsonIgnore]
@@ -569,7 +609,11 @@ namespace RvtIO.Model
 
         /// <summary>AreaMeasureElem.m_areaElemName and m_areaElemDescription of an area scheme.</summary>
         [JsonIgnore]
-        internal (string Name, string Description)? SerializedAreaScheme { get; set; }
+        internal (string Name, string Description)? SerializedAreaScheme
+        {
+            get => ((string Name, string Description)?)_serializedAreaScheme;
+            set => _serializedAreaScheme = value;
+        }
 
         /// <summary>RoomElem.m_bIsLocationless: the room or area is not placed in a plan.</summary>
         [JsonIgnore]
@@ -644,7 +688,11 @@ namespace RvtIO.Model
 
         /// <summary>RbsSystem.m_strName and m_typeId of an MEP system element (piping or duct system); null for other elements.</summary>
         [JsonIgnore]
-        internal (string Name, int TypeId)? SerializedMepSystem { get; set; }
+        internal (string Name, int TypeId)? SerializedMepSystem
+        {
+            get => ((string Name, int TypeId)?)_serializedMepSystem;
+            set => _serializedMepSystem = value;
+        }
 
         /// <summary>The base equipment (panel) of an electrical circuit, from its connector manager; null for other elements and for a circuit with none.</summary>
         [JsonIgnore]
