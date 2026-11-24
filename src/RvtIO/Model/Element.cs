@@ -1360,7 +1360,29 @@ namespace RvtIO.Model
         internal int? SerializedBasicWallTypeFunction { get; set; }
 
         /// <summary>IDs of directly referenced elements.</summary>
-        public List<int>? References { get; set; }
+        public List<int>? References
+        {
+            get
+            {
+                if (_references != null && _references is not List<int>)
+                    _references = _references.ToList();
+                return (List<int>?)_references;
+            }
+            set => _references = value;
+        }
+
+        private IReadOnlyList<int>? _references;
+        internal IReadOnlyList<int>? ReadReferences => _references;
+
+        internal void SetReferences(IEnumerable<int> references, bool editable) =>
+            _references = editable ? references.ToList() : references.ToArray();
+
+        internal void ArchiveReferences(Func<int[], IReadOnlyList<int>> store)
+        {
+            // Short arrays already take less space than an index into scratch.
+            if (_references is int[] { Length: > 32 } values)
+                _references = store(values);
+        }
 
         /// <summary>Strings found near referenced elements, grouped by their TypeId.</summary>
         public Dictionary<string, List<string>>? RefStrings { get; set; }

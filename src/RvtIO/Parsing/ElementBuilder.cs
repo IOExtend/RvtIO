@@ -1230,21 +1230,24 @@ internal static partial class ElementBuilder
 
             if (rec.References.Count > 0)
             {
-                elem.References = rec.References.Select(r => (int)r).ToList();
-                var refStrings = new Dictionary<string, List<string>>();
-                foreach (var refId in rec.References)
+                elem.SetReferences(rec.References.Select(r => (int)r), state.KeepExportProvenance);
+                if (state.KeepExportProvenance)
                 {
-                    if (refId == elemId) continue;
-                    if (!state.ElemTable.ContainsKey(refId)) continue;
-                    if (state.ElemStrings.TryGetValue(refId, out var refStrs) && refStrs.Count > 0)
+                    var refStrings = new Dictionary<string, List<string>>();
+                    foreach (var refId in rec.References)
                     {
-                        string label = state.ElemClassIdx.TryGetValue(refId, out var refClassId)
-                            ? $"Ref_T{refClassId}" : $"Ref_E{refId}";
-                        if (!refStrings.ContainsKey(label))
-                            refStrings[label] = refStrs.Take(5).ToList();
+                        if (refId == elemId) continue;
+                        if (!state.ElemTable.ContainsKey(refId)) continue;
+                        if (state.ElemStrings.TryGetValue(refId, out var refStrs) && refStrs.Count > 0)
+                        {
+                            string label = state.ElemClassIdx.TryGetValue(refId, out var refClassId)
+                                ? $"Ref_T{refClassId}" : $"Ref_E{refId}";
+                            if (!refStrings.ContainsKey(label))
+                                refStrings[label] = refStrs.Take(5).ToList();
+                        }
                     }
+                    if (refStrings.Count > 0) elem.RefStrings = refStrings;
                 }
-                if (refStrings.Count > 0) elem.RefStrings = refStrings;
             }
 
             AddBodyBipParams(elem, rec, elemId, state);
@@ -1350,8 +1353,8 @@ internal static partial class ElementBuilder
         // (e.g. 277), below the >1000 cutoff of the voting heuristic underneath.
         foreach (var e in info.Elements)
         {
-            if (e.CategoryId != -2000261 || e.References is not { Count: > 0 }) continue;
-            int t = e.References[0];
+            if (e.CategoryId != -2000261 || e.ReadReferences is not { Count: > 0 }) continue;
+            int t = e.ReadReferences[0];
             if (t <= 0 || TypeParamOf(e) > 0) continue;
             AddBipIfMissing(e, -1002050, "ELEM_TYPE_PARAM", t);
             AddBipIfMissing(e, -1002052, "ELEM_FAMILY_AND_TYPE_PARAM", t);
@@ -1374,10 +1377,10 @@ internal static partial class ElementBuilder
         var seenRefs = new HashSet<int>();
         foreach (var e in info.Elements)
         {
-            if (e.References == null || !e.CategoryId.HasValue) continue;
+            if (e.ReadReferences == null || !e.CategoryId.HasValue) continue;
             int c = e.CategoryId.Value;
             seenRefs.Clear();
-            foreach (var r in e.References)
+            foreach (var r in e.ReadReferences)
             {
                 if (r <= 1000 || !seenRefs.Add(r)) continue;
                 var key = (r, c);
@@ -1388,13 +1391,13 @@ internal static partial class ElementBuilder
 
         foreach (var e in info.Elements)
         {
-            if (e.References == null || e.References.Count == 0 || TypeParamOf(e) > 0) continue;
+            if (e.ReadReferences == null || e.ReadReferences.Count == 0 || TypeParamOf(e) > 0) continue;
 
             int chosen = -1;
             if (!e.CategoryId.HasValue)
             {
                 // No category to disambiguate by - only trust a referenced known type.
-                foreach (var r in e.References)
+                foreach (var r in e.ReadReferences)
                     if (r > 1000 && r != e.Id && seed.Contains(r)) { chosen = r; break; }
             }
             else
@@ -1402,7 +1405,7 @@ internal static partial class ElementBuilder
                 int C = e.CategoryId.Value;
                 int bestScore = -1;
                 seenRefs.Clear();
-                foreach (var r in e.References)
+                foreach (var r in e.ReadReferences)
                 {
                     if (r <= 1000 || r == e.Id || !seenRefs.Add(r)) continue;
                     // candidate's own category must be compatible (null or same) - excludes
@@ -2573,19 +2576,19 @@ internal static partial class ElementBuilder
         var holderRefCount = new Dictionary<int, int>();
         foreach (var e in info.Elements)
         {
-            if (e.CategoryId != -2000700 || e.References == null) continue;
+            if (e.CategoryId != -2000700 || e.ReadReferences == null) continue;
             var seen = new HashSet<int>();
-            foreach (var r in e.References)
+            foreach (var r in e.ReadReferences)
                 if (seen.Add(r) && state.ShadingEntries.ContainsKey((uint)r))
                 { holderRefCount.TryGetValue(r, out int n); holderRefCount[r] = n + 1; }
         }
 
         foreach (var e in materials)
         {
-            if (e.References == null) continue;
+            if (e.ReadReferences == null) continue;
             var holders = new List<int>();
             var seen = new HashSet<int>();
-            foreach (var r in e.References)
+            foreach (var r in e.ReadReferences)
                 if (seen.Add(r) && state.ShadingEntries.ContainsKey((uint)r)) holders.Add(r);
             if (holders.Count == 0) continue;
 
@@ -2789,8 +2792,8 @@ internal static partial class ElementBuilder
 
             // Level (OST_Levels) and phase (OST_Phases) from the room's references.
             int levelId = -1;
-            if (e.References != null)
-                foreach (var r in e.References)
+            if (e.ReadReferences != null)
+                foreach (var r in e.ReadReferences)
                 {
                     if (!byId.TryGetValue(r, out var re)) continue;
                     if (levelId < 0 && re.CategoryId == -2000240) levelId = r;
@@ -2858,9 +2861,9 @@ internal static partial class ElementBuilder
         var placed = new HashSet<int>();
         foreach (var e in info.Elements)
         {
-            if (e.CategoryId != -2003100 || e.References == null) continue;
+            if (e.CategoryId != -2003100 || e.ReadReferences == null) continue;
             sheetNumbers.TryGetValue(e.Id, out var num);
-            foreach (var r in e.References)
+            foreach (var r in e.ReadReferences)
                 if (r != e.Id && byId.TryGetValue(r, out var re)
                     && re.CategoryId is int rc && ViewCategories.Contains(rc) && rc != -2003100)
                 {
@@ -2872,11 +2875,11 @@ internal static partial class ElementBuilder
         // 3. Viewports -> sheet number; views shown by the viewport inherit it.
         foreach (var e in info.Elements)
         {
-            if (e.CategoryId != -2000515 || e.References == null) continue; // OST_Viewports
+            if (e.CategoryId != -2000515 || e.ReadReferences == null) continue; // OST_Viewports
             string? num = null;
-            foreach (var r in e.References)
+            foreach (var r in e.ReadReferences)
                 if (sheetNumbers.TryGetValue(r, out var n)) { num = n; break; }
-            foreach (var r in e.References)
+            foreach (var r in e.ReadReferences)
                 if (r != e.Id && byId.TryGetValue(r, out var re)
                     && re.CategoryId is int rc && ViewCategories.Contains(rc) && rc != -2003100)
                 {
@@ -2903,9 +2906,9 @@ internal static partial class ElementBuilder
             if (e.CategoryId is not int c || !ViewCategories.Contains(c)) continue;
             string? nm = null;
             if (state.ViewNames.TryGetValue((uint)e.Id, out var own)) nm = own;
-            else if (c == -2000515 && e.References != null)
+            else if (c == -2000515 && e.ReadReferences != null)
             {
-                foreach (var r in e.References)
+                foreach (var r in e.ReadReferences)
                     if (state.ViewNames.TryGetValue((uint)r, out var shown)
                         && byId.TryGetValue(r, out var re) && re.CategoryId is int rc
                         && ViewCategories.Contains(rc) && rc != -2003100) // not the sheet itself
@@ -4341,7 +4344,7 @@ internal static partial class ElementBuilder
         }
 
         if (rec.References.Count > 0)
-            elem.References = rec.References.Select(r => (int)r).ToList();
+            elem.SetReferences(rec.References.Select(r => (int)r), state.KeepExportProvenance);
 
         // Body BIP entries
         foreach (var b in rec.BipParams)
@@ -4432,7 +4435,7 @@ internal static partial class ElementBuilder
             elem.CuttingElementIds = cuttingElementIds.Select(id => (int)id).ToList();
         if (state.HostCutOutSteps.TryGetValue(elementId, out var cutOutSteps)
             && (!state.HostCutOutStepsFromLayoutSearch.Contains(elementId)
-                || elem.References is { } hostReferences && cutOutSteps.All(step => hostReferences.Contains(step.ElementId))))
+                || elem.ReadReferences is { } hostReferences && cutOutSteps.All(step => hostReferences.Contains(step.ElementId))))
             elem.CutOutSteps = cutOutSteps;
     }
 
@@ -5870,8 +5873,8 @@ internal static partial class ElementBuilder
             int added = 0;
             foreach (var e in rvtInfo.Elements)
             {
-                if (e.CategoryId.HasValue || e.References == null) continue;
-                foreach (var refId in e.References)
+                if (e.CategoryId.HasValue || e.ReadReferences == null) continue;
+                foreach (var refId in e.ReadReferences)
                 {
                     if (refId == e.Id) continue;
                     if (idToCategory.TryGetValue(refId, out var refCat)
@@ -5898,9 +5901,9 @@ internal static partial class ElementBuilder
             var levelNameFromView = new Dictionary<int, (int viewId, string name)>();
             foreach (var e in rvtInfo.Elements)
             {
-                if (e.Category != "OST_Views" || string.IsNullOrEmpty(e.Name) || e.References == null) continue;
+                if (e.Category != "OST_Views" || string.IsNullOrEmpty(e.Name) || e.ReadReferences == null) continue;
                 var levelRefs = new List<int>();
-                foreach (var r in e.References)
+                foreach (var r in e.ReadReferences)
                     if (levelIds.Contains(r)) levelRefs.Add(r);
                 if (levelRefs.Count != 1) continue;
                 int lid = levelRefs[0];
@@ -5942,9 +5945,9 @@ internal static partial class ElementBuilder
 
                 // Material name: first record body reference that has a name and isn't self/preview
                 string? materialName = null;
-                if (e.References != null)
+                if (e.ReadReferences != null)
                 {
-                    foreach (var refId in e.References)
+                    foreach (var refId in e.ReadReferences)
                     {
                         if (refId == e.Id) continue;
                         if (idToName.TryGetValue(refId, out var rn) && !string.IsNullOrEmpty(rn))
@@ -6008,8 +6011,8 @@ internal static partial class ElementBuilder
                     continue;
                 }
                 // Try References (for walls without ELEM_TYPE_PARAM)
-                if (e.References == null) continue;
-                foreach (var refId in e.References)
+                if (e.ReadReferences == null) continue;
+                foreach (var refId in e.ReadReferences)
                 {
                     if (layersByElemId.TryGetValue(refId, out var refLayers))
                     { e.Layers = refLayers; break; }
@@ -6042,10 +6045,10 @@ internal static partial class ElementBuilder
                 { resolved = v; break; }
             }
             // Room separation lines reference other boundaries, but have no Revit type.
-            if (resolved == null && e.References != null && e.CategoryId.HasValue
+            if (resolved == null && e.ReadReferences != null && e.CategoryId.HasValue
                 && e.CategoryId != (int)BuiltIns.BuiltInCategory.OST_RoomSeparationLines)
             {
-                foreach (var refId in e.References)
+                foreach (var refId in e.ReadReferences)
                 {
                     if (refId == e.Id) continue;
                     if (!idToElem.TryGetValue(refId, out var refElem)) continue;
@@ -6107,8 +6110,8 @@ internal static partial class ElementBuilder
         {
             if (e.SerializedHostId.HasValue) continue;
             if (e.Category == null || !insertCategories.Contains(e.Category)) continue;
-            if (e.References == null) continue;
-            foreach (var refId in e.References)
+            if (e.ReadReferences == null) continue;
+            foreach (var refId in e.ReadReferences)
             {
                 if (idToElem.TryGetValue(refId, out var refElem) && refElem.Category != null
                     && hostCategories.Contains(refElem.Category))
@@ -6411,9 +6414,9 @@ internal static partial class ElementBuilder
                 {
                     var le = e.ReadParameters.FirstOrDefault(p => p.Id == BIP_LEVEL_ELEV);
                     if (le?.Value is not double elev) continue;
-                    if (e.References == null) continue;
+                    if (e.ReadReferences == null) continue;
 
-                    foreach (var refId in e.References)
+                    foreach (var refId in e.ReadReferences)
                     {
                         if (!levelElemIdSet.Contains(refId)) continue;
                         // Wins (all samples for the same level should agree)
@@ -6971,13 +6974,13 @@ internal static partial class ElementBuilder
         {
             if (e.CategoryId is not (-2000032 or -2000038 or -2000035)) continue;
             var sk = e.SketchLoops;
-            if (sk == null && e.References != null)
-                foreach (var r in e.References)
+            if (sk == null && e.ReadReferences != null)
+                foreach (var r in e.ReadReferences)
                     if (byId.TryGetValue(r, out var re) && re.SketchLoops != null) { sk = re.SketchLoops; break; }
             if (sk == null || sk.Count == 0)
             {
                 if (state is { StaleCopiesRemoved: true }
-                    && e.References?.Any(r => r > 0
+                    && e.ReadReferences?.Any(r => r > 0
                         && state.WalkedElementClassRoots.GetValueOrDefault((uint)r) is { BlockCount: 1, ClassId: 4065 }) == true)
                     ApplyUnsketchedFloorArea(e);
                 continue;
@@ -7217,8 +7220,8 @@ internal static partial class ElementBuilder
         var incoming = new Dictionary<int, int>();
         foreach (var e in info.Elements)
         {
-            if (e.References == null) continue;
-            foreach (var r in e.References)
+            if (e.ReadReferences == null) continue;
+            foreach (var r in e.ReadReferences)
             { incoming.TryGetValue(r, out int c); incoming[r] = c + 1; }
         }
         foreach (var e in info.Elements)
@@ -7226,7 +7229,7 @@ internal static partial class ElementBuilder
             if (e.CategoryId != -2009645 || e.Id <= 0) continue;
             if (!state.ElemClassIdx.TryGetValue((uint)e.Id, out var cls)) continue;
             if (e.ReadParameters.Any(p => p.Id == -1001597)) continue;
-            int outd = e.References?.Count ?? 0;
+            int outd = e.ReadReferences?.Count ?? 0;
             incoming.TryGetValue(e.Id, out int ind);
             int? status = null;
             if (cls == 0x0884) // Hub
@@ -7316,9 +7319,9 @@ internal static partial class ElementBuilder
         var ownerLines = new Dictionary<int, HashSet<int>>();
         foreach (var e in info.Elements)
         {
-            if (e.References == null || sketchLineIds.Contains(e.Id)) continue;
+            if (e.ReadReferences == null || sketchLineIds.Contains(e.Id)) continue;
             HashSet<int>? set = null;
-            foreach (var r in e.References)
+            foreach (var r in e.ReadReferences)
                 if (sketchLineIds.Contains(r)) (set ??= new HashSet<int>()).Add(r);
             if (set != null && set.Count >= 3) ownerLines[e.Id] = set;
         }
@@ -7367,15 +7370,15 @@ internal static partial class ElementBuilder
         if (int.TryParse(Environment.GetEnvironmentVariable("RVTIO_DBG_SKETCH"), out int dbgEid) && dbgEid != 0)
         {
             byId.TryGetValue(dbgEid, out var de);
-            var refs = de?.References;
+            var refs = de?.ReadReferences;
             int inSketch = refs?.Count(r => sketchLineIds.Contains(r)) ?? -1;
             DiagnosticSink.WriteLine($"  [sketch-dbg] {dbgEid}: found={de != null} refs={refs?.Count ?? -1} refsInSketchLines={inSketch} isOwner={ownerLines.ContainsKey(dbgEid)} loops={(de?.SketchLoops?.Count ?? 0)}");
             if (refs != null)
                 foreach (var r in refs.Take(12))
                 {
                     byId.TryGetValue(r, out var re);
-                    int r2 = re?.References?.Count(x => sketchLineIds.Contains(x)) ?? -1;
-                    DiagnosticSink.WriteLine($"  [sketch-dbg]   ref {r}: cat={re?.CategoryId} ownRefs={re?.References?.Count ?? -1} refsInSketchLines={r2} isOwner={ownerLines.ContainsKey(r)}");
+                    int r2 = re?.ReadReferences?.Count(x => sketchLineIds.Contains(x)) ?? -1;
+                    DiagnosticSink.WriteLine($"  [sketch-dbg]   ref {r}: cat={re?.CategoryId} ownRefs={re?.ReadReferences?.Count ?? -1} refsInSketchLines={r2} isOwner={ownerLines.ContainsKey(r)}");
                 }
         }
     }
@@ -7530,10 +7533,10 @@ internal static partial class ElementBuilder
         {
             uint typeCandidate = e.TypeId > 0 ? (uint)e.TypeId : 0u;
             var candidates = new List<uint>();
-            if (e.References != null)
+            if (e.ReadReferences != null)
             {
                 var seen = new HashSet<uint> { typeCandidate };
-                foreach (var rid in e.References)
+                foreach (var rid in e.ReadReferences)
                 {
                     if (rid <= 0 || rid == e.Id) continue;
                     uint urid = (uint)rid;
@@ -7640,10 +7643,10 @@ internal static partial class ElementBuilder
             // blocks are visited AFTER the type so instance-specific values override type defaults.
             var typeCandidate = e.TypeId > 0 ? (uint)e.TypeId : 0u;
             var shadowCandidates = new List<uint>();
-            if (e.References != null)
+            if (e.ReadReferences != null)
             {
                 var seen = new HashSet<uint> { typeCandidate };
-                foreach (var rid in e.References)
+                foreach (var rid in e.ReadReferences)
                 {
                     if (rid <= 0 || rid == e.Id) continue;
                     uint urid = (uint)rid;
@@ -7722,10 +7725,10 @@ internal static partial class ElementBuilder
             var candidates = new List<uint>();
             if (typeCandidate != 0 && state.FamilySymbolBlockInts.ContainsKey(typeCandidate))
                 candidates.Add(typeCandidate);
-            if (e.References != null)
+            if (e.ReadReferences != null)
             {
                 var seen = new HashSet<uint> { typeCandidate };
-                foreach (var rid in e.References)
+                foreach (var rid in e.ReadReferences)
                 {
                     if (rid <= 0 || rid == e.Id) continue;
                     uint urid = (uint)rid;
@@ -7769,10 +7772,10 @@ internal static partial class ElementBuilder
             uint typeCandidate = e.TypeId > 0 ? (uint)e.TypeId : 0u;
             if (typeCandidate != 0 && state.FamilySymbolBlockStrings.ContainsKey(typeCandidate))
                 candidates.Add(typeCandidate);
-            if (e.References != null)
+            if (e.ReadReferences != null)
             {
                 var seen = new HashSet<uint> { typeCandidate };
-                foreach (var rid in e.References)
+                foreach (var rid in e.ReadReferences)
                 {
                     if (rid <= 0 || rid == e.Id) continue;
                     uint urid = (uint)rid;
@@ -7851,9 +7854,9 @@ internal static partial class ElementBuilder
         foreach (var e in ElementsWithParameterEdits(rvtInfo.Elements, state.ArchiveSceneParameters))
         {
             if (e.TypeId <= 0 || !elemById.TryGetValue(e.TypeId, out var typeElem)) continue;
-            if (typeElem.References == null) continue;
+            if (typeElem.ReadReferences == null) continue;
             var existing = new HashSet<int>(e.ReadParameters.Select(p => p.Id));
-            foreach (var defId in typeElem.References)
+            foreach (var defId in typeElem.ReadReferences)
             {
                 if (defId <= 0 || existing.Contains(defId) || !state.IsParameterElement((uint)defId)) continue;
                 if (!elemById.TryGetValue(defId, out var defElem)) continue;
@@ -8097,9 +8100,9 @@ internal static partial class ElementBuilder
         // Per-instance: scan refs + type's refs together to find type-level params.
         IEnumerable<int> CollectRefs(Element e)
         {
-            if (e.TypeId > 0 && elemById.TryGetValue(e.TypeId, out var t) && t.References != null)
-                foreach (var r in t.References) yield return r;
-            if (e.References != null) foreach (var r in e.References) yield return r;
+            if (e.TypeId > 0 && elemById.TryGetValue(e.TypeId, out var t) && t.ReadReferences != null)
+                foreach (var r in t.ReadReferences) yield return r;
+            if (e.ReadReferences != null) foreach (var r in e.ReadReferences) yield return r;
         }
         var typePhases = new Dictionary<int, int?>();
         var typeRefSets = new Dictionary<int, HashSet<int>>();
@@ -8131,21 +8134,21 @@ internal static partial class ElementBuilder
         RefScan ScanRefs(Element e, bool isWall)
         {
             var scan = new RefScan { FirstLevelId = -1 };
-            if (e.TypeId > 0 && elemById.TryGetValue(e.TypeId, out var t) && t.References != null)
+            if (e.TypeId > 0 && elemById.TryGetValue(e.TypeId, out var t) && t.ReadReferences != null)
             {
                 if (!typeScans.TryGetValue((e.TypeId, isWall), out var typeScan))
                 {
                     typeScan = new RefScan { FirstLevelId = -1 };
-                    foreach (var r in t.References) Accumulate(ref typeScan, r, int.MinValue, isWall);
+                    foreach (var r in t.ReadReferences) Accumulate(ref typeScan, r, int.MinValue, isWall);
                     typeScans[(e.TypeId, isWall)] = typeScan;
                 }
                 // A type reference equal to the instance's own id is skipped in the full scan.
                 if (!typeRefSets.TryGetValue(e.TypeId, out var typeRefSet))
-                    typeRefSets[e.TypeId] = typeRefSet = new HashSet<int>(t.References);
-                if (typeRefSet.Contains(e.Id)) typeScan = RescanSkipping(t.References, e.Id, isWall);
+                    typeRefSets[e.TypeId] = typeRefSet = new HashSet<int>(t.ReadReferences);
+                if (typeRefSet.Contains(e.Id)) typeScan = RescanSkipping(t.ReadReferences, e.Id, isWall);
                 scan = typeScan;
             }
-            if (e.References != null) foreach (var r in e.References) Accumulate(ref scan, r, e.Id, isWall);
+            if (e.ReadReferences != null) foreach (var r in e.ReadReferences) Accumulate(ref scan, r, e.Id, isWall);
             return scan;
         }
         RefScan RescanSkipping(IEnumerable<int> refs, int skipId, bool isWall)
@@ -8286,19 +8289,19 @@ internal static partial class ElementBuilder
 
             // PHASE_CREATED / PHASE_DEMOLISHED: phase IDs from references (OST_Phases = -2000112)
             int? phaseCreatedId = null;
-            if (e.TypeId > 0 && elemById.TryGetValue(e.TypeId, out var phaseType) && phaseType.References != null)
+            if (e.TypeId > 0 && elemById.TryGetValue(e.TypeId, out var phaseType) && phaseType.ReadReferences != null)
             {
                 if (!typePhases.TryGetValue(e.TypeId, out var typePhase))
                 {
                     typePhase = null;
-                    foreach (var rid in phaseType.References)
+                    foreach (var rid in phaseType.ReadReferences)
                         if (elemById.TryGetValue(rid, out var refElem) && refElem.CategoryId == -2000112) { typePhase = rid; break; }
                     typePhases[e.TypeId] = typePhase;
                 }
                 phaseCreatedId = typePhase;
             }
-            if (phaseCreatedId == null && e.References != null)
-                foreach (var rid in e.References)
+            if (phaseCreatedId == null && e.ReadReferences != null)
+                foreach (var rid in e.ReadReferences)
                     if (elemById.TryGetValue(rid, out var refElem) && refElem.CategoryId == -2000112) { phaseCreatedId = rid; break; }
             if (phaseCreatedId.HasValue)
                 EnsureBipOrFixNull(e, -1012100, "PHASE_CREATED", StorageType.ElementId, phaseCreatedId.Value, -2000112);

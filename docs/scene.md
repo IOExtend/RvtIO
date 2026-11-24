@@ -47,7 +47,7 @@ reports `(0, 0)` once. Scene mapping follows mesh extraction.
 `RvtSceneOptions.CreatePartitionScratch` passes a scratch stream factory to the file reader for path and stream reads. Use it to
 read inflated partitions through private temporary storage as described in the [public API](public-api.md).
 
-Use `ReadStream(stream, options, triangleScratch)` to keep expanded body faces, resolved element parameters, intermediate triangle meshes and
+Use `ReadStream(stream, options, triangleScratch)` to keep expanded body faces, large element reference lists, resolved parameters, intermediate triangle meshes and
 the scene's triangle buffers in another temporary stream. Pass an empty, readable, writable, seekable stream; the caller owns it and
 keeps it open until it has finished using the returned scene. It must be separate from the input and partition scratch.
 Parameter edits reuse their reserved slots in this stream. A slot moves to a larger allocation when its contents grow beyond its capacity.

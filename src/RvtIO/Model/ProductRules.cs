@@ -27,7 +27,7 @@ internal static class ProductRules
         int? phase = e.ReadParameters.FirstOrDefault(p => p.Id == -1012100)?.Value is int n ? n : null; // PHASE_CREATED
         // Id 0 is a phase of Revit 2023 and later (the first project phase, a row of its
         // element table); the earlier layouts number phases from 1.
-        return phase is > 0 && (e.References?.Contains(phase.Value) == true || e.SerializedCreatedPhaseId == phase.Value)
+        return phase is > 0 && (e.ReadReferences?.Contains(phase.Value) == true || e.SerializedCreatedPhaseId == phase.Value)
             || phase == 0 && e.SerializedCreatedPhaseId == 0;
     }
 

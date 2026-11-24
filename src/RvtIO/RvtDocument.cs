@@ -154,13 +154,13 @@ public class RvtDocument
 
             // ELEM_TYPE_PARAM for elements that don't have it but reference a type element:
             // walls often don't get it from the binary, but their References include the type ID.
-            if (elem.FamilyTypeId <= 0 && elem.References != null && elem.References.Count > 0)
+            if (elem.FamilyTypeId <= 0 && elem.ReadReferences != null && elem.ReadReferences.Count > 0)
             {
                 // Look for a referenced element with same category that:
                 // a) is already known as a type (in _typeElementIds), OR
                 // b) has the same CategoryId and no geometry/bbox (likely a type definition)
                 int? candidateTypeId = null;
-                foreach (var refId in elem.References)
+                foreach (var refId in elem.ReadReferences)
                 {
                     if (refId <= 0 || refId == elem.Id) continue;
                     if (!_elemById.TryGetValue(refId, out var refElem)) continue;

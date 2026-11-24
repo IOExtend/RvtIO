@@ -13,15 +13,21 @@ internal sealed class SceneMeshScratch
     private readonly PartitionChunks.Backing storage;
     private readonly GeometryFaceStore faces;
     private readonly SceneParameterScratch parameters;
+    private readonly Func<int[], IReadOnlyList<int>> storeReferences;
 
     internal SceneMeshScratch(Stream stream)
     {
         storage = new(stream);
         faces = new(storage);
         parameters = new(storage);
+        storeReferences = Store<int>;
     }
 
-    internal void ArchiveGeometry(Element element) => faces.Archive(element);
+    internal void ArchiveGeometry(Element element)
+    {
+        faces.Archive(element);
+        element.ArchiveReferences(storeReferences);
+    }
 
     internal void ArchiveParameters(Element element) => parameters.Archive(element);
 

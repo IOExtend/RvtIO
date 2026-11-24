@@ -125,6 +125,31 @@ public class RvtSceneReaderTests
     private static RvtSceneResult Map() => RvtSceneReader.Read(Document(), Meshes(), new RvtSceneOptions { ModelKey = "model.rvt" });
 
     [Fact]
+    public void PagedReferencesPreserveOrderAndRestoreTheEditableList()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var element = new Element();
+        var source = Enumerable.Range(0, 17_000).Select(i => i % 1037).ToArray();
+        element.SetReferences(source, editable: false);
+        scratch.ArchiveGeometry(element);
+
+        var stored = element.ReadReferences;
+        Assert.NotNull(stored);
+        Assert.IsNotType<int[]>(stored);
+        Assert.Equal(source, stored);
+        Assert.Equal(source[16_384], stored[16_384]);
+        var editable = element.References;
+        Assert.NotNull(editable);
+        editable[16_384] = 42;
+        editable.RemoveAt(0);
+        Assert.Same(editable, element.References);
+        Assert.Equal(16_999, element.ReadReferences!.Count);
+        Assert.Equal(42, element.ReadReferences[16_383]);
+        Assert.Equal(source[16_384], stored[16_384]);
+    }
+
+    [Fact]
     public void ScratchScenePreservesGeometryPropertiesPlacementsAndDiagnostics()
     {
         using var stream = new MemoryStream();
