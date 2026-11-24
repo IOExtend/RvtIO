@@ -13,6 +13,27 @@ namespace RvtIO.Tests;
 /// incomplete geometry and those of a damaged read.</summary>
 public class RvtSceneReaderTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void NativeFactsAreOptionalWithoutChangingSceneParameterValues(bool keepExportProvenance)
+    {
+        const int parameterId = -1001105;
+        var state = new RvtIO.Internal.ParsingState { KeepExportProvenance = keepExportProvenance };
+        var native = new RvtIO.Parsing.TfBlockDeserializer.NativeParams { RootParameterStoresComplete = true };
+        native.Doubles.Add((parameterId, 17.25));
+        state.NativeParams[1] = native;
+        var element = new Element { Id = 1 };
+        var data = new RevitFileInfo { Elements = [element] };
+
+        RvtIO.Parsing.ElementBuilder.ApplyNativeParams(data, state);
+
+        var value = Assert.Single(element.Parameters, parameter => parameter.Id == parameterId);
+        Assert.Equal(17.25, value.Value);
+        Assert.Equal(keepExportProvenance, element.NativeStoredParameterIds?.Contains(parameterId) == true);
+        Assert.Equal(keepExportProvenance, element.NativeParameterStoreIds?.Contains(parameterId) == true);
+    }
+
     private const double Foot = 0.3048;
     private const int Wall = 100, Door = 101, Empty = 102, Broken = 103, Type = 200, Symbol = 300, Concrete = 500;
 

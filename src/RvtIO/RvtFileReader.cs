@@ -203,6 +203,7 @@ public partial class RvtFileReader
             AllKnownIds = new HashSet<uint>(elemTable.Keys),
             Chunks = chunks,
             NativeParams = new(chunks.Store),
+            KeepExportProvenance = _options.ArchiveSceneGeometry == null,
             OwnPartitionWallParts = ownPartitionWallParts,
             TfClassSchemas = tfSchemas ?? new(),
             LocalUsername = fileMetadata.GetValueOrDefault("Username"),

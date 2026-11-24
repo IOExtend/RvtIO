@@ -3128,10 +3128,44 @@ internal static partial class ElementBuilder
     internal static int? StoredGroupMembership(ushort rootClass, TfBlockDeserializer.NativeParams np)
         => rootClass != 1322 && np.Fields.TryGetValue("422:m_groupId", out int groupId) && groupId > 0 ? groupId : null;
 
-    /// <summary>
-    /// Apply the native parameter stores (schema-deserialized Element m_pParamValueSet* containers)
-    /// - the file's authoritative stored params.
-    /// </summary>
+    // These facts are used by the compact API and IFC export. Scene properties use the resolved Parameter values.
+    private static void ApplyNativeExportFacts(Element e, TfBlockDeserializer.NativeParams np)
+    {
+        var storedIds = new HashSet<int>();
+        foreach (var (pid, _) in np.Doubles) storedIds.Add(pid);
+        foreach (var (pid, _) in np.Ints) storedIds.Add(pid);
+        foreach (var (pid, _) in np.Strings) storedIds.Add(pid);
+        foreach (var (pid, _) in np.ElementIds) storedIds.Add(pid);
+        foreach (var named in np.NamedParams)
+            if (named.ParamId < 0) storedIds.Add(named.ParamId);
+        if (storedIds.Count > 0) e.NativeStoredParameterIds = storedIds;
+        var storeIds = new HashSet<int>();
+        foreach (var (pid, _) in np.Doubles) storeIds.Add(pid);
+        foreach (var (pid, _) in np.Ints) storeIds.Add(pid);
+        foreach (var (pid, _) in np.Strings) storeIds.Add(pid);
+        foreach (var (pid, _) in np.ElementIds) storeIds.Add(pid);
+        e.NativeParameterStoreIds = storeIds;
+        e.NativeParameterStoresComplete = np.RootParameterStoresComplete;
+        e.NativeCellListTag = np.Fields.TryGetValue("37:m_cellList", out int cellListTag) ? cellListTag : null;
+        e.NativeCellClasses = np.CellClasses?.ToArray();
+        e.NativeTailWalkComplete = np.TailWalkComplete;
+        if (np.NamedParams.Count > 0)
+            e.NativeNamedParameters = np.NamedParams.Where(named => named.ParamId < 0).Select(named => (named.ParamId, named.Instance)).ToArray();
+        // the two element-base keys are only kept for family instances (they exist in every
+        // record)
+        bool familyInstanceRecord = np.Fields.ContainsKey("1794:m_masterSymbolId");
+        foreach (string key in TfBlockDeserializer.ListFactFieldKeys)
+            if (np.Fields.TryGetValue(key, out int listFieldValue) && (familyInstanceRecord || !key.StartsWith("37:", StringComparison.Ordinal)))
+                (e.NativeListFields ??= new())[key] = listFieldValue;
+        foreach (string key in TfBlockDeserializer.RoomRuleFieldKeys)
+        {
+            if (np.Fields.TryGetValue(key, out int roomRuleInt)) (e.NativeRoomFields ??= new())[key] = roomRuleInt;
+            else if (np.DoubleFields.TryGetValue(key, out double roomRuleReal) && double.IsFinite(roomRuleReal))
+                (e.NativeRoomFields ??= new())[key] = roomRuleReal;
+        }
+    }
+
+    /// <summary>Applies the file's authoritative native parameter stores.</summary>
     internal static void ApplyNativeParams(RevitFileInfo info, ParsingState? state)
     {
         if (state == null
@@ -3154,6 +3188,7 @@ internal static partial class ElementBuilder
             }
         bool hasZeroPhase = Parameter.HasZeroProjectPhase(info, state);
         bool hasZeroDimStyle = Parameter.HasZeroDimensionStyle(info, state);
+        var byId = new Dictionary<int, Parameter>();
         foreach (var e in info.Elements)
         {
             e.SerializedCurtainWallFunction = null;
@@ -3200,41 +3235,10 @@ internal static partial class ElementBuilder
                 e.SerializedStairRunTypeNosingFeet = nosing;
             if (e.CategoryId == -2000011 && np.Fields.TryGetValue("362:m_isFlipped", out int wallFlipped))
                 e.SerializedWallFlipped = wallFlipped != 0;
-            var byId = new Dictionary<int, Parameter>();
+            byId.Clear();
             foreach (var p in e.Parameters) byId.TryAdd(p.Id, p);
-            var storedIds = new HashSet<int>();
-            foreach (var (pid, _) in np.Doubles) storedIds.Add(pid);
-            foreach (var (pid, _) in np.Ints) storedIds.Add(pid);
-            foreach (var (pid, _) in np.Strings) storedIds.Add(pid);
-            foreach (var (pid, _) in np.ElementIds) storedIds.Add(pid);
-            foreach (var named in np.NamedParams)
-                if (named.ParamId < 0) storedIds.Add(named.ParamId);
-            if (storedIds.Count > 0) e.NativeStoredParameterIds = storedIds;
-            var storeIds = new HashSet<int>();
-            foreach (var (pid, _) in np.Doubles) storeIds.Add(pid);
-            foreach (var (pid, _) in np.Ints) storeIds.Add(pid);
-            foreach (var (pid, _) in np.Strings) storeIds.Add(pid);
-            foreach (var (pid, _) in np.ElementIds) storeIds.Add(pid);
-            e.NativeParameterStoreIds = storeIds;
-            e.NativeParameterStoresComplete = np.RootParameterStoresComplete;
-            e.NativeCellListTag = np.Fields.TryGetValue("37:m_cellList", out int cellListTag) ? cellListTag : null;
-            e.NativeCellClasses = np.CellClasses?.ToArray();
-            e.NativeTailWalkComplete = np.TailWalkComplete;
             e.ExtensibleStorage = np.ExtensibleStorage;
-            if (np.NamedParams.Count > 0)
-                e.NativeNamedParameters = np.NamedParams.Where(named => named.ParamId < 0).Select(named => (named.ParamId, named.Instance)).ToArray();
-            // the two element-base keys are only kept for family instances (they exist in every
-            // record)
-            bool familyInstanceRecord = np.Fields.ContainsKey("1794:m_masterSymbolId");
-            foreach (string key in TfBlockDeserializer.ListFactFieldKeys)
-                if (np.Fields.TryGetValue(key, out int listFieldValue) && (familyInstanceRecord || !key.StartsWith("37:", StringComparison.Ordinal)))
-                    (e.NativeListFields ??= new())[key] = listFieldValue;
-            foreach (string key in TfBlockDeserializer.RoomRuleFieldKeys)
-            {
-                if (np.Fields.TryGetValue(key, out int roomRuleInt)) (e.NativeRoomFields ??= new())[key] = roomRuleInt;
-                else if (np.DoubleFields.TryGetValue(key, out double roomRuleReal) && double.IsFinite(roomRuleReal))
-                    (e.NativeRoomFields ??= new())[key] = roomRuleReal;
-            }
+            if (state.KeepExportProvenance) ApplyNativeExportFacts(e, np);
             if (TfBlockDeserializer.CaptureAllFields)
             {
                 e.DebugNativeFields = new Dictionary<string, object>();
@@ -4146,17 +4150,22 @@ internal static partial class ElementBuilder
         int domPhase = -1, domN = 0;
         foreach (var (ph, n) in phaseVotes) if (n > domN) { domPhase = ph; domN = n; }
 
+        var existing = new HashSet<int>();
         foreach (var e in info.Elements)
         {
             if (e.CategoryId is not int c) continue;
-            var existing = new HashSet<int>();
+            bool view = ViewCategories.Contains(c);
+            bool datum = c is -2000530 or -2000220 or -2000240;
+            bool dimension = c is -2000260 or -2000261 or -2000262 || e.Dimension != null;
+            if (!view && !datum && !dimension && c is not (-2009645 or -2000045)) continue;
+            existing.Clear();
             foreach (var p in e.Parameters) existing.Add(p.Id);
             void Add(int id, string name, StorageType st, object val)
             {
                 if (!existing.Contains(id)) e.Parameters.Add(BipHelpers.MakeBipParam(id, name, st, val));
             }
 
-            if (ViewCategories.Contains(c))
+            if (view)
             {
                 Add(-1005176, "VIEW_TEMPLATE", StorageType.ElementId, -1);
                 Add(-1005199, "VIEW_TEMPLATE_FOR_SCHEDULE", StorageType.ElementId, -1);
@@ -4169,9 +4178,9 @@ internal static partial class ElementBuilder
                 if (domPhase > 0)
                     Add(-1012102, "VIEW_PHASE", StorageType.ElementId, domPhase);
             }
-            if (c is -2000530 or -2000220 or -2000240) // ref planes / grids / levels
+            if (datum) // ref planes / grids / levels
                 Add(-1012201, "DATUM_VOLUME_OF_INTEREST", StorageType.ElementId, -1);
-            if (c is -2000260 or -2000261 or -2000262 || e.Dimension != null)
+            if (dimension)
             {
                 Add(-1006477, "BASELINE_DIM_OFFSET", StorageType.Double, 0.0);
                 Add(-1004515, "DIM_LEADER", StorageType.Integer, 1);
