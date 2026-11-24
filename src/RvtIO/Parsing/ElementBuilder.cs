@@ -5767,13 +5767,22 @@ internal static partial class ElementBuilder
             .ToDictionary(pair => (int)pair.Key, pair => pair.Value.Name!);
 
         var idToName = new Dictionary<int, string>();
-        var idToElem = new Dictionary<int, Element>();
+        var idToElem = new Dictionary<int, Element>(rvtInfo.Elements.Count);
+        bool duplicateIds = false;
         foreach (var e in rvtInfo.Elements)
         {
             if (!string.IsNullOrEmpty(e.Name))
                 idToName[e.Id] = e.Name;
-            idToElem[e.Id] = e;
+            if (!idToElem.TryAdd(e.Id, e))
+            {
+                duplicateIds = true;
+                idToElem[e.Id] = e;
+            }
         }
+
+        Element? FirstElement(int id) => duplicateIds
+            ? rvtInfo.Elements.FirstOrDefault(element => element.Id == id)
+            : idToElem.GetValueOrDefault(id);
 
         // Inherit category from type element or references Phase 1: TypeId and ELEM_TYPE_PARAM
         // (safe, direct type->instance)
@@ -5896,7 +5905,7 @@ internal static partial class ElementBuilder
                         if (refId == e.Id) continue;
                         if (idToName.TryGetValue(refId, out var rn) && !string.IsNullOrEmpty(rn))
                         {
-                            var refElem = rvtInfo.Elements.FirstOrDefault(x => x.Id == refId);
+                            var refElem = FirstElement(refId);
                             if (refElem?.Category is "OST_PreviewLegendComponents" or "OST_Materials") continue;
                             materialName = rn;
                             break;
@@ -5922,7 +5931,7 @@ internal static partial class ElementBuilder
         {
             foreach (var (eid, layers) in state.CompoundLayers)
             {
-                var elem = rvtInfo.Elements.FirstOrDefault(e => e.Id == (int)eid);
+                var elem = FirstElement((int)eid);
                 if (elem == null) continue;
                 elem.Layers = layers.Select(l => new Model.MaterialLayer
                 {
@@ -5969,21 +5978,22 @@ internal static partial class ElementBuilder
         // Resolve TypeId independently: ElemTable contains no type element id. Resolution priority:
         // 1. ELEM_TYPE_PARAM value if it references a real element of the same category 2.
         // SYMBOL_ID_PARAM value (same check) 3.
-        var allElemIds = new HashSet<int>(rvtInfo.Elements.Select(e => e.Id));
-        var elemByIdLookup = rvtInfo.Elements.ToDictionary(e => e.Id);
+        // Preserve the duplicate-key check of the type lookup.
+        if (duplicateIds) _ = rvtInfo.Elements.ToDictionary(e => e.Id);
+        int[] typeParameterIds = [-1002050, -1002000, -1002052];
         foreach (var e in rvtInfo.Elements)
         {
             // Trust current TypeId only if it resolves to an element of the SAME category.
             // Otherwise it's likely a Tf-class index or a leaked phase/sentinel value.
-            bool currentValid = e.TypeId > 0 && elemByIdLookup.TryGetValue(e.TypeId, out var curType)
+            bool currentValid = e.TypeId > 0 && idToElem.TryGetValue(e.TypeId, out var curType)
                 && (curType.CategoryId == e.CategoryId || !e.CategoryId.HasValue);
             if (currentValid) continue;
 
             int? resolved = null;
-            foreach (int paramId in new[] { -1002050, -1002000, -1002052 })
+            foreach (int paramId in typeParameterIds)
             {
                 var p = e.Parameters.FirstOrDefault(pp => pp.Id == paramId);
-                if (p?.Value is int v && v > 0 && elemByIdLookup.TryGetValue(v, out var paramTarget)
+                if (p?.Value is int v && v > 0 && idToElem.TryGetValue(v, out var paramTarget)
                     && (paramTarget.CategoryId == e.CategoryId || !e.CategoryId.HasValue))
                 { resolved = v; break; }
             }
@@ -5994,7 +6004,7 @@ internal static partial class ElementBuilder
                 foreach (var refId in e.References)
                 {
                     if (refId == e.Id) continue;
-                    if (!elemByIdLookup.TryGetValue(refId, out var refElem)) continue;
+                    if (!idToElem.TryGetValue(refId, out var refElem)) continue;
                     if (refElem.CategoryId == e.CategoryId)
                     {
                         // Prefer the lowest-ID candidate (types are typically created before
@@ -6009,12 +6019,12 @@ internal static partial class ElementBuilder
         // the resolved TypeId differs from the stored garbage (e.g. 528 Tf-class index)
         foreach (var e in rvtInfo.Elements)
         {
-            if (e.TypeId <= 0 || !allElemIds.Contains(e.TypeId)) continue;
-            foreach (int paramId in new[] { -1002050, -1002000, -1002052 })
+            if (e.TypeId <= 0 || !idToElem.ContainsKey(e.TypeId)) continue;
+            foreach (int paramId in typeParameterIds)
             {
                 var p = e.Parameters.FirstOrDefault(pp => pp.Id == paramId);
                 if (p == null) continue;
-                if (p.Value is int v && v > 0 && allElemIds.Contains(v)) continue; // already valid
+                if (p.Value is int v && v > 0 && idToElem.ContainsKey(v)) continue; // already valid
                 p.Value = e.TypeId;
             }
         }
@@ -6046,7 +6056,6 @@ internal static partial class ElementBuilder
         }
 
         // Compatibility fallback for versions where InsertableInst.m_hostId was not decoded.
-        var elemById = rvtInfo.Elements.ToDictionary(e => e.Id);
         var hostCategories = new HashSet<string> { "OST_Walls", "OST_Floors", "OST_Ceilings", "OST_Roofs" };
         var insertCategories = new HashSet<string> { "OST_Doors", "OST_Windows", "OST_MechanicalEquipment",
             "OST_GenericModel", "OST_StructuralColumns", "OST_CurtainWallPanels" };
@@ -6057,7 +6066,7 @@ internal static partial class ElementBuilder
             if (e.References == null) continue;
             foreach (var refId in e.References)
             {
-                if (elemById.TryGetValue(refId, out var refElem) && refElem.Category != null
+                if (idToElem.TryGetValue(refId, out var refElem) && refElem.Category != null
                     && hostCategories.Contains(refElem.Category))
                 {
                     e.HostId = refId;
@@ -6283,11 +6292,11 @@ internal static partial class ElementBuilder
         // The compatibility ELEM_TYPE_PARAM value above can be a real element id of the wrong
         // category even after TypeId was canonically resolved.
         ApplyValidatedWallTypeNames(
-            rvtInfo.Elements, elemByIdLookup,
+            rvtInfo.Elements, idToElem,
             state.CompoundStructureTypeNameSource,
             state.NativeParams);
         ApplyValidatedCeilingTypeNames(
-            rvtInfo.Elements, elemByIdLookup,
+            rvtInfo.Elements, idToElem,
             state.CeilingTypeNameSource);
 
         // User param name resolution: use ForgeParamDefs (reliable) or ElemStrings &-prefix DO NOT
@@ -6366,7 +6375,7 @@ internal static partial class ElementBuilder
                 foreach (var levelId in levelElemIdSet)
                 {
                     if (!inferredLevelElevs.TryGetValue(levelId, out double elev)) continue;
-                    var levelElem = rvtInfo.Elements.FirstOrDefault(e => e.Id == levelId);
+                    var levelElem = idToElem.GetValueOrDefault(levelId);
                     if (levelElem == null) continue;
                     if (levelElem.Parameters.Any(p => p.Id == BIP_LEVEL_ELEV)) continue; // already set
 
@@ -6468,7 +6477,7 @@ internal static partial class ElementBuilder
         if (state != null)
         {
             ApplyValidatedMemberTypeNames(
-                rvtInfo.Elements, elemByIdLookup,
+                rvtInfo.Elements, idToElem,
                 state.NativeParams, state.ElementNameTable,
                 state.NativeElementNames);
         }
@@ -6521,7 +6530,7 @@ internal static partial class ElementBuilder
         // Runs LAST: needs WALL_BASE_CONSTRAINT / WALL_HEIGHT_TYPE emitted by the passes above.
         ApplyComputedHeights(rvtInfo, state);
         ApplyBipKeyedStrings(rvtInfo, state);
-        if (state != null) Revit2027ApiValues.Apply(rvtInfo, state, elemByIdLookup);
+        if (state != null) Revit2027ApiValues.Apply(rvtInfo, state, idToElem);
         ApplyWorksets(rvtInfo, state);
         TraceElement(rvtInfo, "before-fixphase");
         FixUnresolvedPhaseCreated(rvtInfo);
@@ -6547,17 +6556,17 @@ internal static partial class ElementBuilder
         if (state != null)
         {
             ApplyValidatedFloorTypeReferenceNames(
-                rvtInfo.Elements, elemByIdLookup,
+                rvtInfo.Elements, idToElem,
                 state.FloorTypeNameSource, state.NativeParams, state);
             ApplyValidatedCeilingTypeReferenceNames(
                 rvtInfo.Elements,
                 state.CeilingTypeNameSource,
                 state.NativeParams, state.ElemClassIdx);
             ApplyValidatedWindowTypeReferenceNames(
-                rvtInfo.Elements, elemByIdLookup,
+                rvtInfo.Elements, idToElem,
                 state.NativeParams, state.ElementNameTable);
             ApplyValidatedProxyTypeReferenceNames(
-                rvtInfo.Elements, elemByIdLookup,
+                rvtInfo.Elements, idToElem,
                 state.NativeParams, state.ElementNameTable);
             ApplyValidatedWallSweepTypeReferenceNames(rvtInfo.Elements, state);
             ApplyValidatedDistributionTypeReferenceNames(rvtInfo.Elements, state);
@@ -8470,12 +8479,12 @@ internal static partial class ElementBuilder
             // Universal approach: extract direction and position from world-coordinate faces. The
             // GRep block with world-coordinate faces has XVectors that show the actual wall
             // direction in world space (not axis-aligned).
-            if (elem.Geometry?.Faces != null)
+            if (elem.Geometry?.ReadFaces != null)
             {
                 GeoFace? bestFace = null;
                 double bestArea = 0;
 
-                foreach (var face in elem.Geometry.Faces)
+                foreach (var face in elem.Geometry.ReadFaces)
                 {
                     if (Math.Abs(face.Normal[2]) > 0.5) continue;
                     if (face.Envelope == null || face.Envelope.Length < 4) continue;
@@ -8557,7 +8566,7 @@ internal static partial class ElementBuilder
                         // center, we need to find where the face center maps to in world.
                         GeoFace? largestFace = null;
                         double largestArea = 0;
-                        foreach (var face in elem.Geometry.Faces)
+                        foreach (var face in elem.Geometry.ReadFaces)
                         {
                             if (Math.Abs(face.Normal[2]) > 0.5) continue;
                             if (face.Envelope == null) continue;
@@ -8616,10 +8625,10 @@ internal static partial class ElementBuilder
                 ExtrusionHeight = dz,
             };
 
-            if (elem.Geometry?.Faces != null)
+            if (elem.Geometry?.ReadFaces != null)
             {
                 var openings = new List<GeoOpening>();
-                foreach (var face in elem.Geometry.Faces)
+                foreach (var face in elem.Geometry.ReadFaces)
                 {
                     if (face.InnerVertices == null || face.InnerVertices.Count == 0) continue;
 
@@ -9031,7 +9040,7 @@ internal static partial class ElementBuilder
         // Walls only, and only when the wall has extracted face geometry: synthesize the centreline
         // from the LARGEST VERTICAL face (world coords): direction = the face's in-plane axis,
         // extent = outer vertices projected on it.
-        if (elem.CategoryId != -2000011 || elem.Geometry?.Faces is not { Count: > 0 } faces) return;
+        if (elem.CategoryId != -2000011 || elem.Geometry?.ReadFaces is not { Count: > 0 } faces) return;
 
         double widFt = 0;
         foreach (var p in elem.Parameters)

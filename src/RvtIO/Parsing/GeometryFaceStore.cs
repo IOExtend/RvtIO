@@ -16,8 +16,15 @@ internal sealed class GeometryFaceStore(PartitionChunks.Backing storage)
 
     internal void Archive(Element element)
     {
-        element.Geometry?.ArchiveFaces(Store);
-        element.SerializedComputedSymbolGeometry?.ArchiveFaces(Store);
+        ArchiveBody(element.Geometry);
+        ArchiveBody(element.SerializedComputedSymbolGeometry);
+    }
+
+    private void ArchiveBody(GeometryData? body)
+    {
+        if (body == null) return;
+        body.ArchiveFaces(Store);
+        body.KeepSceneMeshNodeFacts();
     }
 
     private IReadOnlyList<GeoFace> Store(List<GeoFace> faces)

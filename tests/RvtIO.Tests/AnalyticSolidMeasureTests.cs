@@ -221,17 +221,29 @@ public class AnalyticSolidMeasureTests
             }).ToList(),
             BrepSolids = [new GeoBrepSolid { IsClosed = closed, FaceIndices = [0, 1, 2, 3] }],
             MeshNodes = [new GeometryNode(7, 0,
-                Enumerable.Range(1, complete ? 4 : 5).Select(i => new BrFace { Marker = i, SurfaceKind = SurfaceKind.Plane, Loops = [] }).ToList(), 1)
+                Enumerable.Range(1, complete ? 4 : 5).Select(i => new BrFace
+                    { Marker = i, SurfaceKind = i == 1 ? SurfaceKind.Cylinder : SurfaceKind.Plane, Loops = [] }).ToList(), 1)
                 { SourceMeasures = (12, 5) }],
         };
 
-        var shell = Assert.Single(BrepMeasures.ShellsOfCurrent(geometry));
-        Assert.Equal(expected, shell.SourceMeasured);
-        Assert.Equal(expected ? 12 : 4, shell.Area, 12);
-        if (expected)
+        AssertMeasures();
+        geometry.KeepSceneMeshNodeFacts();
+        Assert.Null(geometry.MeshNodes);
+        Assert.Equal(1, geometry.MeshNodeCount);
+        Assert.True(geometry.HasCurvedFace([7]));
+        Assert.False(geometry.HasCurvedFace([8]));
+        AssertMeasures();
+
+        void AssertMeasures()
         {
-            Assert.Equal(5, shell.Volume, 12);
-            Assert.Equal(12, BrepMeasures.SurfaceAreaCurrent(geometry), 12);
+            var shell = Assert.Single(BrepMeasures.ShellsOfCurrent(geometry));
+            Assert.Equal(expected, shell.SourceMeasured);
+            Assert.Equal(expected ? 12 : 4, shell.Area, 12);
+            if (expected)
+            {
+                Assert.Equal(5, shell.Volume, 12);
+                Assert.Equal(12, BrepMeasures.SurfaceAreaCurrent(geometry), 12);
+            }
         }
     }
 

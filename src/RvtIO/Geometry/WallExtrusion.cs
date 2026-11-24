@@ -38,7 +38,7 @@ internal static partial class WallExtrusion
     internal static bool? IsStandardCaseBody(GeometryData? geometry, Parsing.TfBlockDeserializer.OwnWallHelperInput? helper = null,
         double? trimmedAxisLength = null)
     {
-        if (geometry?.Faces is not { Count: > 0 } faces || faces.Any(face => face.OuterVertices is not { Count: >= 3 })) return null;
+        if (geometry?.ReadFaces is not { Count: > 0 } faces || faces.Any(face => face.OuterVertices is not { Count: >= 3 })) return null;
         var solids = geometry.BrepSolids;
         var first = solids is { Count: > 0 }
             ? solids[0].FaceIndices.Where(index => (uint)index < (uint)faces.Count).Select(index => faces[index]).ToList()
@@ -63,7 +63,7 @@ internal static partial class WallExtrusion
         if (TryFindVerticalExtrusion(first, out string reason, exactCylinders: true, edgeBounds)) return true;
         // (a Geometry node the face meshes cover is complete as well: every Face of it is decoded, the round ones that the dense
         // shell lacks included)
-        bool closedShell = solids is { Count: 1 } && solids[0].IsClosed || geometry.MeshNodes is { Count: 1 };
+        bool closedShell = solids is { Count: 1 } && solids[0].IsClosed || geometry.MeshNodeCount == 1;
         return reason == "tilted-or-opening" && !closedShell;
     }
 

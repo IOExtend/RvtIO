@@ -23,7 +23,7 @@ internal sealed class PartitionChunks(PartitionChunks.Backing? backing = null) :
                 long offset = end;
                 try
                 {
-                    stream.Position = offset;
+                    if (stream.Position != offset) stream.Position = offset;
                     stream.Write(data);
                 }
                 catch (Exception failure) when (MalformedInput.Is(failure))
@@ -44,7 +44,7 @@ internal sealed class PartitionChunks(PartitionChunks.Backing? backing = null) :
                 data = new byte[chunk.Length];
                 try
                 {
-                    stream.Position = chunk.Offset;
+                    if (stream.Position != chunk.Offset) stream.Position = chunk.Offset;
                     stream.ReadExactly(data);
                 }
                 catch (Exception failure) when (MalformedInput.Is(failure))

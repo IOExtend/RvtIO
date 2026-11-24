@@ -845,6 +845,8 @@ public partial class RvtFileReader
             "Local" or "Central" => true,
             _ => null,
         };
+        if (archiveGeometry != null) state.ElemScanStrings = new();
+        progress?.Report(new("finalize-model"));
         ElementBuilder.PostProcess(rvtInfo, state, diag);
         if (state.PartitionScratch != null)
         {
@@ -858,7 +860,6 @@ public partial class RvtFileReader
             rvtInfo.CurvedGridAxes = axes.Paths;
             rvtInfo.GridChainMemberIds = axes.Members;
         }
-        progress?.Report(new("finalize-model"));
         LogPhase("Post-processed");
         ElementBuilder.ApplyValidatedStairComponentTypeNames(rvtInfo.Elements, state);
         ElementBuilder.ApplyValidatedCorniceTypeNames(rvtInfo.Elements, state);

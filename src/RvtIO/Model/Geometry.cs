@@ -55,13 +55,57 @@ namespace RvtIO.Model
         /// <summary>The Geometry nodes written as triangle sets, in the frame of <see cref="Faces"/> (see GRepParserV2.BuildNodes).</summary>
         internal List<RvtIO.Parsing.GeometryNode>? MeshNodes { get; set; }
 
+        private MeshNodeSummary[]? sceneMeshNodes;
+
+        private readonly record struct MeshNodeSummary(int Node, bool Curved,
+            (double Area, double Volume)? Measures, uint[]? Markers);
+
+        internal int MeshNodeCount => MeshNodes?.Count ?? sceneMeshNodes?.Length ?? 0;
+
+        // The scene tessellates the polygons. Keep the analytic node facts used to compute element properties.
+        internal void KeepSceneMeshNodeFacts()
+        {
+            if (MeshNodes is not { Count: > 0 } nodes) return;
+            sceneMeshNodes = nodes.Select(node => new MeshNodeSummary(node.Node,
+                node.Faces.Any(face => face.SurfaceKind != RvtIO.Geometry.Meshing.SurfaceKind.Plane),
+                node.SourceMeasures, node.SourceMeasures.HasValue ? node.Faces.Select(face => (uint)face.Marker).ToArray() : null)).ToArray();
+            MeshNodes = null;
+        }
+
+        internal bool TryGetMeshNodeMeasures(int node, IEnumerable<uint> markers, out (double Area, double Volume) measures)
+        {
+            if (sceneMeshNodes != null)
+            {
+                foreach (var summary in sceneMeshNodes)
+                {
+                    if (summary.Node != node) continue;
+                    if (summary.Measures is { } source && markers.ToHashSet().SetEquals(summary.Markers!))
+                    {
+                        measures = source;
+                        return true;
+                    }
+                    break;
+                }
+            }
+            else if (MeshNodes?.FirstOrDefault(item => item.Node == node) is { SourceMeasures: { } source } original
+                && markers.ToHashSet().SetEquals(original.Faces.Select(face => (uint)face.Marker)))
+            {
+                measures = source;
+                return true;
+            }
+            measures = default;
+            return false;
+        }
+
         /// <summary>The surface integrals of the Geometry nodes (see GRepData.NodeMeasures), under the node ids of <see cref="Faces"/>.</summary>
         internal List<RvtIO.Parsing.MeshNodeMeasure>? NodeMeasures { get; set; }
 
         /// <summary>A Geometry node written as a triangle set has a face that is not a plane (a round end, a hole): the body is the face meshes,
         /// whatever the dense polygons of the planar faces close into.</summary>
-        internal bool HasCurvedFace(IReadOnlyCollection<int>? nodes = null) => MeshNodes?.Any(node => (nodes == null || nodes.Contains(node.Node))
-            && node.Faces.Any(face => face.SurfaceKind != RvtIO.Geometry.Meshing.SurfaceKind.Plane)) == true;
+        internal bool HasCurvedFace(IReadOnlyCollection<int>? nodes = null) => sceneMeshNodes != null
+            ? sceneMeshNodes.Any(node => node.Curved && (nodes == null || nodes.Contains(node.Node)))
+            : MeshNodes?.Any(node => (nodes == null || nodes.Contains(node.Node))
+                && node.Faces.Any(face => face.SurfaceKind != RvtIO.Geometry.Meshing.SurfaceKind.Plane)) == true;
 
         /// <summary>List of edges with 3D coordinates.</summary>
         public List<GeoEdge>? Edges { get; set; }

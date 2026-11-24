@@ -48,6 +48,7 @@ read inflated partitions through private temporary storage as described in the [
 Use `ReadStream(stream, options, triangleScratch)` to keep expanded body faces, intermediate triangle meshes and
 the scene's triangle buffers in another temporary stream. Pass an empty, readable, writable, seekable stream; the caller owns it and
 keeps it open until it has finished using the returned scene. It must be separate from the input and partition scratch.
+During this read, analytic mesh nodes retain the facts needed for element measurements. Scene tessellation uses the archived polygons.
 
 Set `RvtSceneOptions.IncludeModelLinesAndReinforcement` to include straight model lines as line primitives and reinforcement with decoded bar paths as triangles. The native RVT-to-NWC tool enables this option.
 
