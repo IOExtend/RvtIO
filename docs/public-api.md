@@ -55,7 +55,7 @@ for records or names (`element-records`, `element-properties`), block scan and r
 (`element-blocks`, `recover-geometry`), decoded stream bytes
 (`parameter-stream`), element candidates processed (`build-model`) or completed resolution passes (`finalize-model`).
 `Completed` does not decrease within a phase.
-`GeometryBlocks` optionally gives the applied and queued geometry blocks within the current block pass. Such updates
+`GeometryBlocks` optionally gives the processed and queued geometry blocks within the current block pass. Such updates
 repeat the pass number while the block count advances. Geometry recovery passes cover decoding blocks from the main
 walk, locating additional blocks, decoding those blocks, and recovering planar wall bodies.
 A zero total means the reader has no work count for that update. Counts describe units within one phase. `complete`

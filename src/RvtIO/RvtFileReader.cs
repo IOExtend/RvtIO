@@ -2722,6 +2722,9 @@ public partial class RvtFileReader
             foreach (var part in dumpGrepEnv.Split(','))
                 if (uint.TryParse(part, out uint dge)) dumpGrepEids.Add(dge);
         var walkGReps = new List<(PartitionChunks.Block Block, uint Size, uint Eid)>();
+        // Scratch-backed blocks retain only their ranges. Keep candidates until the walk
+        // has counted their owners' roots, avoiding a second pass over the partition.
+        List<OwnWallGRep>? wallGReps = state.Chunks is PartitionChunks { Store: not null } ? [] : null;
         // the roots the class and stair sources count: the records of the project's block when every stream is read by its framing
         bool framedRoots = state.ReadsFramedRecords;
         List<(PartitionFraming.Framed Frame, PartitionFraming.ProjectItem Item, ushort Class, uint Owner)>? unanchoredTypeRoots =
@@ -2873,6 +2876,7 @@ public partial class RvtFileReader
             // ref) over whatever the chunk scan stored.
             if ((cls & 0xFFFF) is 0x07D7 or 0x07D6)
             {
+                wallGReps?.Add(new(block, ds, cls, eid));
                 // Decoded in parallel after the walk; the first decodable block of an element wins, as before.
                 if (!state.GrepBlocks.ContainsKey(eid))
                     walkGReps.Add((block, ds, eid));
@@ -3011,7 +3015,7 @@ public partial class RvtFileReader
         }
         scanGReps.Clear();
         progress?.Report(new("recover-geometry", ++completedRecoveryPasses, recoveryPasses));
-        ReadOwnWallPlanarBodies(state);
+        ReadOwnWallPlanarBodies(state, wallGReps, recoveryProgress);
         progress?.Report(new("recover-geometry", ++completedRecoveryPasses, recoveryPasses));
     }
 

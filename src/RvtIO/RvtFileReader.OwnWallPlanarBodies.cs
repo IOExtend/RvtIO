@@ -6,7 +6,10 @@ namespace RvtIO;
 
 public partial class RvtFileReader
 {
-    private static void ReadOwnWallPlanarBodies(ParsingState state)
+    private readonly record struct OwnWallGRep(PartitionChunks.Block Block, uint Size, ushort Cls, uint Owner);
+
+    private static void ReadOwnWallPlanarBodies(ParsingState state, List<OwnWallGRep>? collected,
+        Action<int, int>? progress)
     {
         var owners = state.OwnedElementClassRoots.Where(entry => entry.Value.BlockCount == 1
             && entry.Value.ClassId is 3524 or 361).Select(entry => entry.Key).ToHashSet();
@@ -15,15 +18,19 @@ public partial class RvtFileReader
         state.OwnWallTrimmedRanges.Clear();
         state.OwnCurrentWallFaceGroups.Clear();
         if (owners.Count == 0) return;
-        // Class roots are complete now; a second anchored walk avoids stream-order admission. The walk only collects the
-        // owner blocks; the per-block geometry decode is independent, so it runs in parallel and the results are applied in
-        // walk order.
-        var jobs = new List<(PartitionChunks.Block Block, uint Size, ushort Cls, uint Owner)>();
-        TfStreamWalker.WalkLocated(state.Chunks, state.AllKnownIds, (_, _, size, cls, owner, block) =>
-        {
-            if (cls is 2007 or 2006 && owners.Contains(owner))
-                jobs.Add((block, size, cls, owner));
-        });
+        // Filter only after class roots are complete. In-memory reads rediscover the
+        // ranges here to avoid keeping their resident segment buffers across recovery.
+        var jobs = collected ?? new List<OwnWallGRep>();
+        if (collected != null)
+            jobs.RemoveAll(job => !owners.Contains(job.Owner));
+        else
+            TfStreamWalker.WalkLocated(state.Chunks, state.AllKnownIds, (_, _, size, cls, owner, block) =>
+            {
+                if (cls is 2007 or 2006 && owners.Contains(owner))
+                    jobs.Add(new(block, size, cls, owner));
+            });
+        if (jobs.Count == 0) return;
+        progress?.Invoke(0, jobs.Count);
         // Retain replacement wall geometry and the trimmed ranges on both paths.
         // Only IFC needs the separate planar body and its grouping provenance.
         var decoded = state.KeepExportProvenance ? new (GRepData? Body, string? Failure)[jobs.Count] : null;
@@ -32,9 +39,10 @@ public partial class RvtFileReader
         var normals = decoded == null ? null : new (uint SourceFace, double[] Normal)?[jobs.Count];
         var groups = decoded == null ? null : new IReadOnlyDictionary<uint, uint>?[jobs.Count];
         var trimmed = new (double Lo, double Hi)?[jobs.Count];
-        Parallel.For(0, jobs.Count, index =>
+        void Decode(int index)
         {
             var (block, size, cls, owner) = jobs[index];
+            if (decoded == null && (cls != 2007 || grepCounts[owner] != 1)) return;
             var (data, start) = block.Read();
             var bodyResult = DecodeOwnWallPlanarBody(data, start, size, cls, owner, out var graph);
             if (decoded != null) decoded[index] = bodyResult;
@@ -55,7 +63,22 @@ public partial class RvtFileReader
                 trimmed[index] = TfBlockDeserializer.SelectOwnWallTrimmedRange(graph, baseFaces, trimmedBody, locationAxis);
             if (bodyResult.Body == null)
                 nativeBodies[index] = DecodeOwnNativeWallBody(state, data, start, size, cls, owner, grepCounts[owner]);
-        });
+        }
+        if (OperatingSystem.IsBrowser())
+        {
+            var clock = progress == null ? null : System.Diagnostics.Stopwatch.StartNew();
+            for (int index = 0; index < jobs.Count; index++)
+            {
+                Decode(index);
+                if (clock?.ElapsedMilliseconds >= 500 && index + 1 < jobs.Count)
+                {
+                    progress!(index + 1, jobs.Count);
+                    clock.Restart();
+                }
+            }
+        }
+        else
+            Parallel.For(0, jobs.Count, Decode);
         for (int index = 0; index < jobs.Count; index++)
         {
             if (decoded != null)
@@ -72,6 +95,7 @@ public partial class RvtFileReader
                     job.Size, nativeWallBody: true);
             }
         }
+        progress?.Invoke(jobs.Count, jobs.Count);
     }
 
     internal static GRepData? DecodeOwnNativeWallBody(ParsingState state, byte[] data, int start,

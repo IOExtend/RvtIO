@@ -6,6 +6,6 @@ namespace RvtIO;
 /// <param name="Total">Units of work in that phase, or zero when no count is available.</param>
 public readonly record struct RvtReadProgress(string Phase, long Completed = 0, long Total = 0)
 {
-    /// <summary>The number of geometry blocks applied and queued in the current pass, when available.</summary>
+    /// <summary>The number of geometry blocks processed and queued in the current pass, when available.</summary>
     public (int Completed, int Total)? GeometryBlocks { get; init; }
 }

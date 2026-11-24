@@ -902,11 +902,12 @@ public class RvtSceneReaderTests
     }
 
     [SkippableTheory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void ScratchReadMatchesSceneAndDiagnosticsOfARealModel(bool archiveScene)
+    [InlineData("Test_2022.rvt", true)]
+    [InlineData("Test_2025.rvt", false)]
+    [InlineData("Test_2025.rvt", true)]
+    public void ScratchReadMatchesSceneAndDiagnosticsOfARealModel(string fileName, bool archiveScene)
     {
-        string path = TestFiles.Find("Test_2025.rvt");
+        string path = TestFiles.Find(fileName);
         var baseline = RvtSceneReader.Read(path);
         string temporary = Path.Combine(Path.GetTempPath(), "rvtio-scratch-" + Guid.NewGuid().ToString("N"));
         using var input = File.OpenRead(path);
