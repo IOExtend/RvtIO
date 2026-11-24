@@ -45,6 +45,10 @@ The final reader update, `complete`, marks the end of the file read. Mesh extrac
 `RvtSceneOptions.CreatePartitionScratch` passes a scratch stream factory to the file reader for path and stream reads. Use it to
 read inflated partitions through private temporary storage as described in the [public API](public-api.md).
 
+Use `ReadStream(stream, options, triangleScratch)` to keep intermediate triangle meshes and the scene's triangle
+buffers in another temporary stream. Pass an empty, readable, writable, seekable stream; the caller owns it and
+keeps it open until it has finished using the returned scene. It must be separate from the input and partition scratch.
+
 Set `RvtSceneOptions.IncludeModelLinesAndReinforcement` to include straight model lines as line primitives and reinforcement with decoded bar paths as triangles. The native RVT-to-NWC tool enables this option.
 
 `RvtSceneResult` holds the `Document`, the `Diagnostics` and counts: elements, elements with geometry, elements by

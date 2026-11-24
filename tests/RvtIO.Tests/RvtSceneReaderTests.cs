@@ -102,6 +102,61 @@ public class RvtSceneReaderTests
 
     private static RvtSceneResult Map() => RvtSceneReader.Read(Document(), Meshes(), new RvtSceneOptions { ModelKey = "model.rvt" });
 
+    [Fact]
+    public void ScratchScenePreservesGeometryPropertiesPlacementsAndDiagnostics()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var meshes = Meshes();
+        var stored = new MeshSet
+        {
+            Symbols = meshes.Symbols.ToDictionary(pair => pair.Key, pair => scratch.Store(pair.Value)),
+            Elements = meshes.Elements.Select(element => new ElementMesh
+            {
+                ElementId = element.ElementId,
+                Meshes = scratch.Store(element.Meshes),
+                Placements = element.Placements,
+                Coverage = element.Coverage,
+                UntriangulatedFaces = element.UntriangulatedFaces,
+            }).ToArray(),
+        };
+
+        var expected = Map();
+        var actual = RvtSceneReader.Map(Document(), stored, "model.rvt", scratch: scratch);
+
+        Assert.True(stream.Length > 0);
+        Assert.Equal(SceneJson.Write(expected.Document), SceneJson.Write(actual.Document));
+        Assert.Equal(expected.Diagnostics, actual.Diagnostics);
+    }
+
+    [Fact]
+    public void ScratchSceneArrayReadsAcrossPageBoundariesAndWithInterleavedWrites()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var values = Enumerable.Range(0, 8000).Select(i => new Vector3d(i, -i, i * .5)).ToArray();
+        var stored = scratch.Store(values);
+        var later = scratch.Store(new[] { 5, 7 });
+
+        Assert.Equal(values, stored);
+        Assert.Equal(values, stored.ReadAll());
+        Assert.Equal(values[2730], stored[2730]);
+        Assert.Equal(7, later[1]);
+        Assert.Equal(values[^1], stored[^1]);
+        Assert.Throws<ArgumentOutOfRangeException>(() => stored[values.Length]);
+    }
+
+    [Fact]
+    public void SceneReaderRequiresSeparateTriangleScratch()
+    {
+        using var stream = new MemoryStream();
+        var options = new RvtSceneOptions { ModelKey = "model.rvt" };
+        Assert.Throws<ArgumentException>(() => RvtSceneReader.ReadStream(stream, options, stream));
+        using var nonempty = new MemoryStream([7]);
+        Assert.Throws<ArgumentException>(() => RvtSceneReader.ReadStream(stream, options, nonempty));
+        Assert.Empty(stream.ToArray());
+    }
+
     /// <summary>The scene of one drawable element.</summary>
     private static SceneDocument MapOne(Element element) => RvtSceneReader.Read(RvtDocument.FromInfo(new RevitFileInfo { Elements = [element] }),
         new MeshSet { Elements = [new ElementMesh { ElementId = element.Id, Meshes = [Triangle(0, 0, 0)] }] }, new RvtSceneOptions { ModelKey = "m" }).Document;

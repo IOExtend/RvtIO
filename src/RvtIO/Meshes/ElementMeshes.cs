@@ -41,7 +41,11 @@ public static class ElementMeshes
 
     /// <summary>The meshes of the drawable elements of <paramref name="document"/>.</summary>
     /// <exception cref="ArgumentNullException"><paramref name="document"/> is null.</exception>
-    public static MeshSet Extract(RvtDocument document, ElementMeshOptions? options = null)
+    public static MeshSet Extract(RvtDocument document, ElementMeshOptions? options = null) =>
+        ExtractCore(document, options, null);
+
+    internal static MeshSet ExtractCore(RvtDocument document, ElementMeshOptions? options,
+        Func<IReadOnlyList<TriangleMesh>, IReadOnlyList<TriangleMesh>>? store)
     {
         ArgumentNullException.ThrowIfNull(document);
         options ??= new ElementMeshOptions();
@@ -50,6 +54,9 @@ public static class ElementMeshes
         var drawableIds = drawable.Select(item => item.Element.Id).ToHashSet();
         var symbolCache = new Dictionary<int, SymbolMeshes?>();
         var placedSymbols = new Dictionary<int, IReadOnlyList<TriangleMesh>>();
+
+        IReadOnlyList<TriangleMesh> Keep(IReadOnlyList<TriangleMesh> meshes) =>
+            store != null && meshes.Count > 0 ? store(meshes) : meshes;
 
         bool IsMaterial(int id) => document.GetElement(id)?.CategoryId == MaterialsCategoryId;
         int MaterialOf(GeoFace face)
@@ -73,7 +80,7 @@ public static class ElementMeshes
                 bool ghosts = geometry.GhostNodes is { Count: > 0 };
                 var (meshes, failed) = Triangulate(geometry.Faces, MaterialOf, ghosts);
                 if (meshes.Count > 0)
-                    symbol = new SymbolMeshes(meshes, failed + geometry.UntriangulatedFaces, geometry.UntriangulatedFaces,
+                    symbol = new SymbolMeshes(Keep(meshes), failed + geometry.UntriangulatedFaces, geometry.UntriangulatedFaces,
                         DropsUntakenNodes(geometry.Faces, ghosts), geometry.Faces.Any(face => face.GeometryNode < 0), ghosts);
             }
             symbolCache[symbolId] = symbol;
@@ -136,7 +143,7 @@ public static class ElementMeshes
                     Line = line,
                     Arc = arc,
                     LinePairs = linePairs,
-                    Meshes = rebar == null ? [] : [rebar],
+                    Meshes = rebar == null ? [] : Keep([rebar]),
                     Coverage = line != null || arc != null || linePairs != null || rebar != null ? MeshCoverage.Complete
                         : info.WideLayoutNotRewritten ? MeshCoverage.Undecoded : MeshCoverage.NoGeometry,
                 });
@@ -163,7 +170,7 @@ public static class ElementMeshes
             elements.Add(new ElementMesh
             {
                 ElementId = element.Id,
-                Meshes = meshes,
+                Meshes = Keep(meshes),
                 Coverage = CoverageOf(meshes.Count > 0, body, failed, false),
                 UntriangulatedFaces = failed,
             });

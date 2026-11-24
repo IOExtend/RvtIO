@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="RvtIO.Tests" />
+    <InternalsVisibleTo Include="RvtIO.Scene" />
     <InternalsVisibleTo Include="RvtIO.Cli" />
     <InternalsVisibleTo Include="RvtIO.RootProbe" />
   </ItemGroup>
