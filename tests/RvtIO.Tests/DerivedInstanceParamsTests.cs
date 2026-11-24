@@ -604,9 +604,10 @@ public class DerivedInstanceParamsTests
         };
         var uncertified = new Element { Id = 5, CategoryId = -2001330, NativeMasterSymbolId = 5, LevelSolidCounts = [1, 1, 1], LevelShells = new SolidQuantities.Shell?[3] };
         var door = new Element { Id = 6, CategoryId = -2000023, NativeMasterSymbolId = 5, LevelSolidCounts = [1, 1, 1], LevelShells = shells };
-        var classes = new Dictionary<uint, ushort> { [1] = 1794, [2] = 1794, [3] = 1829, [4] = 1794, [5] = 1794, [6] = 1794 };
+        var unmeasured = new Element { Id = 7, CategoryId = -2001330, NativeMasterSymbolId = 5 };
+        var classes = new Dictionary<uint, ushort> { [1] = 1794, [2] = 1794, [3] = 1829, [4] = 1794, [5] = 1794, [6] = 1794, [7] = 1794 };
 
-        ElementBuilder.ApplyInstanceQuantities(new RevitFileInfo { Elements = [column, fixture, symbol, coped, uncertified, door] }, classes);
+        ElementBuilder.ApplyInstanceQuantities(new RevitFileInfo { Elements = [column, fixture, symbol, coped, uncertified, door, unmeasured] }, classes);
 
         Assert.Equal(2.0, Value(column, -1012806));
         Assert.Null(Value(column, -1012805));
@@ -616,6 +617,9 @@ public class DerivedInstanceParamsTests
         Assert.Null(Value(coped, -1012806));
         Assert.Null(Value(uncertified, -1012806));
         Assert.Null(Value(door, -1012806));
+        Assert.Null(unmeasured.LevelSolidCounts);
+        Assert.Null(unmeasured.LevelShells);
+        Assert.Null(Value(unmeasured, -1012806));
     }
 
     [Fact]

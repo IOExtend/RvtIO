@@ -945,13 +945,14 @@ namespace RvtIO.Model
         internal bool TypeFromNativePointer { get; set; }
 
         /// <summary>Closed-shell quantities of the solids at the Coarse, Medium and Fine detail levels (index 0, 1, 2); null at a level whose
-        /// solids are not all closed shells of plane faces. See <c>ElementBuilder.ApplyInstanceQuantities</c>.</summary>
+        /// solids are not all closed shells of plane faces. Null until quantities are collected.
+        /// See <c>ElementBuilder.ApplyInstanceQuantities</c>.</summary>
         [JsonIgnore]
-        internal Parsing.SolidQuantities.Shell?[] LevelShells { get; set; } = new Parsing.SolidQuantities.Shell?[3];
+        internal Parsing.SolidQuantities.Shell?[]? LevelShells { get; set; }
 
-        /// <summary>Number of solids at Coarse, Medium and Fine.</summary>
+        /// <summary>Number of solids at Coarse, Medium and Fine. Null until quantities are collected.</summary>
         [JsonIgnore]
-        internal int[] LevelSolidCounts { get; set; } = new int[3];
+        internal int[]? LevelSolidCounts { get; set; }
 
         /// <summary>Revit BuiltInCategory ID (e.g. -2000011 = OST_Walls).</summary>
         public int? CategoryId { get; set; }
