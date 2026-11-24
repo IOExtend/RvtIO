@@ -82,6 +82,27 @@ public class NonVisibleQuantityGeometryTests
     }
 
     [Fact]
+    public void ScratchDetailFlagsFollowNestedSymbolsWithoutReplayingGeometry()
+    {
+        using var stream = new MemoryStream();
+        var backing = new PartitionChunks.Backing(stream);
+        // Only the decoded summary is meaningful here; replaying the bytes would fail.
+        var block = new PartitionChunks.Block([0], 0, 1, backing);
+        var blocks = new GRepBlockStore();
+        blocks.Set(10, new GRepData { Instances = [new GRepInstance { SymbolElemId = 20 }] }, block, 1);
+        blocks.Set(20, new GRepData
+        {
+            Instances = [new GRepInstance { SymbolElemId = 10 }],
+            CoarseQuantities = new GRepData(),
+            Medium = new GRepData(),
+        }, block, 1);
+
+        Assert.True(blocks.HasDetailAlternative(10, GRepBlockStore.DetailAlternatives.CoarseQuantities, []));
+        Assert.True(blocks.HasDetailAlternative(10, GRepBlockStore.DetailAlternatives.Medium, []));
+        Assert.False(blocks.HasDetailAlternative(10, GRepBlockStore.DetailAlternatives.Coarse, []));
+    }
+
+    [Fact]
     public void SurfaceArea_CountsSourceSurfaceOnceAcrossFacetsAndSeparatelyAcrossNodes()
     {
         var geometry = new GeometryData

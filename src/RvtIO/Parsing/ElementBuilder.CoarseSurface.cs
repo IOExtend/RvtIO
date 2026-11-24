@@ -21,14 +21,16 @@ internal static partial class ElementBuilder
             }
             if (element.CategoryId is not (DoorsCategoryId or WindowsCategoryId)) continue;
             uint id = (uint)element.Id;
-            state.GrepBlocks.TryGetValue(id, out var grep);
             state.FamilyInstanceTransforms.TryGetValue(id, out var transformOnly);
             var visited = new HashSet<uint>();
-            if (!HasQuantityAlternative(grep, state, visited)
-                && !(transformOnly != null && state.GrepBlocks.TryGetValue((uint)Math.Max(transformOnly.SymbolId, 0), out var symbol)
-                    && HasQuantityAlternative(symbol, state, visited)))
+            const GRepBlockStore.DetailAlternatives alternatives =
+                GRepBlockStore.DetailAlternatives.Coarse | GRepBlockStore.DetailAlternatives.CoarseQuantities;
+            if (!state.GrepBlocks.HasDetailAlternative(id, alternatives, visited)
+                && !(transformOnly != null
+                    && state.GrepBlocks.HasDetailAlternative((uint)Math.Max(transformOnly.SymbolId, 0), alternatives, visited)))
                 continue;
 
+            state.GrepBlocks.TryGetValue(id, out var grep);
             state.CoarseView = true;
             state.IncludeNonVisibleQuantities = true;
             try
@@ -56,13 +58,14 @@ internal static partial class ElementBuilder
     private static void ApplyMediumLevelVolume(Element element, ParsingState state)
     {
         uint id = (uint)element.Id;
-        state.GrepBlocks.TryGetValue(id, out var grep);
         state.FamilyInstanceTransforms.TryGetValue(id, out var transformOnly);
         var visited = new HashSet<uint>();
-        if (!HasAlternative(grep, state, visited, 2)
-            && !(transformOnly != null && state.GrepBlocks.TryGetValue((uint)Math.Max(transformOnly.SymbolId, 0), out var symbol)
-                && HasAlternative(symbol, state, visited, 2)))
+        const GRepBlockStore.DetailAlternatives alternativeLevel = GRepBlockStore.DetailAlternatives.Medium;
+        if (!state.GrepBlocks.HasDetailAlternative(id, alternativeLevel, visited)
+            && !(transformOnly != null
+                && state.GrepBlocks.HasDetailAlternative((uint)Math.Max(transformOnly.SymbolId, 0), alternativeLevel, visited)))
             return;
+        state.GrepBlocks.TryGetValue(id, out var grep);
         element.HasMediumAlternatives = true;
         state.DetailView = 2;
         try
@@ -78,18 +81,5 @@ internal static partial class ElementBuilder
             element.MediumSolidTotals = BrepMeasures.NodeSolidTotalsCurrent(alternative.Geometry);
         }
         finally { state.DetailView = 0; }
-    }
-
-    /// <summary>True when the block or a nested symbol has a separate Coarse or non-visible quantity view.</summary>
-    private static bool HasQuantityAlternative(GRepData? block, ParsingState state, HashSet<uint> visited)
-    {
-        if (block == null) return false;
-        if (block.Coarse != null || block.CoarseQuantities != null) return true;
-        foreach (var instance in block.Instances)
-            if (instance.SymbolElemId > 0 && visited.Add((uint)instance.SymbolElemId)
-                && state.GrepBlocks.TryGetValue((uint)instance.SymbolElemId, out var symbol)
-                && HasQuantityAlternative(symbol, state, visited))
-                return true;
-        return false;
     }
 }

@@ -83,6 +83,9 @@ namespace RvtIO.Model
 
         internal string? DefinitionName => _definition is DefinitionTemplate template ? template.Name : ((Definition?)_definition)?.Name;
 
+        internal static bool IsHostQuantityPlaceholder(Parameter parameter) => parameter.Id is -1012805 or -1012806 or -1012807
+            && ((parameter.Value is double number && number <= 0) || (parameter.Value is int integer && integer <= 0));
+
         internal (int Id, string? Name, string? BuiltIn)? DefinitionFields => _definition switch
         {
             DefinitionTemplate template => (template.Id, template.Name, template.BuiltIn),

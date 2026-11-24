@@ -7,6 +7,12 @@ namespace RvtIO.Internal;
 /// <summary>Keeps decoded geometry for resident reads and exact block references for scratch-backed reads.</summary>
 internal sealed class GRepBlockStore : IEnumerable<KeyValuePair<uint, GRepData>>
 {
+    [Flags]
+    internal enum DetailAlternatives : byte
+    {
+        Coarse = 1, Medium = 2, CoarseQuantities = 4,
+    }
+
     private readonly Dictionary<uint, Entry> entries = [];
 
     private readonly record struct Entry(GRepData? Resident, Replay? Stored)
@@ -14,6 +20,7 @@ internal sealed class GRepBlockStore : IEnumerable<KeyValuePair<uint, GRepData>>
         internal List<GRepInstance> Instances => Resident?.Instances ?? Stored!.Instances;
         internal int FaceCount => Resident?.Faces.Count ?? Stored!.FaceCount;
         internal Rank Rank => Resident is { } geometry ? Rank.From(geometry) : Stored!.Rank;
+        internal DetailAlternatives Alternatives => Resident is { } geometry ? GetAlternatives(geometry) : Stored!.Alternatives;
         internal GRepData Read() => Resident ?? Stored!.Read();
     }
 
@@ -22,6 +29,7 @@ internal sealed class GRepBlockStore : IEnumerable<KeyValuePair<uint, GRepData>>
         internal readonly Rank Rank = Rank.From(decoded);
         internal readonly int FaceCount = decoded.Faces.Count;
         internal readonly List<GRepInstance> Instances = decoded.Instances;
+        internal readonly DetailAlternatives Alternatives = GetAlternatives(decoded);
         private int symbol = decoded.SymbolElemId;
         private double[]? transform = decoded.InstanceTransform;
         private WeakReference<GRepData>? cached;
@@ -93,6 +101,27 @@ internal sealed class GRepBlockStore : IEnumerable<KeyValuePair<uint, GRepData>>
         bool found = entries.TryGetValue(id, out var entry);
         rank = found ? entry.Rank : default;
         return found;
+    }
+
+    private static DetailAlternatives GetAlternatives(GRepData geometry)
+    {
+        DetailAlternatives alternatives = 0;
+        if (geometry.Coarse != null) alternatives |= DetailAlternatives.Coarse;
+        if (geometry.Medium != null) alternatives |= DetailAlternatives.Medium;
+        if (geometry.CoarseQuantities != null) alternatives |= DetailAlternatives.CoarseQuantities;
+        return alternatives;
+    }
+
+    /// <summary>Checks the retained detail flags and links before replaying the geometry of an element or symbol.</summary>
+    internal bool HasDetailAlternative(uint id, DetailAlternatives alternatives, HashSet<uint> visited)
+    {
+        if (!entries.TryGetValue(id, out var entry)) return false;
+        if ((entry.Alternatives & alternatives) != 0) return true;
+        foreach (var instance in entry.Instances)
+            if (instance.SymbolElemId > 0 && visited.Add((uint)instance.SymbolElemId)
+                && HasDetailAlternative((uint)instance.SymbolElemId, alternatives, visited))
+                return true;
+        return false;
     }
 
     internal void MergeInstances(uint id, List<GRepInstance> source)

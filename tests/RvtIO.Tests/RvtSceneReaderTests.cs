@@ -252,6 +252,41 @@ public class RvtSceneReaderTests
     }
 
     [Fact]
+    public void ArchivedPhaseVoteAndQuantityPlaceholderFollowParameterEdits()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var element = new Element
+        {
+            Parameters =
+            [
+                new Parameter { Id = -1012100, StorageType = StorageType.ElementId, Value = -1 },
+                new Parameter { Id = -1012100, StorageType = StorageType.ElementId, Value = 0 },
+                new Parameter { Id = -1012100, StorageType = StorageType.ElementId, Value = 12 },
+                new Parameter { Id = -1012100, StorageType = StorageType.ElementId, Value = 13 },
+                new Parameter { Id = -1012805, StorageType = StorageType.Double, Value = 0d },
+                new Parameter { Id = -1012807, StorageType = StorageType.String, Value = "0" },
+            ],
+        };
+
+        scratch.ArchiveParameters(element);
+        var stored = element.ReadParameters;
+        Assert.Equal(12, element.FirstPositiveCreatedPhase);
+        Assert.True(element.HasHostQuantityPlaceholder);
+        Assert.Same(stored, element.ReadParameters);
+
+        element.Parameters[2].Value = -1;
+        element.Parameters[4].Value = 1d;
+        Assert.Equal(13, element.FirstPositiveCreatedPhase);
+        Assert.False(element.HasHostQuantityPlaceholder);
+
+        scratch.ArchiveParameters(element);
+        Assert.Equal(13, element.FirstPositiveCreatedPhase);
+        Assert.False(element.HasHostQuantityPlaceholder);
+        Assert.IsNotType<List<Parameter>>(element.ReadParameters);
+    }
+
+    [Fact]
     public void ArchivedZeroReferencesAreResolvedAndClearedAsTargetsChange()
     {
         using var stream = new MemoryStream();

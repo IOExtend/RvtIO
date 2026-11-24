@@ -52,7 +52,8 @@ the scene's triangle buffers in another temporary stream. Pass an empty, readabl
 keeps it open until it has finished using the returned scene. It must be separate from the input and partition scratch.
 Parameter edits reuse their reserved slots in this stream. A slot moves to a larger allocation when its contents grow beyond its capacity.
 Derived curve, sheet, room and instance properties are written back as each element is updated, keeping the edited parameter lists out of the managed heap between updates.
-The archived lists keep the first type references and the kinds of zero-ID references available to the resolver without loading the full lists.
+The archived lists also retain the first type references, the kinds of zero-ID references, the first positive creation phase, and whether a host quantity placeholder needs removal.
+Geometry block indexes carry the available detail alternatives alongside symbol links. Quantity checks inspect the index before decoding geometry.
 During this read, analytic mesh nodes retain the facts needed for element measurements. Shell quantities and scene tessellation read the archived polygons through the same paged face lists.
 The temporary scene document keeps the resolved parameter values and omits the provenance indexes used by the compact API and IFC export.
 Element records allocate storage for optional MEP, room, validated type-reference, curve driver, and instance placement facts when those facts are present.

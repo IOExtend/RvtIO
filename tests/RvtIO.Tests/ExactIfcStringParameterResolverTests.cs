@@ -1,4 +1,5 @@
 using RvtIO.Model;
+using RvtIO.Scene;
 using Xunit;
 
 namespace RvtIO.Tests;
@@ -29,6 +30,26 @@ public class ExactIfcStringParameterResolverTests
 
         Assert.Equal(ExactIfcStringParameterState.Value, result.State);
         Assert.Equal("Type suffix", result.Value);
+    }
+
+    [Fact]
+    public void ResolveReference_LeavesInstanceAndTypeParametersInScratch()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var instance = ElementWithParameter("Reference", StorageType.String, "");
+        var type = ElementWithParameter("reference [type]", StorageType.String, "Type suffix");
+        scratch.ArchiveParameters(instance);
+        scratch.ArchiveParameters(type);
+        var storedInstance = instance.ReadParameters;
+        var storedType = type.ReadParameters;
+
+        var result = ExactIfcStringParameterResolver.ResolveReference(instance, type);
+
+        Assert.Equal(ExactIfcStringParameterState.Value, result.State);
+        Assert.Equal("Type suffix", result.Value);
+        Assert.Same(storedInstance, instance.ReadParameters);
+        Assert.Same(storedType, type.ReadParameters);
     }
 
     [Theory]

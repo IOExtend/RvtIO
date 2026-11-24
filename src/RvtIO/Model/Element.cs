@@ -1961,7 +1961,26 @@ namespace RvtIO.Model
             int FamilyTypeId { get; }
             int FamilyAndTypeReferenceId { get; }
             Parameter.ZeroReferenceKinds ZeroReferences { get; }
+            int FirstPositiveCreatedPhase { get; }
+            bool HasHostQuantityPlaceholder { get; }
         }
+
+        internal int FirstPositiveCreatedPhase
+        {
+            get
+            {
+                if (_parameters == null && _storedParameters is IArchivedParameters archived)
+                    return archived.FirstPositiveCreatedPhase;
+                foreach (var parameter in ReadParameters)
+                    if (parameter.Id == -1012100 && parameter.Value is int phase && phase > 0) return phase;
+                return -1;
+            }
+        }
+
+        internal bool HasHostQuantityPlaceholder =>
+            _parameters == null && _storedParameters is IArchivedParameters archived
+                ? archived.HasHostQuantityPlaceholder
+                : ReadParameters.Any(Parameter.IsHostQuantityPlaceholder);
 
         internal Parameter.ZeroReferenceKinds? ArchivedZeroReferences =>
             _parameters == null && _storedParameters is IArchivedParameters archived ? archived.ZeroReferences : null;

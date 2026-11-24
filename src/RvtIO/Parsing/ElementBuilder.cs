@@ -4059,9 +4059,6 @@ internal static partial class ElementBuilder
 
     private static void ApplyComputedHeights(RevitFileInfo info, ParsingState? state)
     {
-        var byId = new Dictionary<int, Element>();
-        foreach (var e in info.Elements) byId[e.Id] = e;
-
         // (1) level elevations - three sources in priority order: a) an already-decoded LEVEL_ELEV
         // parameter; b) the [elev][-0.0][-1.0] block-signature candidate; c) wall votes: for a wall
         // based on level L, bboxMinZ - baseOffset == elev(L).
@@ -4176,11 +4173,8 @@ internal static partial class ElementBuilder
         // Sanitize computed-quantity placeholders: Revit never reports non-positive
         // HOST_AREA/VOLUME/PERIMETER; a - here is a binary placeholder, not a value.
         foreach (var e in ElementsWithParameterEdits(info.Elements, state?.ArchiveSceneParameters))
-            if (e.ReadParameters.Any(IsQuantityPlaceholder))
-                e.Parameters.RemoveAll(IsQuantityPlaceholder);
-
-        static bool IsQuantityPlaceholder(Parameter p) => p.Id is -1012805 or -1012806 or -1012807
-            && ((p.Value is double dv && dv <= 0) || (p.Value is int iv && iv <= 0));
+            if (e.HasHostQuantityPlaceholder)
+                e.Parameters.RemoveAll(Parameter.IsHostQuantityPlaceholder);
     }
 
     /// <summary>
@@ -4228,12 +4222,10 @@ internal static partial class ElementBuilder
     {
         var votes = new Dictionary<int, int>();
         foreach (var e in elements)
-            foreach (var p in e.ReadParameters)
-                if (p.Id == -1012100 && p.Value is int phase && phase > 0)
-                {
-                    votes[phase] = votes.GetValueOrDefault(phase) + 1;
-                    break;
-                }
+        {
+            int phase = e.FirstPositiveCreatedPhase;
+            if (phase > 0) votes[phase] = votes.GetValueOrDefault(phase) + 1;
+        }
         int dominant = -1, count = 0;
         foreach (var (phase, votesForPhase) in votes)
             if (votesForPhase > count)
