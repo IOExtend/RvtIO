@@ -2968,11 +2968,9 @@ internal static partial class ElementBuilder
             var shell = SolidQuantities.OfSingleClosedShell(e.Geometry);
             if (shell is null && GeometryBox(e) is not { Length: 6 }) continue;
 
-            var existing = new HashSet<int>();
-            foreach (var p in e.Parameters) existing.Add(p.Id);
             void Add(int id, string name, double val)
             {
-                if (!existing.Contains(id) && val > 1e-9)
+                if (val > 1e-9 && !e.Parameters.Any(p => p.Id == id))
                     e.Parameters.Add(BipHelpers.MakeBipParam(id, name, StorageType.Double, val));
             }
 

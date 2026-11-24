@@ -43,6 +43,24 @@ public class SolidQuantitiesTests
     }
 
     [Fact]
+    public void QuantityCalculationsLeaveArchivedFacesInScratch()
+    {
+        var box = Box(0, 0, 0, 2, 3, 4, 1, 4);
+        foreach (var face in box.Faces) face.PlaneSurface = true;
+        var expected = SolidQuantities.OfSingleClosedShell(box);
+        Assert.NotNull(expected);
+        using var scratch = new MemoryStream();
+        new GeometryFaceStore(new PartitionChunks.Backing(scratch)).Archive(new Element { Geometry = box });
+        var archived = box.ReadFaces;
+        Assert.True(scratch.Length > 0);
+
+        Assert.Equal(expected, SolidQuantities.OfSingleClosedShell(box));
+        Assert.Equal(expected, SolidQuantities.OfAllSolids(box));
+        Assert.Equal(6, SolidQuantities.RoomPlanArea(box)!.Value, 9);
+        Assert.Same(archived, box.ReadFaces);
+    }
+
+    [Fact]
     public void HoleThroughAFacePairIsSubtracted()
     {
         // 4 x 4 x 1 plate with a 2 x 2 hole: the top and bottom faces carry the hole, four more faces line it.

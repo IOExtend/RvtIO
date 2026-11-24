@@ -19,35 +19,36 @@ internal static class SolidQuantities
     /// volumes and surfaces add up, the largest face is the largest of any solid. Null otherwise.</summary>
     internal static Shell? OfAllSolids(GeometryData? geometry)
     {
-        if (geometry?.BrepSolids is not { Count: > 0 } solids || geometry.Faces.Count == 0) return null;
+        if (geometry?.BrepSolids is not { Count: > 0 } solids || geometry.ReadFaces is not { Count: > 0 } faces) return null;
         var covered = new HashSet<int>();
         double volume = 0, surface = 0, largest = 0;
         foreach (var solid in solids)
         {
-            if (!solid.IsClosed || solid.FaceIndices.Any(i => i < 0 || i >= geometry.Faces.Count || !geometry.Faces[i].PlaneSurface))
+            if (!solid.IsClosed || OfClosedShell(faces, solid.FaceIndices, planarOnly: true) is not { } shell)
                 return null;
-            var one = new GeometryData
-            {
-                Faces = solid.FaceIndices.Select(i => geometry.Faces[i]).ToList(),
-                BrepSolids = [new GeoBrepSolid { FaceIndices = Enumerable.Range(0, solid.FaceIndices.Count).ToList(), IsClosed = true }],
-            };
-            if (OfSingleClosedShell(one) is not { } shell) return null;
             volume += shell.Volume; surface += shell.SurfaceArea; largest = Math.Max(largest, shell.LargestFaceArea);
             covered.UnionWith(solid.FaceIndices);
         }
-        return covered.Count == geometry.Faces.Count ? new Shell(volume, surface, largest) : null;
+        return covered.Count == faces.Count ? new Shell(volume, surface, largest) : null;
     }
 
     internal static Shell? OfSingleClosedShell(GeometryData? geometry)
     {
         if (geometry?.BrepSolids is not { Count: 1 } solids || !solids[0].IsClosed) return null;
+        return OfClosedShell(geometry.ReadFaces, solids[0].FaceIndices, planarOnly: false);
+    }
+
+    private static Shell? OfClosedShell(IReadOnlyList<GeoFace> source, List<int> indices, bool planarOnly)
+    {
         var faces = new List<List<List<double[]>>>(); // face -> loops (outer first) -> points
-        foreach (int index in solids[0].FaceIndices)
+        foreach (int index in indices)
         {
-            if (index < 0 || index >= geometry.Faces.Count || geometry.Faces[index].OuterVertices is not { Count: >= 3 } outer) return null;
+            if ((uint)index >= (uint)source.Count) return null;
+            var face = source[index];
+            if ((planarOnly && !face.PlaneSurface) || face.OuterVertices is not { Count: >= 3 } outer) return null;
             var loops = new List<List<double[]>> { outer };
             double[] outerArea = VectorArea(outer);
-            foreach (var inner in geometry.Faces[index].InnerVertices ?? [])
+            foreach (var inner in face.InnerVertices ?? [])
             {
                 if (inner.Count < 3) return null;
                 // holes run against the outer boundary
@@ -117,7 +118,7 @@ internal static class SolidQuantities
     /// floor steps.</summary>
     internal static double? RoomPlanArea(GeometryData? boundary)
     {
-        if (boundary?.Faces is not { Count: > 0 } faces) return null;
+        if (boundary?.ReadFaces is not { Count: > 0 } faces) return null;
         double projected = 0;
         foreach (var face in faces)
         {
