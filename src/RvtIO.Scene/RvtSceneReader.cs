@@ -71,12 +71,12 @@ public static class RvtSceneReader
     public static RvtSceneResult ReadStream(Stream stream, RvtSceneOptions options) =>
         ReadStreamCore(stream, options, null);
 
-    /// <summary>Reads a scene and keeps its triangle buffers in a separate temporary stream.
+    /// <summary>Reads a scene and keeps its triangle buffers and intermediate data in a separate temporary stream.
     /// The caller owns that stream and keeps it open until the scene is no longer needed.</summary>
     /// <param name="stream">The readable, seekable RVT input.</param>
     /// <param name="options">The options of the read, including the required model key.</param>
     /// <param name="triangleScratch">An empty, readable, writable, seekable stream distinct from the input
-    /// and any partition scratch stream. Its contents are written during conversion and read when the scene is used.</param>
+    /// and any partition scratch stream. Its contents are written during conversion and read while rendering or exporting the scene.</param>
     /// <exception cref="ArgumentException">The triangle scratch stream is not empty or separate, or does not support
     /// reading, writing and seeking.</exception>
     public static RvtSceneResult ReadStream(Stream stream, RvtSceneOptions options, Stream triangleScratch)
@@ -105,6 +105,7 @@ public static class RvtSceneReader
         var scratch = triangleScratch == null ? null : new SceneMeshScratch(triangleScratch);
         if (scratch != null) readerOptions.ArchiveSceneGeometry = scratch.ArchiveGeometry;
         var document = RvtDocument.OpenStream(stream, readerOptions);
+        scratch?.ArchiveParameters(document.Elements);
         var meshes = ElementMeshes.ExtractCore(document, MeshOptions(options), scratch == null ? null : scratch.Store);
         return Map(document, meshes, key, ReadDiagnostics(readDiagnostics), scratch);
     }
@@ -244,12 +245,12 @@ public static class RvtSceneReader
             if (sceneElement.SourceId == null) withoutUniqueId++;
             if (element != null)
             {
-                if (AddPropertySet(scene, "Instance", "revit:instance", element.Parameters, element) is int instanceSet)
+                if (AddPropertySet(scene, "Instance", "revit:instance", element.ReadParameters, element) is int instanceSet)
                     sceneElement.PropertySetIds.Add(instanceSet);
                 if (document.GetTypeElement(element) is { } type)
                 {
                     if (!typeSets.TryGetValue(type.Id, out int? typeSet))
-                        typeSets[type.Id] = typeSet = AddPropertySet(scene, "Type", "revit:type", type.Parameters);
+                        typeSets[type.Id] = typeSet = AddPropertySet(scene, "Type", "revit:type", type.ReadParameters);
                     if (typeSet is int set) sceneElement.PropertySetIds.Add(set);
                 }
             }
@@ -466,7 +467,7 @@ public static class RvtSceneReader
     /// element id the UniqueId ends with) in the IFC base-64 form; null without either.</summary>
     private static string? IfcGuidOf(Element element)
     {
-        if (element.Parameters.Where(parameter => parameter.Id == (int)BuiltInParameter.IFC_GUID)
+        if (element.ReadParameters.Where(parameter => parameter.Id == (int)BuiltInParameter.IFC_GUID)
             .Select(parameter => parameter.Value as string).FirstOrDefault(IsIfcGuid) is { } stored) return stored;
 
         // The original element id has a minimum width of eight hex digits.

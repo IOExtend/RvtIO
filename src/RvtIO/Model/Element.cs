@@ -960,8 +960,36 @@ namespace RvtIO.Model
         /// <summary>BuiltInCategory name (e.g. "OST_Walls").</summary>
         public string? Category { get; set; }
 
+        private List<Parameter>? _parameters = new();
+        private IReadOnlyList<Parameter>? _storedParameters;
+
         /// <summary>The parameters of the element.</summary>
-        public List<Parameter> Parameters { get; set; } = new();
+        public List<Parameter> Parameters
+        {
+            get
+            {
+                if (_storedParameters != null)
+                {
+                    _parameters = _storedParameters.ToList();
+                    _storedParameters = null;
+                }
+                return _parameters!;
+            }
+            set
+            {
+                _parameters = value;
+                _storedParameters = null;
+            }
+        }
+
+        internal IReadOnlyList<Parameter> ReadParameters => _storedParameters ?? _parameters!;
+
+        internal void ArchiveParameters(Func<List<Parameter>, IReadOnlyList<Parameter>?> store)
+        {
+            if (_parameters is not { Count: > 0 } parameters || store(parameters) is not { } archived) return;
+            _storedParameters = archived;
+            _parameters = null;
+        }
 
         /// <summary>The axis-aligned outline the element header stores: [minX, minY, minZ, maxX, maxY, maxZ] in Revit internal
         /// units (feet, project coordinates) - the box the application reports. Null when the header stores no outline; the
@@ -1144,7 +1172,7 @@ namespace RvtIO.Model
         /// </summary>
         public Parameter? LookupParameter(string name)
         {
-            foreach (var p in Parameters)
+            foreach (var p in ReadParameters)
                 if (p.DefinitionName == name) return p;
             return null;
         }
@@ -1155,8 +1183,8 @@ namespace RvtIO.Model
         public Parameter? LookupParameter(BuiltIns.BuiltInParameter bip)
         {
             int bipId = (int)bip;
-            foreach (var p in Parameters)
-                if (p.Definition?.Id == bipId) return p;
+            foreach (var p in ReadParameters)
+                if (p.DefinitionFields?.Id == bipId) return p;
             return null;
         }
 
@@ -1166,7 +1194,7 @@ namespace RvtIO.Model
         public IReadOnlyList<Parameter> GetParameters(string name)
         {
             var result = new List<Parameter>();
-            foreach (var p in Parameters)
+            foreach (var p in ReadParameters)
                 if (p.DefinitionName == name) result.Add(p);
             return result;
         }
@@ -1180,7 +1208,7 @@ namespace RvtIO.Model
         {
             get
             {
-                foreach (var p in Parameters)
+                foreach (var p in ReadParameters)
                 {
                     if (p.DefinitionName is "ELEM_TYPE_PARAM" && p.Value is int id && id > 0)
                         return id;

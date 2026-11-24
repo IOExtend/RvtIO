@@ -14,6 +14,7 @@ namespace RvtIO.Model
         {
             var copy = (Parameter)MemberwiseClone();
             copy._definition = Definition;
+            copy._metadata = _metadata?.Copy();
             if (!Equals(copy._value, value))
                 copy.HasResolvedZeroElementId = false;
             copy._value = value;
@@ -22,6 +23,21 @@ namespace RvtIO.Model
 
         private object? _value;
         private object? _definition;
+        private Metadata? _metadata;
+
+        internal bool HasSupplementalMetadata => _metadata != null;
+
+        private sealed class Metadata
+        {
+            internal Guid? Guid;
+            internal string? ForgeId;
+            internal string? SpecType;
+            internal string? UnitSymbol;
+            internal double? ConversionFactor;
+            internal long? NativeElementId;
+
+            internal Metadata Copy() => (Metadata)MemberwiseClone();
+        }
 
         internal sealed record BuiltInDefinition(int Id, string Name);
 
@@ -33,7 +49,14 @@ namespace RvtIO.Model
         /// <summary>GUID of shared/external parameters (parsed from ForgeId). Null for built-in params.
         /// Invariant per definition id - serialized once in the document's ParameterDefinitions table.</summary>
         [JsonIgnore]
-        public Guid? Guid { get; set; }
+        public Guid? Guid
+        {
+            get => _metadata?.Guid;
+            set
+            {
+                if (value != null || _metadata != null) (_metadata ??= new()).Guid = value;
+            }
+        }
 
         /// <summary>
         /// For built-in params: the BIP enum int value (same as Definition.Id, negative).
@@ -54,6 +77,13 @@ namespace RvtIO.Model
         }
 
         internal string? DefinitionName => _definition is BuiltInDefinition template ? template.Name : ((Definition?)_definition)?.Name;
+
+        internal (int Id, string? Name, string? BuiltIn)? DefinitionFields => _definition switch
+        {
+            BuiltInDefinition template => (template.Id, template.Name, template.Name),
+            Definition definition => (definition.Id, definition.Name, definition.BuiltInParameter),
+            _ => null,
+        };
 
         /// <summary>Storage type. Invariant per definition id - lives in ParameterDefinitions.</summary>
         [JsonIgnore]
@@ -83,23 +113,51 @@ namespace RvtIO.Model
         /// <summary>Forge TypeId string for user-defined/shared params (e.g. "autodesk.parameter.aec.revit.external.-1:GUID-1.0.0").
         /// Invariant per definition id - lives in ParameterDefinitions.</summary>
         [JsonIgnore]
-        public string? ForgeId { get; set; }
+        public string? ForgeId
+        {
+            get => _metadata?.ForgeId;
+            set
+            {
+                if (value != null || _metadata != null) (_metadata ??= new()).ForgeId = value;
+            }
+        }
 
         /// <summary>Measurement spec type (e.g. "autodesk.spec.aec:length-2.0.0").
         /// Resolved from ForgeId via 0x0B3A blocks, or from BIP name heuristics.</summary>
         [JsonIgnore]
-        public string? SpecType { get; set; }
+        public string? SpecType
+        {
+            get => _metadata?.SpecType;
+            set
+            {
+                if (value != null || _metadata != null) (_metadata ??= new()).SpecType = value;
+            }
+        }
 
         /// <summary>Display unit symbol (e.g. "mm", "m^2", "degC").
         /// Resolved from SpecType via 0x0FBD ForgeTypeId spec registry.
         /// Invariant per definition id - lives in ParameterDefinitions.</summary>
         [JsonIgnore]
-        public string? UnitSymbol { get; set; }
+        public string? UnitSymbol
+        {
+            get => _metadata?.UnitSymbol;
+            set
+            {
+                if (value != null || _metadata != null) (_metadata ??= new()).UnitSymbol = value;
+            }
+        }
 
         /// <summary>Conversion factor from Revit internal units to display units.
         /// E.g. for length: feet -> mm = 304.8.</summary>
         [JsonIgnore]
-        public double? ConversionFactor { get; set; }
+        public double? ConversionFactor
+        {
+            get => _metadata?.ConversionFactor;
+            set
+            {
+                if (value != null || _metadata != null) (_metadata ??= new()).ConversionFactor = value;
+            }
+        }
 
         /// <summary>True when this parameter's value came from an approximate fallback
         /// (e.g. dominant bounding-box dimension) rather than an exact decoded source (e.g.
@@ -318,7 +376,14 @@ namespace RvtIO.Model
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public string? SourceElementId => NativeElementId?.ToString(CultureInfo.InvariantCulture);
 
-        internal long? NativeElementId { get; set; }
+        internal long? NativeElementId
+        {
+            get => _metadata?.NativeElementId;
+            set
+            {
+                if (value != null || _metadata != null) (_metadata ??= new()).NativeElementId = value;
+            }
+        }
 
         /// <summary>
         /// Get a formatted display string for the value.

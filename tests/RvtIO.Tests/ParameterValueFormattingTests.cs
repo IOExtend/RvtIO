@@ -25,6 +25,39 @@ public class ParameterValueFormattingTests
     }
 
     [Fact]
+    public void OptionalMetadataRemainsIndependentAfterCopying()
+    {
+        var original = new Parameter
+        {
+            Guid = Guid.Empty, ForgeId = "forge", SpecType = "length",
+            UnitSymbol = "mm", ConversionFactor = 304.8,
+            StorageType = StorageType.ElementId, Value = 15, NativeElementId = 4294967311,
+        };
+        var copy = original.ShallowCopy(original.Value);
+
+        Assert.Equal(original.Guid, copy.Guid);
+        Assert.Equal(original.ForgeId, copy.ForgeId);
+        Assert.Equal(original.SpecType, copy.SpecType);
+        Assert.Equal(original.UnitSymbol, copy.UnitSymbol);
+        Assert.Equal(original.ConversionFactor, copy.ConversionFactor);
+        Assert.Equal(original.AsElementId64(), copy.AsElementId64());
+
+        copy.Guid = null;
+        copy.ForgeId = null;
+        copy.SpecType = "area";
+        copy.UnitSymbol = "m²";
+        copy.ConversionFactor = null;
+        copy.NativeElementId = null;
+
+        Assert.Equal(Guid.Empty, original.Guid);
+        Assert.Equal("forge", original.ForgeId);
+        Assert.Equal("length", original.SpecType);
+        Assert.Equal("mm", original.UnitSymbol);
+        Assert.Equal(304.8, original.ConversionFactor);
+        Assert.Equal(4294967311, original.AsElementId64());
+    }
+
+    [Fact]
     public void Parameter_AsValueString_CaseInsensitiveAndBipFallback()
     {
         var paramLength = new Parameter

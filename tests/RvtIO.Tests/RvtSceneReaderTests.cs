@@ -168,6 +168,57 @@ public class RvtSceneReaderTests
     }
 
     [Fact]
+    public void ResolvedParameterPagesPreserveOrderFlagsAndPropertyValues()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var reference = new Parameter
+        {
+            Id = -1012100, Definition = new Definition { Id = -1012100, Name = "Phase", BuiltInParameter = "PHASE_CREATED" },
+            Value = 0, StorageType = StorageType.ElementId, NativeElementId = 4294967311, HasResolvedZeroElementId = true,
+            FromNativeFields = true, IsReadOnly = true,
+        };
+        var text = new Parameter
+        {
+            Id = 1200, Value = "\ud800", StorageType = StorageType.String, Guid = Guid.Empty,
+            Definition = new Definition { Id = 1200, Name = "Exact text" },
+        };
+        var distance = new Parameter
+        {
+            Id = 1201, Value = 2.25, StorageType = StorageType.Double, ForgeId = "length",
+            SpecType = "autodesk.spec.aec:length-2.0.0", UnitSymbol = "mm", ConversionFactor = 304.8,
+            IsApproximate = true,
+        };
+        var missing = new Parameter { Id = 1202, Value = false, StorageType = StorageType.Integer, HasNoRevitValue = true };
+        var first = new Element { Parameters = [reference, text, distance, missing] };
+        var second = new Element { Parameters = [new Parameter { Id = 2, Value = 7 }] };
+        var original = first.Parameters;
+        scratch.ArchiveParameters([first, second]);
+
+        var archived = first.ReadParameters;
+        Assert.NotSame(original, archived);
+        Assert.Equal(original.Select(p => p.Id), archived.Select(p => p.Id));
+        Assert.Equal(7, second.ReadParameters[0].Value);
+        Assert.Equal(reference.SourceElementId, archived[0].SourceElementId);
+        Assert.True(archived[0].HasRevitValue);
+        Assert.True(archived[0].FromNativeFields);
+        Assert.True(archived[0].IsReadOnly);
+        Assert.Equal(reference.Definition.BuiltInParameter, archived[0].Definition.BuiltInParameter);
+        Assert.Equal(text.Value, first.LookupParameter("Exact text")!.Value);
+        Assert.Equal(Guid.Empty, archived[1].Guid);
+        Assert.Equal(distance.AsValueString(), archived[2].AsValueString());
+        Assert.Equal(distance.SpecType, archived[2].SpecType);
+        Assert.True(archived[2].IsApproximate);
+        Assert.False(archived[3].HasRevitValue);
+        Assert.Equal(false, archived[3].Value);
+        Assert.Same(archived, first.ReadParameters);
+
+        first.Parameters.RemoveAt(3);
+        Assert.Equal(3, first.ReadParameters.Count);
+        Assert.Same(first.Parameters, first.ReadParameters);
+    }
+
+    [Fact]
     public void ExpandedFacePagesPreserveFaceOrderAndRestoreMutableLists()
     {
         using var stream = new MemoryStream();

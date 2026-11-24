@@ -292,7 +292,7 @@ public static class ElementMeshes
         if (element.CategoryId is not ((int)BuiltInCategory.OST_Lines or (int)BuiltInCategory.OST_RoomSeparationLines
             or (int)BuiltInCategory.OST_MEPSpaceSeparationLines) || element.OwnerViewId != null
             || !element.RootClassIs("CurveElem")
-            || !element.Parameters.Any(p => p.Id == (int)BuiltInParameter.CURVE_IS_DETAIL && p.Value is 0))
+            || !element.ReadParameters.Any(p => p.Id == (int)BuiltInParameter.CURVE_IS_DETAIL && p.Value is 0))
             return null;
         return element.NativeModelArc ?? (element.Location is { CurveType: "Line" } line ? line : null);
     }

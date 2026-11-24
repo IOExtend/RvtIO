@@ -846,7 +846,14 @@ public partial class RvtFileReader
             "Local" or "Central" => true,
             _ => null,
         };
-        if (archiveGeometry != null) state.ElemScanStrings = new();
+        if (archiveGeometry != null)
+        {
+            // The element builders have now consumed these unnamed strings and per-record value maps.
+            state.ElemScanStrings = new();
+            state.ElemBipDoubles = new();
+            state.ElemBipInts = new();
+            state.ElemParamStrings = new();
+        }
         progress?.Report(new("finalize-model"));
         ElementBuilder.PostProcess(rvtInfo, state, diag);
         if (state.PartitionScratch != null)

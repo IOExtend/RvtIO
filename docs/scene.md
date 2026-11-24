@@ -45,7 +45,7 @@ The final reader update, `complete`, marks the end of the file read. Mesh extrac
 `RvtSceneOptions.CreatePartitionScratch` passes a scratch stream factory to the file reader for path and stream reads. Use it to
 read inflated partitions through private temporary storage as described in the [public API](public-api.md).
 
-Use `ReadStream(stream, options, triangleScratch)` to keep expanded body faces, intermediate triangle meshes and
+Use `ReadStream(stream, options, triangleScratch)` to keep expanded body faces, resolved element parameters, intermediate triangle meshes and
 the scene's triangle buffers in another temporary stream. Pass an empty, readable, writable, seekable stream; the caller owns it and
 keeps it open until it has finished using the returned scene. It must be separate from the input and partition scratch.
 During this read, analytic mesh nodes retain the facts needed for element measurements. Shell quantities and scene tessellation read the archived polygons through the same paged face lists.

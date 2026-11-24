@@ -265,7 +265,8 @@ internal static class BlockParser
         {
             ExtractBlockStrings(chunk, dataStart, dataEnd, eid, state.ElemStrings);
 
-            ExtractBlockDoubles(chunk, dataStart, dataEnd, eid, state.ElemDoubles);
+            if (state.KeepExportProvenance)
+                ExtractBlockDoubles(chunk, dataStart, dataEnd, eid, state.ElemDoubles);
 
             // Blocks with high classIdx word = 0xFFFF contain BIP key->double pairs at stride 12
             if ((classIdx >> 16) == 0xFFFF)

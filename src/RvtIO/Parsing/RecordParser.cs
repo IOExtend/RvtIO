@@ -69,7 +69,8 @@ internal static class RecordParser
                     ExtractReferences(rec);
                     ExtractBodyParams(rec);
                     BlockParser.ExtractBlockStrings(body, 0, body.Length, elemId, state.ElemStrings);
-                    BlockParser.ExtractBlockDoubles(body, 0, body.Length, elemId, state.ElemDoubles);
+                    if (state.KeepExportProvenance)
+                        BlockParser.ExtractBlockDoubles(body, 0, body.Length, elemId, state.ElemDoubles);
                     state.Records[elemId] = rec;
                     // Extract after storing record (needs references for SymbolId validation)
                     BlockParser.ExtractFamilyInstanceTransform(body, 0, body.Length, elemId, state.FamilyInstanceTransforms, state.Records);
@@ -113,7 +114,8 @@ internal static class RecordParser
                     ExtractR25Body(rec);
 
                     BlockParser.ExtractBlockStrings(body, 0, body.Length, elemId, state.ElemStrings);
-                    BlockParser.ExtractBlockDoubles(body, 0, body.Length, elemId, state.ElemDoubles);
+                    if (state.KeepExportProvenance)
+                        BlockParser.ExtractBlockDoubles(body, 0, body.Length, elemId, state.ElemDoubles);
                     state.Records[elemId] = rec;
                     if (source?.StoredBlock(segment, pos + 16, body.Length) is { } stored)
                         rec.RetainBodyInScratch(stored);

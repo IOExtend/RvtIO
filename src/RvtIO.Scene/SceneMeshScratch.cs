@@ -7,7 +7,7 @@ using RvtIO.Parsing;
 
 namespace RvtIO.Scene;
 
-/// <summary>Stores triangle buffers in seekable scratch while preserving the scene's list contracts.</summary>
+/// <summary>Stores scene working data in seekable scratch while preserving the list contracts.</summary>
 internal sealed class SceneMeshScratch
 {
     private readonly PartitionChunks.Backing storage;
@@ -20,6 +20,12 @@ internal sealed class SceneMeshScratch
     }
 
     internal void ArchiveGeometry(Element element) => faces.Archive(element);
+
+    internal void ArchiveParameters(IReadOnlyList<Element> elements)
+    {
+        var parameters = new SceneParameterScratch(storage);
+        foreach (var element in elements) parameters.Archive(element);
+    }
 
     internal IReadOnlyList<TriangleMesh> Store(IReadOnlyList<TriangleMesh> meshes)
     {
