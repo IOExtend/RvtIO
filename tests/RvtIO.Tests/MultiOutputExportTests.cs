@@ -257,6 +257,53 @@ public class MultiOutputExportTests
     }
 
     [Fact]
+    public void CopiedElementCanReplaceMepRoomAndTypeFactsIndependently()
+    {
+        var original = new RvtIO.Model.Element
+        {
+            SerializedConnectorSystems = [0, 9],
+            SerializedMepSystem = ("Supply", 0),
+            SerializedPlanBoundary = [(1, 2), (3, 4)],
+            SerializedRoomIsLocationless = false,
+            SerializedRoomPlanAreaSquareFeet = 0,
+            SerializedSystemTypeId = 0,
+            ValidatedWindowTypeReferenceName = "Window type",
+            ValidatedWindowTypeReferenceIsExplicit = true,
+        };
+        var copy = original.ShallowCopy();
+
+        Assert.Same(original.SerializedConnectorSystems, copy.SerializedConnectorSystems);
+        Assert.Same(original.SerializedPlanBoundary, copy.SerializedPlanBoundary);
+        Assert.Equal(("Supply", 0), copy.SerializedMepSystem);
+        Assert.False(copy.SerializedRoomIsLocationless);
+        Assert.Equal(0, copy.SerializedRoomPlanAreaSquareFeet);
+        Assert.Equal(0, copy.SerializedSystemTypeId);
+
+        copy.SerializedConnectorSystems = null;
+        copy.SerializedMepSystem = null;
+        copy.SerializedPlanBoundary = null;
+        copy.SerializedRoomIsLocationless = true;
+        copy.SerializedSystemTypeId = null;
+        copy.ValidatedWindowTypeReferenceName = null;
+        copy.ValidatedWindowTypeReferenceIsExplicit = false;
+
+        Assert.Equal([0, 9], original.SerializedConnectorSystems);
+        Assert.Equal(("Supply", 0), original.SerializedMepSystem);
+        Assert.Equal([(1d, 2d), (3d, 4d)], original.SerializedPlanBoundary);
+        Assert.False(original.SerializedRoomIsLocationless);
+        Assert.Equal(0, original.SerializedSystemTypeId);
+        Assert.Equal("Window type", original.ValidatedWindowTypeReferenceName);
+        Assert.True(original.ValidatedWindowTypeReferenceIsExplicit);
+        Assert.Null(copy.SerializedConnectorSystems);
+        Assert.Null(copy.SerializedMepSystem);
+        Assert.Null(copy.SerializedPlanBoundary);
+        Assert.True(copy.SerializedRoomIsLocationless);
+        Assert.Null(copy.SerializedSystemTypeId);
+        Assert.Null(copy.ValidatedWindowTypeReferenceName);
+        Assert.False(copy.ValidatedWindowTypeReferenceIsExplicit);
+    }
+
+    [Fact]
     public void MultiOutput_RvtDocumentFromInfo_DoesNotMutateSourceInfo()
     {
         var info = new RvtIO.Model.RevitFileInfo
