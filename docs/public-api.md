@@ -49,8 +49,9 @@ reports them in this order and never returns to an earlier phase. A file can ski
 `wide-model` (no counts) only when `PreserveWideLayout` also parses the model of the wide layout first.
 `class-schema` covers reading the file's own class schema, its element table records and the episode table;
 `r22-layout` is the rewrite that follows, which can take as long as the phases around it.
-`Completed` and `Total` count partition streams (`partitions`), the streams the rewrite reads (`r22-layout`), block scan
-passes (`element-blocks`), decoded stream bytes (`parameter-stream`) or element candidates processed (`build-model`).
+`Completed` and `Total` count partition streams (`partitions`), the streams the rewrite reads (`r22-layout`), data chunks scanned
+for records or names (`element-records`, `element-properties`), block scan passes (`element-blocks`), decoded stream bytes
+(`parameter-stream`) or element candidates processed (`build-model`).
 `Completed` does not decrease within a phase.
 `GeometryBlocks` optionally gives the applied and queued geometry blocks within the current block pass. Such updates
 repeat the pass number while the block count advances.

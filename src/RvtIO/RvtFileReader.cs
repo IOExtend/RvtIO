@@ -222,7 +222,7 @@ public partial class RvtFileReader
         progress?.Report(new("element-records"));
         ReadWideElementIndex(root, state, partitionStreams, framedStreams, wideSchema, diag);
         ReadRebarBars(root, state, partitionStreams, framedStreams, wideSchema);
-        ClassifyAndParseRecords(chunks, state, diag);
+        ClassifyAndParseRecords(chunks, state, diag, progress);
         LogPhase("Records parsed");
 
         ParseBlocks(state, diag, progress);
@@ -239,17 +239,7 @@ public partial class RvtFileReader
         diag?.WriteLine($"Grid datums: {state.GridDatums.Count}");
 
         progress?.Report(new("element-properties"));
-        // Scan all chunks for element name strings in parallel. Store each result at its
-        // source chunk index so task completion order cannot change first-match name resolution.
-        var partialResults = new Dictionary<uint, List<string>>?[chunks.Count];
-        Parallel.For(0, chunks.Count, chunkIndex =>
-        {
-            var localStrings = new Dictionary<uint, List<string>>();
-            StringScanner.ScanChunk(chunks[chunkIndex], state.AllKnownIds, localStrings);
-            if (localStrings.Count > 0) partialResults[chunkIndex] = localStrings;
-        });
-        MergeElemScanStringsInChunkOrder(partialResults, state.ElemScanStrings);
-        Array.Clear(partialResults);
+        ScanElementStrings(chunks, state, progress);
         LogPhase("Strings scanned");
         diag?.WriteLine($"Elements with BIP doubles: {state.ElemBipDoubles.Count}");
 
@@ -978,13 +968,44 @@ public partial class RvtFileReader
         return (rvtInfo, state);
     }
 
+    private static void ScanElementStrings(PartitionChunks chunks, ParsingState state, IProgress<RvtReadProgress>? progress)
+    {
+        if (chunks.Count == 0) return;
+        const int batchSize = 16;
+        var partialResults = new Dictionary<uint, List<string>>?[Math.Min(batchSize, chunks.Count)];
+        var seen = new Dictionary<uint, HashSet<string>>();
+        var clock = progress == null ? null : System.Diagnostics.Stopwatch.StartNew();
+        progress?.Report(new("element-properties", 0, chunks.Count));
+        for (int start = 0; start < chunks.Count;)
+        {
+            int first = start;
+            int count = Math.Min(partialResults.Length, chunks.Count - first);
+            // Keep both memory use and merge order independent of task completion order.
+            Parallel.For(0, count, index =>
+            {
+                var localStrings = new Dictionary<uint, List<string>>();
+                StringScanner.ScanChunk(chunks[first + index], state.AllKnownIds, localStrings);
+                if (localStrings.Count > 0) partialResults[index] = localStrings;
+            });
+            MergeElemScanStringsInChunkOrder(partialResults, state.ElemScanStrings, seen);
+            Array.Clear(partialResults);
+            start += count;
+            if (clock != null && (start == chunks.Count || clock.ElapsedMilliseconds >= 500))
+            {
+                progress!.Report(new("element-properties", start, chunks.Count));
+                clock.Restart();
+            }
+        }
+    }
+
     internal static void MergeElemScanStringsInChunkOrder(
         IReadOnlyList<Dictionary<uint, List<string>>?> partialResults,
-        Dictionary<uint, List<string>> elemScanStrings)
+        Dictionary<uint, List<string>> elemScanStrings,
+        Dictionary<uint, HashSet<string>>? mergeSeen = null)
     {
         // HashSet-backed dedupe: rebar-heavy models attribute thousands of strings per
         // element, and List.Contains per insert made this merge quadratic.
-        var mergeSeen = new Dictionary<uint, HashSet<string>>();
+        mergeSeen ??= new();
         for (int chunkIndex = 0; chunkIndex < partialResults.Count; chunkIndex++)
         {
             var partial = partialResults[chunkIndex];
@@ -1852,11 +1873,14 @@ public partial class RvtFileReader
         return new EpisodeTableParseResult { Guids = result, X = x, DetachGuid = detachGuid };
     }
 
-    private static void ClassifyAndParseRecords(PartitionChunks chunks, ParsingState state, TextWriter? diag)
+    private static void ClassifyAndParseRecords(PartitionChunks chunks, ParsingState state, TextWriter? diag,
+        IProgress<RvtReadProgress>? progress = null)
     {
         var records = new PartitionChunks(chunks.Store);
         var other = new PartitionChunks(chunks.Store);
         var fields = chunks.Store is { } backing ? new ElementRecordFieldStore(backing) : null;
+        var clock = progress == null ? null : System.Diagnostics.Stopwatch.StartNew();
+        if (chunks.Count > 0) progress?.Report(new("element-records", 0, chunks.Count));
         for (int i = 0; i < chunks.Count; i++)
         {
             var chunk = chunks[i];
@@ -1876,6 +1900,11 @@ public partial class RvtFileReader
             else
             {
                 other.Add(chunks.Reference(i));
+            }
+            if (clock != null && (i + 1 == chunks.Count || clock.ElapsedMilliseconds >= 500))
+            {
+                progress!.Report(new("element-records", i + 1, chunks.Count));
+                clock.Restart();
             }
         }
 
