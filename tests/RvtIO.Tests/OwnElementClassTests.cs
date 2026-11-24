@@ -231,6 +231,31 @@ public class OwnElementClassTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public void ParseBlocks_KeepsTheLegacyScanOrderWithScratchSegments(bool storeSegments)
+    {
+        byte[] known = Frame(0x07D7), discovered = Frame(0x07D7);
+        BitConverter.GetBytes(456u).CopyTo(discovered, 0);
+        using var scratch = new MemoryStream();
+        var segments = new PartitionChunks(storeSegments ? new PartitionChunks.Backing(scratch) : null);
+        segments.Add(known);
+        segments.Add(discovered);
+        var state = new ParsingState
+        {
+            AllKnownIds = [123],
+            Chunks = segments,
+            NonRecordChunks = segments,
+        };
+
+        RvtFileReader.ParseBlocks(state, null);
+
+        Assert.Equal([456u], state.BlockOnlyIds);
+        Assert.Equal(4, state.BlockClassInventory[0x07D7].Count);
+        Assert.Equal(storeSegments ? known.Length + discovered.Length : 0, scratch.Length);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public void TheGeometryOfARecordThatRunsIntoTheNextSegmentOrIsOverTheSizeLimit_IsNotDecoded(bool storeSegments)
     {
         byte[] crossing = Frame(0x07D7), whole = Frame(0x07D7);

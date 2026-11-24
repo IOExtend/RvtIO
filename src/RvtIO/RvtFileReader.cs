@@ -247,6 +247,7 @@ public partial class RvtFileReader
             if (localStrings.Count > 0) partialResults[chunkIndex] = localStrings;
         });
         MergeElemScanStringsInChunkOrder(partialResults, state.ElemScanStrings);
+        Array.Clear(partialResults);
         LogPhase("Strings scanned");
         diag?.WriteLine($"Elements with BIP doubles: {state.ElemBipDoubles.Count}");
 
@@ -818,6 +819,13 @@ public partial class RvtFileReader
             _ => null,
         };
         ElementBuilder.PostProcess(rvtInfo, state, diag);
+        if (state.PartitionScratch != null)
+        {
+            // Geometry and its cutters have been resolved into the elements. A scratch-backed
+            // read does not retain ParsingState for diagnostics after it returns.
+            state.GrepBlocks.Clear();
+            state.FamilyCutGreps.Clear();
+        }
         if (state.GridAxes is { } axes)
         {
             rvtInfo.CurvedGridAxes = axes.Paths;
@@ -3014,10 +3022,7 @@ public partial class RvtFileReader
         bool framedBlocks = state.ReadsFramedRecords;
         bool skipPartitionScan = framedBlocks
             || (!state.R22View && state.WideSchema != null && WideElementRecords.IdWidth(state.WideSchema) == 8);
-        var nonRecordScan = ScanChunks(state.NonRecordChunks);
-        var recordScan = ScanChunks(state.RecordChunks);
-
-        IEnumerable<byte[]> ScanChunks(IReadOnlyList<byte[]> list)
+        IReadOnlyList<byte[]> ScanChunks(IReadOnlyList<byte[]> list)
         {
             if (!skipPartitionScan) return list;
             if (state.Chunks is PartitionChunks { Store: not null } stored && list is PartitionChunks selected)
@@ -3027,16 +3032,12 @@ public partial class RvtFileReader
                 return selected.Select(Enumerable.Range(0, selected.Count).Where(i => !excluded.Contains(selected.Reference(i))));
             }
             var partitionChunks = state.Chunks.Take(state.PartitionChunkCount).ToHashSet(ReferenceEqualityComparer.Instance);
-            return list.Where(chunk => !partitionChunks.Contains(chunk));
+            return list.Where(chunk => !partitionChunks.Contains(chunk)).ToArray();
         }
-        // First pass: parse blocks, collect block-only IDs
-        var firstPassGReps = new List<BlockParser.PendingGRep>();
-        if (framedBlocks) ParseFramedBlocks(state, collectBlockOnlyIds: true, firstPassGReps);
-        foreach (var chunk in nonRecordScan)
-            BlockParser.ParseChunk(chunk, state, collectBlockOnlyIds: true, deferred: firstPassGReps);
-        foreach (var chunk in recordScan)
-            BlockParser.ParseChunk(chunk, state, collectBlockOnlyIds: true, deferred: firstPassGReps);
-        BlockParser.ApplyPendingGReps(state, firstPassGReps, geometryProgress);
+        var nonRecordScan = ScanChunks(state.NonRecordChunks);
+        var recordScan = ScanChunks(state.RecordChunks);
+
+        ApplyPass(collectBlockOnlyIds: true);
         diag?.WriteLine($"Block-only elements: {state.BlockOnlyIds.Count}");
 
         Lap("first parse pass");
@@ -3045,13 +3046,7 @@ public partial class RvtFileReader
         {
             foreach (var bid in state.BlockOnlyIds)
                 state.AllKnownIds.Add(bid);
-            var secondPassGReps = new List<BlockParser.PendingGRep>();
-            if (framedBlocks) ParseFramedBlocks(state, collectBlockOnlyIds: false, secondPassGReps);
-            foreach (var chunk in nonRecordScan)
-                BlockParser.ParseChunk(chunk, state, deferred: secondPassGReps);
-            foreach (var chunk in recordScan)
-                BlockParser.ParseChunk(chunk, state, deferred: secondPassGReps);
-            BlockParser.ApplyPendingGReps(state, secondPassGReps, geometryProgress);
+            ApplyPass(collectBlockOnlyIds: false);
         }
         Lap("second parse pass");
         diag?.WriteLine($"GRep blocks: {state.GrepBlocks.Count} elements");
@@ -3065,6 +3060,31 @@ public partial class RvtFileReader
         if (state.ForgeParamSpecs.Count > 0)
             diag?.WriteLine($"ForgeId to spec mappings: {state.ForgeParamSpecs.Count} params");
 
+        void ApplyPass(bool collectBlockOnlyIds)
+        {
+            var pending = new List<BlockParser.PendingGRep>();
+            if (framedBlocks) ParseFramedBlocks(state, collectBlockOnlyIds, pending);
+            Scan(nonRecordScan);
+            Scan(recordScan);
+            BlockParser.ApplyPendingGReps(state, pending, geometryProgress);
+
+            void Scan(IReadOnlyList<byte[]> chunks)
+            {
+                var segments = chunks as PartitionChunks;
+                for (int i = 0; i < chunks.Count; i++)
+                {
+                    int first = pending.Count;
+                    BlockParser.ParseChunk(chunks[i], state, collectBlockOnlyIds, pending);
+                    if (segments?.Store == null) continue;
+                    for (int j = first; j < pending.Count; j++)
+                    {
+                        var job = pending[j];
+                        if (segments.StoredBlock(i, job.Start, (int)job.Size + 16) is { } stored)
+                            pending[j] = job with { Chunk = [], Stored = stored };
+                    }
+                }
+            }
+        }
     }
 
     /// <summary>
