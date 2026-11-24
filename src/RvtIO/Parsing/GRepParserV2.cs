@@ -186,8 +186,25 @@ internal static partial class GRepParserV2
             Pos += sizeof(int);
             return true;
         }
-        public double F64() { if (Pos + 8 > End) throw Stop; double v = BitConverter.ToDouble(D, Pos); Pos += 8; return v; }
-        public void Take(int n) { if (Pos + n > End) throw Stop; Pos += n; }
+        public double F64() => TryF64(out double value) ? value : throw Stop;
+
+        public bool TryF64(out double value)
+        {
+            value = 0;
+            if (End - Pos < sizeof(double)) return false;
+            value = BitConverter.ToDouble(D, Pos);
+            Pos += sizeof(double);
+            return true;
+        }
+
+        public void Take(int n) { if (!TryTake(n)) throw Stop; }
+
+        public bool TryTake(int n)
+        {
+            if (n > End - Pos) return false;
+            Pos += n;
+            return true;
+        }
         public bool CanRead(int n) => Pos + n <= End;
     }
 
@@ -2203,11 +2220,12 @@ internal static partial class GRepParserV2
         }
 
         int hi = f.Mods >> 4;
-        if (hi == 6) { ReadString(c); return true; }
+        if (hi == 6) return TryReadString(c);
         if (hi == 1)
         {
             int n = f.Cnt ?? 0;
-            for (int i = 0; i < n; i++) ReadScalar(c, f, depth);
+            for (int i = 0; i < n; i++)
+                if (!TryReadScalar(c, f, depth)) return false;
             return true;
         }
         if (hi == 5)
@@ -2216,11 +2234,11 @@ internal static partial class GRepParserV2
             uint n = (uint)count;
             if (n == 0xFFFFFFFF) return true;
             if (n > 1_000_000) return false;
-            for (uint i = 0; i < n; i++) ReadScalar(c, f, depth);
+            for (uint i = 0; i < n; i++)
+                if (!TryReadScalar(c, f, depth)) return false;
             return true;
         }
-        ReadScalar(c, f, depth);
-        return true;
+        return TryReadScalar(c, f, depth);
     }
 
     private static void ReadInlineContainer(Cur c, int classId, int depth)
@@ -2238,13 +2256,13 @@ internal static partial class GRepParserV2
         foreach (var field in fields) ReadField(c, field, depth + 1);
     }
 
-    private static void ReadScalar(Cur c, TfBlockDeserializer.TfField f, int depth)
+    private static bool TryReadScalar(Cur c, TfBlockDeserializer.TfField f, int depth)
     {
         switch (f.Type)
         {
             case 0x01: case 0x02: case 0x03:
             {
-                if (!c.CanRead(1)) throw Stop;
+                if (!c.CanRead(1)) return false;
                 byte value = c.D[c.Pos++];
                 bool captureConditionCut = c.CurrentObjectClass is 1995 or 1996
                     && f.Name == "m_negateDirCondition";
@@ -2258,11 +2276,11 @@ internal static partial class GRepParserV2
                         values[f.Name] = fieldValues = new();
                     fieldValues.Add(value);
                 }
-                return;
+                return true;
             }
             case 0x04:
             {
-                int value = c.U32();
+                if (!c.TryU32(out int value)) return false;
                 bool captureModelCondition = c.CurrentObjectClass is 1999 or 2002;
                 if (c.CurrentQueueIndex >= 0
                     && ((c.Debug && c.CurrentObjectClass is >= 1992 and <= 2015)
@@ -2272,12 +2290,12 @@ internal static partial class GRepParserV2
                         c.QueueInts[c.CurrentQueueIndex] = values = new();
                     values[f.Name] = value;
                 }
-                return;
+                return true;
             }
-            case 0x05: case 0x06: c.Take(4); return;
+            case 0x05: case 0x06: return c.TryTake(4);
             case 0x07:
             {
-                double value = c.F64();
+                if (!c.TryF64(out double value)) return false;
                 if (c.Debug && c.CurrentQueueIndex >= 0 && c.CurrentObjectClass is >= 1992 and <= 2003)
                 {
                     if (!c.QueueDoubles.TryGetValue(c.CurrentQueueIndex, out var values))
@@ -2286,19 +2304,19 @@ internal static partial class GRepParserV2
                         values[f.Name] = fieldValues = new();
                     fieldValues.Add(value);
                 }
-                return;
+                return true;
             }
-            case 0x0A: c.Take(8); return;
-            case 0x08: ReadString(c); return;
-            case 0x09: c.Take(16); return;
+            case 0x0A: return c.TryTake(8);
+            case 0x08: return TryReadString(c);
+            case 0x09: return c.TryTake(16);
             // POD array item: ref 524(Envelope)/1248(EdgePnt) = 2xf64 UV (16b); else 3xf64 point
             // (24b). field already loops cnt times for fixed arrays (hi==1).
-            case 0x0D: c.Take((f.Mods >> 4) == 1 ? (f.Ref is 524 or 1248 ? 16 : 24) : 8 * (f.Cnt ?? 3)); return;
+            case 0x0D: return c.TryTake((f.Mods >> 4) == 1 ? (f.Ref is 524 or 1248 ? 16 : 24) : 8 * (f.Cnt ?? 3));
             case 0x0E:
             {
                 int lo = f.Mods & 0x0F;
-                if (lo == 3) { c.Take(4); return; }
-                if (lo is 1 or 2) { ReadPtr(c, f.Name); return; }
+                if (lo == 3) return c.TryTake(4);
+                if (lo is 1 or 2) return TryReadPtr(c, f.Name);
                 if (f.Ref == 20)
                 {
                     // GPolyMesh.m_materialID: the material of the mesh (the mesh has no faces to
@@ -2309,53 +2327,49 @@ internal static partial class GRepParserV2
                             c.QueueInts[c.CurrentQueueIndex] = meshValues = new();
                         meshValues[f.Name] = BitConverter.ToInt32(c.D, c.Pos);
                     }
-                    c.Take(4);
-                    return;
+                    return c.TryTake(4);
                 }
                 if (f.Ref.HasValue)
                 {
-                    var sub = TfBlockDeserializer.SerializationFields(f.Ref.Value) ?? throw Stop;
-                    foreach (var sf in sub) ReadField(c, sf, depth + 1);
-                    return;
+                    var sub = TfBlockDeserializer.SerializationFields(f.Ref.Value);
+                    if (sub == null) return false;
+                    foreach (var sf in sub)
+                        if (!TryReadField(c, sf, depth + 1)) return false;
+                    return true;
                 }
-                ReadPoly(c, f.Name);
-                return;
+                return TryReadPoly(c, f.Name);
             }
-            default: throw Stop;
+            default: return false;
         }
     }
 
-    private static void ReadString(Cur c)
+    private static bool TryReadString(Cur c)
     {
-        uint n = (uint)c.U32();
-        if (n > 100000) throw Stop;
-        c.Take(2 * (int)n);
+        return c.TryU32(out int count) && (uint)count <= 100000 && c.TryTake(2 * count);
     }
 
-    private static void ReadPtr(Cur c, string? field = null)
+    private static bool TryReadPtr(Cur c, string field)
     {
-        int v = c.U32();
+        if (!c.TryU32(out int v)) return false;
         if (field == "m_pFirstLoop" && c.CurrentObjectClass == 1589)
             c.FaceHasFirstLoop[(uint)c.CurrentObjectHandle] = v != 0;
         else if (field == "m_nextLoop" && v == 0 && c.CurrentObjectClass is 1254 or 1257 && c.CurrentQueueIndex >= 0)
             c.LastLoops.Add(c.CurrentQueueIndex);
-        if (v == 0) return;
-        if (!c.CanRead(2)) throw Stop;
-        ushort cls = BitConverter.ToUInt16(c.D, c.Pos); c.Pos += 2;
-        if (cls == 4) { ReadGInfoTail(c); return; }
-        if (!TfBlockDeserializer.Schemas.ContainsKey(cls)) throw Stop;
-        Enqueue(c, cls, v, field ?? "<pointer>");
+        if (v == 0) return true;
+        return TryReadReference(c, v, field);
     }
 
-    private static void ReadPoly(Cur c, string field)
+    private static bool TryReadPoly(Cur c, string field)
+        => c.TryU32(out int v) && (v != -1 || TryReadReference(c, v, field));
+
+    private static bool TryReadReference(Cur c, int handle, string field)
     {
-        uint v = (uint)c.U32();
-        if (v == 0 || v != 0xFFFFFFFF) return; // null or plain handle
-        if (!c.CanRead(2)) throw Stop;
+        if (!c.CanRead(2)) return false;
         ushort cls = BitConverter.ToUInt16(c.D, c.Pos); c.Pos += 2;
-        if (cls == 4) { ReadGInfoTail(c); return; }
-        if (!TfBlockDeserializer.Schemas.ContainsKey(cls)) throw Stop;
-        Enqueue(c, cls, (int)v, field);
+        if (cls == 4) return TryReadGInfoTail(c);
+        if (!TfBlockDeserializer.Schemas.ContainsKey(cls)) return false;
+        Enqueue(c, cls, handle, field);
+        return true;
     }
 
     private static void Enqueue(Cur c, ushort cls, int handle, string field)
@@ -2371,15 +2385,13 @@ internal static partial class GRepParserV2
         }
     }
 
-    private static void ReadGInfoTail(Cur c)
+    private static bool TryReadGInfoTail(Cur c)
     {
-        if (!c.CanRead(2)) throw Stop;
+        if (!c.CanRead(2)) return false;
         ushort tk = BitConverter.ToUInt16(c.D, c.Pos); c.Pos += 2;
-        if ((tk & 0xFF) != 8) throw Stop;
+        if ((tk & 0xFF) != 8) return false;
         int kind = tk >> 8;
-        if (kind == 0) return;
-        if (kind == 1) { c.Take(6 * 8 + 2 * 4); return; }
-        throw Stop;
+        return kind == 0 || kind == 1 && c.TryTake(6 * 8 + 2 * 4);
     }
 
     private static EdgeUV ReadUV(Cur c)
