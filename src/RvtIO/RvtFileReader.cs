@@ -752,6 +752,7 @@ public partial class RvtFileReader
 
         // Pre-propagate BIP doubles through reference chains
         PrePropagateBipDoubles(state, diag);
+        state.ArchiveElementValues();
 
         LogPhase("Parameter keys remapped");
         // a file with 64-bit ids lists the elements of its element table only (the record and stream heuristics also find ids of the
@@ -840,9 +841,7 @@ public partial class RvtFileReader
         {
             // The element builders have now consumed these unnamed strings and per-record value maps.
             state.ElemScanStrings = new();
-            state.ElemBipDoubles = new();
-            state.ElemBipInts = new();
-            state.ElemParamStrings = new();
+            state.ReleaseElementValues();
         }
         progress?.Report(new("finalize-model"));
         ElementBuilder.PostProcess(rvtInfo, state, diag);

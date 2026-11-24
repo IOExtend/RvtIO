@@ -174,13 +174,13 @@ internal sealed class NativeParameterStore : IReadOnlyDictionary<uint, NativePar
         for (int i = 0; i < count; i++) fields.Add(ReadString(reader), readValue(reader));
     }
 
-    private static void WriteString(BinaryWriter writer, string value)
+    internal static void WriteString(BinaryWriter writer, string value)
     {
         writer.Write(value.Length);
         // Preserve UTF-16 code units exactly, including unpaired surrogates.
         writer.Write(MemoryMarshal.AsBytes(value.AsSpan()));
     }
 
-    private static string ReadString(BinaryReader reader) => string.Create(reader.ReadInt32(), reader.BaseStream,
+    internal static string ReadString(BinaryReader reader) => string.Create(reader.ReadInt32(), reader.BaseStream,
         static (chars, stream) => stream.ReadExactly(MemoryMarshal.AsBytes(chars)));
 }

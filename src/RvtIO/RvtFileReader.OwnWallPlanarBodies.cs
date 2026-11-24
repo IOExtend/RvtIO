@@ -24,41 +24,47 @@ public partial class RvtFileReader
             if (cls is 2007 or 2006 && owners.Contains(owner))
                 jobs.Add((block, size, cls, owner));
         });
-        var decoded = new (GRepData? Body, string? Failure)[jobs.Count];
+        // Retain replacement wall geometry and the trimmed ranges on both paths.
+        // Only IFC needs the separate planar body and its grouping provenance.
+        var decoded = state.KeepExportProvenance ? new (GRepData? Body, string? Failure)[jobs.Count] : null;
         var grepCounts = jobs.GroupBy(job => job.Owner).ToDictionary(group => group.Key, group => group.Count());
         var nativeBodies = new GRepData?[jobs.Count];
-        var normals = new (uint SourceFace, double[] Normal)?[jobs.Count];
-        var groups = new IReadOnlyDictionary<uint, uint>?[jobs.Count];
+        var normals = decoded == null ? null : new (uint SourceFace, double[] Normal)?[jobs.Count];
+        var groups = decoded == null ? null : new IReadOnlyDictionary<uint, uint>?[jobs.Count];
         var trimmed = new (double Lo, double Hi)?[jobs.Count];
         Parallel.For(0, jobs.Count, index =>
         {
             var (block, size, cls, owner) = jobs[index];
             var (data, start) = block.Read();
-            decoded[index] = DecodeOwnWallPlanarBody(data, start, size, cls, owner, out var graph);
-            if (graph != null && grepCounts[owner] == 1 && decoded[index].Body != null
+            var bodyResult = DecodeOwnWallPlanarBody(data, start, size, cls, owner, out var graph);
+            if (decoded != null) decoded[index] = bodyResult;
+            if (state.KeepExportProvenance && graph != null && grepCounts[owner] == 1 && bodyResult.Body != null
                 && state.OwnCurrentWallRoots.Contains(owner)
                 && state.OwnPartitionWallParts?.TryGetValue(owner, out var current) == true
                 && OwnPartitionParts.MatchesFrame(data, start, size, current.GeometrySha256))
             {
                 if (state.OwnWallSide0Ids.TryGetValue(owner, out int sideId))
-                    normals[index] = TfBlockDeserializer.SelectOwnWallSide0Normal(graph, sideId);
-                groups[index] = TfBlockDeserializer.SelectOwnPostCutFaceGroups(graph,
-                    decoded[index].Body!.Faces.Select(face => face.SourceFace).ToArray());
+                    normals![index] = TfBlockDeserializer.SelectOwnWallSide0Normal(graph, sideId);
+                groups![index] = TfBlockDeserializer.SelectOwnPostCutFaceGroups(graph,
+                    bodyResult.Body.Faces.Select(face => face.SourceFace).ToArray());
             }
-            if (graph != null && grepCounts[owner] == 1 && decoded[index].Body is { } trimmedBody
+            if (graph != null && grepCounts[owner] == 1 && bodyResult.Body is { } trimmedBody
                 && state.OwnWallBaseFaces.TryGetValue(owner, out var baseFaces)
                 && state.OwnWallCutoutSteps.TryGetValue(owner, out var location) && location.BlockCount == 1
                 && location.Axis is { } locationAxis)
                 trimmed[index] = TfBlockDeserializer.SelectOwnWallTrimmedRange(graph, baseFaces, trimmedBody, locationAxis);
-            if (decoded[index].Body == null)
+            if (bodyResult.Body == null)
                 nativeBodies[index] = DecodeOwnNativeWallBody(state, data, start, size, cls, owner, grepCounts[owner]);
         });
         for (int index = 0; index < jobs.Count; index++)
         {
-            ApplyOwnWallPlanarBody(state, jobs[index].Owner, decoded[index]);
-            if (normals[index] is { } normal) state.OwnWallSide0Normals[jobs[index].Owner] = normal;
+            if (decoded != null)
+            {
+                ApplyOwnWallPlanarBody(state, jobs[index].Owner, decoded[index]);
+                if (normals![index] is { } normal) state.OwnWallSide0Normals[jobs[index].Owner] = normal;
+                if (groups![index] is { } faces) state.OwnCurrentWallFaceGroups[jobs[index].Owner] = faces;
+            }
             if (trimmed[index] is { } range) state.OwnWallTrimmedRanges[jobs[index].Owner] = range;
-            if (groups[index] is { } faces) state.OwnCurrentWallFaceGroups[jobs[index].Owner] = faces;
             if (nativeBodies[index] is { } native)
             {
                 var job = jobs[index];

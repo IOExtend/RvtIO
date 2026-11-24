@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using RvtIO.Parsing;
 
 namespace RvtIO.Internal;
@@ -155,6 +156,43 @@ internal class ParsingState
     public Dictionary<uint, Dictionary<int, double>> ElemBipDoubles { get; set; } = new();
     public Dictionary<uint, Dictionary<uint, string>> ElemParamStrings { get; set; } = new();
     public Dictionary<uint, Dictionary<int, int>> ElemBipInts { get; set; } = new();
+    private ElementValueStore<int, double>? storedBipDoubles;
+    private ElementValueStore<int, int>? storedBipInts;
+    private ElementValueStore<uint, string>? storedParamStrings;
+
+    internal void ArchiveElementValues()
+    {
+        if (KeepExportProvenance || PartitionScratch is not { } scratch) return;
+        storedBipDoubles = new(scratch, ElemBipDoubles, static (w, v) => w.Write(v), static (w, v) => w.Write(v),
+            static r => r.ReadInt32(), static r => r.ReadDouble());
+        ElemBipDoubles = new();
+        storedBipInts = new(scratch, ElemBipInts, static (w, v) => w.Write(v), static (w, v) => w.Write(v),
+            static r => r.ReadInt32(), static r => r.ReadInt32());
+        ElemBipInts = new();
+        storedParamStrings = new(scratch, ElemParamStrings, static (w, v) => w.Write(v), NativeParameterStore.WriteString,
+            static r => r.ReadUInt32(), NativeParameterStore.ReadString);
+        ElemParamStrings = new();
+    }
+
+    internal bool TryReadBipDoubles(uint owner, [NotNullWhen(true)] out Dictionary<int, double>? values) =>
+        storedBipDoubles != null ? storedBipDoubles.TryGetValue(owner, out values) : ElemBipDoubles.TryGetValue(owner, out values);
+
+    internal bool TryReadBipInts(uint owner, [NotNullWhen(true)] out Dictionary<int, int>? values) =>
+        storedBipInts != null ? storedBipInts.TryGetValue(owner, out values) : ElemBipInts.TryGetValue(owner, out values);
+
+    internal bool TryReadParamStrings(uint owner, [NotNullWhen(true)] out Dictionary<uint, string>? values) =>
+        storedParamStrings != null ? storedParamStrings.TryGetValue(owner, out values) : ElemParamStrings.TryGetValue(owner, out values);
+
+    internal void ReleaseElementValues()
+    {
+        storedBipDoubles = null;
+        storedBipInts = null;
+        storedParamStrings = null;
+        ElemBipDoubles = new();
+        ElemBipInts = new();
+        ElemParamStrings = new();
+    }
+
     public Dictionary<uint, BaseElementFields> ElemBaseFields { get; set; } = new();
     public GRepBlockStore GrepBlocks { get; set; } = new();
     internal Dictionary<uint, (int BlockCount, TfBlockDeserializer.OwnRailingQuantityInput? Input)> RailingQuantityInputs { get; } = new();

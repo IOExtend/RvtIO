@@ -4309,10 +4309,10 @@ internal static partial class ElementBuilder
             if (b.BipId == 0 && !b.Value.HasValue) continue;
             BipNames.Lookup.TryGetValue(b.BipId, out string? bipName);
             var param = BipHelpers.MakeBipParam(b.BipId, bipName, BipHelpers.BipStorageType(bipName), null);
-            if (param.StorageType == StorageType.Double && state.ElemBipDoubles.TryGetValue(eid, out var dblMap) && dblMap.TryGetValue(b.BipId, out double dv))
+            if (param.StorageType == StorageType.Double && state.TryReadBipDoubles(eid, out var dblMap) && dblMap.TryGetValue(b.BipId, out double dv))
                 param.Value = dv;
             else if ((param.StorageType == StorageType.Integer || param.StorageType == StorageType.ElementId)
-                && state.ElemBipInts.TryGetValue(eid, out var intMap) && intMap.TryGetValue(b.BipId, out int iv))
+                && state.TryReadBipInts(eid, out var intMap) && intMap.TryGetValue(b.BipId, out int iv))
                 param.Value = iv;
             else
                 param.Value = b.Value.HasValue ? (object)b.Value.Value : null;
@@ -4376,7 +4376,9 @@ internal static partial class ElementBuilder
     /// </summary>
     internal static void AttachFamilyCutGeometry(Element elem, uint elementId, ParsingState state)
     {
-        if (state.FamilyCutGreps.TryGetValue(elementId, out var familyCut))
+        // The scene uses the already resolved visible faces. The cutting operand itself
+        // is needed by IFC, which constructs its own host representation.
+        if (state.KeepExportProvenance && state.FamilyCutGreps.TryGetValue(elementId, out var familyCut))
         {
             elem.FamilyCutGeometry = BuildGeometryData(familyCut, state.SeparateFacesWithDistinctOpenings);
             elem.FamilyCutClosurePlaneOrigin = familyCut.FamilyClosurePlaneOrigin;
@@ -8759,15 +8761,15 @@ internal static partial class ElementBuilder
             {
                 bool resolvedStored = false;
                 if (param.StorageType == StorageType.Double
-                    && state.ElemBipDoubles.TryGetValue(elemId, out var bipDoubleVals)
+                    && state.TryReadBipDoubles(elemId, out var bipDoubleVals)
                     && bipDoubleVals.TryGetValue(b.BipId, out double dv))
                 { param.Value = dv; resolvedStored = true; }
                 else if ((param.StorageType == StorageType.ElementId || param.StorageType == StorageType.Integer)
-                    && state.ElemBipInts.TryGetValue(elemId, out var bipIntVals)
+                    && state.TryReadBipInts(elemId, out var bipIntVals)
                     && bipIntVals.TryGetValue(b.BipId, out int iv))
                 { param.Value = iv; resolvedStored = true; }
                 else if (param.StorageType == StorageType.None
-                    && state.ElemBipDoubles.TryGetValue(elemId, out var bipDblFallback)
+                    && state.TryReadBipDoubles(elemId, out var bipDblFallback)
                     && bipDblFallback.TryGetValue(b.BipId, out double dvFallback))
                 {
                     param.StorageType = StorageType.Double;
@@ -8782,7 +8784,7 @@ internal static partial class ElementBuilder
                         foreach (var refId in rec.References)
                         {
                             if (refId == elemId) continue;
-                            if (state.ElemBipDoubles.TryGetValue(refId, out var refBipDbls)
+                            if (state.TryReadBipDoubles(refId, out var refBipDbls)
                                 && refBipDbls.TryGetValue(b.BipId, out double refDv))
                             {
                                 if (param.StorageType == StorageType.None) param.StorageType = StorageType.Double;
@@ -8798,7 +8800,7 @@ internal static partial class ElementBuilder
                         foreach (var refId in rec.References)
                         {
                             if (refId == elemId) continue;
-                            if (state.ElemBipInts.TryGetValue(refId, out var refBipInts)
+                            if (state.TryReadBipInts(refId, out var refBipInts)
                                 && refBipInts.TryGetValue(b.BipId, out int refIv))
                             {
                                 param.Value = refIv;
@@ -8830,10 +8832,10 @@ internal static partial class ElementBuilder
                 param.Guid = paramGuid;
                 param.Definition = new Definition { Id = b.BipId, Name = displayName };
                 param.IsReadOnly = !rec.IsWritable(b.BipId);
-                if (state.ElemBipDoubles.TryGetValue(elemId, out var userDblVals)
+                if (state.TryReadBipDoubles(elemId, out var userDblVals)
                     && userDblVals.TryGetValue(b.BipId, out double userDbl))
                 { param.StorageType = StorageType.Double; param.Value = userDbl; }
-                else if (state.ElemParamStrings.TryGetValue(elemId, out var paramStrMap)
+                else if (state.TryReadParamStrings(elemId, out var paramStrMap)
                     && paramStrMap.TryGetValue((uint)b.BipId, out string? strVal))
                 { param.StorageType = StorageType.String; param.Value = strVal; }
                 else
@@ -8849,7 +8851,7 @@ internal static partial class ElementBuilder
 
     private static void AddUserParams(Element elem, ElementRecord rec, uint elemId, ParsingState state)
     {
-        if (!state.ElemParamStrings.TryGetValue(elemId, out var paramStrMap)) return;
+        if (!state.TryReadParamStrings(elemId, out var paramStrMap)) return;
         var existingIds = new HashSet<int>(elem.Parameters.Select(p => p.Id));
         foreach (var (paramDefId, strVal) in paramStrMap)
         {
@@ -8877,7 +8879,7 @@ internal static partial class ElementBuilder
 
     private static void AddBipDoubles(Element elem, uint elemId, ParsingState state)
     {
-        if (!state.ElemBipDoubles.TryGetValue(elemId, out var bipDblMap)) return;
+        if (!state.TryReadBipDoubles(elemId, out var bipDblMap)) return;
         var existing = new HashSet<int>(elem.Parameters.Select(p => p.Id));
         foreach (var (bipKey, bipVal) in bipDblMap)
         {
@@ -8885,12 +8887,7 @@ internal static partial class ElementBuilder
             if (bipKey < 0)
             {
                 BipNames.Lookup.TryGetValue(bipKey, out string? bipName);
-                elem.Parameters.Add(new Parameter
-                {
-                    Id = bipKey, StorageType = StorageType.Double, Value = bipVal,
-                    IsReadOnly = BipHelpers.IsBipReadOnly(bipName),
-                    Definition = new Definition { Id = bipKey, BuiltInParameter = bipName, Name = bipName },
-                });
+                elem.Parameters.Add(BipHelpers.MakeBipParam(bipKey, bipName, StorageType.Double, bipVal));
             }
             else
             {
@@ -8914,7 +8911,7 @@ internal static partial class ElementBuilder
 
     private static void AddBipInts(Element elem, uint elemId, ParsingState state)
     {
-        if (!state.ElemBipInts.TryGetValue(elemId, out var bipIntMap)) return;
+        if (!state.TryReadBipInts(elemId, out var bipIntMap)) return;
         var existing = new HashSet<int>(elem.Parameters.Select(p => p.Id));
         foreach (var (bipKey, bipVal) in bipIntMap)
         {
@@ -8922,12 +8919,7 @@ internal static partial class ElementBuilder
             if (bipKey < 0)
             {
                 BipNames.Lookup.TryGetValue(bipKey, out string? bipName);
-                elem.Parameters.Add(new Parameter
-                {
-                    Id = bipKey, StorageType = BipHelpers.BipStorageType(bipName), Value = bipVal,
-                    IsReadOnly = BipHelpers.IsBipReadOnly(bipName),
-                    Definition = new Definition { Id = bipKey, BuiltInParameter = bipName, Name = bipName },
-                });
+                elem.Parameters.Add(BipHelpers.MakeBipParam(bipKey, bipName, BipHelpers.BipStorageType(bipName), bipVal));
             }
             else
             {
@@ -8957,7 +8949,7 @@ internal static partial class ElementBuilder
         foreach (var refId in rec.References)
         {
             if (refId == elemId) continue;
-            if (!state.ElemBipDoubles.TryGetValue(refId, out var refBipDbls)) continue;
+            if (!state.TryReadBipDoubles(refId, out var refBipDbls)) continue;
             foreach (var (bipKey, bipVal) in refBipDbls)
             {
                 if (existing.Contains(bipKey)) continue;
@@ -8965,12 +8957,7 @@ internal static partial class ElementBuilder
                 if (bipKey < 0)
                 {
                     BipNames.Lookup.TryGetValue(bipKey, out string? bipName);
-                    elem.Parameters.Add(new Parameter
-                    {
-                        Id = bipKey, StorageType = StorageType.Double, Value = bipVal,
-                        IsReadOnly = BipHelpers.IsBipReadOnly(bipName),
-                        Definition = new Definition { Id = bipKey, BuiltInParameter = bipName, Name = bipName },
-                    });
+                    elem.Parameters.Add(BipHelpers.MakeBipParam(bipKey, bipName, StorageType.Double, bipVal));
                 }
                 else
                 {
