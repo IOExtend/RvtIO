@@ -92,17 +92,22 @@ internal class ParsingState
 
     /// <summary>ElementHeader.m_categroryId of the element records the continuous walk accepted (see <see cref="ElementHeaderCategory"/>);
     /// a null value marks an id whose records disagree or whose header could not be read.</summary>
-    public Dictionary<uint, int?> HeaderCategories { get; } = new();
+    public Dictionary<uint, int?> HeaderCategories { get; private set; } = new();
 
     // Categories proved by the current project's own framed header and a compatible root.
     internal Dictionary<uint, int?> CurrentFramedCategories { get; } = new();
 
     /// <summary>ElementHeader.m_designOptionId per element id (files with 64-bit ids; null: the records of the id disagree).</summary>
-    public Dictionary<uint, int?> HeaderDesignOptions { get; } = new();
+    public Dictionary<uint, int?> HeaderDesignOptions { get; private set; } = new();
 
     /// <summary>The axis-aligned outline the ElementHeader of the element's records stores (see <see cref="Parsing.ElementHeaderCategory"/>):
     /// a verdict when the records agree it is there or agree there is none, null when they disagree or no record was read.</summary>
-    public Dictionary<uint, Parsing.ElementHeaderBox?> HeaderBoundingBoxes { get; } = new();
+    public Dictionary<uint, Parsing.ElementHeaderBox?> HeaderBoundingBoxes { get; private set; } = new();
+
+    internal void ReleaseSceneHeaderBoundingBoxes()
+    {
+        if (!KeepExportProvenance) HeaderBoundingBoxes = new();
+    }
 
     /// <summary>The file's own class schema when its element ids are 64-bit (Revit 2025 layout, see <see cref="Parsing.WideElementRecords"/>);
     /// null for the 32-bit layouts, which keep the shipped Revit 2022 tables.</summary>
@@ -186,8 +191,12 @@ internal class ParsingState
     internal bool TryReadParamStrings(uint owner, [NotNullWhen(true)] out Dictionary<uint, string>? values) =>
         storedParamStrings != null ? storedParamStrings.TryGetValue(owner, out values) : ElemParamStrings.TryGetValue(owner, out values);
 
-    internal void ReleaseElementValues()
+    internal void ReleaseElementBuildInputs()
     {
+        SceneFallbackNames = null;
+        HeaderCategories = new();
+        HeaderDesignOptions = new();
+        ElemBaseFields = new();
         storedBipDoubles = null;
         storedBipInts = null;
         storedParamStrings = null;

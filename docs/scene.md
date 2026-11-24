@@ -51,6 +51,7 @@ Use `ReadStream(stream, options, triangleScratch)` to keep expanded body faces, 
 the scene's triangle buffers in another temporary stream. Pass an empty, readable, writable, seekable stream; the caller owns it and
 keeps it open until it has finished using the returned scene. It must be separate from the input and partition scratch.
 Parameter edits reuse their reserved slots in this stream. A slot moves to a larger allocation when its contents grow beyond its capacity.
+The archived lists keep the first type references and the kinds of zero-ID references available to the resolver without loading the full lists.
 During this read, analytic mesh nodes retain the facts needed for element measurements. Shell quantities and scene tessellation read the archived polygons through the same paged face lists.
 The temporary scene document keeps the resolved parameter values and omits the provenance indexes used by the compact API and IFC export.
 

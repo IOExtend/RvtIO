@@ -120,6 +120,32 @@ public class TfStreamWalkerStreamingTests
     }
 
     [Fact]
+    public void ScratchBlockReadsFetchOnlyTheirRangeOutsideTheChunkCache()
+    {
+        using var scratch = new TrackingScratch();
+        var chunks = new PartitionChunks(new PartitionChunks.Backing(scratch));
+        var first = new byte[256 * 1024];
+        var second = new byte[256 * 1024];
+        first[^2] = 1;
+        first[^1] = 2;
+        second[0] = 3;
+        second[1] = 4;
+        chunks.Add(first);
+        chunks.Add(second);
+        var record = chunks.StoredBlock(0, first.Length - 2, 2)!.Value;
+        var acrossChunks = new PartitionChunks.Block(new PartitionChunks.WindowSource(chunks), first.Length - 2, 4);
+
+        Assert.Equal(new byte[] { 1, 2 }, record.Read().Data);
+        Assert.Equal(2, scratch.ReadBytes);
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, acrossChunks.Read().Data);
+        Assert.Equal(6, scratch.ReadBytes);
+
+        _ = chunks[0];
+        Assert.Equal(new byte[] { 1, 2 }, record.Read().Data);
+        Assert.Equal(first.Length + 6, scratch.ReadBytes);
+    }
+
+    [Fact]
     public void EmptyAndEmptyChunkStreamsHaveNoVisits()
     {
         TfStreamWalker.WalkStreaming([], [], (_, _, _, _, _) => Assert.Fail("Unexpected visit"));
@@ -161,5 +187,17 @@ public class TfStreamWalkerStreamingTests
             BitConverter.GetBytes(size).CopyTo(result, start + length - 4);
         }
         return result;
+    }
+
+    private sealed class TrackingScratch : MemoryStream
+    {
+        internal int ReadBytes { get; private set; }
+
+        public override int Read(Span<byte> buffer)
+        {
+            int count = base.Read(buffer);
+            ReadBytes += count;
+            return count;
+        }
     }
 }

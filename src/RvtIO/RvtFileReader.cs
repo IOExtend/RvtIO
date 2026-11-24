@@ -813,9 +813,9 @@ public partial class RvtFileReader
             }
         }
 
-        foreach (var (elemId, typeId) in state.ElemTable.OrderBy(x => x.Key))
+        foreach (uint elemId in state.ElemTable.Keys.Order())
         {
-            ElementBuilder.BuildElemTableElement(elemId, typeId, state, rvtInfo);
+            ElementBuilder.BuildElemTableElement(elemId, state.ElemTable[elemId], state, rvtInfo);
             ElementBuilt();
         }
         LogPhase("Elements built");
@@ -845,11 +845,7 @@ public partial class RvtFileReader
             _ => null,
         };
         if (archiveGeometry != null)
-        {
-            // Names are attached and the element builders have consumed their per-record value maps.
-            state.SceneFallbackNames = null;
-            state.ReleaseElementValues();
-        }
+            state.ReleaseElementBuildInputs();
         const int finalizationPasses = 7;
         int completedFinalizationPasses = 0;
         progress?.Report(new("finalize-model", completedFinalizationPasses, finalizationPasses));

@@ -25,8 +25,8 @@ returns or throws. Use private temporary storage outside managed memory to reduc
 segments are kept in memory.
 
 Exact framing is validated in both modes. Layout translation reads the partition by item and writes completed chunks to scratch
-when configured. Raw element record bodies can be read back from those same chunks. With scratch storage, the geometry block
-index keeps ranges in the inflated chunks and decodes the selected blocks again when building the document. The parser
+when configured. Raw element record bodies and geometry blocks are read back from their byte ranges in those chunks, including
+ranges that cross chunk boundaries. A bounded whole-chunk cache serves full scans and supplies any ranges it already holds. The parser
 stores decoded parameter records individually in scratch and reads them by element ID. Paged scene reads also keep the
 resolved value maps used to build elements in scratch. Recovery of damaged framing and bytes
 outside the layout grammar can still require a whole partition in memory. The returned document and its geometry are built in

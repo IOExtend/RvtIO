@@ -47,7 +47,7 @@ public class ElementValueStoreTests
         Assert.True(state.TryReadParamStrings(2, out strings));
         Assert.Equal(text, strings[unsignedKey]);
 
-        state.ReleaseElementValues();
+        state.ReleaseElementBuildInputs();
         Assert.False(state.TryReadParamStrings(2, out _));
     }
 }

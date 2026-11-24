@@ -6749,6 +6749,7 @@ internal static partial class ElementBuilder
                 e.BoundingBox = box.Present ? box.Box : null;
                 e.BoundingBoxIsHeaderOutline = box.Present;
             }
+        state.ReleaseSceneHeaderBoundingBoxes();
     }
 
     /// <param name="instanceOrder">The order key of the GInstance node the source geometry is the symbol of: the source's nodes then sort at that node's place among the nodes of the target (Revit walks a GInstance's symbol where the GInstance stands); null keeps the keys of the source as they are.</param>

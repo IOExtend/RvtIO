@@ -67,15 +67,7 @@ internal sealed class PartitionChunks(PartitionChunks.Backing? backing = null) :
             {
                 if (cache.TryGetValue(chunk, out var data)) return data;
                 data = new byte[chunk.Length];
-                try
-                {
-                    if (stream.Position != chunk.Offset) stream.Position = chunk.Offset;
-                    stream.ReadExactly(data);
-                }
-                catch (Exception failure) when (MalformedInput.Is(failure))
-                {
-                    throw new StorageFailure("Could not read the partition scratch stream.", failure);
-                }
+                ReadAt(chunk.Offset, data);
                 if (data.Length <= CacheLimit)
                 {
                     while (cache.Count == CachedChunks || cacheBytes + data.Length > CacheLimit)
@@ -89,6 +81,33 @@ internal sealed class PartitionChunks(PartitionChunks.Backing? backing = null) :
                     cacheBytes += data.Length;
                 }
                 return data;
+            }
+        }
+
+        internal void ReadSlice(Chunk chunk, int start, Span<byte> destination)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(start);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(destination.Length, chunk.Length - start);
+            if (destination.IsEmpty) return;
+            lock (stream)
+            {
+                if (cache.TryGetValue(chunk, out var data))
+                    data.AsSpan(start, destination.Length).CopyTo(destination);
+                else
+                    ReadAt(checked(chunk.Offset + start), destination);
+            }
+        }
+
+        private void ReadAt(long offset, Span<byte> destination)
+        {
+            try
+            {
+                if (stream.Position != offset) stream.Position = offset;
+                stream.ReadExactly(destination);
+            }
+            catch (Exception failure) when (MalformedInput.Is(failure))
+            {
+                throw new StorageFailure("Could not read the partition scratch stream.", failure);
             }
         }
     }
@@ -136,8 +155,11 @@ internal sealed class PartitionChunks(PartitionChunks.Backing? backing = null) :
         {
             if (source is byte[] resident) return (resident, (int)start);
             if (source is WindowSource window) return (window.Read(start, length), 0);
-            var bytes = ((Backing)source!).Read(stored!);
-            return (length == 0 ? bytes : bytes.AsSpan((int)start, length).ToArray(), 0);
+            var backing = (Backing)source!;
+            if (length == 0) return (backing.Read(stored!), 0);
+            var bytes = new byte[length];
+            backing.ReadSlice(stored!, (int)start, bytes);
+            return (bytes, 0);
         }
     }
 
@@ -181,10 +203,14 @@ internal sealed class PartitionChunks(PartitionChunks.Backing? backing = null) :
             int written = 0;
             while (written < count)
             {
-                var chunk = chunks[index];
+                var chunk = chunks.entries[index];
                 int from = (int)(offset - starts[index]);
                 int copy = Math.Min(count - written, chunk.Length - from);
-                chunk.AsSpan(from, copy).CopyTo(result.AsSpan(written));
+                var target = result.AsSpan(written, copy);
+                if (chunk.Memory is { } resident)
+                    resident.AsSpan(from, copy).CopyTo(target);
+                else
+                    chunks.Store!.ReadSlice(chunk, from, target);
                 offset += copy;
                 written += copy;
                 index++;
