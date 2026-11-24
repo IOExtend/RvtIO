@@ -757,6 +757,9 @@ public partial class RvtFileReader
         ElementBuilder.CompactSceneNameCandidates(state);
 
         LogPhase("Parameter keys remapped");
+        // Scan the original chunks before the element records occupy the heap.
+        ExtractWallFunctions(state);
+
         // a file with 64-bit ids lists the elements of its element table only (the record and stream heuristics also find ids of the
         // loaded families' own documents)
         var extraRecordIds = state.WideSchema != null ? new List<uint>() : state.Records.Keys
@@ -832,8 +835,6 @@ public partial class RvtFileReader
             ElementBuilt();
         }
 
-        // Wall function extraction: scan all chunks for classIdx=0x00012100 blocks
-        ExtractWallFunctions(state);
         diag?.WriteLine($"Wall type functions: {state.WallTypeFunctions.Count} entries");
 
         LogPhase("Block-only elements built");

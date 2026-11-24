@@ -2092,11 +2092,13 @@ internal static partial class ElementBuilder
 
     /// <summary>Runs after categories are final.</summary>
     internal static void PruneNativeFieldTableOutsideDomains(RevitFileInfo info, IReadOnlyDictionary<uint, ushort>? classByElement,
-        Action<Element>? archiveParameters = null)
+        Action<Element>? archiveParameters = null, NativeTableEffectsScratch? effectsScratch = null)
     {
         if (classByElement == null) return;
+        effectsScratch?.Seal();
         foreach (var e in info.Elements)
         {
+            effectsScratch?.Restore(e);
             if (e.NativeTableAddedParams is not { Count: > 0 } added) continue;
             string rootClass = classByElement.TryGetValue((uint)e.Id, out var cls) ? cls.ToString(System.Globalization.CultureInfo.InvariantCulture) : "None";
             string domain = rootClass + "/" + (e.CategoryId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "None");
@@ -3251,7 +3253,7 @@ internal static partial class ElementBuilder
     }
 
     /// <summary>Applies the file's authoritative native parameter stores.</summary>
-    internal static void ApplyNativeParams(RevitFileInfo info, ParsingState? state)
+    internal static void ApplyNativeParams(RevitFileInfo info, ParsingState? state, NativeTableEffectsScratch? effectsScratch = null)
     {
         if (state == null
             || (state.NativeParams.Count == 0
@@ -3763,6 +3765,7 @@ internal static partial class ElementBuilder
                 Apply(-1005147, StorageType.ElementId, fsp); // VIEW_FIXED_SKETCH_PLANE
             if (np.Fields.TryGetValue("m_bUseTrueNorth", out int tn))
                 Apply(-1005168, StorageType.Integer, tn); // PLAN_VIEW_NORTH
+            effectsScratch?.Archive(e);
             state.ArchiveSceneParameters?.Invoke(e);
         }
         Parameter.ResolveZeroElementIds(info, state);
@@ -6548,7 +6551,9 @@ internal static partial class ElementBuilder
         passCompleted?.Invoke();
         // Native (schema-deserialized) params land BEFORE the default-emitting passes so
         // authoritative stored values are not blocked by add-if-missing defaults.
-        ApplyNativeParams(rvtInfo, state);
+        var nativeTableScratch = archiveParameters != null && state?.PartitionScratch is { } nativeBacking
+            ? new NativeTableEffectsScratch(nativeBacking) : null;
+        ApplyNativeParams(rvtInfo, state, nativeTableScratch);
         TraceElement(rvtInfo, "after-native");
         if (state != null)
         {
@@ -6559,7 +6564,8 @@ internal static partial class ElementBuilder
         FixCategoryFromClassIdx(rvtInfo, state);
         PropagateInstanceCategoryFromType(rvtInfo, state?.ArchiveSceneParameters);
         TraceElement(rvtInfo, "before-prune");
-        PruneNativeFieldTableOutsideDomains(rvtInfo, state?.ElemClassIdx, state?.ArchiveSceneParameters);
+        PruneNativeFieldTableOutsideDomains(rvtInfo, state?.ElemClassIdx, archiveParameters, nativeTableScratch);
+        nativeTableScratch = null;
         TraceElement(rvtInfo, "after-prune");
         if (state != null)
         {
