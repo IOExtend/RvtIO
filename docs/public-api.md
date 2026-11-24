@@ -26,8 +26,8 @@ segments are kept in memory.
 
 Exact framing is validated in both modes. Layout translation reads the partition by item and writes completed chunks to scratch
 when configured. Raw element record bodies can be read back from those same chunks. With scratch storage, the geometry block
-index keeps references and decodes the selected blocks again when building the document. The parser stores decoded parameter
-records individually in scratch and reads them by element ID. Recovery of damaged framing and bytes
+index keeps ranges in the inflated chunks and decodes the selected blocks again when building the document. The parser
+stores decoded parameter records individually in scratch and reads them by element ID. Recovery of damaged framing and bytes
 outside the layout grammar can still require a whole partition in memory. The returned document and its geometry are built in
 memory.
 

@@ -964,7 +964,10 @@ public partial class RvtFileReader
             diag?.WriteLine($"Sketch topology: {sketchOwners} owners, " +
                 $"{rvtInfo.Elements.Where(e => e.SketchLoops != null).Sum(e => e.SketchLoops!.Count)} loops");
 
-        rvtInfo.UserParameters = UserParameterCatalog.Build(state);
+        // Paged scenes take their properties from the resolved element parameters.
+        // The catalog serves compact export and sheets, and duplicates decoded values.
+        if (state.KeepExportProvenance)
+            rvtInfo.UserParameters = UserParameterCatalog.Build(state);
         return (rvtInfo, state);
     }
 
@@ -2711,7 +2714,7 @@ public partial class RvtFileReader
         List<(PartitionFraming.Framed Frame, PartitionFraming.ProjectItem Item, ushort Class, uint Owner)>? unanchoredTypeRoots =
             framedRoots ? [] : null;
         if (framedRoots) RecordFramedRoots(state, unanchoredTypeRoots);
-        TfStreamWalker.Walk(state.Chunks, state.AllKnownIds, (seg, bs, ds, cls, eid) =>
+        TfStreamWalker.WalkLocated(state.Chunks, state.AllKnownIds, (seg, bs, ds, cls, eid, block) =>
         {
             uint fullClassIdx = BitConverter.ToUInt32(seg, bs + 12);
             if (fullClassIdx is 0xFFFF0200 or 0xFFFF077B or 0xFFFF0286)
@@ -2859,7 +2862,7 @@ public partial class RvtFileReader
             {
                 // Decoded in parallel after the walk; the first decodable block of an element wins, as before.
                 if (!state.GrepBlocks.ContainsKey(eid))
-                    walkGReps.Add((new(seg, bs, checked((int)ds + 16), state.PartitionScratch), ds, eid));
+                    walkGReps.Add((block, ds, eid));
             }
             // Sketch/detail curves at full coverage (safe: extraction has strict filters).
             if (cls == 0x0346 && !state.SketchCurves.ContainsKey(eid))
@@ -2947,7 +2950,7 @@ public partial class RvtFileReader
         var scanGReps = new List<(PartitionChunks.Block Block, uint Size, uint Eid)>();
         if (missingIds.Count > 0)
         {
-            TfStreamWalker.ScanBlocks(state.Chunks, missingIds, (seg, bs, ds, cls, eid) =>
+            TfStreamWalker.ScanLocated(state.Chunks, missingIds, (seg, bs, ds, cls, eid, block) =>
             {
                 if (dumpGrepEids.Count > 0 && dumpGrepEids.Contains(eid))
                 {
@@ -2984,7 +2987,7 @@ public partial class RvtFileReader
                 if (state.RoomNameSource.ContainsKey(eid))
                     RecordSpaceBoundarySource(state, seg, bs, ds, cls, eid);
                 if (state.GrepBlocks.ContainsKey(eid)) return;
-                scanGReps.Add((new(seg, bs, checked((int)ds + 16), state.PartitionScratch), ds, eid));
+                scanGReps.Add((block, ds, eid));
             });
         }
         progress?.Report(new("recover-geometry", ++completedRecoveryPasses, recoveryPasses));

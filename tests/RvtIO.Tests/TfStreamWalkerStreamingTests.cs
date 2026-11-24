@@ -68,6 +68,23 @@ public class TfStreamWalkerStreamingTests
         Assert.Equal(Visits(chunks, true), Visits(backed, true));
         Assert.Equal(ids.Length, Visits(backed, true).Count);
 
+        var anchored = new List<PartitionChunks.Block>();
+        var scanned = new List<PartitionChunks.Block>();
+        TfStreamWalker.WalkLocated(backed, [], (_, _, _, _, _, block) => anchored.Add(block));
+        TfStreamWalker.ScanLocated(backed, ids.ToHashSet(), (_, _, _, _, _, block) => scanned.Add(block));
+        Assert.Equal(bytes.Length, scratch.Length);
+        Assert.Equal(ids, anchored.Select(CheckBlock));
+        Assert.Equal(Visits(chunks, true).Select(visit => visit.Owner), scanned.Select(CheckBlock));
+
+        uint CheckBlock(PartitionChunks.Block block)
+        {
+            var (source, start) = block.Read();
+            uint owner = BitConverter.ToUInt32(source, start);
+            int index = Array.IndexOf(ids, owner);
+            Assert.True(index >= 0 && bytes.AsSpan(index * length, length).SequenceEqual(source.AsSpan(start, length)));
+            return owner;
+        }
+
         List<(uint Owner, uint Size, ushort Class)> Visits(IReadOnlyList<byte[]> source, bool targeted)
         {
             var result = new List<(uint, uint, ushort)>();
@@ -80,6 +97,26 @@ public class TfStreamWalkerStreamingTests
             else TfStreamWalker.Walk(source, [], Visit);
             return result;
         }
+    }
+
+    [Fact]
+    public void LocatedBlocksUseLongOffsetsInTheConcatenatedChunks()
+    {
+        using var scratch = new MemoryStream();
+        var chunks = new PartitionChunks(new PartitionChunks.Backing(scratch));
+        // Only the final chunk is read. The virtual length of the preceding chunks tests
+        // the address without allocating a multi-gigabyte array.
+        const int largeChunk = 1_000_000_000;
+        for (int i = 0; i < 10; i++) chunks.Add(new PartitionChunks.Chunk(largeChunk, null, 0));
+        byte[] payload = [1, 2, 3, 4, 5, 6];
+        chunks.Add(payload[..3]);
+        chunks.Add(payload[3..]);
+        var range = new PartitionChunks.Block(new PartitionChunks.WindowSource(chunks), 10L * largeChunk + 1, 4);
+
+        var (data, start) = range.Read();
+
+        Assert.Equal(0, start);
+        Assert.Equal(payload[1..5], data);
     }
 
     [Fact]

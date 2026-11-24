@@ -73,39 +73,98 @@ internal sealed class PartitionChunks(PartitionChunks.Backing? backing = null) :
 
     internal readonly struct Block
     {
-        private readonly byte[]? data;
-        private readonly int start;
-        private readonly Backing? backing;
+        private readonly object? source;
         private readonly Chunk? stored;
+        private readonly long start;
         private readonly int length;
 
         internal Block(byte[] data, int start, int length, Backing? backing)
         {
             if (backing == null)
             {
-                this.data = data;
+                source = data;
                 this.start = start;
             }
             else
             {
-                this.backing = backing;
+                source = backing;
                 stored = backing.Add(data.AsSpan(start, length));
             }
         }
 
         internal Block(Backing backing, Chunk stored, int start, int length)
         {
-            this.backing = backing;
+            source = backing;
             this.stored = stored;
+            this.start = start;
+            this.length = length;
+        }
+
+        internal Block(WindowSource source, long start, int length)
+        {
+            this.source = source;
             this.start = start;
             this.length = length;
         }
 
         internal (byte[] Data, int Start) Read()
         {
-            if (data != null) return (data, start);
-            var bytes = backing!.Read(stored!);
-            return (length == 0 ? bytes : bytes.AsSpan(start, length).ToArray(), 0);
+            if (source is byte[] resident) return (resident, (int)start);
+            if (source is WindowSource window) return (window.Read(start, length), 0);
+            var bytes = ((Backing)source!).Read(stored!);
+            return (length == 0 ? bytes : bytes.AsSpan((int)start, length).ToArray(), 0);
+        }
+    }
+
+    /// <summary>A bounded view over the concatenation of the original inflated chunks.</summary>
+    internal sealed class WindowSource
+    {
+        private readonly PartitionChunks chunks;
+        private readonly long[] starts;
+
+        internal WindowSource(PartitionChunks chunks)
+        {
+            this.chunks = chunks;
+            starts = new long[chunks.Count + 1];
+            for (int i = 0; i < chunks.Count; i++) starts[i + 1] = starts[i] + PartitionChunks.LengthAt(chunks, i);
+        }
+
+        internal long Length => starts[^1];
+
+        // Use the same logical segment and overlap boundaries as the in-memory scanner.
+        internal IEnumerable<(long Start, int Length, int Limit)> Segments(long target, int overlap)
+        {
+            int index = 0;
+            long start = 0;
+            while (index < chunks.Count)
+            {
+                int first = index;
+                while (index < chunks.Count && starts[index + 1] - start <= target) index++;
+                if (index == first) index++;
+                int length = checked((int)(starts[index] - start));
+                int limit = index == chunks.Count ? length : Math.Max(0, length - overlap);
+                yield return (start, length, limit);
+                start += limit;
+            }
+        }
+
+        internal byte[] Read(long offset, int count)
+        {
+            var result = new byte[count];
+            int index = Array.BinarySearch(starts, offset);
+            if (index < 0) index = ~index - 1;
+            int written = 0;
+            while (written < count)
+            {
+                var chunk = chunks[index];
+                int from = (int)(offset - starts[index]);
+                int copy = Math.Min(count - written, chunk.Length - from);
+                chunk.AsSpan(from, copy).CopyTo(result.AsSpan(written));
+                offset += copy;
+                written += copy;
+                index++;
+            }
+            return result;
         }
     }
 
