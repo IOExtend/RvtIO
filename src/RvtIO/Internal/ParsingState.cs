@@ -153,6 +153,8 @@ internal class ParsingState
     public HashSet<uint> AllKnownIds { get; set; } = new();
     public Dictionary<uint, List<string>> ElemStrings { get; set; } = new();
     public Dictionary<uint, List<string>> ElemScanStrings { get; set; } = new();
+    internal Dictionary<uint, string>? SceneFallbackNames { get; set; }
+    internal Dictionary<int, string>? SceneParameterNames { get; set; }
     public Dictionary<uint, List<double>> ElemDoubles { get; set; } = new();
     public Dictionary<uint, Dictionary<int, double>> ElemBipDoubles { get; set; } = new();
     public Dictionary<uint, Dictionary<uint, string>> ElemParamStrings { get; set; } = new();

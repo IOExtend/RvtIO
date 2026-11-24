@@ -84,6 +84,7 @@ public class ElementHeaderBoundingBoxTests
         Assert.NotNull(verdict);
         Assert.False(verdict.Present);
         Assert.Null(verdict.Box);
+        Assert.Same(verdict, ElementHeaderCategory.ReadBoundingBox(Record(AbsentBody()), 0));
     }
 
     [Theory]

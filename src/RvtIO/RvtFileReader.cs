@@ -754,6 +754,7 @@ public partial class RvtFileReader
         // Pre-propagate BIP doubles through reference chains
         PrePropagateBipDoubles(state, diag);
         state.ArchiveElementValues();
+        ElementBuilder.CompactSceneNameCandidates(state);
 
         LogPhase("Parameter keys remapped");
         // a file with 64-bit ids lists the elements of its element table only (the record and stream heuristics also find ids of the
@@ -845,8 +846,8 @@ public partial class RvtFileReader
         };
         if (archiveGeometry != null)
         {
-            // The element builders have now consumed these unnamed strings and per-record value maps.
-            state.ElemScanStrings = new();
+            // Names are attached and the element builders have consumed their per-record value maps.
+            state.SceneFallbackNames = null;
             state.ReleaseElementValues();
         }
         const int finalizationPasses = 7;

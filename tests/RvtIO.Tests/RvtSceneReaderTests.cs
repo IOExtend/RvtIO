@@ -17,6 +17,44 @@ public class RvtSceneReaderTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
+    public void SceneNameCandidatesKeepElementAndParameterNamePriorities(bool keepExportProvenance)
+    {
+        var state = new RvtIO.Internal.ParsingState { KeepExportProvenance = keepExportProvenance };
+        state.ElementNameTable[1] = "Table name";
+        state.NativeElementNames[1] = "Native name";
+        state.NativeElementNames[2] = "Native name";
+        state.WideNames[2] = "Wide name";
+        state.WideNames[3] = "Wide name";
+        state.WideNames[4] = " ";
+        state.ElemStrings[1] = ["Block name", "&Block caption"];
+        state.ElemStrings[4] = ["1234", "First block name", "Later block name"];
+        state.ElemStrings[5] = ["1234", "autodesk.parameter.key"];
+        state.ElemStrings[6] = ["&First caption", "&Later caption"];
+        state.ElemScanStrings[4] = ["Scan name"];
+        state.ElemScanStrings[5] = ["1234", "First scan name", "Later scan name"];
+        state.ElemScanStrings[7] = ["&Scan caption"];
+        state.ForgeParamDefs[1] = ("autodesk.parameter.key", "Forge caption");
+        state.ForgeParamDefs[6] = ("autodesk.parameter.other", null);
+
+        ElementBuilder.CompactSceneNameCandidates(state);
+
+        Assert.Equal("Table name", ElementBuilder.ResolveElementName(1, state));
+        Assert.Equal("Native name", ElementBuilder.ResolveElementName(2, state));
+        Assert.Equal("Wide name", ElementBuilder.ResolveElementName(3, state));
+        Assert.Equal("First block name", ElementBuilder.ResolveElementName(4, state));
+        Assert.Equal("First scan name", ElementBuilder.ResolveElementName(5, state));
+        Assert.Null(ElementBuilder.ResolveElementName(8, state));
+        var captions = ElementBuilder.CollectParameterDefinitionNames(state);
+        Assert.Equal(2, captions.Count);
+        Assert.Equal("Forge caption", captions[1]);
+        Assert.Equal("First caption", captions[6]);
+        Assert.Equal(keepExportProvenance ? 4 : 0, state.ElemStrings.Count);
+        Assert.Equal(keepExportProvenance ? 3 : 0, state.ElemScanStrings.Count);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
     public void NativeFactsAreOptionalWithoutChangingSceneParameterValues(bool keepExportProvenance)
     {
         const int parameterId = -1001105;

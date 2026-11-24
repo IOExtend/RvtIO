@@ -1159,12 +1159,52 @@ internal static partial class ElementBuilder
             return nativeName;
         if (state.WideNames.TryGetValue(eid, out var wideName) && !string.IsNullOrWhiteSpace(wideName))
             return wideName;
+        if (state.SceneFallbackNames is { } sceneNames) return sceneNames.GetValueOrDefault(eid);
         string? foundName = null;
         if (state.ElemStrings.TryGetValue(eid, out var blkStrs))
             foundName = blkStrs.FirstOrDefault(StringScanner.IsValidElementName);
         if (foundName == null && state.ElemScanStrings.TryGetValue(eid, out var scanStrs))
             foundName = scanStrs.FirstOrDefault(StringScanner.IsValidParamName);
         return foundName;
+    }
+
+    internal static void CompactSceneNameCandidates(ParsingState state)
+    {
+        if (state.KeepExportProvenance) return;
+
+        // Parameter captions still need the block strings even when an authoritative element name exists.
+        state.SceneParameterNames = CollectParameterDefinitionNames(state);
+        var names = new Dictionary<uint, string>();
+        // Removing the current entry preserves enumeration and releases candidates as they are consumed.
+        foreach (var (id, strings) in state.ElemStrings)
+        {
+            if (strings.FirstOrDefault(StringScanner.IsValidElementName) is { } name)
+                names.Add(id, name);
+            state.ElemStrings.Remove(id);
+        }
+        state.ElemStrings = new();
+        foreach (var (id, strings) in state.ElemScanStrings)
+        {
+            if (!names.ContainsKey(id) && strings.FirstOrDefault(StringScanner.IsValidParamName) is { } name)
+                names.Add(id, name);
+            state.ElemScanStrings.Remove(id);
+        }
+        state.ElemScanStrings = new();
+        state.SceneFallbackNames = names;
+    }
+
+    internal static Dictionary<int, string> CollectParameterDefinitionNames(ParsingState state)
+    {
+        if (state.SceneParameterNames is { } sceneNames) return sceneNames;
+
+        // Use ForgeParamDefs or an &-prefixed string from the block, never an element's scan name.
+        var names = new Dictionary<int, string>();
+        foreach (var (id, definition) in state.ForgeParamDefs)
+            if (definition.DisplayName is { } name) names[(int)id] = name;
+        foreach (var (id, strings) in state.ElemStrings)
+            if (!names.ContainsKey((int)id) && strings.FirstOrDefault(s => s.StartsWith('&') && s.Length > 1) is { } name)
+                names[(int)id] = name[1..];
+        return names;
     }
 
     public static void BuildElemTableElement(
@@ -6345,23 +6385,8 @@ internal static partial class ElementBuilder
             rvtInfo.Elements, idToElem,
             state.CeilingTypeNameSource);
 
-        // User param name resolution: use ForgeParamDefs (reliable) or ElemStrings &-prefix DO NOT
-        // use idToName for ParamElem elements - their Name comes from unreliable ScanStr
-        var paramDefNames = new Dictionary<int, string>();
-        foreach (var (pid, def) in state.ForgeParamDefs)
-        {
-            if (def.DisplayName != null)
-                paramDefNames[(int)pid] = def.DisplayName;
-        }
-        // Also try extracting names from &-prefixed strings in ElemStrings for elements not yet in
-        // paramDefNames
-        foreach (var (pid, strs) in state.ElemStrings)
-        {
-            if (paramDefNames.ContainsKey((int)pid)) continue;
-            var ampName = strs.FirstOrDefault(s => s.StartsWith('&') && s.Length > 1);
-            if (ampName != null)
-                paramDefNames[(int)pid] = ampName[1..];
-        }
+        var paramDefNames = CollectParameterDefinitionNames(state);
+        state.SceneParameterNames = null;
         foreach (var e in rvtInfo.Elements)
         {
             int index = -1;
