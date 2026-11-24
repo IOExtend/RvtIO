@@ -3961,7 +3961,7 @@ internal static partial class ElementBuilder
     private static void ApplyBipKeyedStrings(RevitFileInfo info, ParsingState? state)
     {
         if (state == null || state.BipKeyedStrings.Count == 0) return;
-        foreach (var e in info.Elements)
+        foreach (var e in ElementsWithParameterEdits(info.Elements, state.ArchiveSceneParameters))
         {
             if (!state.BipKeyedStrings.TryGetValue((uint)e.Id, out var map)) continue;
             var byBip = new Dictionary<int, Parameter>();
@@ -4000,7 +4000,7 @@ internal static partial class ElementBuilder
         {
             if (e.CategoryId != -2000011 || GeometryBox(e) is not { Length: 6 } wb) continue;
             int baseId = -1; double bo = 0;
-            foreach (var p in e.Parameters)
+            foreach (var p in e.ReadParameters)
             {
                 if (p.Id == -1001107 && p.Value is int b && b > 0) baseId = b;
                 else if (p.Id == -1001108 && p.Value is double o1) bo = o1;
@@ -4011,7 +4011,7 @@ internal static partial class ElementBuilder
         }
 
         var levelElev = new Dictionary<int, double>();
-        foreach (var e in info.Elements)
+        foreach (var e in ElementsWithParameterEdits(info.Elements, state?.ArchiveSceneParameters))
         {
             if (e.CategoryId != -2000240) continue;
             var p = e.Parameters.FirstOrDefault(p => p.Id == -1007102);
@@ -4032,10 +4032,12 @@ internal static partial class ElementBuilder
             }
         }
 
-        foreach (var e in info.Elements)
+        var existing = new HashSet<int>();
+        foreach (var e in ElementsWithParameterEdits(info.Elements, state?.ArchiveSceneParameters))
         {
-            var existing = new HashSet<int>();
-            foreach (var p in e.Parameters) existing.Add(p.Id);
+            if (e.CategoryId is not (-2000011 or -2000170 or -2000032 or -2001320 or -2001330 or -2001300)) continue;
+            existing.Clear();
+            foreach (var p in e.ReadParameters) existing.Add(p.Id);
             void Add(int id, string name, double val)
             {
                 if (!existing.Contains(id))
@@ -4103,10 +4105,12 @@ internal static partial class ElementBuilder
 
         // Sanitize computed-quantity placeholders: Revit never reports non-positive
         // HOST_AREA/VOLUME/PERIMETER; a - here is a binary placeholder, not a value.
-        foreach (var e in info.Elements)
-            e.Parameters.RemoveAll(p =>
-                p.Id is -1012805 or -1012806 or -1012807 &&
-                ((p.Value is double dv && dv <= 0) || (p.Value is int iv && iv <= 0)));
+        foreach (var e in ElementsWithParameterEdits(info.Elements, state?.ArchiveSceneParameters))
+            if (e.ReadParameters.Any(IsQuantityPlaceholder))
+                e.Parameters.RemoveAll(IsQuantityPlaceholder);
+
+        static bool IsQuantityPlaceholder(Parameter p) => p.Id is -1012805 or -1012806 or -1012807
+            && ((p.Value is double dv && dv <= 0) || (p.Value is int iv && iv <= 0));
     }
 
     /// <summary>
@@ -4150,24 +4154,38 @@ internal static partial class ElementBuilder
         return geo;
     }
 
+    private static int DominantCreatedPhase(List<Element> elements)
+    {
+        var votes = new Dictionary<int, int>();
+        foreach (var e in elements)
+            foreach (var p in e.ReadParameters)
+                if (p.Id == -1012100 && p.Value is int phase && phase > 0)
+                {
+                    votes[phase] = votes.GetValueOrDefault(phase) + 1;
+                    break;
+                }
+        int dominant = -1, count = 0;
+        foreach (var (phase, votesForPhase) in votes)
+            if (votesForPhase > count)
+            {
+                dominant = phase;
+                count = votesForPhase;
+            }
+        return dominant;
+    }
+
     /// <summary>
     /// Constant/default parameters the Revit API reports on views, datums and dimensions, each
     /// constant for the whole file.
     /// </summary>
-    private static void AddViewAndDatumDefaults(RevitFileInfo info)
+    private static void AddViewAndDatumDefaults(RevitFileInfo info, Action<Element>? archiveParameters)
     {
         // VIEW_PHASE: views report the model's dominant phase - derive it as the most common
         // PHASE_CREATED value across all elements.
-        var phaseVotes = new Dictionary<int, int>();
-        foreach (var e in info.Elements)
-            foreach (var p in e.Parameters)
-                if (p.Id == -1012100 && p.Value is int ph && ph > 0)
-                { phaseVotes.TryGetValue(ph, out int n); phaseVotes[ph] = n + 1; break; }
-        int domPhase = -1, domN = 0;
-        foreach (var (ph, n) in phaseVotes) if (n > domN) { domPhase = ph; domN = n; }
+        int domPhase = DominantCreatedPhase(info.Elements);
 
         var existing = new HashSet<int>();
-        foreach (var e in info.Elements)
+        foreach (var e in ElementsWithParameterEdits(info.Elements, archiveParameters))
         {
             if (e.CategoryId is not int c) continue;
             bool view = ViewCategories.Contains(c);
@@ -4175,7 +4193,7 @@ internal static partial class ElementBuilder
             bool dimension = c is -2000260 or -2000261 or -2000262 || e.Dimension != null;
             if (!view && !datum && !dimension && c is not (-2009645 or -2000045)) continue;
             existing.Clear();
-            foreach (var p in e.Parameters) existing.Add(p.Id);
+            foreach (var p in e.ReadParameters) existing.Add(p.Id);
             void Add(int id, string name, StorageType st, object val)
             {
                 if (!existing.Contains(id)) e.Parameters.Add(BipHelpers.MakeBipParam(id, name, st, val));
@@ -6530,7 +6548,7 @@ internal static partial class ElementBuilder
         ApplyViewPlanes(rvtInfo, state);
         ApplyImageSizes(rvtInfo, state);
         ApplyViewportScales(rvtInfo, state);
-        AddViewAndDatumDefaults(rvtInfo);
+        AddViewAndDatumDefaults(rvtInfo, state?.ArchiveSceneParameters);
         AddCurtainQuantities(rvtInfo);
         EnrichTypeLevelBips(rvtInfo, state);
         PropagateChainPlaceholders(rvtInfo, state);
@@ -6616,10 +6634,10 @@ internal static partial class ElementBuilder
             ApplyCurtainPanelOrders(rvtInfo.Elements, state);
             RepairBasicWallTypeFunctionBodyFallbacks(rvtInfo.Elements, state);
         }
-        foreach (var e in rvtInfo.Elements)
+        foreach (var e in ElementsWithParameterEdits(rvtInfo.Elements, state?.ArchiveSceneParameters))
         {
             Parameter? lv = null; bool hasSched = false;
-            foreach (var p in e.Parameters)
+            foreach (var p in e.ReadParameters)
             {
                 if (p.Id == -1001952) lv = p;
                 else if (p.Id == -1002062) { hasSched = true; break; }
@@ -6629,10 +6647,10 @@ internal static partial class ElementBuilder
         }
         // Curtain panel GENERIC_HEIGHT and CURTAIN_WALL_PANELS_HEIGHT are the same value; fill
         // whichever is missing from the other.
-        foreach (var e in rvtInfo.Elements)
+        foreach (var e in ElementsWithParameterEdits(rvtInfo.Elements, state?.ArchiveSceneParameters))
         {
             Parameter? gen = null, pan = null;
-            foreach (var p in e.Parameters)
+            foreach (var p in e.ReadParameters)
             {
                 if (p.Id == -1001300) gen = p;
                 else if (p.Id == -1010300) pan = p;
@@ -6652,7 +6670,7 @@ internal static partial class ElementBuilder
             // Same pair for the width: GENERIC_WIDTH equals CURTAIN_WALL_PANELS_WIDTH on every
             // element that has the panel width.
             Parameter? genWidth = null, panWidth = null;
-            foreach (var p in e.Parameters)
+            foreach (var p in e.ReadParameters)
             {
                 if (p.Id == -1001301) genWidth = p;
                 else if (p.Id == -1010301) panWidth = p;
@@ -6822,13 +6840,7 @@ internal static partial class ElementBuilder
     /// </summary>
     private static void FixUnresolvedPhaseCreated(RevitFileInfo info, Action<Element>? archiveParameters)
     {
-        var phaseVotes = new Dictionary<int, int>();
-        foreach (var e in info.Elements)
-            foreach (var p in e.ReadParameters)
-                if (p.Id == -1012100 && p.Value is int ph && ph > 0)
-                { phaseVotes.TryGetValue(ph, out int n); phaseVotes[ph] = n + 1; break; }
-        int domPhase = -1, domN = 0;
-        foreach (var (ph, n) in phaseVotes) if (n > domN) { domPhase = ph; domN = n; }
+        int domPhase = DominantCreatedPhase(info.Elements);
         if (domPhase <= 0) return;
 
         foreach (var e in info.Elements)
@@ -7238,13 +7250,7 @@ internal static partial class ElementBuilder
         foreach (var e in info.Elements) existing.Add(e.Id);
 
         // Model dominant phase (same derivation as FixUnresolvedPhaseCreated) for PHASE_CREATED.
-        var phaseVotes = new Dictionary<int, int>();
-        foreach (var e in info.Elements)
-            foreach (var p in e.ReadParameters)
-                if (p.Id == -1012100 && p.Value is int ph && ph > 0)
-                { phaseVotes.TryGetValue(ph, out int n); phaseVotes[ph] = n + 1; break; }
-        int domPhase = -1, domN = 0;
-        foreach (var (ph, n) in phaseVotes) if (n > domN) { domPhase = ph; domN = n; }
+        int domPhase = DominantCreatedPhase(info.Elements);
 
         var src = new HashSet<uint>(state.ElemTable.Keys);
         foreach (var k in state.ElemWorksets.Keys) src.Add(k);
