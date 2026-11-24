@@ -16,12 +16,8 @@ namespace RvtIO.Model
     {
         // Specialized tuples are absent on most elements. Boxing the present values
         // keeps the empty fields reference-sized while preserving shallow-copy semantics.
-        private object? _curveDriverLineZ;
-        private object? _curveDriverLineDirection;
-        private object? _familyLevelRefs;
         private object? _mediumSolidTotals;
         private object? _columnAttachment;
-        private object? _instanceOriginXY;
         private object? _ownSingleFamilyCutout;
         private object? _serializedAreaScheme;
 
@@ -172,6 +168,36 @@ namespace RvtIO.Model
             internal TypeReferenceData ShallowCopy() => (TypeReferenceData)MemberwiseClone();
         }
 
+        private CurveDriverData? _curveDriver;
+
+        private sealed class CurveDriverData
+        {
+            internal LocationCurve? NativeModelArc;
+            internal (double StartZ, double EndZ)? CurveDriverLineZ;
+            internal (double X, double Y, double Z)? CurveDriverLineDirection;
+            internal double? CurveDriverLineLength;
+            internal int? CurveDriverRefLevelId;
+            internal double? CurveDriverRotation;
+
+            internal CurveDriverData ShallowCopy() => (CurveDriverData)MemberwiseClone();
+        }
+
+        private FamilyPlacementData? _familyPlacement;
+
+        private sealed class FamilyPlacementData
+        {
+            internal (double X, double Y)? InstanceOriginXY;
+            internal double? InstanceOriginZ;
+            internal bool? InstanceUsesOffsetPosition;
+            internal bool? InstanceIsVertical;
+            internal int? NativeStructuralType;
+            internal (int BaseLevel, double BaseOffset, int TopLevel, double TopOffset)? FamilyLevelRefs;
+            internal double? FramingCopingDistance;
+            internal double? SymbolFramingLength;
+
+            internal FamilyPlacementData ShallowCopy() => (FamilyPlacementData)MemberwiseClone();
+        }
+
         /// <summary>A copy that shares member values with this element; the caller replaces what it changes.</summary>
         internal Element ShallowCopy()
         {
@@ -182,6 +208,8 @@ namespace RvtIO.Model
             copy._mep = _mep?.ShallowCopy();
             copy._space = _space?.ShallowCopy();
             copy._typeReferences = _typeReferences?.ShallowCopy();
+            copy._curveDriver = _curveDriver?.ShallowCopy();
+            copy._familyPlacement = _familyPlacement?.ShallowCopy();
             return copy;
         }
 
@@ -251,32 +279,66 @@ namespace RvtIO.Model
         [JsonIgnore]
         internal (double StartZ, double EndZ)? CurveDriverLineZ
         {
-            get => ((double StartZ, double EndZ)?)_curveDriverLineZ;
-            set => _curveDriverLineZ = value;
+            get => _curveDriver?.CurveDriverLineZ;
+            set
+            {
+                if (value != null || _curveDriver != null) (_curveDriver ??= new()).CurveDriverLineZ = value;
+            }
         }
 
         /// <summary>The circular drive curve owned by this curve element, in internal coordinates.</summary>
-        internal LocationCurve? NativeModelArc { get; set; }
+        internal LocationCurve? NativeModelArc
+        {
+            get => _curveDriver?.NativeModelArc;
+            set
+            {
+                if (value != null || _curveDriver != null) (_curveDriver ??= new()).NativeModelArc = value;
+            }
+        }
 
         /// <summary>Unit direction of the straight drive curve (CurveDriver.m_pCrv GLine dirVec); absent for an arc driver.</summary>
         [JsonIgnore]
         internal (double X, double Y, double Z)? CurveDriverLineDirection
         {
-            get => ((double X, double Y, double Z)?)_curveDriverLineDirection;
-            set => _curveDriverLineDirection = value;
+            get => _curveDriver?.CurveDriverLineDirection;
+            set
+            {
+                if (value != null || _curveDriver != null) (_curveDriver ??= new()).CurveDriverLineDirection = value;
+            }
         }
 
         /// <summary>Length of the straight drive curve (CurveDriver.m_pCrv GLine: the end-parameter span times the stored direction vector), feet.</summary>
         [JsonIgnore]
-        internal double? CurveDriverLineLength { get; set; }
+        internal double? CurveDriverLineLength
+        {
+            get => _curveDriver?.CurveDriverLineLength;
+            set
+            {
+                if (value != null || _curveDriver != null) (_curveDriver ??= new()).CurveDriverLineLength = value;
+            }
+        }
 
         /// <summary>StructuralUserData.m_copingDistance as stored (-1 when the member has no coped end).</summary>
         [JsonIgnore]
-        internal double? FramingCopingDistance { get; set; }
+        internal double? FramingCopingDistance
+        {
+            get => _familyPlacement?.FramingCopingDistance;
+            set
+            {
+                if (value != null || _familyPlacement != null) (_familyPlacement ??= new()).FramingCopingDistance = value;
+            }
+        }
 
         /// <summary>FamInstCurveDriver.m_refLevelId as stored (-1 when the driver has no reference level of its own).</summary>
         [JsonIgnore]
-        internal int? CurveDriverRefLevelId { get; set; }
+        internal int? CurveDriverRefLevelId
+        {
+            get => _curveDriver?.CurveDriverRefLevelId;
+            set
+            {
+                if (value != null || _curveDriver != null) (_curveDriver ??= new()).CurveDriverRefLevelId = value;
+            }
+        }
 
         /// <summary>Material whose appearance came from a shading (0x09B6) payload or its shading holder.</summary>
         [JsonIgnore]
@@ -284,14 +346,24 @@ namespace RvtIO.Model
 
         /// <summary>FamilyInstance.m_instOrigin z as stored (the placement height relative to the instance's host/level).</summary>
         [JsonIgnore]
-        internal double? InstanceOriginZ { get; set; }
+        internal double? InstanceOriginZ
+        {
+            get => _familyPlacement?.InstanceOriginZ;
+            set
+            {
+                if (value != null || _familyPlacement != null) (_familyPlacement ??= new()).InstanceOriginZ = value;
+            }
+        }
 
         /// <summary>FamilyInstance.m_refs FamilyLevelRef pair as stored: base (first) and top (second) level and offset.</summary>
         [JsonIgnore]
         internal (int BaseLevel, double BaseOffset, int TopLevel, double TopOffset)? FamilyLevelRefs
         {
-            get => ((int BaseLevel, double BaseOffset, int TopLevel, double TopOffset)?)_familyLevelRefs;
-            set => _familyLevelRefs = value;
+            get => _familyPlacement?.FamilyLevelRefs;
+            set
+            {
+                if (value != null || _familyPlacement != null) (_familyPlacement ??= new()).FamilyLevelRefs = value;
+            }
         }
 
         /// <summary>Parameters set by the NativeFieldParameters table with their validated presence domains, the
@@ -309,7 +381,14 @@ namespace RvtIO.Model
 
         /// <summary>StructCurveDriverBase.m_rotation as stored.</summary>
         [JsonIgnore]
-        internal double? CurveDriverRotation { get; set; }
+        internal double? CurveDriverRotation
+        {
+            get => _curveDriver?.CurveDriverRotation;
+            set
+            {
+                if (value != null || _curveDriver != null) (_curveDriver ??= new()).CurveDriverRotation = value;
+            }
+        }
 
         /// <summary>Element.m_createdPhaseId / m_demolishedPhaseId as stored.</summary>
         [JsonIgnore]
@@ -362,7 +441,14 @@ namespace RvtIO.Model
 
         /// <summary>Framing length regenerated into an instance symbol: StructSetbackSymFamRef.m_Length, equal at both ends.</summary>
         [JsonIgnore]
-        internal double? SymbolFramingLength { get; set; }
+        internal double? SymbolFramingLength
+        {
+            get => _familyPlacement?.SymbolFramingLength;
+            set
+            {
+                if (value != null || _familyPlacement != null) (_familyPlacement ??= new()).SymbolFramingLength = value;
+            }
+        }
 
         /// <summary>The attachment record of a column end (AttachInfo 699): <c>IsTop</c> is m_baseOrTop = 1.</summary>
         [JsonIgnore]
@@ -374,19 +460,36 @@ namespace RvtIO.Model
 
         /// <summary>FamilyInstance.m_useOffsetPos as stored: whether the instance keeps its offset when its grid moves.</summary>
         [JsonIgnore]
-        internal bool? InstanceUsesOffsetPosition { get; set; }
+        internal bool? InstanceUsesOffsetPosition
+        {
+            get => _familyPlacement?.InstanceUsesOffsetPosition;
+            set
+            {
+                if (value != null || _familyPlacement != null) (_familyPlacement ??= new()).InstanceUsesOffsetPosition = value;
+            }
+        }
 
         /// <summary>FamilyInstance.m_instOrigin x and y as stored (project coordinates, feet).</summary>
         [JsonIgnore]
         internal (double X, double Y)? InstanceOriginXY
         {
-            get => ((double X, double Y)?)_instanceOriginXY;
-            set => _instanceOriginXY = value;
+            get => _familyPlacement?.InstanceOriginXY;
+            set
+            {
+                if (value != null || _familyPlacement != null) (_familyPlacement ??= new()).InstanceOriginXY = value;
+            }
         }
 
         /// <summary>FamilyInstance.m_bVertical as stored.</summary>
         [JsonIgnore]
-        internal bool? InstanceIsVertical { get; set; }
+        internal bool? InstanceIsVertical
+        {
+            get => _familyPlacement?.InstanceIsVertical;
+            set
+            {
+                if (value != null || _familyPlacement != null) (_familyPlacement ??= new()).InstanceIsVertical = value;
+            }
+        }
 
         /// <summary>FamilyInstance.m_assocSketchPlaneId as stored.</summary>
         [JsonIgnore]
@@ -836,7 +939,14 @@ namespace RvtIO.Model
         /// <summary>FamilyInstance.m_structType as stored (StructuralType: 0 non-structural, 1 beam, 2 brace, 3 column, 4 footing, 5 unknown
         /// framing); null when the walk did not read it.</summary>
         [JsonIgnore]
-        internal int? NativeStructuralType { get; set; }
+        internal int? NativeStructuralType
+        {
+            get => _familyPlacement?.NativeStructuralType;
+            set
+            {
+                if (value != null || _familyPlacement != null) (_familyPlacement ??= new()).NativeStructuralType = value;
+            }
+        }
 
         /// <summary>ElementHeader.m_designOptionId of a file with 64-bit ids; null when not decoded.</summary>
         [JsonIgnore]

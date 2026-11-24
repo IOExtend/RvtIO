@@ -304,6 +304,48 @@ public class MultiOutputExportTests
     }
 
     [Fact]
+    public void CopiedElementCanReplaceCurveDriverAndPlacementFactsIndependently()
+    {
+        var original = new RvtIO.Model.Element
+        {
+            CurveDriverLineZ = (0, 3),
+            CurveDriverLineLength = 0,
+            InstanceOriginXY = (0, 0),
+            InstanceUsesOffsetPosition = false,
+            NativeStructuralType = 0,
+            FamilyLevelRefs = (4, 0, 5, 2),
+        };
+        var copy = original.ShallowCopy();
+
+        Assert.Equal((0d, 3d), copy.CurveDriverLineZ);
+        Assert.Equal(0d, copy.CurveDriverLineLength);
+        Assert.Equal((0d, 0d), copy.InstanceOriginXY);
+        Assert.False(copy.InstanceUsesOffsetPosition);
+        Assert.Equal(0, copy.NativeStructuralType);
+        Assert.Equal((4, 0d, 5, 2d), copy.FamilyLevelRefs);
+
+        copy.CurveDriverLineZ = null;
+        copy.CurveDriverLineLength = 10;
+        copy.InstanceOriginXY = (7, 9);
+        copy.InstanceUsesOffsetPosition = true;
+        copy.NativeStructuralType = null;
+        copy.FamilyLevelRefs = null;
+
+        Assert.Equal((0d, 3d), original.CurveDriverLineZ);
+        Assert.Equal(0d, original.CurveDriverLineLength);
+        Assert.Equal((0d, 0d), original.InstanceOriginXY);
+        Assert.False(original.InstanceUsesOffsetPosition);
+        Assert.Equal(0, original.NativeStructuralType);
+        Assert.Equal((4, 0d, 5, 2d), original.FamilyLevelRefs);
+        Assert.Null(copy.CurveDriverLineZ);
+        Assert.Equal(10d, copy.CurveDriverLineLength);
+        Assert.Equal((7d, 9d), copy.InstanceOriginXY);
+        Assert.True(copy.InstanceUsesOffsetPosition);
+        Assert.Null(copy.NativeStructuralType);
+        Assert.Null(copy.FamilyLevelRefs);
+    }
+
+    [Fact]
     public void MultiOutput_RvtDocumentFromInfo_DoesNotMutateSourceInfo()
     {
         var info = new RvtIO.Model.RevitFileInfo
