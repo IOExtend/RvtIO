@@ -98,6 +98,8 @@ public class ReadProgressTests
         Assert.Equal(new RvtReadProgress("build-model", 1, 1), build[^1]);
         Assert.Equal(Enumerable.Range(0, 5).Select(pass => new RvtReadProgress("recover-geometry", pass, 4)),
             progress.Updates.Where(update => update.Phase == "recover-geometry" && update.GeometryBlocks == null));
+        Assert.Equal(Enumerable.Range(0, 8).Select(pass => new RvtReadProgress("finalize-model", pass, 7)),
+            progress.Updates.Where(update => update.Phase == "finalize-model"));
     }
 
     [Fact]

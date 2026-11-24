@@ -849,8 +849,13 @@ public partial class RvtFileReader
             state.ElemScanStrings = new();
             state.ReleaseElementValues();
         }
-        progress?.Report(new("finalize-model"));
-        ElementBuilder.PostProcess(rvtInfo, state, diag);
+        const int finalizationPasses = 7;
+        int completedFinalizationPasses = 0;
+        progress?.Report(new("finalize-model", completedFinalizationPasses, finalizationPasses));
+        Action? finalizationProgress = progress == null ? null : () =>
+            progress.Report(new("finalize-model", ++completedFinalizationPasses, finalizationPasses));
+        ElementBuilder.PostProcess(rvtInfo, state, diag, finalizationProgress);
+        finalizationProgress?.Invoke();
         if (state.PartitionScratch != null)
         {
             // Geometry and its cutters have been resolved into the elements. A scratch-backed
@@ -889,6 +894,7 @@ public partial class RvtFileReader
         ElementBuilder.ApplyMepSystemParams(rvtInfo, state, systemFamilyNames);
         ElementBuilder.ApplyConnectorGraph(rvtInfo, state);
         ElementBuilder.ApplyStairNameParameterScopes(rvtInfo.Elements, state);
+        finalizationProgress?.Invoke();
         diag?.WriteLine($"System family names: locale={rvtInfo.Metadata.SavedLocale ?? "?"}, " +
             $"resources={(systemFamilyNames != null ? "loaded" : "unavailable")}, types={systemFamilyTypes}");
         LogPhase("Names and parameters applied");
@@ -939,6 +945,7 @@ public partial class RvtFileReader
         diag?.WriteLine($"Wall height overrides: {ElementBuilder.WallHeightOverrides}, skipped-no-elev: {ElementBuilder.WallHeightSkippedNoElev}; level-elev candidates: {state.LevelElevCandidates.Count}");
 
         LogPhase("Export ids applied");
+        finalizationProgress?.Invoke();
         ResolveParameterUnits(rvtInfo, state);
         Parameter.ResolveZeroElementIds(rvtInfo, state);
 
@@ -973,6 +980,7 @@ public partial class RvtFileReader
         // The catalog serves compact export and sheets, and duplicates decoded values.
         if (state.KeepExportProvenance)
             rvtInfo.UserParameters = UserParameterCatalog.Build(state);
+        finalizationProgress?.Invoke();
         return (rvtInfo, state);
     }
 

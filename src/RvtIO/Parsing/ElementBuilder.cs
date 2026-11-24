@@ -5760,7 +5760,8 @@ internal static partial class ElementBuilder
         }
     }
 
-    public static void PostProcess(RevitFileInfo rvtInfo, ParsingState? state = null, TextWriter? diag = null)
+    public static void PostProcess(RevitFileInfo rvtInfo, ParsingState? state = null, TextWriter? diag = null,
+        Action? passCompleted = null)
     {
         ApplyGridDatums(rvtInfo, state);
         rvtInfo.GraphicsStyles = state?.GraphicsStyles
@@ -6457,6 +6458,7 @@ internal static partial class ElementBuilder
         ResolveTypeParams(rvtInfo);
         ApplyDetailLines(rvtInfo, state);
         ApplyBlockSignatureCategories(rvtInfo, state);
+        passCompleted?.Invoke();
         // Native (schema-deserialized) params land BEFORE the default-emitting passes so
         // authoritative stored values are not blocked by add-if-missing defaults.
         ApplyNativeParams(rvtInfo, state);
@@ -6493,6 +6495,7 @@ internal static partial class ElementBuilder
                 state.NativeElementNames);
         }
         AddCategoryAndFamilyParams(rvtInfo);
+        passCompleted?.Invoke();
         AddCurveLengths(rvtInfo);
         ApplyMaterialAppearance(rvtInfo, state);
         ApplyHvacSpaceTypeParams(rvtInfo, state);
@@ -6534,6 +6537,7 @@ internal static partial class ElementBuilder
         ApplyStructuralConnectionParams(rvtInfo);
         ApplyCrossSectionRotation(rvtInfo);
         ApplyDetailCurveFlag(rvtInfo, state?.ElemClassIdx);
+        passCompleted?.Invoke();
         ApplyStoredPhases(rvtInfo, state?.ElemClassIdx,
             state?.ProjectPhaseOrderSource is { BlockCount: 1, PhaseIds: { } phaseOrder } ? phaseOrder : null);
         TraceElement(rvtInfo, "after-phases");
