@@ -42,6 +42,9 @@ Set `RvtSceneOptions.ReadProgress` to observe the reader phases and work counts 
 Pass an `IProgress<RvtReadProgress>` of your own when order matters, as `Progress<T>` can deliver updates late and out of order.
 The final reader update, `complete`, marks the end of the file read. Mesh extraction and scene mapping follow it and report nothing.
 
+`RvtSceneOptions.CreatePartitionScratch` passes a scratch stream factory to the file reader for path and stream reads. Use it to
+read inflated partitions through private temporary storage as described in the [public API](public-api.md).
+
 Set `RvtSceneOptions.IncludeModelLinesAndReinforcement` to include straight model lines as line primitives and reinforcement with decoded bar paths as triangles. The native RVT-to-NWC tool enables this option.
 
 `RvtSceneResult` holds the `Document`, the `Diagnostics` and counts: elements, elements with geometry, elements by

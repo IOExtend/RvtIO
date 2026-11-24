@@ -200,9 +200,10 @@ internal class ParsingState
     public HashSet<uint> HostCutOutStepsFromLayoutSearch { get; } = new();
     public HashSet<uint> BlockOnlyIds { get; set; } = new();
     public Dictionary<uint, (string ForgeId, string? DisplayName)> ForgeParamDefs { get; set; } = new();
-    public List<byte[]> Chunks { get; set; } = new();
-    public List<byte[]> RecordChunks { get; set; } = new();
-    public List<byte[]> NonRecordChunks { get; set; } = new();
+    public IReadOnlyList<byte[]> Chunks { get; set; } = [];
+    public IReadOnlyList<byte[]> RecordChunks { get; set; } = [];
+    public IReadOnlyList<byte[]> NonRecordChunks { get; set; } = [];
+    internal PartitionChunks.Backing? PartitionScratch => (Chunks as PartitionChunks)?.Store;
     public Dictionary<uint, double> WallTypeWidths { get; set; } = new();
 
     /// <summary>Wall function enum extracted from classIdx=0x00012100 blocks at offset 0x18.

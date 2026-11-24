@@ -58,14 +58,22 @@ public partial class RvtFileReader
     public RevitFileInfo ReadStream(Stream stream)
     {
         using var root = RvtContainerCheck.OpenVerified(stream, "Revit input stream", out var view);
-        var info = ReadCore(root);
+        var info = ReadCore(root, stream);
         // The decoders absorb a read that fails and go on with less data; such a result is not returned.
         view.ThrowStreamFailure();
         return info;
     }
 
-    private RevitFileInfo ReadCore(RootStorage root)
+    private RevitFileInfo ReadCore(RootStorage root, Stream? input = null)
     {
+        var createScratch = _options.CreatePartitionScratch;
+        var storage = createScratch?.Invoke();
+        if (storage != null && ReferenceEquals(storage, input))
+            throw new ArgumentException("Partition scratch storage must be separate from the input stream.");
+        using var scratch = storage;
+        if (createScratch != null && (scratch == null || !scratch.CanRead || !scratch.CanWrite || !scratch.CanSeek || scratch.Length != 0))
+            throw new ArgumentException("Partition scratch storage must be a readable, writable, seekable, empty stream.");
+        var backing = scratch == null ? null : new PartitionChunks.Backing(scratch);
         var progress = _options.Progress;
         progress?.Report(new("metadata"));
         var diag = _options.DiagnosticOutput;
@@ -93,11 +101,11 @@ public partial class RvtFileReader
 
         Dictionary<string, TfClassRegistry.TfClassDef>? tfSchemas = null;
         LogPhase("Decompressing partitions...");
-        var chunks = DecompressPartitions(root, diag, out var ownPartitionWallParts, out var partitionStreams, out var framedStreams, out bool staleCopiesRemoved, out var routing, collectFamilyStorage: true, progress);
+        var chunks = DecompressPartitions(root, diag, out var ownPartitionWallParts, out var partitionStreams, out var framedStreams, out bool staleCopiesRemoved, out var routing, collectFamilyStorage: true, progress, backing);
         var fmtChunks = DecompressStorage(root, "Formats", diag);
         if (fmtChunks.Count > 0)
         {
-            chunks.AddRange(fmtChunks);
+            foreach (var chunk in fmtChunks) chunks.Add(chunk);
             // Parse Formats/Latest class schema table (stored temporarily, assigned to state below)
             try
             {
@@ -108,7 +116,7 @@ public partial class RvtFileReader
             catch (Exception ex) when (MalformedInput.Is(ex)) { }
         }
         var globalChunks = DecompressStorage(root, "Global", diag);
-        if (globalChunks.Count > 0) chunks.AddRange(globalChunks);
+        foreach (var chunk in globalChunks) chunks.Add(chunk);
 
         progress?.Report(new("class-schema"));
         // Episode GUID table: nested stream Global/History (there is no top-level "History" storage).
@@ -124,7 +132,7 @@ public partial class RvtFileReader
                 projectInfo, transmissionData, episodeTable, elemRecHistories, elemRecOwners, tfSchemas, ownPartitionWallParts,
                 staleCopiesRemoved, routing, elemTableIsExact, previewBase64, previewMime, diag, LogPhase, ids);
             WideModel = wideInfo;
-            WideState = wideState;
+            WideState = backing == null ? wideState : null;
         }
 
         bool r22View = false;
@@ -145,14 +153,14 @@ public partial class RvtFileReader
             projectInfo, transmissionData, episodeTable, elemRecHistories, elemRecOwners, tfSchemas, ownPartitionWallParts,
             staleCopiesRemoved, routing, elemTableIsExact, previewBase64, previewMime, diag, LogPhase, ids, progress);
         ExtensibleStorageReader.Apply(root, rvtInfo, framedStreams);
-        LastParsingState = state;
+        LastParsingState = backing == null ? state : null;
         progress?.Report(new("complete", 1, 1));
         return rvtInfo;
     }
 
     private (RevitFileInfo Info, ParsingState State) ParseModel(
         RootStorage root,
-        List<byte[]> chunks,
+        PartitionChunks chunks,
         IReadOnlyList<PartitionFraming.Framed?> readFrames,
         int partitionChunkCount,
         bool r22View,
@@ -182,7 +190,7 @@ public partial class RvtFileReader
         if (ids != null && !r22View)
         {
             // The native index reads these partitions. A legacy scan could attach a wide owner's low bits to another element.
-            chunks = chunks.Skip(partitionChunkCount).ToList();
+            chunks = chunks.Select(Enumerable.Range(partitionChunkCount, chunks.Count - partitionChunkCount));
             partitionChunkCount = 0;
         }
         var state = new ParsingState
@@ -985,7 +993,7 @@ public partial class RvtFileReader
         }
         if (ids != null && !r22View)
         {
-            chunks = chunks.Skip(partitionChunkCount).ToList();
+            chunks = chunks.Select(Enumerable.Range(partitionChunkCount, chunks.Count - partitionChunkCount));
             partitionChunkCount = 0;
         }
 
@@ -1341,12 +1349,12 @@ public partial class RvtFileReader
         diag?.WriteLine($"Wide document units: UnitsElem {document.UnitsElemId}, {options.Options.Length} format options, unit schemas {document.Units.Entries.Length}");
     }
 
-    private List<byte[]> DecompressPartitions(RootStorage root, TextWriter? diag,
+    private PartitionChunks DecompressPartitions(RootStorage root, TextWriter? diag,
         out Dictionary<uint, OwnPartitionParts.WallParts>? ownPartitionWallParts,
         out List<IReadOnlyList<byte[]>> partitionStreams, out List<PartitionFraming.Framed?> framedStreams,
         out bool staleCopiesRemoved,
         out (IReadOnlyDictionary<ulong, int>? Current, IReadOnlyDictionary<ulong, int>? UnroutedTypePartitions) routes,
-        bool collectFamilyStorage = false, IProgress<RvtReadProgress>? progress = null)
+        bool collectFamilyStorage = false, IProgress<RvtReadProgress>? progress = null, PartitionChunks.Backing? backing = null)
     {
         staleCopiesRemoved = false;
         var partStor = root.OpenStorage("Partitions");
@@ -1358,13 +1366,13 @@ public partial class RvtFileReader
         progress?.Report(new("partitions", 0, partEntries.Count));
 
         var decompressor = new ChunkDecompressor();
-        var allChunks = new List<byte[]>();
+        var allChunks = new PartitionChunks(backing);
         partitionStreams = new List<IReadOnlyList<byte[]>>();
         framedStreams = [];
         ownPartitionWallParts = null;
         var routing = partEntries.Count > 1
             ? PlanRecordRouting(root, partStor, partEntries.Select(e => e.Name).ToList(), _options.ResolveCurrentCopies ? diag : null,
-                recoverTypeIds: collectFamilyStorage)
+                recoverTypeIds: collectFamilyStorage, streamInput: backing != null)
             : null;
         routes = (routing?.Current, routing?.UnroutedTypePartitions);
         // the exact framing of the partition streams (PartitionFraming), when the class table names its marker classes and the id width is known
@@ -1380,8 +1388,7 @@ public partial class RvtFileReader
         {
             diag?.WriteLine($"Partitions stream: '{partEntry.Name}' ({partEntry.Length:N0} bytes)");
             using var partStream = partStor.OpenStream(partEntry.Name);
-            var raw = new byte[partStream.Length];
-            partStream.ReadExactly(raw);
+            var raw = backing == null ? ReadRawPartition(partStream) : null;
 
             // shortcut: saved format9 with one partition stream; multi-stream scope needs its own load validation.
             if (partEntries.Count == 1 && partEntry.Name == "0")
@@ -1390,23 +1397,25 @@ public partial class RvtFileReader
                 var wallClasses = framingSchema == null ? null : OwnPartitionParts.ClassesOf(framingSchema);
                 string? failure;
                 ownPartitionWallParts = wallClasses != null && ElemTableLayout.IdWidth(framingSchema!) is int framingWidth
-                    ? OwnPartitionParts.Read(raw, wallClasses, framingWidth, out failure)
+                    ? raw == null ? OwnPartitionParts.Read(partStream, wallClasses, framingWidth, out failure)
+                        : OwnPartitionParts.Read(raw, wallClasses, framingWidth, out failure)
                     : Fail("the schema lacks the framing or wall classes", out failure);
                 diag?.WriteLine($"  Own partition wall parts: {ownPartitionWallParts?.Count.ToString() ?? "unavailable"} ({failure ?? "exact"})");
             }
 
-            var chunks = CutPartition(raw, framing, decompressor, out var stats, out string? framingFailure, out var framed, entityCellTag);
+            var chunks = CutPartitionCore(raw, partStream, framing, decompressor, out var stats, out string? framingFailure,
+                out var framed, entityCellTag, backing);
             int? partitionNumber = int.TryParse(partEntry.Name, out int parsedPartition) ? parsedPartition : null;
             if (framed != null && partitionNumber is int partNum)
                 framed = framed with { Partition = partNum };
-            RecordStream("Partitions/" + partEntry.Name, raw.Length, stats.Members, stats.Decoded, stats.Failed, stats.Recovered, stats.Unverified,
-                chunks.Sum(chunk => (long)chunk.Length));
+            RecordStream("Partitions/" + partEntry.Name, partStream.Length, stats.Members, stats.Decoded, stats.Failed, stats.Recovered, stats.Unverified,
+                Enumerable.Range(0, chunks.Count).Sum(index => (long)PartitionChunks.LengthAt(chunks, index)));
             diag?.WriteLine(framingFailure == null ? $"  Chunks: {chunks.Count} segments of the exact framing"
                 : $"  Chunks: {chunks.Count} decompressed by a search for gzip members (framing: {framingFailure})");
             if (_options.ResolveCurrentCopies && routing != null && partitionNumber is int pruningPartition
                 && RecordRouting.Stale(routing.Census, routing.Current, pruningPartition) is { Count: > 0 } stale)
             {
-                if (RecordRouting.Prune(chunks, routing.Census.SegmentLengths[pruningPartition], stale) is { } pruned)
+                if (RecordRouting.PrunePartition(chunks, routing.Census.SegmentLengths[pruningPartition], stale) is { } pruned)
                 {
                     chunks = pruned;
                     staleCopiesRemoved = true;
@@ -1428,21 +1437,36 @@ public partial class RvtFileReader
 
     private static Dictionary<uint, OwnPartitionParts.WallParts>? Fail(string reason, out string? failure) { failure = reason; return null; }
 
+    private static byte[] ReadRawPartition(Stream stream)
+    {
+        stream.Position = 0;
+        var raw = new byte[stream.Length];
+        stream.ReadExactly(raw);
+        return raw;
+    }
+
     /// <summary>The chunks of a partition stream: when its framing holds (<see cref="PartitionFraming"/>), the output of each segment, every one a
     /// gzip member checked by its CRC and length, and <paramref name="framingFailure"/> null; otherwise the members a search for gzip headers
     /// finds, with the recovery of damaged ones (<see cref="ChunkDecompressor"/>), and the reason the framing does not hold.</summary>
-    internal static List<byte[]> CutPartition(byte[] raw, (PartitionFraming.Tags Tags, int IdWidth)? framing, ChunkDecompressor decompressor,
+    internal static IReadOnlyList<byte[]> CutPartition(byte[] raw, (PartitionFraming.Tags Tags, int IdWidth)? framing, ChunkDecompressor decompressor,
         out (int Members, int Decoded, int Failed, int Recovered, int Unverified) stats, out string? framingFailure, out PartitionFraming.Framed? framed,
         ushort? familyEntityCellTag = null)
+        => CutPartitionCore(raw, null, framing, decompressor, out stats, out framingFailure, out framed, familyEntityCellTag, null);
+
+    private static PartitionChunks CutPartitionCore(byte[]? raw, Stream? stream, (PartitionFraming.Tags Tags, int IdWidth)? framing,
+        ChunkDecompressor decompressor, out (int Members, int Decoded, int Failed, int Recovered, int Unverified) stats,
+        out string? framingFailure, out PartitionFraming.Framed? framed, ushort? familyEntityCellTag, PartitionChunks.Backing? backing)
     {
-        var segments = new List<byte[]>();
+        var segments = new PartitionChunks(backing);
         var items = new List<PartitionFraming.ProjectItem>();
         var familyItems = new List<PartitionFraming.FamilyItem>();
         var familyKeys = familyEntityCellTag.HasValue ? new HashSet<string>(StringComparer.Ordinal) : null;
         byte[]? cellTagBytes = familyEntityCellTag is ushort tag ? BitConverter.GetBytes(tag) : null;
         framed = null;
         framingFailure = "the class table names no framing classes or the id width is not known";
-        if (framing is var (tags, idWidth) && PartitionFraming.Walk(raw, tags, idWidth, r =>
+        if (framing is var (tags, idWidth))
+        {
+            void Collect(PartitionFraming.Record r)
             {
                 if (r.Block == 0 && r.Owner != (idWidth == 8 ? ulong.MaxValue : uint.MaxValue))
                     items.Add(new(r.Channel, r.Owner, r.Offset, r.Item.Length));
@@ -1452,15 +1476,28 @@ public partial class RvtFileReader
                     if (r.Body.Span.IndexOf(cellTagBytes!) >= 0)
                         familyItems.Add(new(r.Key, new(r.Channel, r.Owner, r.Offset, r.Item.Length)));
                 }
-            }, out framingFailure, out _, null, segments))
-        {
-            stats = (segments.Count, segments.Count, 0, 0, 0);
-            framed = new PartitionFraming.Framed(segments, items, idWidth) { FamilyEntityCandidates = familyItems, FamilyKeys = familyKeys };
-            return segments;
+            }
+            bool exact;
+            if (raw == null)
+                exact = PartitionFraming.WalkStream(stream!, tags, idWidth, Collect, out framingFailure, out _, onSegment: segments.Add);
+            else
+            {
+                var resident = new List<byte[]>();
+                exact = PartitionFraming.Walk(raw, tags, idWidth, Collect, out framingFailure, out _, segmentBytes: resident);
+                if (exact) foreach (var segment in resident) segments.Add(segment);
+            }
+            if (exact)
+            {
+                stats = (segments.Count, segments.Count, 0, 0, 0);
+                framed = new PartitionFraming.Framed(segments, items, idWidth) { FamilyEntityCandidates = familyItems, FamilyKeys = familyKeys };
+                return segments;
+            }
         }
-        var chunks = decompressor.DecompressAll(raw);
+        var chunks = decompressor.DecompressAll(raw ?? ReadRawPartition(stream!));
         stats = decompressor.LastStats;
-        return chunks;
+        var recovered = new PartitionChunks(backing);
+        foreach (var chunk in chunks) recovered.Add(chunk);
+        return recovered;
     }
 
     private sealed record RoutingPlan(RecordRouting.Census Census, Dictionary<ulong, int> Current,
@@ -1469,7 +1506,7 @@ public partial class RvtFileReader
     /// <summary>The current copy of every element that several partition streams hold (<see cref="RecordRouting"/>), or null with the
     /// reason in the diagnostics when the framing, the element table or the increment table does not decode.</summary>
     private static RoutingPlan? PlanRecordRouting(RootStorage root, Storage partStor, IReadOnlyList<string> names, TextWriter? diag,
-        bool recoverTypeIds)
+        bool recoverTypeIds, bool streamInput)
     {
         var schema = FormatsSchema.TryRead(root);
         var census = RecordRouting.Begin(schema, out var failure);
@@ -1483,9 +1520,9 @@ public partial class RvtFileReader
         {
             if (!int.TryParse(name, out int partition)) { diag?.WriteLine($"Record routing: not applied (partition stream '{name}')"); return null; }
             using var stream = partStor.OpenStream(name);
-            var raw = new byte[stream.Length];
-            stream.ReadExactly(raw);
-            if (!RecordRouting.Collect(census, partition, raw, out failure))
+            bool collected = streamInput ? RecordRouting.CollectStream(census, partition, stream, out failure)
+                : RecordRouting.Collect(census, partition, ReadRawPartition(stream), out failure);
+            if (!collected)
             { diag?.WriteLine($"Record routing: not applied (framing of partition {name}: {failure})"); return null; }
         }
         var current = RecordRouting.Current(census, rows, table);
@@ -1766,10 +1803,13 @@ public partial class RvtFileReader
         return new EpisodeTableParseResult { Guids = result, X = x, DetachGuid = detachGuid };
     }
 
-    private static void ClassifyAndParseRecords(List<byte[]> chunks, ParsingState state, TextWriter? diag)
+    private static void ClassifyAndParseRecords(PartitionChunks chunks, ParsingState state, TextWriter? diag)
     {
-        foreach (var chunk in chunks)
+        var records = new PartitionChunks(chunks.Store);
+        var other = new PartitionChunks(chunks.Store);
+        for (int i = 0; i < chunks.Count; i++)
         {
+            var chunk = chunks[i];
             bool hasRecords = RecordParser.ContainsAnchoredR22Record(
                 chunk, state.AllKnownIds);
             bool isR25 = !hasRecords && RecordParser.ContainsAnchoredR25Record(
@@ -1777,7 +1817,7 @@ public partial class RvtFileReader
             hasRecords |= isR25;
             if (hasRecords)
             {
-                state.RecordChunks.Add(chunk);
+                records.Add(chunks.Reference(i));
                 if (isR25)
                     RecordParser.ParseChunkR25(chunk, state);
                 else
@@ -1785,10 +1825,12 @@ public partial class RvtFileReader
             }
             else
             {
-                state.NonRecordChunks.Add(chunk);
+                other.Add(chunks.Reference(i));
             }
         }
 
+        state.RecordChunks = records;
+        state.NonRecordChunks = other;
         var extraCount = state.Records.Keys.Count(k => !state.ElemTable.ContainsKey(k));
         diag?.WriteLine($"Records: {state.Records.Count} ({state.Records.Count - extraCount} in ElemTable + {extraCount} discovered)");
 
@@ -2406,7 +2448,7 @@ public partial class RvtFileReader
     internal static void RecordFramedRoots(ParsingState state,
         List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner)>? unanchoredTypeRoots = null)
     {
-        var roots = new List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner, int? Partition)>();
+        var roots = new List<(PartitionFraming.Framed Frame, PartitionFraming.ProjectItem Item, ushort Class, uint Owner)>();
         foreach (var frame in state.FramedPartitions!)
             foreach (var record in frame!.Items)
             {
@@ -2414,18 +2456,21 @@ public partial class RvtFileReader
                 uint owner = (uint)record.Owner;
                 if (owner == 0 && !state.AllKnownIds.Contains(0)) continue;
                 // the item [owner:4][checksum:4][size:4][class:2 ...][size:4] is the block layout the walk hands over
-                var (data, start, _) = frame.Bytes(record);
+                var (data, start, _) = frame.Bytes(record with { Length = 14 });
                 ushort classId = BitConverter.ToUInt16(data, start + 12);
                 if (!state.ElemClassIdx.ContainsKey(owner)) state.ElemClassIdx[owner] = classId;
-                roots.Add((data, start, (uint)(record.Length - 16), classId, owner, frame.Partition));
+                roots.Add((frame, record, classId, owner));
             }
         // a file with its own class schema has the roots of its element index seeded already (ReadWideElementIndex): the record replaces
         // the seed where it is counted; a root the count leaves out, such as one whose rewrite failed (unknown tag), keeps it
         if (state.WideSchema != null)
-            foreach (var (_, _, _, classId, owner, _) in roots)
+            foreach (var (_, _, classId, owner) in roots)
                 if (StairComponentSource.CountsClassRoot(state, classId, owner)) state.OwnedElementClassRoots.Remove(owner);
-        foreach (var (data, start, size, classId, owner, partition) in roots)
+        foreach (var (frame, record, classId, owner) in roots)
         {
+            var (data, start, _) = frame.Bytes(record);
+            uint size = (uint)(record.Length - 16);
+            int? partition = frame.Partition;
             StairComponentSource.Record(state, data, start, size, classId, owner);
             if (classId == 1012 && state.WideSchema == null
                 || state.StaleCopiesRemoved && (classId is 2335 or 3971
@@ -2454,8 +2499,12 @@ public partial class RvtFileReader
                     || part == currentPartition))
                 RecordProjectPhaseOrderSource(state, data, start, size, classId, owner);
         }
-        foreach (var (data, start, size, classId, owner, _) in roots)
-            if (classId is 3524 or 361) RecordWallLocationLine(state, data, start, size, classId, owner);
+        foreach (var (frame, record, classId, owner) in roots)
+            if (classId is 3524 or 361)
+            {
+                var (data, start, _) = frame.Bytes(record);
+                RecordWallLocationLine(state, data, start, (uint)(record.Length - 16), classId, owner);
+            }
 
         if (!state.StaleCopiesRemoved) return;
         foreach (var frame in state.FramedPartitions)
@@ -2478,11 +2527,14 @@ public partial class RvtFileReader
                     state.CurrentFramedCategories[owner] = null;
             }
         if (unanchoredTypeRoots != null)
-            foreach (var (data, start, size, classId, owner, partition) in roots)
+            foreach (var (frame, record, classId, owner) in roots)
                 if (classId == 1794 && state.CurrentFramedCategories.GetValueOrDefault(owner) == -2000150
                     && (state.IncrementRoutedPartitions?.TryGetValue(owner, out int currentPartition) != true
-                        || partition == currentPartition))
-                    unanchoredTypeRoots.Add((data, start, size, classId, owner));
+                        || frame.Partition == currentPartition))
+                {
+                    var (data, start, _) = frame.Bytes(record);
+                    unanchoredTypeRoots.Add((data, start, (uint)(record.Length - 16), classId, owner));
+                }
     }
 
     /// <summary>Hands <see cref="BlockParser.ParseBlock"/> the channel-102 and 103 records of the project's own block (the root objects and the
@@ -2504,6 +2556,13 @@ public partial class RvtFileReader
                 // records of one model, none of which changed the output); decode it once the geometry decoder is linear in the block size.
                 if ((copied || record.Length - 16 > BlockParser.MaxBlockSize) && pending.Count > queued)
                     pending.RemoveRange(queued, pending.Count - queued);
+                else if (state.PartitionScratch is { } backing)
+                    for (int i = queued; i < pending.Count; i++)
+                    {
+                        var job = pending[i];
+                        var stored = new PartitionChunks.Block(job.Chunk, job.Start, (int)job.Size + 16, backing);
+                        pending[i] = job with { Chunk = [], Stored = stored };
+                    }
             }
     }
     private static void RecoverFramedScheduleTypes(ParsingState state,
@@ -2555,7 +2614,7 @@ public partial class RvtFileReader
         if (dumpGrepEnv != null)
             foreach (var part in dumpGrepEnv.Split(','))
                 if (uint.TryParse(part, out uint dge)) dumpGrepEids.Add(dge);
-        var walkGReps = new List<(byte[] Segment, int Start, uint Size, uint Eid)>();
+        var walkGReps = new List<(PartitionChunks.Block Block, uint Size, uint Eid)>();
         // the roots the class and stair sources count: the records of the project's block when every stream is read by its framing
         bool framedRoots = state.ReadsFramedRecords;
         List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner)>? unanchoredTypeRoots =
@@ -2707,7 +2766,7 @@ public partial class RvtFileReader
             {
                 // Decoded in parallel after the walk; the first decodable block of an element wins, as before.
                 if (!state.GrepBlocks.ContainsKey(eid))
-                    walkGReps.Add((seg, bs, (uint)ds, eid));
+                    walkGReps.Add((new(seg, bs, checked((int)ds + 16), state.PartitionScratch), ds, eid));
             }
             // Sketch/detail curves at full coverage (safe: extraction has strict filters).
             if (cls == 0x0346 && !state.SketchCurves.ContainsKey(eid))
@@ -2786,7 +2845,7 @@ public partial class RvtFileReader
         if (missingIds.Count > 0)
         {
             int foundSketch = 0;
-            var scanGReps = new List<(byte[] Segment, int Start, uint Size, uint Eid)>();
+            var scanGReps = new List<(PartitionChunks.Block Block, uint Size, uint Eid)>();
             TfStreamWalker.ScanBlocks(state.Chunks, missingIds, (seg, bs, ds, cls, eid) =>
             {
                 if (dumpGrepEids.Count > 0 && dumpGrepEids.Contains(eid))
@@ -2824,7 +2883,7 @@ public partial class RvtFileReader
                 if (state.RoomNameSource.ContainsKey(eid))
                     RecordSpaceBoundarySource(state, seg, bs, ds, cls, eid);
                 if (state.GrepBlocks.ContainsKey(eid)) return;
-                scanGReps.Add((seg, bs, ds, eid));
+                scanGReps.Add((new(seg, bs, checked((int)ds + 16), state.PartitionScratch), ds, eid));
             });
             int found = ApplyFirstDecodableGReps(state, scanGReps);
             DiagnosticSink.WriteLine($"  [gscan] targeted scan recovered {found} G-blocks + {foundSketch} sketch curves for {missingIds.Count} candidate ids");
@@ -2835,7 +2894,7 @@ public partial class RvtFileReader
     /// <summary>Decodes collected GRep blocks in parallel and stores, in collection order, the first decodable block of
     /// each element that has none yet. Returns the number stored.</summary>
     private static int ApplyFirstDecodableGReps(
-        ParsingState state, List<(byte[] Segment, int Start, uint Size, uint Eid)> jobs)
+        ParsingState state, List<(PartitionChunks.Block Block, uint Size, uint Eid)> jobs)
     {
         if (jobs.Count == 0) return 0;
         bool slowDiag = Environment.GetEnvironmentVariable("RVTIO_GREP_SLOW") is { Length: > 0 };
@@ -2845,7 +2904,8 @@ public partial class RvtFileReader
             {
                 var job = jobs[index];
                 var clock = slowDiag ? System.Diagnostics.Stopwatch.StartNew() : null;
-                var geometry = GRepParserV2.Parse(job.Segment, job.Start, job.Size);
+                var (data, start) = job.Block.Read();
+                var geometry = GRepParserV2.Parse(data, start, job.Size);
                 if (clock != null && (clock.ElapsedMilliseconds > 2000 || geometry?.Faces.Count > 100000))
                     DiagnosticSink.WriteLine($"slow GRep eid={job.Eid} ms={clock.ElapsedMilliseconds} faces={geometry?.Faces.Count}");
                 return geometry;
@@ -2932,27 +2992,42 @@ public partial class RvtFileReader
             BlockParser.CollectViewPlanes(chunk, state);
         // The blocks of some views (a detail section, a wall section) sit in chunks that are neither a record nor a
         // data chunk of the classified lists: every remaining chunk is scanned too, so their planes are found.
-        var planeChunks = new HashSet<byte[]>(ReferenceEqualityComparer.Instance);
-        foreach (var chunk in state.NonRecordChunks) planeChunks.Add(chunk);
-        foreach (var chunk in state.RecordChunks) planeChunks.Add(chunk);
-        foreach (var chunk in state.Chunks)
-            if (planeChunks.Add(chunk))
-                BlockParser.CollectViewPlanes(chunk, state);
+        if (state.Chunks is not PartitionChunks { Store: not null })
+        {
+            var planeChunks = new HashSet<byte[]>(ReferenceEqualityComparer.Instance);
+            foreach (var chunk in state.NonRecordChunks) planeChunks.Add(chunk);
+            foreach (var chunk in state.RecordChunks) planeChunks.Add(chunk);
+            foreach (var chunk in state.Chunks)
+                if (planeChunks.Add(chunk))
+                    BlockParser.CollectViewPlanes(chunk, state);
+        }
 
         Lap("view planes");
         // a file read by its framing or an unrewritten 64-bit file: skip the legacy 32-bit partition chunk scan
         bool framedBlocks = state.ReadsFramedRecords;
         bool skipPartitionScan = framedBlocks
             || (!state.R22View && state.WideSchema != null && WideElementRecords.IdWidth(state.WideSchema) == 8);
-        var partitionChunks = skipPartitionScan
-            ? state.Chunks.Take(state.PartitionChunkCount).ToHashSet(ReferenceEqualityComparer.Instance) : null;
-        bool Scanned(byte[] chunk) => partitionChunks?.Contains(chunk) != true;
+        var nonRecordScan = ScanChunks(state.NonRecordChunks);
+        var recordScan = ScanChunks(state.RecordChunks);
+
+        IEnumerable<byte[]> ScanChunks(IReadOnlyList<byte[]> list)
+        {
+            if (!skipPartitionScan) return list;
+            if (state.Chunks is PartitionChunks { Store: not null } stored && list is PartitionChunks selected)
+            {
+                var excluded = Enumerable.Range(0, state.PartitionChunkCount).Select(stored.Reference)
+                    .ToHashSet(ReferenceEqualityComparer.Instance);
+                return selected.Select(Enumerable.Range(0, selected.Count).Where(i => !excluded.Contains(selected.Reference(i))));
+            }
+            var partitionChunks = state.Chunks.Take(state.PartitionChunkCount).ToHashSet(ReferenceEqualityComparer.Instance);
+            return list.Where(chunk => !partitionChunks.Contains(chunk));
+        }
         // First pass: parse blocks, collect block-only IDs
         var firstPassGReps = new List<BlockParser.PendingGRep>();
         if (framedBlocks) ParseFramedBlocks(state, collectBlockOnlyIds: true, firstPassGReps);
-        foreach (var chunk in state.NonRecordChunks.Where(Scanned))
+        foreach (var chunk in nonRecordScan)
             BlockParser.ParseChunk(chunk, state, collectBlockOnlyIds: true, deferred: firstPassGReps);
-        foreach (var chunk in state.RecordChunks.Where(Scanned))
+        foreach (var chunk in recordScan)
             BlockParser.ParseChunk(chunk, state, collectBlockOnlyIds: true, deferred: firstPassGReps);
         BlockParser.ApplyPendingGReps(state, firstPassGReps);
         diag?.WriteLine($"Block-only elements: {state.BlockOnlyIds.Count}");
@@ -2965,9 +3040,9 @@ public partial class RvtFileReader
                 state.AllKnownIds.Add(bid);
             var secondPassGReps = new List<BlockParser.PendingGRep>();
             if (framedBlocks) ParseFramedBlocks(state, collectBlockOnlyIds: false, secondPassGReps);
-            foreach (var chunk in state.NonRecordChunks.Where(Scanned))
+            foreach (var chunk in nonRecordScan)
                 BlockParser.ParseChunk(chunk, state, deferred: secondPassGReps);
-            foreach (var chunk in state.RecordChunks.Where(Scanned))
+            foreach (var chunk in recordScan)
                 BlockParser.ParseChunk(chunk, state, deferred: secondPassGReps);
             BlockParser.ApplyPendingGReps(state, secondPassGReps);
         }

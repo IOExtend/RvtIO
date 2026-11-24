@@ -11,7 +11,10 @@ internal static class BlockParser
     private static readonly string? DumpGrepEnvironment = Environment.GetEnvironmentVariable("RVTIO_DUMP_GREP");
 
     /// <summary>A GRep block collected for decoding after the walk of one or several chunks.</summary>
-    internal readonly record struct PendingGRep(byte[] Chunk, uint Eid, int Start, uint Size, bool IsFamilyCut);
+    internal readonly record struct PendingGRep(byte[] Chunk, uint Eid, int Start, uint Size, bool IsFamilyCut)
+    {
+        internal PartitionChunks.Block? Stored { get; init; }
+    }
 
     /// <summary>Decodes the collected GRep blocks and applies them in collection order (the merge rules depend on
     /// arrival order).</summary>
@@ -22,7 +25,8 @@ internal static class BlockParser
             index =>
             {
                 var job = pending[index];
-                return GRepParserV2.Parse(job.Chunk, job.Start, job.Size);
+                var (data, start) = job.Stored?.Read() ?? (job.Chunk, job.Start);
+                return GRepParserV2.Parse(data, start, job.Size);
             },
             (index, geometry) => ApplyPendingGRep(state, pending[index], geometry));
     }

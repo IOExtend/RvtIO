@@ -51,6 +51,38 @@ public class TfStreamWalkerStreamingTests
     }
 
     [Fact]
+    public void BackedWindowsPreserveAnchorsRecordsAndTargetedVisitOrder()
+    {
+        uint[] ids = Enumerable.Range(101, 24).Select(id => (uint)id).ToArray();
+        byte[] bytes = Blocks(ids);
+        // Cross the 16 MiB boundary with different targeted classes and keep their visit order.
+        const int length = 800_016;
+        for (int i = 0; i < ids.Length; i++)
+            BitConverter.GetBytes((ushort)(i % 2 == 0 ? 2006 : 2007)).CopyTo(bytes, i * length + 12);
+        byte[][] chunks = bytes.Chunk(189_911).ToArray();
+        using var scratch = new MemoryStream();
+        var backed = new PartitionChunks(new PartitionChunks.Backing(scratch));
+        foreach (var chunk in chunks) backed.Add(chunk);
+
+        Assert.Equal(Visits(chunks, false), Visits(backed, false));
+        Assert.Equal(Visits(chunks, true), Visits(backed, true));
+        Assert.Equal(ids.Length, Visits(backed, true).Count);
+
+        List<(uint Owner, uint Size, ushort Class)> Visits(IReadOnlyList<byte[]> source, bool targeted)
+        {
+            var result = new List<(uint, uint, ushort)>();
+            void Visit(byte[] data, int start, uint size, ushort kind, uint owner)
+            {
+                Assert.Equal(size, BitConverter.ToUInt32(data, start + 12 + (int)size));
+                result.Add((owner, size, kind));
+            }
+            if (targeted) TfStreamWalker.ScanBlocks(source, ids.ToHashSet(), Visit);
+            else TfStreamWalker.Walk(source, [], Visit);
+            return result;
+        }
+    }
+
+    [Fact]
     public void EmptyAndEmptyChunkStreamsHaveNoVisits()
     {
         TfStreamWalker.WalkStreaming([], [], (_, _, _, _, _) => Assert.Fail("Unexpected visit"));

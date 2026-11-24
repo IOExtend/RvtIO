@@ -13,6 +13,10 @@ public sealed class RvtSceneOptions
     /// order and thread; the last update, <c>complete</c>, ends the file read, and the meshes and the scene are built after it.</summary>
     public IProgress<RvtReadProgress>? ReadProgress { get; set; }
 
+    /// <summary>Opens scratch storage for inflated partitions when the scene reader opens a file.
+    /// The factory follows the contract of <see cref="RvtReaderOptions.CreatePartitionScratch"/>.</summary>
+    public Func<Stream>? CreatePartitionScratch { get; set; }
+
     /// <summary>Includes straight model lines and reinforcement described by its centre lines.</summary>
     public bool IncludeModelLinesAndReinforcement { get; set; }
 

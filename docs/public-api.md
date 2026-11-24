@@ -10,7 +10,7 @@ projects through `InternalsVisibleTo`.
 |---|---|
 | `RvtDocument` | Opens a file (`Open`) or a readable, seekable stream (`OpenStream`), saves a verified lossless copy (`SaveAs`), and gives the elements, project information, file metadata and category lookups. A document opened from a stream has no `SourcePath`: `SaveAs` throws `InvalidOperationException`, and printing cannot read the images it takes from the file (the title block logo and the picture of a rendering view). |
 | `RvtFileReader` | Lower level read that returns the `RevitFileInfo` behind a document. `Read` takes a path and `ReadStream` reads from the beginning of a readable, seekable stream, whatever its position. The stream is only read: it is never written to, shortened or closed, also when it is writable. A failure of the stream itself is thrown as the stream threw it. |
-| `RvtReaderOptions` | Options of a read, including `DiagnosticOutput`, `Progress` (see below), `ResolveCurrentCopies` (keeps only the current copy of an element that several partition streams hold; default true, set it to false to decode every copy), `RaiseLimits` and `Diagnostics`. `RevitLocalizationDirectory` is `[Obsolete]` and ignored: the texts are built in. |
+| `RvtReaderOptions` | Options of a read, including `DiagnosticOutput`, `Progress`, `CreatePartitionScratch`, `ResolveCurrentCopies` (keeps only the current copy of an element that several partition streams hold; default true, set it to false to decode every copy), `RaiseLimits` and `Diagnostics`. `RevitLocalizationDirectory` is `[Obsolete]` and ignored: the texts are built in. |
 | `RvtReadDiagnostics`, `StreamRecord`, `ReaderLimitHit` | What a read collects when `RvtReaderOptions.Diagnostics` is set: the partition and metadata streams read (stored and inflated byte sizes and member decode counts) and the streams cut by a limit. |
 | `RvtReadProgress` | File-reading updates delivered through `RvtReaderOptions.Progress`. |
 | `ExportReport`, `SkipLog`, `GeometryQualityClass`, `ElementGeometryQuality` | The machine-readable report of a run (`ToJson`), the per-element geometry quality classification and totals, and the elements an export left out; see [the export report](export-report.md). |
@@ -18,6 +18,14 @@ projects through `InternalsVisibleTo`.
 | `FilteredElementCollector` | Query over the elements of a document (`OfCategory`, `WhereElementIsNotElementType`, `Where`, ...). |
 | `BuildingStoreyCatalog`, `BuildingStorey` | `RvtDocument.GetBuildingStoreyCatalog()` lists native project building storeys in order of elevation and Revit ID. Each storey carries its ID, name and resolved elevation in internal feet. `GetStoreyId(elementId)` uses the current IFC storey rules and returns null for an unknown element or one assigned to the building itself. Obtain a new catalog after editing levels. |
 | `GridAxis` | `RvtDocument.GetGridAxes()` lists decoded project axes in Revit ID order. A circular or multi-segment axis has ordered analytic segments. `GridAxis.Tessellate(maxErrorFeet)` returns path points in internal feet. |
+
+`RvtReaderOptions.CreatePartitionScratch` can return a new, empty stream for the current read. The stream must support reading,
+writing and seeking. RvtIO writes inflated partition segments to it, reads them back in windows and disposes it before the read
+returns or throws. Use private temporary storage outside managed memory to reduce the reader's working set. With a null factory,
+segments are kept in memory.
+
+Exact framing is validated in both modes. Recovery of damaged framing and translation of other Revit layouts can still allocate
+whole partitions. The decoded document and its geometry are built in memory after the partition passes.
 
 `RvtReaderOptions.Progress` observes one `RvtFileReader.Read` or `ReadStream`. The reader calls `IProgress<RvtReadProgress>.Report`
 synchronously on the thread that calls `Read` or `ReadStream`, one call at a time and in phase order, and does not catch an exception the

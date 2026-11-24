@@ -23,6 +23,11 @@ internal static partial class TfStreamWalker
     {
         // As in WalkStreaming: the carried overlap and two maximum-sized items must fit in a segment.
         if (segTarget <= 3 * MaxBlock) throw new ArgumentOutOfRangeException(nameof(segTarget));
+        if (chunks is PartitionChunks { Store: not null } stored)
+        {
+            WalkWindows(stored, knownIds, visit, visitRecord, progress, segTarget);
+            return;
+        }
         long total = 0;
         foreach (var c in chunks) total += c.Length;
         progress?.Invoke(0, total);
@@ -68,12 +73,17 @@ internal static partial class TfStreamWalker
     private static void WalkSegment(byte[] buf, HashSet<uint> knownIds, BlockVisitor visit,
         int visitLimit, RecordVisitor? visitRecord = null, Action<int>? reportPosition = null)
     {
-        int n = buf.Length;
-        int pos = 0;
         bool aligned = false;
+        WalkWindow(buf, 0, ref aligned, knownIds, visit, visitLimit, visitRecord, reportPosition);
+    }
+
+    private static int WalkWindow(byte[] buf, int pos, ref bool aligned, HashSet<uint> knownIds, BlockVisitor visit,
+        int visitLimit, RecordVisitor? visitRecord, Action<int>? reportPosition)
+    {
+        int n = buf.Length;
         const int reportInterval = 1 << 20;
-        long nextReport = reportPosition is null ? long.MaxValue : reportInterval;
-        while (pos + 12 <= n)
+        long nextReport = reportPosition is null ? long.MaxValue : pos + (long)reportInterval;
+        while (pos < visitLimit && pos + 12 <= n)
         {
             if (pos >= nextReport && pos < visitLimit)
             {
@@ -93,13 +103,14 @@ internal static partial class TfStreamWalker
                 continue;
             }
             var (isBlock, size, eid, cls, dataSize) = it.Value;
-            if (isBlock && pos < visitLimit)
+            if (isBlock)
                 visit(buf, pos, dataSize, cls, eid);
-            else if (!isBlock && pos < visitLimit)
+            else
                 visitRecord?.Invoke(buf, pos, eid);
             pos += size;
             aligned = true;
         }
+        return pos;
     }
 
     /// <summary>Targeted scan for GRep blocks (classIdx 0x07D7/0x07D6) of SPECIFIC element
@@ -114,6 +125,11 @@ internal static partial class TfStreamWalker
         // Freeform family symbols (imported meshes) reach multi-MB blocks, far above the
         // anchored walk's MaxBlock. The id+classIdx match already gates false positives.
         const int maxTargetBlock = 8_000_000;
+        if (chunks is PartitionChunks { Store: not null } stored)
+        {
+            ScanWindows(stored, targetIds, visit, segTarget, maxTargetBlock);
+            return;
+        }
         int i = 0;
         var carry = Array.Empty<byte>();
         while (i < chunks.Count)
@@ -130,35 +146,34 @@ internal static partial class TfStreamWalker
             int scanLimit = last ? seg.Length : Math.Max(0, seg.Length - maxTargetBlock);
 
             foreach (byte marker in (ReadOnlySpan<byte>)[0xD7, 0xD6, 0x46])
-            {
-                byte hi = marker == 0x46 ? (byte)0x03 : (byte)0x07;   // 0x0346 sketch curves / 0x07D7-6 GRep
-                var span = new ReadOnlySpan<byte>(seg);
-                int p = 12;                             // classIdx low byte sits at blockStart+12
-                while (p < scanLimit + 12 && p < seg.Length - 1)
-                {
-                    int rel = span[p..].IndexOf(marker);
-                    if (rel < 0) break;
-                    p += rel;
-                    int bs = p - 12;
-                    if (seg[p + 1] == hi && bs >= 0 && bs < scanLimit)
-                    {
-                        uint eid = BitConverter.ToUInt32(seg, bs);
-                        if (targetIds.Contains(eid))
-                        {
-                            uint ds = BitConverter.ToUInt32(seg, bs + 8);
-                            if (ds >= 20 && ds < maxTargetBlock && bs + 16 + ds <= seg.Length)
-                                visit(seg, bs, ds, BitConverter.ToUInt16(seg, bs + 12), eid);
-                        }
-                    }
-                    p++;
-                }
-            }
+                ScanWindow(seg, 0, scanLimit, marker, maxTargetBlock, targetIds, visit);
             if (!last)
             {
                 int tail = Math.Min(maxTargetBlock, seg.Length);
                 carry = new byte[tail];
                 Buffer.BlockCopy(seg, seg.Length - tail, carry, 0, tail);
             }
+        }
+    }
+
+    private static void ScanWindow(byte[] bytes, int start, int stop, byte marker, int maxBlock,
+        HashSet<uint> targetIds, BlockVisitor visit)
+    {
+        byte hi = marker == 0x46 ? (byte)0x03 : (byte)0x07;
+        int end = Math.Min(stop, bytes.Length - 13) + 12;
+        var span = bytes.AsSpan();
+        for (int p = start + 12; p < end; p++)
+        {
+            int rel = span[p..end].IndexOf(marker);
+            if (rel < 0) break;
+            p += rel;
+            int bs = p - 12;
+            if (span[p + 1] != hi) continue;
+            uint eid = BitConverter.ToUInt32(span[bs..]);
+            if (!targetIds.Contains(eid)) continue;
+            uint ds = BitConverter.ToUInt32(span[(bs + 8)..]);
+            if (ds >= 20 && ds < maxBlock && bs + 16L + ds <= bytes.Length)
+                visit(bytes, bs, ds, BitConverter.ToUInt16(span[p..]), eid);
         }
     }
 

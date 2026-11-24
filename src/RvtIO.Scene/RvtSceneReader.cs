@@ -85,6 +85,7 @@ public static class RvtSceneReader
             SeparateFacesWithDistinctOpenings = true,
             Diagnostics = diagnostics,
             Progress = options?.ReadProgress,
+            CreatePartitionScratch = options?.CreatePartitionScratch,
         };
 
     /// <summary>The scene diagnostics of a read: <c>read-cut</c> for each stream a reader limit cut, then for each stream read, in

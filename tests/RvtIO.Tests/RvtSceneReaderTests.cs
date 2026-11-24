@@ -652,6 +652,43 @@ public class RvtSceneReaderTests
     }
 
     [Fact]
+    public void ScratchReadKeepsTheSceneAndRecoveryDiagnosticsAndClosesScratch()
+    {
+        var baseline = ReadSyntheticFile([1, 2, 3], new RvtSceneOptions { ModelKey = "model" });
+        using var scratch = new MemoryStream();
+        var result = ReadSyntheticFile([1, 2, 3], new RvtSceneOptions
+        {
+            ModelKey = "model",
+            CreatePartitionScratch = () => scratch,
+        });
+
+        Assert.Equal(SceneJson.Write(baseline.Document), SceneJson.Write(result.Document));
+        Assert.Equal(baseline.Diagnostics, result.Diagnostics);
+        Assert.False(scratch.CanRead);
+    }
+
+    [SkippableFact]
+    public void ScratchReadMatchesSceneAndDiagnosticsOfARealModel()
+    {
+        string path = TestFiles.Find("Test_2025.rvt");
+        var baseline = RvtSceneReader.Read(path);
+        string temporary = Path.Combine(Path.GetTempPath(), "rvtio-scratch-" + Guid.NewGuid().ToString("N"));
+        using var input = File.OpenRead(path);
+        var result = RvtSceneReader.ReadStream(input, new RvtSceneOptions
+        {
+            ModelKey = Path.GetFileName(path),
+            CreatePartitionScratch = () => new FileStream(temporary, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None,
+                bufferSize: 64 * 1024, FileOptions.DeleteOnClose),
+        });
+
+        Assert.NotEmpty(baseline.Document.Instances);
+        Assert.Equal(baseline.Diagnostics, result.Diagnostics);
+        Assert.Equal(SceneJson.Write(baseline.Document), SceneJson.Write(result.Document));
+        Assert.False(File.Exists(temporary));
+        Assert.True(input.CanRead);
+    }
+
+    [Fact]
     public void InvalidCompoundStreamKeepsItsTypedErrorAndRemainsOpen()
     {
         using var stream = new MemoryStream([1, 2, 3]);

@@ -9,8 +9,8 @@ public partial class RvtFileReader
     /// Revit 2022 layout (see <see cref="R22Transcoder"/>); the chunks after the partition streams are kept. Also the number of rewritten
     /// partition chunks and the framed streams with their records of the project's own block in that layout (null for a stream without
     /// a framing or with another id width). Null when the file's schema table does not parse a second time or its id width is not 4 or 8 bytes.</summary>
-    private static (List<byte[]> Chunks, int PartitionChunkCount, List<PartitionFraming.Framed?> Framed)? RewriteToR22Layout(RootStorage root,
-        FileSchema schema, List<byte[]> chunks, IReadOnlyList<IReadOnlyList<byte[]>> partitionStreams,
+    private static (PartitionChunks Chunks, int PartitionChunkCount, List<PartitionFraming.Framed?> Framed)? RewriteToR22Layout(RootStorage root,
+        FileSchema schema, PartitionChunks chunks, IReadOnlyList<IReadOnlyList<byte[]>> partitionStreams,
         IReadOnlyList<PartitionFraming.Framed?> framedStreams, TextWriter? diag, ElementIdMap? ids,
         IProgress<RvtReadProgress>? progress = null)
     {
@@ -23,14 +23,15 @@ public partial class RvtFileReader
         using var shipped = typeof(RvtFileReader).Assembly.GetManifestResourceStream("RvtIO.Resources.r22_schemas.json");
         if (shipped == null) return null;
         var transcoder = new R22Transcoder(source, TfSchemaReader.ReadShipped2022(shipped), width, ids);
-        var rewritten = new List<byte[]>(chunks.Count);
+        var rewritten = new PartitionChunks(chunks.Store);
         // The unit of work is a stream: each partition stream and each framed stream the rewrite reads.
         int streamCount = partitionStreams.Count + framedStreams.Count(frame => frame != null);
         int streamsDone = 0;
         progress?.Report(new("r22-layout", 0, streamCount));
         foreach (var stream in partitionStreams)
         {
-            rewritten.AddRange(transcoder.Stream(stream, out var stats));
+            var segments = transcoder.Stream(stream, out var stats);
+            foreach (var segment in segments) rewritten.Add(segment);
             diag?.WriteLine($"Revit 2022 layout: {stats.Records} records ({stats.RecordsRewritten} rewritten), "
                 + $"{stats.RootBlocks} root blocks ({stats.RootBlocksRewritten}), {stats.OtherBlocks} other blocks ({stats.OtherBlocksRewritten}), "
                 + $"{stats.UnparsedBytes} bytes outside the section grammar");
@@ -41,7 +42,8 @@ public partial class RvtFileReader
             progress?.Report(new("r22-layout", ++streamsDone, streamCount));
         }
         int partitionChunkCount = rewritten.Count;
-        rewritten.AddRange(chunks.Skip(partitionStreams.Sum(s => s.Count)));
+        int sourcePartitionCount = partitionStreams.Sum(s => s.Count);
+        rewritten.AddRange(chunks.Select(Enumerable.Range(sourcePartitionCount, chunks.Count - sourcePartitionCount)));
         var framed = new List<PartitionFraming.Framed?>(framedStreams.Count);
         foreach (var frame in framedStreams)
         {

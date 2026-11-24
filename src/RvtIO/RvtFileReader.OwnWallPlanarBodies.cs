@@ -18,10 +18,11 @@ public partial class RvtFileReader
         // Class roots are complete now; a second anchored walk avoids stream-order admission. The walk only collects the
         // owner blocks; the per-block geometry decode is independent, so it runs in parallel and the results are applied in
         // walk order.
-        var jobs = new List<(byte[] Data, int Start, uint Size, ushort Cls, uint Owner)>();
+        var jobs = new List<(PartitionChunks.Block Block, uint Size, ushort Cls, uint Owner)>();
         TfStreamWalker.Walk(state.Chunks, state.AllKnownIds, (data, start, size, cls, owner) =>
         {
-            if (cls is 2007 or 2006 && owners.Contains(owner)) jobs.Add((data, start, size, cls, owner));
+            if (cls is 2007 or 2006 && owners.Contains(owner))
+                jobs.Add((new(data, start, checked((int)size + 16), state.PartitionScratch), size, cls, owner));
         });
         var decoded = new (GRepData? Body, string? Failure)[jobs.Count];
         var grepCounts = jobs.GroupBy(job => job.Owner).ToDictionary(group => group.Key, group => group.Count());
@@ -31,7 +32,8 @@ public partial class RvtFileReader
         var trimmed = new (double Lo, double Hi)?[jobs.Count];
         Parallel.For(0, jobs.Count, index =>
         {
-            var (data, start, size, cls, owner) = jobs[index];
+            var (block, size, cls, owner) = jobs[index];
+            var (data, start) = block.Read();
             decoded[index] = DecodeOwnWallPlanarBody(data, start, size, cls, owner, out var graph);
             if (graph != null && grepCounts[owner] == 1 && decoded[index].Body != null
                 && state.OwnCurrentWallRoots.Contains(owner)
