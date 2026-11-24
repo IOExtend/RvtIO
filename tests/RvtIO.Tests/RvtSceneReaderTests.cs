@@ -3,6 +3,7 @@ using IOScene;
 using RvtIO.BuiltIns;
 using RvtIO.Meshes;
 using RvtIO.Model;
+using RvtIO.Parsing;
 using RvtIO.Scene;
 using Xunit;
 
@@ -229,6 +230,38 @@ public class RvtSceneReaderTests
         Assert.True(stream.Length > persisted);
         Assert.Equal(3, first.ReadParameters.Count);
         Assert.Equal("Resolved later", first.ReadParameters[1].Value);
+    }
+
+    [Fact]
+    public void StoredPhasesAreUpdatedAndRearchivedOneElementAtATime()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var info = new RevitFileInfo
+        {
+            Elements =
+            [
+                new() { Id = 1, SerializedCreatedPhaseId = 7, Parameters = [ExistingPhase(-1)] },
+                new() { Id = 2, SerializedCreatedPhaseId = 8, Parameters = [ExistingPhase(3)] },
+            ],
+        };
+        foreach (var element in info.Elements) scratch.ArchiveParameters(element);
+
+        var edited = new List<int>();
+        ElementBuilder.ApplyStoredPhases(info, new Dictionary<uint, ushort> { [7] = 3065 },
+            archiveParameters: element =>
+            {
+                scratch.ArchiveParameters(element);
+                edited.Add(element.Id);
+            });
+
+        Assert.Equal([1, 2], edited);
+        Assert.Equal(7, info.Elements[0].ReadParameters[0].Value);
+        Assert.Equal(3, info.Elements[1].ReadParameters[0].Value);
+        Assert.All(info.Elements, element => Assert.IsNotType<List<Parameter>>(element.ReadParameters));
+
+        static Parameter ExistingPhase(int value) =>
+            new() { Id = -1012100, StorageType = StorageType.ElementId, Value = value };
     }
 
     [Fact]
