@@ -24,6 +24,7 @@ internal sealed class GRepBlockStore : IEnumerable<KeyValuePair<uint, GRepData>>
         internal readonly List<GRepInstance> Instances = decoded.Instances;
         private int symbol = decoded.SymbolElemId;
         private double[]? transform = decoded.InstanceTransform;
+        private WeakReference<GRepData>? cached;
 
         internal void MergeInstances(List<GRepInstance> source)
         {
@@ -31,10 +32,12 @@ internal sealed class GRepBlockStore : IEnumerable<KeyValuePair<uint, GRepData>>
             if (Instances.Count == 0) return;
             symbol = Instances[0].SymbolElemId;
             transform = Instances[0].Transform;
+            Volatile.Write(ref cached, null);
         }
 
         internal GRepData Read()
         {
+            if (Volatile.Read(ref cached)?.TryGetTarget(out var recent) == true) return recent;
             var (data, start) = block.Read();
             // This block has already contributed its diagnostics on the initial decode.
             using var silenceReplay = DiagnosticSink.Use(TextWriter.Null);
@@ -43,6 +46,8 @@ internal sealed class GRepBlockStore : IEnumerable<KeyValuePair<uint, GRepData>>
             geometry.Instances = Instances;
             geometry.SymbolElemId = symbol;
             geometry.InstanceTransform = transform;
+            // Repeated lookups can reuse the decoded graph while it remains reachable.
+            Volatile.Write(ref cached, new WeakReference<GRepData>(geometry));
             return geometry;
         }
     }

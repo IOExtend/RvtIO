@@ -85,6 +85,10 @@ public class ReadProgressTests
         Assert.Equal(new RvtReadProgress("parameter-stream"), stream[0]);
         Assert.True(stream.Length >= 3 && stream[^1].Total > 0 && stream[^1].Completed == stream[^1].Total);
         Assert.Equal(new RvtReadProgress("parameter-stream", 0, stream[^1].Total), stream[1]);
+        var build = progress.Updates.Where(update => update.Phase == "build-model").ToArray();
+        Assert.Equal(new RvtReadProgress("build-model"), build[0]);
+        Assert.Equal(new RvtReadProgress("build-model", 0, 1), build[1]);
+        Assert.Equal(new RvtReadProgress("build-model", 1, 1), build[^1]);
     }
 
     [Fact]

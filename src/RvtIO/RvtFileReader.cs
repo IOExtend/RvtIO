@@ -769,14 +769,6 @@ public partial class RvtFileReader
             .Where(k => !state.ElemTable.ContainsKey(k))
             .OrderBy(k => k).ToList();
 
-        foreach (var (elemId, typeId) in state.ElemTable.OrderBy(x => x.Key))
-            ElementBuilder.BuildElemTableElement(elemId, typeId, state, rvtInfo);
-
-        LogPhase("Elements built");
-        foreach (var eid in extraRecordIds)
-            ElementBuilder.BuildDiscoveredElement(eid, state, rvtInfo);
-        LogPhase("Discovered elements built");
-
         // GRep blocks discovered by the stream walk / targeted scan that no index knows:
         // real geometry whose Record/ElemTable entries sit in unrecoverable stream members
         // (e.g. heavy slabs with thousands of reference triangles were entirely absent).
@@ -802,8 +794,39 @@ public partial class RvtFileReader
                 && !state.Records.ContainsKey(familySymbolId))
                 state.BlockOnlyIds.Add(familySymbolId);
 
+        long elementJobs = (long)state.ElemTable.Count + extraRecordIds.Count + state.BlockOnlyIds.Count;
+        long elementsBuilt = 0;
+        var buildClock = progress == null ? null : System.Diagnostics.Stopwatch.StartNew();
+        if (elementJobs > 0) progress?.Report(new("build-model", 0, elementJobs));
+
+        void ElementBuilt()
+        {
+            if (buildClock == null) return;
+            if (++elementsBuilt == elementJobs || buildClock.ElapsedMilliseconds >= 500)
+            {
+                progress!.Report(new("build-model", elementsBuilt, elementJobs));
+                buildClock.Restart();
+            }
+        }
+
+        foreach (var (elemId, typeId) in state.ElemTable.OrderBy(x => x.Key))
+        {
+            ElementBuilder.BuildElemTableElement(elemId, typeId, state, rvtInfo);
+            ElementBuilt();
+        }
+        LogPhase("Elements built");
+        foreach (var eid in extraRecordIds)
+        {
+            ElementBuilder.BuildDiscoveredElement(eid, state, rvtInfo);
+            ElementBuilt();
+        }
+        LogPhase("Discovered elements built");
+
         foreach (var bid in state.BlockOnlyIds)
+        {
             ElementBuilder.BuildBlockOnlyElement(bid, state, rvtInfo);
+            ElementBuilt();
+        }
 
         // Wall function extraction: scan all chunks for classIdx=0x00012100 blocks
         ExtractWallFunctions(state);
