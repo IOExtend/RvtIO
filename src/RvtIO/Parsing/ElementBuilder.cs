@@ -6588,7 +6588,7 @@ internal static partial class ElementBuilder
         FixUnresolvedPhaseCreated(rvtInfo, state?.ArchiveSceneParameters);
         TraceElement(rvtInfo, "after-fixphase");
         FixWallStructuralUsage(rvtInfo, state?.ArchiveSceneParameters);
-        FixWallBaseConstraint(rvtInfo);
+        FixWallBaseConstraint(rvtInfo, state?.ArchiveSceneParameters);
         FixNodeConnectionStatus(rvtInfo, state);
         AddCategoryConstantParams(rvtInfo, state);
         // Wall centrelines the pattern scan missed: synthesize from face geometry (needs the width
@@ -7064,17 +7064,17 @@ internal static partial class ElementBuilder
     /// categories the user edited report the LOCAL USERNAME (they were borrowed on edit);
     /// annotation/view categories report empty.
     /// </summary>
-    private static void ApplyEditedByCategoryRules(RevitFileInfo info, ParsingState? state)
+    internal static void ApplyEditedByCategoryRules(RevitFileInfo info, ParsingState? state)
     {
         string? user = state?.LocalUsername;
         if (string.IsNullOrEmpty(user)) return;
-        foreach (var e in info.Elements)
+        foreach (var e in ElementsWithParameterEdits(info.Elements, state?.ArchiveSceneParameters))
         {
             // Key the rule on the EMITTED category param (what the export/comparison sees), not
             // e.CategoryId - late passes assign CategoryId without updating the param, and those
             // are exactly the internal elements.
             int c = -1;
-            foreach (var p in e.Parameters)
+            foreach (var p in e.ReadParameters)
                 if (p.Id == -1140362) { if (p.Value is int cv) c = cv; break; }
             if (c == -1) continue;
             string? val = EditedByUserCats.Contains(c) ? user
@@ -7089,7 +7089,7 @@ internal static partial class ElementBuilder
     private static void ApplyCapturedCurveStyles(RevitFileInfo info, ParsingState? state)
     {
         if (state == null) return;
-        foreach (var e in info.Elements)
+        foreach (var e in ElementsWithParameterEdits(info.Elements, state.ArchiveSceneParameters))
         {
             if (e.Id <= 0) continue;
             uint eid = (uint)e.Id;
@@ -7269,9 +7269,9 @@ internal static partial class ElementBuilder
         }
     }
 
-    private static void FixWallBaseConstraint(RevitFileInfo info)
+    private static void FixWallBaseConstraint(RevitFileInfo info, Action<Element>? archiveParameters)
     {
-        foreach (var e in info.Elements)
+        foreach (var e in ElementsWithParameterEdits(info.Elements, archiveParameters))
         {
             if (e.CategoryId != -2000011) continue; // OST_Walls
             int lvl = 0; Parameter? baseParam = null;

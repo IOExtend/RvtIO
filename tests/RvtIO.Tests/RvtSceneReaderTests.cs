@@ -257,6 +257,39 @@ public class RvtSceneReaderTests
     }
 
     [Fact]
+    public void WorksharingOwnersUseTheEmittedCategoryWithoutRetainingParameterLists()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var info = new RevitFileInfo
+        {
+            Elements =
+            [
+                new() { CategoryId = -2000260, Parameters = [Category(-2000011)] },
+                new() { Parameters = [Category(-2000260)] },
+                new() { Parameters = [Category(7)] },
+                new() { Parameters = [Category(-2000011), new() { Id = -1002067, Value = "Stored owner" }] },
+            ],
+        };
+        foreach (var element in info.Elements) scratch.ArchiveParameters(element);
+
+        ElementBuilder.ApplyEditedByCategoryRules(info, new RvtIO.Internal.ParsingState
+        {
+            LocalUsername = "Local owner",
+            ArchiveSceneParameters = scratch.ArchiveParameters,
+        });
+
+        Assert.Equal("Local owner", Owner(info.Elements[0]));
+        Assert.Equal("", Owner(info.Elements[1]));
+        Assert.Null(Owner(info.Elements[2]));
+        Assert.Equal("Stored owner", Owner(info.Elements[3]));
+        Assert.All(info.Elements, element => Assert.IsNotType<List<Parameter>>(element.ReadParameters));
+
+        static Parameter Category(int value) => new() { Id = -1140362, Value = value };
+        static object? Owner(Element element) => element.ReadParameters.FirstOrDefault(p => p.Id == -1002067)?.Value;
+    }
+
+    [Fact]
     public void StoredPhasesAreUpdatedAndRearchivedOneElementAtATime()
     {
         using var stream = new MemoryStream();
