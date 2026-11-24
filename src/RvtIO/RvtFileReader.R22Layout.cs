@@ -30,8 +30,8 @@ public partial class RvtFileReader
         progress?.Report(new("r22-layout", 0, streamCount));
         foreach (var stream in partitionStreams)
         {
-            var segments = transcoder.Stream(stream, out var stats);
-            foreach (var segment in segments) rewritten.Add(segment);
+            var segments = transcoder.Stream(stream, out var stats, chunks.Store);
+            rewritten.AddRange(segments);
             diag?.WriteLine($"Revit 2022 layout: {stats.Records} records ({stats.RecordsRewritten} rewritten), "
                 + $"{stats.RootBlocks} root blocks ({stats.RootBlocksRewritten}), {stats.OtherBlocks} other blocks ({stats.OtherBlocksRewritten}), "
                 + $"{stats.UnparsedBytes} bytes outside the section grammar");
@@ -48,7 +48,7 @@ public partial class RvtFileReader
         foreach (var frame in framedStreams)
         {
             if (frame == null) { framed.Add(null); continue; }
-            var rewrittenFrame = transcoder.Framed(frame, out var stats);
+            var rewrittenFrame = transcoder.Framed(frame, out var stats, chunks.Store);
             framed.Add(rewrittenFrame);
             if (rewrittenFrame != null)
                 diag?.WriteLine($"Revit 2022 layout of the project block: {stats.RootBlocks} root blocks ({stats.RootBlocksRewritten} rewritten), "

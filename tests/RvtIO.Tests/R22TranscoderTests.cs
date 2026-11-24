@@ -116,8 +116,10 @@ public class R22TranscoderTests
         Assert.Null(new R22Transcoder(Source(), Target(), 8).Payload(block, 0, block.Length));
     }
 
-    [Fact]
-    public void Framed_RewritesTheBlocksOfTheProjectBlock_EachWholeInOneSegment_AndLeavesOutTheHeaders()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Framed_RewritesTheBlocksOfTheProjectBlock_EachWholeInOneSegment_AndLeavesOutTheHeaders(bool storeSegments)
     {
         var payload = Bytes(w => { w.Write((ushort)6); w.Write(1); w.Write(2); w.Write(77L); });
         var unknown = Bytes(w => { w.Write((ushort)4); w.Write(1); });
@@ -135,7 +137,9 @@ public class R22TranscoderTests
             [new(101, 123, 0, header.Length), new(102, 123, header.Length, root.Length), new(103, 456, header.Length + root.Length, geometry.Length)], 8);
         var transcoder = new R22Transcoder(Source(), Target(), 8);
 
-        var framed = transcoder.Framed(source, out var stats)!;
+        using var scratch = new MemoryStream();
+        var backing = storeSegments ? new PartitionChunks.Backing(scratch) : null;
+        var framed = transcoder.Framed(source, out var stats, backing)!;
 
         Assert.Equal(4, framed.IdWidth);
         Assert.Equal([(102, 123UL), (103, 456UL)], framed.Items.Select(i => (i.Channel, i.Owner)));
@@ -154,6 +158,7 @@ public class R22TranscoderTests
             Assert.False(copied);
             Assert.Equal(expected[i], data.AsSpan(start, framed.Items[i].Length).ToArray());
         }
+        Assert.Equal(storeSegments ? expected.Sum(block => block.Length) : 0, scratch.Length);
         // a frame of another id width than the file's schema is not rewritten
         Assert.Null(transcoder.Framed(source with { IdWidth = 4 }, out _));
     }
@@ -236,13 +241,26 @@ public class R22TranscoderTests
             w.Write(0L);
         });
 
+        byte[] suffix = [0xBC, 0xAD, 0xDE, 0x0A];
+        byte[] input = [.. stream, .. suffix];
         var transcoder = new R22Transcoder(Source(), Target(), 8);
-        _ = transcoder.Stream([stream], out var stats);
+        var expected = transcoder.Stream([input], out var contiguous);
+        using var scratch = new MemoryStream();
+        var backing = new PartitionChunks.Backing(scratch);
+        var split = new PartitionChunks(backing);
+        // Every scalar, payload and separator crosses input segment boundaries.
+        foreach (byte value in input) { split.Add([]); split.Add([value]); }
+        var actual = transcoder.Stream(split, out var stats, backing);
 
-        Assert.Equal(0, stats.UnparsedBytes);
+        Assert.Equal(suffix.Length, stats.UnparsedBytes);
         Assert.Equal(stream.Length, stats.StoppedAt);
+        Assert.Equal("BCADDE0A", stats.StoppedBytes);
+        Assert.Equal(contiguous.StoppedAt, stats.StoppedAt);
         Assert.Equal(1, stats.Records);
         Assert.Equal(1, stats.RecordsRewritten);
         Assert.Empty(stats.Failures);
+        Assert.Equal(expected.Count, actual.Count);
+        for (int i = 0; i < expected.Count; i++) Assert.Equal(expected[i], actual[i]);
+        Assert.Equal(suffix, actual[^1]);
     }
 }

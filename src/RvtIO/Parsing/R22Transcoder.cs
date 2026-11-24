@@ -55,67 +55,80 @@ internal sealed class R22Transcoder
 
     /// <summary>The chunks of one partition stream in the 2022 layout, cut at item boundaries; the input is the same stream
     /// concatenated. Bytes outside the section grammar are copied as they are.</summary>
-    internal List<byte[]> Stream(IReadOnlyList<byte[]> chunks, out Stats stats)
+    internal PartitionChunks Stream(IReadOnlyList<byte[]> chunks, out Stats stats, PartitionChunks.Backing? backing = null)
     {
-        long total = 0;
-        foreach (var c in chunks) total += c.Length;
-        var buf = new byte[total];
-        long off = 0;
-        foreach (var c in chunks) { Buffer.BlockCopy(c, 0, buf, (int)off, c.Length); off += c.Length; }
-        var result = new List<byte[]>();
-        var output = new MemoryStream();
+        var source = new ChunkInput(chunks);
+        var result = new PartitionChunks(backing);
+        using var output = new MemoryStream();
         stats = new Stats();
         int w = _sourceWidth;
-        int n = buf.Length, p = 0;
+        long n = source.Length, p = 0;
         void Flush(bool force)
         {
-            if (output.Length > 0 && (force || output.Length >= 1 << 20)) { result.Add(output.ToArray()); output.SetLength(0); }
+            if (output.Length == 0 || (!force && output.Length < 1 << 20)) return;
+            result.Add(output.ToArray());
+            output.SetLength(0);
         }
         void Separator(int length, bool counted)
         {
             // ff*W [u32 k]? 00*8 in the source width, ff*4 ... in the target width
-            var sep = new byte[(counted ? 4 : 0) + 4 + 8];
-            sep.AsSpan(0, 4).Fill(0xFF);
-            if (counted) BinaryPrimitives.WriteUInt32LittleEndian(sep.AsSpan(4), BitConverter.ToUInt32(buf, p + w));
-            output.Write(sep);
+            Span<byte> sep = stackalloc byte[16];
+            sep.Clear();
+            sep[..4].Fill(0xFF);
+            if (counted) BinaryPrimitives.WriteUInt32LittleEndian(sep[4..], source.UInt32(p + w));
+            output.Write(sep[..(counted ? 16 : 12)]);
             p += length;
         }
-        bool IsSeparator(int at) => at + w <= n && buf.AsSpan(at, w).IndexOfAnyExcept((byte)0xFF) < 0;
-        bool HasRecordlessSectionAhead(int at)
+        bool IsSeparator(long at) => at + w <= n && source.Span(at, w).IndexOfAnyExcept((byte)0xFF) < 0;
+        bool TryItem(long at, bool block, out int length)
         {
-            if (at + w + 8 > n || !IsSeparator(at) || buf.AsSpan(at + w, 8).IndexOfAnyExcept((byte)0) >= 0) return false;
-            int q = at + w + 8;
-            while (q + w + 12 <= n && !IsSeparator(q) && TryBlock(buf, q, w, out int len)) q += len;
-            if (q + w + 12 > n || !IsSeparator(q) || buf.AsSpan(q + w + 4, 8).IndexOfAnyExcept((byte)0) >= 0) return false;
+            length = 0;
+            int head = w + (block ? 8 : 4);
+            if (at + head + 4 > n) return false;
+            uint size = source.UInt32(at + head - 4);
+            if (size < 2 || size > (block ? 64_000_000u : 8_000_000u) || at + head + 4 + size > n
+                || source.UInt32(at + head + size) != size) return false;
+            length = head + (int)size + 4;
+            return true;
+        }
+        bool HasRecordlessSectionAhead(long at)
+        {
+            if (at + w + 8 > n || !IsSeparator(at) || source.Span(at + w, 8).IndexOfAnyExcept((byte)0) >= 0) return false;
+            long q = at + w + 8;
+            while (!IsSeparator(q) && TryItem(q, true, out int len)) q += len;
+            if (q + w + 12 > n || !IsSeparator(q) || source.Span(q + w + 4, 8).IndexOfAnyExcept((byte)0) >= 0) return false;
             q += w + 12;
-            while (q + w + 12 <= n && !IsSeparator(q) && TryBlock(buf, q, w, out int len)) q += len;
-            return q + w + 12 <= n && IsSeparator(q) && buf.AsSpan(q + w + 4, 8).IndexOfAnyExcept((byte)0) < 0;
+            while (!IsSeparator(q) && TryItem(q, true, out int len)) q += len;
+            return q + w + 12 <= n && IsSeparator(q) && source.Span(q + w + 4, 8).IndexOfAnyExcept((byte)0) < 0;
         }
         while (p < n)
         {
             // section: records
-            int recordsAt = p;
-            while (p + w + 8 <= n && !IsSeparator(p) && TryRecord(buf, p, w, out int length))
+            long recordsAt = p;
+            while (!IsSeparator(p) && TryItem(p, false, out int length))
             {
-                WriteRecord(buf, p, output, stats);
+                var (data, start) = source.Bytes(p, length);
+                WriteRecord(data, start, output, stats);
                 p += length;
                 Flush(false);
             }
             if (!IsSeparator(p) || p + w + 8 > n || (p == recordsAt && !HasRecordlessSectionAhead(p))) break;
             Separator(w + 8, false);
             // root blocks
-            while (p + w + 12 <= n && !IsSeparator(p) && TryBlock(buf, p, w, out int length))
+            while (!IsSeparator(p) && TryItem(p, true, out int length))
             {
-                WriteBlock(buf, p, output, stats, root: true);
+                var (data, start) = source.Bytes(p, length);
+                WriteBlock(data, start, output, stats, root: true);
                 p += length;
                 Flush(false);
             }
             if (!IsSeparator(p) || p + w + 12 > n) break;
             Separator(w + 12, true);
             // second blocks (one per record: placeholders and geometry)
-            while (p + w + 12 <= n && !IsSeparator(p) && TryBlock(buf, p, w, out int length))
+            while (!IsSeparator(p) && TryItem(p, true, out int length))
             {
-                WriteBlock(buf, p, output, stats, root: false);
+                var (data, start) = source.Bytes(p, length);
+                WriteBlock(data, start, output, stats, root: false);
                 p += length;
                 Flush(false);
             }
@@ -123,22 +136,91 @@ internal sealed class R22Transcoder
             Separator(w + 12, true);
             Flush(true);
         }
-        if (p < n) output.Write(buf, p, n - p);
+        if (p < n)
+        {
+            // Preserve the original unparsed tail as one chunk for the legacy scanners.
+            source.CopyTail(p, output);
+            stats.StoppedBytes = Convert.ToHexString(source.Span(p, (int)Math.Min(48, n - p)));
+        }
         Flush(true);
         stats.UnparsedBytes = n - p;
         stats.StoppedAt = p;
-        if (p < n) stats.StoppedBytes = Convert.ToHexString(buf, p, Math.Min(48, n - p));
         return result;
+    }
+
+    private sealed class ChunkInput
+    {
+        private readonly IReadOnlyList<byte[]> _chunks;
+        private readonly long[] _starts;
+        private int _current = -1;
+        private byte[] _data = [];
+
+        internal ChunkInput(IReadOnlyList<byte[]> chunks)
+        {
+            _chunks = chunks;
+            _starts = new long[chunks.Count + 1];
+            for (int index = 0; index < chunks.Count; index++)
+                _starts[index + 1] = _starts[index] + PartitionChunks.LengthAt(chunks, index);
+        }
+
+        internal long Length => _starts[^1];
+
+        private int Locate(long at)
+        {
+            if (_current < 0 || at < _starts[_current] || at >= _starts[_current + 1])
+            {
+                int index = Array.BinarySearch(_starts, at);
+                if (index < 0) index = ~index - 1;
+                while (at == _starts[index + 1]) index++;
+                _data = _chunks[index];
+                _current = index;
+            }
+            return (int)(at - _starts[_current]);
+        }
+
+        internal (byte[] Data, int Offset) Bytes(long at, int count)
+        {
+            int offset = Locate(at);
+            if (count <= _data.Length - offset) return (_data, offset);
+            var buffer = new byte[count];
+            for (int copied = 0; copied < count;)
+            {
+                offset = Locate(at + copied);
+                int length = Math.Min(count - copied, _data.Length - offset);
+                _data.AsSpan(offset, length).CopyTo(buffer.AsSpan(copied));
+                copied += length;
+            }
+            return (buffer, 0);
+        }
+
+        internal ReadOnlySpan<byte> Span(long at, int count)
+        {
+            var (data, offset) = Bytes(at, count);
+            return data.AsSpan(offset, count);
+        }
+
+        internal uint UInt32(long at) => BinaryPrimitives.ReadUInt32LittleEndian(Span(at, 4));
+
+        internal void CopyTail(long at, Stream output)
+        {
+            while (at < Length)
+            {
+                int offset = Locate(at);
+                int length = _data.Length - offset;
+                output.Write(_data, offset, length);
+                at += length;
+            }
+        }
     }
 
     /// <summary>The channel-102 and 103 records of the project's own block of one framed stream in the 2022 layout, each rewritten as
     /// <see cref="Stream"/> rewrites a block and none running into the next segment; channel 101 is left out. Null when the frame's id
     /// width is not the one of the file's schema.</summary>
-    internal PartitionFraming.Framed? Framed(PartitionFraming.Framed source, out Stats stats)
+    internal PartitionFraming.Framed? Framed(PartitionFraming.Framed source, out Stats stats, PartitionChunks.Backing? backing = null)
     {
         stats = new Stats();
         if (source.IdWidth != _sourceWidth) return null;
-        var segments = new List<byte[]>();
+        var segments = new PartitionChunks(backing);
         var items = new List<PartitionFraming.ProjectItem>();
         var output = new MemoryStream();
         long flushed = 0;
@@ -163,26 +245,6 @@ internal sealed class R22Transcoder
         public long StoppedAt;
         public string? StoppedBytes;
         public readonly Dictionary<string, int> Failures = new();
-    }
-
-    private static bool TryRecord(byte[] b, int p, int w, out int length)
-    {
-        length = 0;
-        if (p + w + 8 > b.Length) return false;
-        uint size = BitConverter.ToUInt32(b, p + w);
-        if (size < 2 || size > 8_000_000 || p + (long)w + 8 + size > b.Length || BitConverter.ToUInt32(b, p + w + 4 + (int)size) != size) return false;
-        length = w + 8 + (int)size;
-        return true;
-    }
-
-    private static bool TryBlock(byte[] b, int p, int w, out int length)
-    {
-        length = 0;
-        if (p + w + 12 > b.Length) return false;
-        uint size = BitConverter.ToUInt32(b, p + w + 4);
-        if (size < 2 || size > 64_000_000 || p + (long)w + 12 + size > b.Length || BitConverter.ToUInt32(b, p + w + 8 + (int)size) != size) return false;
-        length = w + 12 + (int)size;
-        return true;
     }
 
     private void WriteId(byte[] b, int p, MemoryStream output)

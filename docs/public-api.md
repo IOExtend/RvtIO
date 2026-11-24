@@ -24,8 +24,10 @@ writing and seeking. RvtIO writes inflated partition segments to it, reads them 
 returns or throws. Use private temporary storage outside managed memory to reduce the reader's working set. With a null factory,
 segments are kept in memory.
 
-Exact framing is validated in both modes. Recovery of damaged framing and translation of other Revit layouts can still allocate
-whole partitions. The decoded document and its geometry are built in memory after the partition passes.
+Exact framing is validated in both modes. Layout translation reads the partition by item and writes completed chunks to scratch
+when configured. Raw element record bodies can be read back from those same chunks. Recovery of damaged framing and bytes outside
+the layout grammar can still require a whole partition in memory. The decoded document and its geometry are built in memory after
+the partition passes.
 
 `RvtReaderOptions.Progress` observes one `RvtFileReader.Read` or `ReadStream`. The reader calls `IProgress<RvtReadProgress>.Report`
 synchronously on the thread that calls `Read` or `ReadStream`, one call at a time and in phase order, and does not catch an exception the
