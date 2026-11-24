@@ -190,8 +190,8 @@ public class RvtSceneReaderTests
             IsApproximate = true,
         };
         var missing = new Parameter { Id = 1202, Value = false, StorageType = StorageType.Integer, HasNoRevitValue = true };
-        var first = new Element { Parameters = [reference, text, distance, missing] };
-        var second = new Element { Parameters = [new Parameter { Id = 2, Value = 7 }] };
+        var first = new Element { Parameters = [reference, text, distance, missing], SerializedCreatedPhaseId = 0 };
+        var second = new Element { Parameters = [new Parameter { Id = -1002050, Value = 7 }] };
         var original = first.Parameters;
         scratch.ArchiveParameters([first, second]);
 
@@ -211,6 +211,8 @@ public class RvtSceneReaderTests
         Assert.True(archived[2].IsApproximate);
         Assert.False(archived[3].HasRevitValue);
         Assert.Equal(false, archived[3].Value);
+        Assert.Contains(7, ProductRules.TypeElementIds([first, second]));
+        Assert.True(ProductRules.HasProjectPhaseReference(first));
         Assert.Same(archived, first.ReadParameters);
 
         first.Parameters.RemoveAt(3);

@@ -24,7 +24,7 @@ internal static class ProductRules
     /// inherit the parameter during parameter propagation without referencing that phase.</summary>
     internal static bool HasProjectPhaseReference(Element e)
     {
-        int? phase = e.Parameters.FirstOrDefault(p => p.Id == -1012100)?.Value is int n ? n : null; // PHASE_CREATED
+        int? phase = e.ReadParameters.FirstOrDefault(p => p.Id == -1012100)?.Value is int n ? n : null; // PHASE_CREATED
         // Id 0 is a phase of Revit 2023 and later (the first project phase, a row of its
         // element table); the earlier layouts number phases from 1.
         return phase is > 0 && (e.References?.Contains(phase.Value) == true || e.SerializedCreatedPhaseId == phase.Value)
@@ -36,7 +36,7 @@ internal static class ProductRules
     {
         var typeElementIds = new HashSet<int>();
         foreach (var e in elements)
-            foreach (var p in e.Parameters)
+            foreach (var p in e.ReadParameters)
                 if (p.Id is -1002050 or -1002052 && p.Value is int typeId && typeId > 0)
                     typeElementIds.Add(typeId);
         return typeElementIds;
