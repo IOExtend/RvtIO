@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
+using System.Text;
 using RvtIO.Model;
 using RvtIO.Parsing;
 using NativeParams = RvtIO.Parsing.TfBlockDeserializer.NativeParams;
@@ -9,9 +10,20 @@ using NamedParam = RvtIO.Parsing.TfBlockDeserializer.NamedParamRecord;
 namespace RvtIO.Internal;
 
 /// <summary>Stores decoded parameter records individually in the partition scratch stream when available.</summary>
-internal sealed class NativeParameterStore(PartitionChunks.Backing? backing) : IReadOnlyDictionary<uint, NativeParams>
+internal sealed class NativeParameterStore : IReadOnlyDictionary<uint, NativeParams>
 {
     private readonly Dictionary<uint, Entry> entries = [];
+    private readonly PartitionChunks.Backing? backing;
+    private readonly MemoryStream? writeBuffer;
+    private readonly BinaryWriter? bufferWriter;
+
+    internal NativeParameterStore(PartitionChunks.Backing? backing)
+    {
+        this.backing = backing;
+        if (backing == null) return;
+        writeBuffer = new MemoryStream(1024);
+        bufferWriter = new BinaryWriter(writeBuffer, Encoding.UTF8, leaveOpen: true);
+    }
 
     private readonly record struct Entry(NativeParams? Resident, PartitionChunks.Chunk? Stored,
         IReadOnlyList<ExtensibleStorageEntity>? Entities);
@@ -44,8 +56,23 @@ internal sealed class NativeParameterStore(PartitionChunks.Backing? backing) : I
     private Entry Store(NativeParams value)
     {
         if (backing == null) return new(value, null, null);
-        using var bytes = new MemoryStream();
-        using var writer = new BinaryWriter(bytes);
+        var bytes = writeBuffer!;
+        lock (bytes)
+        {
+            bytes.SetLength(0);
+            WriteRecord(bufferWriter!, value);
+            var chunk = backing.Add(bytes.GetBuffer().AsSpan(0, checked((int)bytes.Length)));
+            if (bytes.Capacity > 128 * 1024)
+            {
+                bytes.SetLength(0);
+                bytes.Capacity = 64 * 1024;
+            }
+            return new(null, chunk, value.ExtensibleStorage);
+        }
+    }
+
+    private static void WriteRecord(BinaryWriter writer, NativeParams value)
+    {
         writer.Write(value.RootParameterStoresComplete);
         writer.Write(value.TailWalkComplete);
         WriteNullableInts(writer, value.CellClasses);
@@ -69,7 +96,6 @@ internal sealed class NativeParameterStore(PartitionChunks.Backing? backing) : I
             writer.Write(entry.Instance);
             writer.Write(entry.Reporting);
         }
-        return new(null, backing.Add(bytes.GetBuffer().AsSpan(0, checked((int)bytes.Length))), value.ExtensibleStorage);
     }
 
     private NativeParams Read(Entry entry)

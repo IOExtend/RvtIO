@@ -70,4 +70,21 @@ public class NativeParameterStoreTests
         Assert.Equal(new uint[] { 3, 5 }, store.Keys);
         Assert.Equal(7, store[3].Fields["m_dbViewTypeId"]);
     }
+
+    [Fact]
+    public void ReusingBufferKeepsSmallRecordsShortAfterALargeRecord()
+    {
+        using var scratch = new MemoryStream();
+        var store = new NativeParameterStore(new PartitionChunks.Backing(scratch));
+        store[1] = new TfBlockDeserializer.NativeParams();
+        long emptySize = scratch.Length;
+        string largeValue = new('а', 100_000);
+        store[2] = new TfBlockDeserializer.NativeParams { Strings = { (10, largeValue) } };
+        long largeEnd = scratch.Length;
+        store[3] = new TfBlockDeserializer.NativeParams();
+
+        Assert.Equal(emptySize, scratch.Length - largeEnd);
+        Assert.Equal(largeValue, Assert.Single(store[2].Strings).Value);
+        Assert.Empty(store[3].Strings);
+    }
 }
