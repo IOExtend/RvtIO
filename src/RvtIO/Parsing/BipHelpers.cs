@@ -7,8 +7,8 @@ internal static class BipHelpers
 {
     private static class BuiltInDefinitions
     {
-        internal static readonly Dictionary<int, Parameter.BuiltInDefinition> ById = BipNames.Lookup.ToDictionary(
-            entry => entry.Key, entry => new Parameter.BuiltInDefinition(entry.Key, entry.Value));
+        internal static readonly Dictionary<int, Parameter.DefinitionTemplate> ById = BipNames.Lookup.ToDictionary(
+            entry => entry.Key, entry => new Parameter.DefinitionTemplate(entry.Key, entry.Value));
     }
 
     public static Parameter MakeBipParam(int bipId, string? bipName, StorageType storageType, object? value,

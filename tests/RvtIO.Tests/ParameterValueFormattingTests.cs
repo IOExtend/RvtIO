@@ -8,7 +8,7 @@ public class ParameterValueFormattingTests
     [Fact]
     public void DeferredBuiltInDefinitionRetainsIndependentMutabilityAndCloneSemantics()
     {
-        var definition = new Parameter.BuiltInDefinition(-1001203, "ALL_MODEL_MARK");
+        var definition = new Parameter.DefinitionTemplate(-1001203, "ALL_MODEL_MARK");
         var first = new Parameter(definition) { Id = definition.Id, StorageType = StorageType.String, Value = "", HasNoRevitValue = true };
         var second = new Parameter(definition) { Id = definition.Id, StorageType = StorageType.String, Value = "", HasNoRevitValue = true };
         var clone = first.ShallowCopy("A-01");

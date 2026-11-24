@@ -39,12 +39,15 @@ namespace RvtIO.Model
             internal Metadata Copy() => (Metadata)MemberwiseClone();
         }
 
-        internal sealed record BuiltInDefinition(int Id, string Name);
+        internal sealed record DefinitionTemplate(int Id, string? Name, string? BuiltIn)
+        {
+            internal DefinitionTemplate(int id, string name) : this(id, name, name) { }
+        }
 
         /// <summary>Creates an empty parameter with its own mutable definition.</summary>
         public Parameter() => _definition = new Definition();
 
-        internal Parameter(BuiltInDefinition definition) => _definition = definition;
+        internal Parameter(DefinitionTemplate? definition) => _definition = definition;
 
         internal Parameter(Definition definition) => _definition = definition;
 
@@ -72,17 +75,17 @@ namespace RvtIO.Model
         [JsonIgnore]
         public Definition Definition
         {
-            get => _definition is BuiltInDefinition template
-                ? (Definition)(_definition = new Definition { Id = template.Id, Name = template.Name, BuiltInParameter = template.Name })
+            get => _definition is DefinitionTemplate template
+                ? (Definition)(_definition = new Definition { Id = template.Id, Name = template.Name, BuiltInParameter = template.BuiltIn })
                 : (Definition)_definition!;
             set => _definition = value;
         }
 
-        internal string? DefinitionName => _definition is BuiltInDefinition template ? template.Name : ((Definition?)_definition)?.Name;
+        internal string? DefinitionName => _definition is DefinitionTemplate template ? template.Name : ((Definition?)_definition)?.Name;
 
         internal (int Id, string? Name, string? BuiltIn)? DefinitionFields => _definition switch
         {
-            BuiltInDefinition template => (template.Id, template.Name, template.Name),
+            DefinitionTemplate template => (template.Id, template.Name, template.BuiltIn),
             Definition definition => (definition.Id, definition.Name, definition.BuiltInParameter),
             _ => null,
         };

@@ -233,6 +233,30 @@ public class RvtSceneReaderTests
     }
 
     [Fact]
+    public void ParameterPagesRestoreIndependentDefinitions()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        string inlineName = new('x', 513);
+        var first = new Element { Parameters = [WithName("Caption"), WithName(inlineName), new() { Definition = null! }] };
+        var second = new Element { Parameters = [WithName("Caption")] };
+        scratch.ArchiveParameters(first);
+        scratch.ArchiveParameters(second);
+
+        var definition = first.Parameters[0].Definition;
+        definition.Name = "Edited";
+        scratch.ArchiveParameters(first);
+        Assert.Equal("Edited", first.ReadParameters[0].DefinitionName);
+        Assert.Equal("Caption", second.ReadParameters[0].DefinitionName);
+        Assert.Equal("BUILT_IN", second.ReadParameters[0].Definition.BuiltInParameter);
+        Assert.Equal(inlineName, first.ReadParameters[1].DefinitionName);
+        Assert.Null(first.ReadParameters[2].Definition);
+
+        static Parameter WithName(string name) =>
+            new() { Id = -7, Definition = new Definition { Id = -7, Name = name, BuiltInParameter = "BUILT_IN" } };
+    }
+
+    [Fact]
     public void StoredPhasesAreUpdatedAndRearchivedOneElementAtATime()
     {
         using var stream = new MemoryStream();

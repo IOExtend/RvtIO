@@ -419,7 +419,7 @@ public static class RvtSceneReader
             if (DisplayText(parameter) is not { } text) continue;
             properties.Add(new SceneProperty
             {
-                Name = parameter.Definition?.Name ?? parameter.Id.ToString(CultureInfo.InvariantCulture),
+                Name = parameter.DefinitionName ?? parameter.Id.ToString(CultureInfo.InvariantCulture),
                 Key = parameter.Id < 0 ? "revit:bip:" + parameter.Id.ToString(CultureInfo.InvariantCulture) : null,
                 Value = SceneValue.FromText(text),
             });

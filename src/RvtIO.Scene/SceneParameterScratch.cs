@@ -22,7 +22,7 @@ internal sealed class SceneParameterScratch(PartitionChunks.Backing storage)
     private readonly MemoryStream output = new(64 * 1024);
     private readonly object readLock = new();
     private readonly Dictionary<(int Id, string? Name, string? BuiltIn), int> definitionIds = new();
-    private readonly List<(int Id, string? Name, string? BuiltIn)> definitions = new();
+    private readonly List<Parameter.DefinitionTemplate> definitions = new();
     private PartitionChunks.Chunk? cached;
     private Parameter[]? cachedParameters;
 
@@ -89,17 +89,16 @@ internal sealed class SceneParameterScratch(PartitionChunks.Backing storage)
                 int id = reader.ReadInt32();
                 StorageType storageType = (StorageType)reader.Read7BitEncodedInt();
                 var flags = (ParameterFlags)reader.ReadByte();
-                var parameter = new Parameter
-                {
-                    Id = id, StorageType = storageType,
-                    IsReadOnly = (flags & ParameterFlags.ReadOnly) != 0,
-                    IsApproximate = (flags & ParameterFlags.Approximate) != 0,
-                    Value = ReadValue(reader),
-                    HasNoRevitValue = (flags & ParameterFlags.Missing) != 0,
-                    HasResolvedZeroElementId = (flags & ParameterFlags.ResolvedZero) != 0,
-                    FromNativeFields = (flags & ParameterFlags.Native) != 0,
-                    Definition = ReadDefinition(reader)!,
-                };
+                object? value = ReadValue(reader);
+                var parameter = ReadParameter(reader);
+                parameter.Id = id;
+                parameter.StorageType = storageType;
+                parameter.IsReadOnly = (flags & ParameterFlags.ReadOnly) != 0;
+                parameter.IsApproximate = (flags & ParameterFlags.Approximate) != 0;
+                parameter.Value = value;
+                parameter.HasNoRevitValue = (flags & ParameterFlags.Missing) != 0;
+                parameter.HasResolvedZeroElementId = (flags & ParameterFlags.ResolvedZero) != 0;
+                parameter.FromNativeFields = (flags & ParameterFlags.Native) != 0;
                 parameters[i] = parameter;
                 if ((flags & ParameterFlags.Metadata) == 0) continue;
                 if (reader.ReadBoolean())
@@ -135,7 +134,7 @@ internal sealed class SceneParameterScratch(PartitionChunks.Backing storage)
         {
             writer.Write7BitEncodedInt(definitions.Count + 2);
             definitionIds.Add(definition, definitions.Count);
-            definitions.Add(definition);
+            definitions.Add(new Parameter.DefinitionTemplate(definition.Id, definition.Name, definition.BuiltIn));
             return;
         }
         writer.Write7BitEncodedInt(1);
@@ -144,14 +143,15 @@ internal sealed class SceneParameterScratch(PartitionChunks.Backing storage)
         WriteText(writer, definition.BuiltIn);
     }
 
-    private Definition? ReadDefinition(BinaryReader reader)
+    private Parameter ReadParameter(BinaryReader reader)
     {
         int tag = reader.Read7BitEncodedInt();
-        if (tag == 0) return null;
-        var (id, name, builtIn) = tag == 1
-            ? (reader.ReadInt32(), ReadText(reader), ReadText(reader))
-            : definitions[tag - 2];
-        return new Definition { Id = id, Name = name, BuiltInParameter = builtIn };
+        return tag switch
+        {
+            0 => new Parameter((Parameter.DefinitionTemplate?)null),
+            1 => new Parameter(new Definition { Id = reader.ReadInt32(), Name = ReadText(reader), BuiltInParameter = ReadText(reader) }),
+            _ => new Parameter(definitions[tag - 2]),
+        };
     }
 
     private sealed class ParameterList(SceneParameterScratch store, PartitionChunks.Chunk block, int count)

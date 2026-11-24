@@ -1431,12 +1431,12 @@ internal static partial class ElementBuilder
     /// "Design Option" (DESIGN_OPTION_PARAM, string) is "Main Model" for an element outside any
     /// design option (DESIGN_OPTION_ID -1, or -4 on Material elements).
     /// </summary>
-    private static void ApplyDerivedDesignOptionName(RevitFileInfo info)
+    private static void ApplyDerivedDesignOptionName(RevitFileInfo info, Action<Element>? archiveParameters)
     {
-        foreach (var e in info.Elements)
+        foreach (var e in ElementsWithParameterEdits(info.Elements, archiveParameters))
         {
             if (e.ReadParameters.Any(p => p.Id == -1013200)) continue;
-            var option = e.Parameters.FirstOrDefault(p => p.Id == -1013201);
+            var option = e.ReadParameters.FirstOrDefault(p => p.Id == -1013201);
             if (option?.Value is int id && id is -1 or -4)
                 e.Parameters.Add(BipHelpers.MakeBipParam(-1013200, "DESIGN_OPTION_PARAM", StorageType.String, "Main Model"));
         }
@@ -1531,11 +1531,12 @@ internal static partial class ElementBuilder
     /// HOST_ID_PARAM of a family instance from the stored InsertableInst.m_hostId: curtain cells
     /// and mullions report their curtain host, beams their beam system or truss.
     /// </summary>
-    internal static void ApplyHostIdParam(RevitFileInfo info, IReadOnlyDictionary<uint, ushort>? classByElement)
+    internal static void ApplyHostIdParam(RevitFileInfo info, IReadOnlyDictionary<uint, ushort>? classByElement,
+        Action<Element>? archiveParameters = null)
     {
         var byId = new Dictionary<int, Element>();
         foreach (var e in info.Elements) byId.TryAdd(e.Id, e);
-        foreach (var e in info.Elements)
+        foreach (var e in ElementsWithParameterEdits(info.Elements, archiveParameters))
         {
             if (e.SerializedHostId is not int host || host <= 0) continue;
             int? value = null;
@@ -1562,9 +1563,9 @@ internal static partial class ElementBuilder
     /// instances that carry Offset from Host get it as that value; which instances carry it is left
     /// to the existing passes.
     /// </summary>
-    internal static void ApplyInstanceOriginOffsets(RevitFileInfo info)
+    internal static void ApplyInstanceOriginOffsets(RevitFileInfo info, Action<Element>? archiveParameters = null)
     {
-        foreach (var e in info.Elements)
+        foreach (var e in ElementsWithParameterEdits(info.Elements, archiveParameters))
         {
             if (e.InstanceOriginZ is not double z || e.NativeMasterSymbolId == null) continue;
             if (e.CategoryId == -2001300) // OST_StructuralFoundation
@@ -2358,11 +2359,11 @@ internal static partial class ElementBuilder
     }
 
     /// <summary>Which instances carry the parameter is left to the existing passes.</summary>
-    internal static void ApplyInstanceElevationFromLevel(RevitFileInfo info)
+    internal static void ApplyInstanceElevationFromLevel(RevitFileInfo info, Action<Element>? archiveParameters = null)
     {
         var byId = new Dictionary<int, Element>();
         foreach (var e in info.Elements) byId.TryAdd(e.Id, e);
-        foreach (var e in info.Elements)
+        foreach (var e in ElementsWithParameterEdits(info.Elements, archiveParameters))
         {
             if (e.NativeMasterSymbolId == null || e.Transform?.Origin is not { Length: 3 } origin) continue;
             var elevationParam = e.Parameters.FirstOrDefault(p => p.Id == -1001360);
@@ -2370,7 +2371,7 @@ internal static partial class ElementBuilder
             if (e.Parameters.FirstOrDefault(p => p.Id == -1002108)?.Value is not int host || host != -1) continue;
             if (e.Parameters.FirstOrDefault(p => p.Id == -1001352)?.Value is not int level || level <= 0
                 || !byId.TryGetValue(level, out var levelElement)
-                || levelElement.Parameters.FirstOrDefault(p => p.Id == -1007102)?.Value is not double levelElevation)
+                || levelElement.ReadParameters.FirstOrDefault(p => p.Id == -1007102)?.Value is not double levelElevation)
                 continue;
             elevationParam.Value = origin[2] - levelElevation;
             elevationParam.StorageType = StorageType.Double;
@@ -2976,9 +2977,9 @@ internal static partial class ElementBuilder
     }
 
     /// <summary>Computed area/volume for curtain-wall members.</summary>
-    private static void AddCurtainQuantities(RevitFileInfo info)
+    private static void AddCurtainQuantities(RevitFileInfo info, Action<Element>? archiveParameters)
     {
-        foreach (var e in info.Elements)
+        foreach (var e in ElementsWithParameterEdits(info.Elements, archiveParameters))
         {
             if (e.CategoryId is not (-2000170 or -2000171)) continue;
             bool panel = e.CategoryId == -2000170;
@@ -6549,7 +6550,7 @@ internal static partial class ElementBuilder
         ApplyImageSizes(rvtInfo, state);
         ApplyViewportScales(rvtInfo, state);
         AddViewAndDatumDefaults(rvtInfo, state?.ArchiveSceneParameters);
-        AddCurtainQuantities(rvtInfo);
+        AddCurtainQuantities(rvtInfo, state?.ArchiveSceneParameters);
         EnrichTypeLevelBips(rvtInfo, state);
         PropagateChainPlaceholders(rvtInfo, state);
         PropagateTypeElementIdParams(rvtInfo, state);
@@ -6558,11 +6559,11 @@ internal static partial class ElementBuilder
         PropagateFamilySymbolBlockInts(rvtInfo, state);
         PropagateFamilyElementIdParams(rvtInfo, state);
         CoerceParamStorageByForge(rvtInfo, state);
-        ApplyDerivedDesignOptionName(rvtInfo);
+        ApplyDerivedDesignOptionName(rvtInfo, state?.ArchiveSceneParameters);
         ApplyCurveDriverLevelParams(rvtInfo);
-        ApplyHostIdParam(rvtInfo, state?.ElemClassIdx);
-        ApplyInstanceOriginOffsets(rvtInfo);
-        ApplyInstanceElevationFromLevel(rvtInfo);
+        ApplyHostIdParam(rvtInfo, state?.ElemClassIdx, state?.ArchiveSceneParameters);
+        ApplyInstanceOriginOffsets(rvtInfo, state?.ArchiveSceneParameters);
+        ApplyInstanceElevationFromLevel(rvtInfo, state?.ArchiveSceneParameters);
         ApplyStructuralColumnParams(rvtInfo);
         ApplyRoomLevelParams(rvtInfo);
         ApplyFramingSymbolLength(rvtInfo);
@@ -8059,7 +8060,7 @@ internal static partial class ElementBuilder
         public int FirstLevelId;
     }
 
-    private static readonly (Parameter.BuiltInDefinition Definition, StorageType Type, object Value, bool ReadOnly)[] CommonBipDefaults =
+    private static readonly (Parameter.DefinitionTemplate Definition, StorageType Type, object Value, bool ReadOnly)[] CommonBipDefaults =
     [
         CommonBipDefault(-1010103, "ALL_MODEL_DESCRIPTION", StorageType.String, ""),
         CommonBipDefault(-1010104, "ALL_MODEL_URL", StorageType.String, ""),
@@ -8082,7 +8083,7 @@ internal static partial class ElementBuilder
         CommonBipDefault(-1001205, "ALL_MODEL_COST", StorageType.Double, 0.0),
     ];
 
-    private static (Parameter.BuiltInDefinition Definition, StorageType Type, object Value, bool ReadOnly) CommonBipDefault(
+    private static (Parameter.DefinitionTemplate Definition, StorageType Type, object Value, bool ReadOnly) CommonBipDefault(
         int id, string name, StorageType type, object value) => (new(id, name), type, value, BipHelpers.IsBipReadOnly(name));
 
     private static void EnrichTypeLevelBips(RevitFileInfo rvtInfo, ParsingState? state)
