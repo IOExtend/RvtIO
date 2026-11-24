@@ -50,11 +50,13 @@ reports them in this order and never returns to an earlier phase. A file can ski
 `class-schema` covers reading the file's own class schema, its element table records and the episode table;
 `r22-layout` is the rewrite that follows, which can take as long as the phases around it.
 `Completed` and `Total` count partition streams (`partitions`), the streams the rewrite reads (`r22-layout`), data chunks scanned
-for records or names (`element-records`, `element-properties`), block scan passes (`element-blocks`), decoded stream bytes
+for records or names (`element-records`, `element-properties`), block scan and recovery passes
+(`element-blocks`, `recover-geometry`), decoded stream bytes
 (`parameter-stream`) or element candidates processed (`build-model`).
 `Completed` does not decrease within a phase.
 `GeometryBlocks` optionally gives the applied and queued geometry blocks within the current block pass. Such updates
-repeat the pass number while the block count advances.
+repeat the pass number while the block count advances. Geometry recovery passes cover decoding blocks from the main
+walk, locating additional blocks, decoding those blocks, and recovering planar wall bodies.
 A zero total means the reader has no work count for that update. Counts describe units within one phase. `complete`
 (1 of 1) is the last update of a read.
 

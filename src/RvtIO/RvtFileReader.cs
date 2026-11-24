@@ -972,8 +972,11 @@ public partial class RvtFileReader
     {
         if (chunks.Count == 0) return;
         const int batchSize = 16;
+        // ScanChunk emits only valid names and rejects Autodesk identifiers. The scene parser
+        // uses the first valid scan name for element names and missing parameter captions.
+        bool firstNameOnly = !state.KeepExportProvenance;
         var partialResults = new Dictionary<uint, List<string>>?[Math.Min(batchSize, chunks.Count)];
-        var seen = new Dictionary<uint, HashSet<string>>();
+        var seen = firstNameOnly ? null : new Dictionary<uint, HashSet<string>>();
         var clock = progress == null ? null : System.Diagnostics.Stopwatch.StartNew();
         progress?.Report(new("element-properties", 0, chunks.Count));
         for (int start = 0; start < chunks.Count;)
@@ -984,10 +987,10 @@ public partial class RvtFileReader
             Parallel.For(0, count, index =>
             {
                 var localStrings = new Dictionary<uint, List<string>>();
-                StringScanner.ScanChunk(chunks[first + index], state.AllKnownIds, localStrings);
+                StringScanner.ScanChunk(chunks[first + index], state.AllKnownIds, localStrings, firstNameOnly);
                 if (localStrings.Count > 0) partialResults[index] = localStrings;
             });
-            MergeElemScanStringsInChunkOrder(partialResults, state.ElemScanStrings, seen);
+            MergeElemScanStringsInChunkOrder(partialResults, state.ElemScanStrings, seen, firstNameOnly);
             Array.Clear(partialResults);
             start += count;
             if (clock != null && (start == chunks.Count || clock.ElapsedMilliseconds >= 500))
@@ -1001,11 +1004,12 @@ public partial class RvtFileReader
     internal static void MergeElemScanStringsInChunkOrder(
         IReadOnlyList<Dictionary<uint, List<string>>?> partialResults,
         Dictionary<uint, List<string>> elemScanStrings,
-        Dictionary<uint, HashSet<string>>? mergeSeen = null)
+        Dictionary<uint, HashSet<string>>? mergeSeen = null,
+        bool firstNameOnly = false)
     {
         // HashSet-backed dedupe: rebar-heavy models attribute thousands of strings per
         // element, and List.Contains per insert made this merge quadratic.
-        mergeSeen ??= new();
+        if (!firstNameOnly) mergeSeen ??= new();
         for (int chunkIndex = 0; chunkIndex < partialResults.Count; chunkIndex++)
         {
             var partial = partialResults[chunkIndex];
@@ -1013,9 +1017,14 @@ public partial class RvtFileReader
 
             foreach (var (eid, strings) in partial)
             {
+                if (firstNameOnly)
+                {
+                    elemScanStrings.TryAdd(eid, strings);
+                    continue;
+                }
                 if (!elemScanStrings.TryGetValue(eid, out var list))
                     elemScanStrings[eid] = list = new List<string>();
-                if (!mergeSeen.TryGetValue(eid, out var seen))
+                if (!mergeSeen!.TryGetValue(eid, out var seen))
                     mergeSeen[eid] = seen = new HashSet<string>(list);
                 foreach (var s in strings)
                     if (seen.Add(s)) list.Add(s);
@@ -2868,7 +2877,12 @@ public partial class RvtFileReader
         }, (seg, recordStart, eid) => ElementHeaderCategory.Record(state, seg, recordStart, eid),
             progress is null ? null : (completed, total) => progress.Report(new("parameter-stream", completed, total)));
 
-        progress?.Report(new("recover-geometry"));
+        const int recoveryPasses = 4;
+        int completedRecoveryPasses = 0;
+        progress?.Report(new("recover-geometry", completedRecoveryPasses, recoveryPasses));
+        Action<int, int>? recoveryProgress = progress == null ? null : (completed, total) =>
+            progress.Report(new("recover-geometry", completedRecoveryPasses, recoveryPasses)
+                { GeometryBlocks = (completed, total) });
         if (unanchoredTypeRoots != null)
         {
             RecoverFramedScheduleTypes(state, unanchoredTypeRoots);
@@ -2903,7 +2917,9 @@ public partial class RvtFileReader
             }
         }
 
-        ApplyFirstDecodableGReps(state, walkGReps);
+        ApplyFirstDecodableGReps(state, walkGReps, recoveryProgress);
+        walkGReps.Clear();
+        progress?.Report(new("recover-geometry", ++completedRecoveryPasses, recoveryPasses));
 
         // Second pass: geometry blocks the anchored walk missed. Family symbols live in
         // the family doc's own id space (absent from ElemTable), so whole symbol regions
@@ -2927,10 +2943,10 @@ public partial class RvtFileReader
             if (rec.References != null)
                 foreach (var r in rec.References)
                     if (r > 0 && !state.GrepBlocks.ContainsKey((uint)r)) missingIds.Add((uint)r);
+        int foundSketch = 0;
+        var scanGReps = new List<(PartitionChunks.Block Block, uint Size, uint Eid)>();
         if (missingIds.Count > 0)
         {
-            int foundSketch = 0;
-            var scanGReps = new List<(PartitionChunks.Block Block, uint Size, uint Eid)>();
             TfStreamWalker.ScanBlocks(state.Chunks, missingIds, (seg, bs, ds, cls, eid) =>
             {
                 if (dumpGrepEids.Count > 0 && dumpGrepEids.Contains(eid))
@@ -2970,16 +2986,23 @@ public partial class RvtFileReader
                 if (state.GrepBlocks.ContainsKey(eid)) return;
                 scanGReps.Add((new(seg, bs, checked((int)ds + 16), state.PartitionScratch), ds, eid));
             });
-            int found = ApplyFirstDecodableGReps(state, scanGReps);
+        }
+        progress?.Report(new("recover-geometry", ++completedRecoveryPasses, recoveryPasses));
+        if (missingIds.Count > 0)
+        {
+            int found = ApplyFirstDecodableGReps(state, scanGReps, recoveryProgress);
             DiagnosticSink.WriteLine($"  [gscan] targeted scan recovered {found} G-blocks + {foundSketch} sketch curves for {missingIds.Count} candidate ids");
         }
+        scanGReps.Clear();
+        progress?.Report(new("recover-geometry", ++completedRecoveryPasses, recoveryPasses));
         ReadOwnWallPlanarBodies(state);
+        progress?.Report(new("recover-geometry", ++completedRecoveryPasses, recoveryPasses));
     }
 
     /// <summary>Decodes collected GRep blocks in parallel and stores, in collection order, the first decodable block of
     /// each element that has none yet. Returns the number stored.</summary>
     private static int ApplyFirstDecodableGReps(
-        ParsingState state, List<(PartitionChunks.Block Block, uint Size, uint Eid)> jobs)
+        ParsingState state, List<(PartitionChunks.Block Block, uint Size, uint Eid)> jobs, Action<int, int>? progress)
     {
         if (jobs.Count == 0) return 0;
         bool slowDiag = Environment.GetEnvironmentVariable("RVTIO_GREP_SLOW") is { Length: > 0 };
@@ -2999,7 +3022,7 @@ public partial class RvtFileReader
             {
                 var job = jobs[index];
                 if (StoreFirstDecodableGRep(state, job.Eid, geometry, job.Block, job.Size)) stored++;
-            });
+            }, progress);
         return stored;
     }
 

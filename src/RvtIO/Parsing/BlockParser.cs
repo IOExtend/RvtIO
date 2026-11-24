@@ -20,9 +20,6 @@ internal static class BlockParser
     /// arrival order).</summary>
     internal static void ApplyPendingGReps(ParsingState state, List<PendingGRep> pending, Action<int, int>? progress = null)
     {
-        if (pending.Count == 0) return;
-        var clock = progress == null ? null : System.Diagnostics.Stopwatch.StartNew();
-        progress?.Invoke(0, pending.Count);
         DecodeGRepBlocksInOrder(pending.Count,
             index =>
             {
@@ -30,16 +27,7 @@ internal static class BlockParser
                 var (data, start) = job.Stored?.Read() ?? (job.Chunk, job.Start);
                 return GRepParserV2.Parse(data, start, job.Size);
             },
-            (index, geometry) =>
-            {
-                ApplyPendingGRep(state, pending[index], geometry);
-                int completed = index + 1;
-                if (clock != null && (completed == pending.Count || clock.ElapsedMilliseconds >= 500))
-                {
-                    progress!(completed, pending.Count);
-                    clock.Restart();
-                }
-            });
+            (index, geometry) => ApplyPendingGRep(state, pending[index], geometry), progress);
     }
 
     /// <summary>Applies one decoded block of a pass: a family cutter is kept when it is the first authored one of its
@@ -60,19 +48,36 @@ internal static class BlockParser
 
     /// <summary>Decodes <paramref name="count"/> blocks and applies each result on the calling thread in index order.
     /// A browser decodes and applies one block at a time; elsewhere the blocks are decoded in parallel.</summary>
-    internal static void DecodeGRepBlocksInOrder(int count, Func<int, GRepData?> decode, Action<int, GRepData?> apply) =>
-        DecodeGRepBlocksInOrder(count, decode, apply, OperatingSystem.IsBrowser());
+    internal static void DecodeGRepBlocksInOrder(int count, Func<int, GRepData?> decode, Action<int, GRepData?> apply,
+        Action<int, int>? progress = null) =>
+        DecodeGRepBlocksInOrder(count, decode, apply, OperatingSystem.IsBrowser(), progress);
 
     /// <summary>The seam of the overload above: <paramref name="sequential"/> selects the one-block-at-a-time path of a
     /// browser.</summary>
     internal static void DecodeGRepBlocksInOrder(
-        int count, Func<int, GRepData?> decode, Action<int, GRepData?> apply, bool sequential)
+        int count, Func<int, GRepData?> decode, Action<int, GRepData?> apply, bool sequential,
+        Action<int, int>? progress = null)
     {
+        if (count == 0) return;
+        var clock = progress == null ? null : System.Diagnostics.Stopwatch.StartNew();
+        progress?.Invoke(0, count);
+
+        void Apply(int index, GRepData? geometry)
+        {
+            apply(index, geometry);
+            int completed = index + 1;
+            if (clock != null && (completed == count || clock.ElapsedMilliseconds >= 500))
+            {
+                progress!(completed, count);
+                clock.Restart();
+            }
+        }
+
         if (sequential)
         {
             // A browser has a bounded WebAssembly heap: release each unused result before decoding the next block.
             for (int index = 0; index < count; index++)
-                apply(index, decode(index));
+                Apply(index, decode(index));
             return;
         }
 
@@ -82,7 +87,7 @@ internal static class BlockParser
         Parallel.For(0, count, index => decoded[index] = decode(index));
         for (int index = 0; index < count; index++)
         {
-            apply(index, decoded[index]);
+            Apply(index, decoded[index]);
             decoded[index] = null;
         }
     }
