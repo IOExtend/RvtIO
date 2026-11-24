@@ -342,8 +342,8 @@ public class RvtDocument
     /// <exception cref="ArgumentNullException"><paramref name="stream"/> is null.</exception>
     /// <exception cref="ArgumentException"><paramref name="stream"/> is not readable or not seekable, or is closed.</exception>
     /// <exception cref="RvtInputException">The stream is empty, is not a compound file, or is cut or damaged.</exception>
-    /// <exception cref="RvtLimitException">A stream is longer than one array can hold, or a file with no project
-    /// partitions contains a source element ID above the range of document-local keys.</exception>
+    /// <exception cref="RvtLimitException">A stream that requires an array is longer than one array can hold, or a file
+    /// with no project partitions contains a source element ID above the range of document-local keys.</exception>
     public static RvtDocument OpenStream(Stream stream, RvtReaderOptions? options = null)
         => new(new RvtFileReader(options).ReadStream(stream));
 

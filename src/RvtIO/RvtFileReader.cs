@@ -53,11 +53,12 @@ public partial class RvtFileReader
     /// <exception cref="ArgumentNullException"><paramref name="stream"/> is null.</exception>
     /// <exception cref="ArgumentException"><paramref name="stream"/> is not readable or not seekable, or is closed.</exception>
     /// <exception cref="RvtInputException">The stream is empty, is not a compound file, or is cut or damaged.</exception>
-    /// <exception cref="RvtLimitException">A stream is longer than one array can hold, or a file with no project
-    /// partitions contains a source element ID above the range of document-local keys.</exception>
+    /// <exception cref="RvtLimitException">A stream that requires an array is longer than one array can hold, or a file
+    /// with no project partitions contains a source element ID above the range of document-local keys.</exception>
     public RevitFileInfo ReadStream(Stream stream)
     {
-        using var root = RvtContainerCheck.OpenVerified(stream, "Revit input stream", out var view);
+        using var root = RvtContainerCheck.OpenVerified(stream, "Revit input stream", out var view,
+            streamPartitions: _options.CreatePartitionScratch != null);
         var info = ReadCore(root, stream);
         // The decoders absorb a read that fails and go on with less data; such a result is not returned.
         view.ThrowStreamFailure();
@@ -1404,7 +1405,7 @@ public partial class RvtFileReader
             }
 
             var chunks = CutPartitionCore(raw, partStream, framing, decompressor, out var stats, out string? framingFailure,
-                out var framed, entityCellTag, backing);
+                out var framed, entityCellTag, backing, partEntry.Name);
             int? partitionNumber = int.TryParse(partEntry.Name, out int parsedPartition) ? parsedPartition : null;
             if (framed != null && partitionNumber is int partNum)
                 framed = framed with { Partition = partNum };
@@ -1455,7 +1456,8 @@ public partial class RvtFileReader
 
     private static PartitionChunks CutPartitionCore(byte[]? raw, Stream? stream, (PartitionFraming.Tags Tags, int IdWidth)? framing,
         ChunkDecompressor decompressor, out (int Members, int Decoded, int Failed, int Recovered, int Unverified) stats,
-        out string? framingFailure, out PartitionFraming.Framed? framed, ushort? familyEntityCellTag, PartitionChunks.Backing? backing)
+        out string? framingFailure, out PartitionFraming.Framed? framed, ushort? familyEntityCellTag, PartitionChunks.Backing? backing,
+        string? partition = null)
     {
         var segments = new PartitionChunks(backing);
         var items = new List<PartitionFraming.ProjectItem>();
@@ -1493,6 +1495,9 @@ public partial class RvtFileReader
                 return segments;
             }
         }
+        // The gzip recovery scanner still requires one contiguous compressed partition.
+        if (raw == null && stream!.Length > Array.MaxLength)
+            throw RvtContainerCheck.ArrayLengthLimit("Partitions/" + partition, stream.Length);
         var chunks = decompressor.DecompressAll(raw ?? ReadRawPartition(stream!));
         stats = decompressor.LastStats;
         var recovered = new PartitionChunks(backing);

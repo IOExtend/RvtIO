@@ -29,6 +29,9 @@ when configured. Raw element record bodies can be read back from those same chun
 the layout grammar can still require a whole partition in memory. The decoded document and its geometry are built in memory after
 the partition passes.
 
+With a scratch factory, `ReadStream` can validate and decode an exactly framed partition stream larger than one array.
+The array-size limit still applies to other streams and to compressed partitions that require the recovery scanner.
+
 `RvtReaderOptions.Progress` observes one `RvtFileReader.Read` or `ReadStream`. The reader calls `IProgress<RvtReadProgress>.Report`
 synchronously on the thread that calls `Read` or `ReadStream`, one call at a time and in phase order, and does not catch an exception the
 observer throws: it ends the read and reaches the caller as it was thrown, so an observer can cancel by throwing.
