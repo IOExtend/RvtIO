@@ -17,7 +17,7 @@ internal static class ProductRules
     /// an instance whose own geometry is null is not exported (for example the floor-hosted family
     /// "Assignment - Rectangular opening (floor)"). Faces whose flags are not known (placed from a nested symbol) count as filled.</summary>
     internal static bool HasOnlyUnfilledFaces(Element element) =>
-        element.Geometry?.Faces is { Count: > 0 } faces
+        element.Geometry?.ReadFaces is { Count: > 0 } faces
         && faces.All(face => face.GInfoFlags is uint flags && (flags & FaceFillFlag) == 0);
 
     /// <summary>Whether the element names its created phase (PHASE_CREATED) in its own record graph. Preview and type records

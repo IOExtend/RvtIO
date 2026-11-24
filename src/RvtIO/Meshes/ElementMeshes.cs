@@ -78,10 +78,10 @@ public static class ElementMeshes
             if (document.GetElement(symbolId)?.Geometry is { PlacedSymbolClipped: false, PlacedSymbolBox: false } geometry)
             {
                 bool ghosts = geometry.GhostNodes is { Count: > 0 };
-                var (meshes, failed) = Triangulate(geometry.Faces, MaterialOf, ghosts);
+                var (meshes, failed) = Triangulate(geometry.ReadFaces, MaterialOf, ghosts);
                 if (meshes.Count > 0)
                     symbol = new SymbolMeshes(Keep(meshes), failed + geometry.UntriangulatedFaces, geometry.UntriangulatedFaces,
-                        DropsUntakenNodes(geometry.Faces, ghosts), geometry.Faces.Any(face => face.GeometryNode < 0), ghosts);
+                        DropsUntakenNodes(geometry.ReadFaces, ghosts), geometry.ReadFaces.Any(face => face.GeometryNode < 0), ghosts);
             }
             symbolCache[symbolId] = symbol;
             return symbol;
@@ -92,7 +92,7 @@ public static class ElementMeshes
         {
             if (geometry.ExactMappedInstances is not { Count: > 0 } mapped || geometry.PlacedSymbolClipped || geometry.PlacedSymbolBox)
                 return null;
-            bool dropsUntaken = DropsUntakenNodes(geometry.Faces, geometry.GhostNodes is { Count: > 0 });
+            bool dropsUntaken = DropsUntakenNodes(geometry.ReadFaces, geometry.GhostNodes is { Count: > 0 });
             var placements = new List<SymbolPlacement>(mapped.Count);
             int failed = 0;
             int untriangulatedInSymbols = 0;
@@ -164,7 +164,7 @@ public static class ElementMeshes
                 });
                 continue;
             }
-            var (meshes, failed) = Triangulate(body.Faces, MaterialOf, body.GhostNodes is { Count: > 0 });
+            var (meshes, failed) = Triangulate(body.ReadFaces, MaterialOf, body.GhostNodes is { Count: > 0 });
             // A face left out of the reader's triangulation of its trim loops (see GeometryData.UntriangulatedFaces).
             failed += body.UntriangulatedFaces;
             elements.Add(new ElementMesh
@@ -312,7 +312,7 @@ public static class ElementMeshes
         if (!(length > 0 && double.IsFinite(length))) return null;
         var normal = direction / length;
         var origin = Pt3.From(plane.Origin);
-        var faces = host.Faces.Where(face => face.OuterVertices is { Count: >= 3 } loop &&
+        var faces = host.ReadFaces.Where(face => face.OuterVertices is { Count: >= 3 } loop &&
             loop.All(point => point.Length == 3 && Math.Abs(normal.Dot(Pt3.From(point) - origin)) <= tolerance))
             .Take(2).ToArray();
         if (faces.Length != 1) return null;

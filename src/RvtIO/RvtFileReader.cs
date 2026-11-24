@@ -796,11 +796,16 @@ public partial class RvtFileReader
 
         long elementJobs = (long)state.ElemTable.Count + extraRecordIds.Count + state.BlockOnlyIds.Count;
         long elementsBuilt = 0;
+        int archivedElements = 0;
+        var archiveGeometry = _options.ArchiveSceneGeometry;
         var buildClock = progress == null ? null : System.Diagnostics.Stopwatch.StartNew();
         if (elementJobs > 0) progress?.Report(new("build-model", 0, elementJobs));
 
         void ElementBuilt()
         {
+            if (archiveGeometry != null)
+                while (archivedElements < rvtInfo.Elements.Count)
+                    archiveGeometry(rvtInfo.Elements[archivedElements++]);
             if (buildClock == null) return;
             if (++elementsBuilt == elementJobs || buildClock.ElapsedMilliseconds >= 500)
             {

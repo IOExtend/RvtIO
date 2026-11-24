@@ -53,6 +53,8 @@ public class RvtReaderOptions
     /// working set. Null keeps the segments in memory.</summary>
     public Func<Stream>? CreatePartitionScratch { get; set; }
 
+    internal Action<Model.Element>? ArchiveSceneGeometry { get; set; }
+
     /// <summary>Receives phase and work-count updates from <see cref="RvtFileReader.Read"/> in the order the phases run.
     /// The reader calls <see cref="IProgress{T}.Report"/> synchronously on the thread that calls <c>Read</c>, one call at a time, and
     /// does not catch an exception the observer throws: it ends the read. <see cref="Progress{T}"/> instead posts each update to the

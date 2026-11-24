@@ -2,14 +2,24 @@ using System.Collections;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using RvtIO.Meshes;
+using RvtIO.Model;
 using RvtIO.Parsing;
 
 namespace RvtIO.Scene;
 
 /// <summary>Stores triangle buffers in seekable scratch while preserving the scene's list contracts.</summary>
-internal sealed class SceneMeshScratch(Stream stream)
+internal sealed class SceneMeshScratch
 {
-    private readonly PartitionChunks.Backing storage = new(stream);
+    private readonly PartitionChunks.Backing storage;
+    private readonly GeometryFaceStore faces;
+
+    internal SceneMeshScratch(Stream stream)
+    {
+        storage = new(stream);
+        faces = new(storage);
+    }
+
+    internal void ArchiveGeometry(Element element) => faces.Archive(element);
 
     internal IReadOnlyList<TriangleMesh> Store(IReadOnlyList<TriangleMesh> meshes)
     {

@@ -102,8 +102,9 @@ public static class RvtSceneReader
                     throw new ArgumentException("Partition scratch must be separate from triangle scratch.", nameof(options));
                 return partitionScratch;
             };
-        var document = RvtDocument.OpenStream(stream, readerOptions);
         var scratch = triangleScratch == null ? null : new SceneMeshScratch(triangleScratch);
+        if (scratch != null) readerOptions.ArchiveSceneGeometry = scratch.ArchiveGeometry;
+        var document = RvtDocument.OpenStream(stream, readerOptions);
         var meshes = ElementMeshes.ExtractCore(document, MeshOptions(options), scratch == null ? null : scratch.Store);
         return Map(document, meshes, key, ReadDiagnostics(readDiagnostics), scratch);
     }

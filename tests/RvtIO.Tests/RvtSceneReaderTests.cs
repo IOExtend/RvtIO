@@ -147,6 +147,43 @@ public class RvtSceneReaderTests
     }
 
     [Fact]
+    public void ExpandedFacePagesPreserveFaceOrderAndRestoreMutableLists()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var faces = Enumerable.Range(0, 1024).Select(i => new GeoFace
+        {
+            Origin = [i, 0, 0],
+            OuterVertices = [[i, 0, 0], [i + 1, 0, 0], [i, 1, 0]],
+            InnerVertices = i == 1 ? [[[1.1, .1, 0], [1.2, .1, 0], [1.1, .2, 0]]] : null,
+            Normal = [0, 0, 1],
+            GeometryNode = i % 2 == 0 ? 4 : -7,
+            RenderStyleId = i,
+            MeshArcs = i == 1 ? [new([1, 2, 3], [1, 0, 0], [0, 1, 0], .5, .25, .75, 6)] : null,
+            GInfoFlags = i == 0 ? 0x200u : null,
+            EdgeIndices = i == 0 ? [0, 2, 1] : null,
+        }).ToList();
+        var geometry = new GeometryData { Faces = faces };
+        scratch.ArchiveGeometry(new Element { Geometry = geometry });
+
+        Assert.True(stream.Length > 64 * 1024);
+        Assert.NotSame(faces, geometry.ReadFaces);
+        Assert.Equal(faces.Select(face => face.RenderStyleId), geometry.ReadFaces.Select(face => face.RenderStyleId));
+        Assert.Equal(faces[1000].OuterVertices![2], geometry.ReadFaces[1000].OuterVertices![2]);
+        Assert.Equal(faces[1].InnerVertices![0][1], geometry.ReadFaces[1].InnerVertices![0][1]);
+        Assert.Equal(6u, Assert.Single(geometry.ReadFaces[1].MeshArcs!).Edge);
+        Assert.Equal(0x200u, geometry.ReadFaces[0].GInfoFlags);
+        Assert.Equal(faces[0].EdgeIndices, geometry.ReadFaces[0].EdgeIndices);
+
+        var restored = geometry.Faces;
+        restored[0].GeometryNode = 42;
+        restored.RemoveAt(restored.Count - 1);
+        Assert.Same(restored, geometry.Faces);
+        Assert.Equal(1023, geometry.ReadFaces.Count);
+        Assert.Equal(42, geometry.ReadFaces[0].GeometryNode);
+    }
+
+    [Fact]
     public void SceneReaderRequiresSeparateTriangleScratch()
     {
         using var stream = new MemoryStream();

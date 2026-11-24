@@ -18,8 +18,36 @@ namespace RvtIO.Model
         /// <summary>The m_bbox of the root representation (feet, in the frame of the geometry), which may exceed the tight box.</summary>
         internal double[]? RootBoundingBox { get; set; }
 
+        private List<GeoFace>? residentFaces = new();
+        private IReadOnlyList<GeoFace>? storedFaces;
+
         /// <summary>List of geometry nodes (GGroups containing faces/edges).</summary>
-        public List<GeoFace> Faces { get; set; } = new();
+        public List<GeoFace> Faces
+        {
+            get
+            {
+                if (storedFaces != null)
+                {
+                    residentFaces = storedFaces.ToList();
+                    storedFaces = null;
+                }
+                return residentFaces!;
+            }
+            set
+            {
+                residentFaces = value;
+                storedFaces = null;
+            }
+        }
+
+        internal IReadOnlyList<GeoFace> ReadFaces => storedFaces ?? residentFaces!;
+
+        internal void ArchiveFaces(Func<List<GeoFace>, IReadOnlyList<GeoFace>> store)
+        {
+            if (residentFaces is not { Count: > 0 } faces) return;
+            storedFaces = store(faces);
+            residentFaces = null;
+        }
 
         /// <summary>Classifier-only faces: no boundary and no rendered geometry.</summary>
         internal List<GeoFace>? InactiveFaces { get; set; }
