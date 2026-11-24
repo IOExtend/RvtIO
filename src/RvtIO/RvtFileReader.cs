@@ -2933,6 +2933,8 @@ public partial class RvtFileReader
             lap.Restart();
             progress?.Report(new("element-blocks", ++completedPasses, passCount));
         }
+        Action<int, int>? geometryProgress = progress == null ? null : (completed, total) =>
+            progress.Report(new("element-blocks", completedPasses, passCount) { GeometryBlocks = (completed, total) });
         // Expand known IDs with discovered record IDs
         foreach (var eid in state.Records.Keys)
             state.AllKnownIds.Add(eid);
@@ -3029,7 +3031,7 @@ public partial class RvtFileReader
             BlockParser.ParseChunk(chunk, state, collectBlockOnlyIds: true, deferred: firstPassGReps);
         foreach (var chunk in recordScan)
             BlockParser.ParseChunk(chunk, state, collectBlockOnlyIds: true, deferred: firstPassGReps);
-        BlockParser.ApplyPendingGReps(state, firstPassGReps);
+        BlockParser.ApplyPendingGReps(state, firstPassGReps, geometryProgress);
         diag?.WriteLine($"Block-only elements: {state.BlockOnlyIds.Count}");
 
         Lap("first parse pass");
@@ -3044,7 +3046,7 @@ public partial class RvtFileReader
                 BlockParser.ParseChunk(chunk, state, deferred: secondPassGReps);
             foreach (var chunk in recordScan)
                 BlockParser.ParseChunk(chunk, state, deferred: secondPassGReps);
-            BlockParser.ApplyPendingGReps(state, secondPassGReps);
+            BlockParser.ApplyPendingGReps(state, secondPassGReps, geometryProgress);
         }
         Lap("second parse pass");
         diag?.WriteLine($"GRep blocks: {state.GrepBlocks.Count} elements");

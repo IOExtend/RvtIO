@@ -18,9 +18,11 @@ internal static class BlockParser
 
     /// <summary>Decodes the collected GRep blocks and applies them in collection order (the merge rules depend on
     /// arrival order).</summary>
-    internal static void ApplyPendingGReps(ParsingState state, List<PendingGRep> pending)
+    internal static void ApplyPendingGReps(ParsingState state, List<PendingGRep> pending, Action<int, int>? progress = null)
     {
         if (pending.Count == 0) return;
+        var clock = progress == null ? null : System.Diagnostics.Stopwatch.StartNew();
+        progress?.Invoke(0, pending.Count);
         DecodeGRepBlocksInOrder(pending.Count,
             index =>
             {
@@ -28,7 +30,16 @@ internal static class BlockParser
                 var (data, start) = job.Stored?.Read() ?? (job.Chunk, job.Start);
                 return GRepParserV2.Parse(data, start, job.Size);
             },
-            (index, geometry) => ApplyPendingGRep(state, pending[index], geometry));
+            (index, geometry) =>
+            {
+                ApplyPendingGRep(state, pending[index], geometry);
+                int completed = index + 1;
+                if (clock != null && (completed == pending.Count || clock.ElapsedMilliseconds >= 500))
+                {
+                    progress!(completed, pending.Count);
+                    clock.Restart();
+                }
+            });
     }
 
     /// <summary>Applies one decoded block of a pass: a family cutter is kept when it is the first authored one of its

@@ -43,6 +43,8 @@ reports them in this order and never returns to an earlier phase. A file can ski
 `r22-layout` is the rewrite that follows, which can take as long as the phases around it.
 `Completed` and `Total` count partition streams (`partitions`), the streams the rewrite reads (`r22-layout`), block scan
 passes (`element-blocks`) or decoded stream bytes (`parameter-stream`). `Completed` does not decrease within a phase.
+`GeometryBlocks` optionally gives the applied and queued geometry blocks within the current block pass. Such updates
+repeat the pass number while the block count advances.
 A zero total means the reader has no work count for that update. Counts describe units within one phase. `complete`
 (1 of 1) is the last update of a read.
 

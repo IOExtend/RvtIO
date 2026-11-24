@@ -141,6 +141,25 @@ public class GRepBlockDecodeTests
     };
 
     [Fact]
+    public void ApplyPendingGReps_ReportsStartAndCompletionOfItsPass()
+    {
+        var state = new ParsingState();
+        var updates = new List<(int Completed, int Total)>();
+        var pending = new List<BlockParser.PendingGRep>
+        {
+            new(new byte[16], 7, 0, 0, IsFamilyCut: false),
+            new(new byte[16], 8, 0, 0, IsFamilyCut: false),
+        };
+
+        BlockParser.ApplyPendingGReps(state, pending, (completed, total) => updates.Add((completed, total)));
+
+        Assert.Equal((0, 2), updates[0]);
+        Assert.Equal((2, 2), updates[^1]);
+        Assert.All(updates, update => Assert.Equal(2, update.Total));
+        Assert.Empty(state.GrepBlocks);
+    }
+
+    [Fact]
     public void ApplyPendingGRep_KeepsTheFirstAuthoredFamilyCutterOfAnElement()
     {
         var state = new ParsingState();

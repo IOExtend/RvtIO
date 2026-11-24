@@ -599,7 +599,7 @@ public class RvtSceneReaderTests
         Assert.Equal(new RvtReadProgress("complete", 1, 1), progress.Updates[^1]);
         Assert.Equal([0L, 1L, 2L], progress.Updates.Where(update => update.Phase == "partitions").Select(update => update.Completed));
         Assert.All(progress.Updates.Where(update => update.Phase == "partitions"), update => Assert.Equal(2, update.Total));
-        var blocks = progress.Updates.Where(update => update.Phase == "element-blocks").ToArray();
+        var blocks = progress.Updates.Where(update => update.Phase == "element-blocks" && update.GeometryBlocks == null).ToArray();
         Assert.Equal(Enumerable.Range(0, blocks.Length).Select(index => (long)index), blocks.Select(update => update.Completed));
         Assert.Equal(blocks[^1].Total, blocks[^1].Completed);
         ReadProgressTests.AssertWellFormed(progress.Updates, ReadProgressTests.ProjectPhases);
