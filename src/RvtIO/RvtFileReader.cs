@@ -888,8 +888,8 @@ public partial class RvtFileReader
         int systemFamilyTypes = ElementBuilder.ApplyValidatedSystemFamilyNames(rvtInfo.Elements, state, familyNames);
         ReadCompactLookupText(rvtInfo);
         ElementBuilder.ApplyValidatedStairOccurrenceNames(rvtInfo.Elements, familyNames);
-        ElementBuilder.ApplyHostLabels(rvtInfo, systemFamilyNames, state.ElemClassIdx);
-        ElementBuilder.ApplyWorkPlaneLabels(rvtInfo, systemFamilyNames);
+        ElementBuilder.ApplyHostLabels(rvtInfo, systemFamilyNames, state.ElemClassIdx, archiveParameters);
+        ElementBuilder.ApplyWorkPlaneLabels(rvtInfo, systemFamilyNames, archiveParameters);
         ElementBuilder.ApplyColumnLocationMarks(rvtInfo, state.OwnDocumentUnitOptions?.Value, state.ElemClassIdx);
         ElementBuilder.ApplyMepSystemParams(rvtInfo, state, systemFamilyNames);
         ElementBuilder.ApplyConnectorGraph(rvtInfo, state);

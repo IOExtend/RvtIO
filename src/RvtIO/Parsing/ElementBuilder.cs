@@ -1644,7 +1644,7 @@ internal static partial class ElementBuilder
     /// topography surface/subregion.
     /// </summary>
     internal static void ApplyHostLabels(RevitFileInfo info, Lookup.RevitSystemFamilyNames? names,
-        IReadOnlyDictionary<uint, ushort>? classByElement)
+        IReadOnlyDictionary<uint, ushort>? classByElement, Action<Element>? archiveParameters = null)
     {
         if (names == null) return;
         foreach (var group in info.Elements)
@@ -1655,15 +1655,17 @@ internal static partial class ElementBuilder
         }
         var byId = new Dictionary<int, Element>();
         foreach (var e in info.Elements) byId.TryAdd(e.Id, e);
-        foreach (var e in info.Elements)
+        foreach (var e in ElementsWithParameterEdits(info.Elements, archiveParameters))
         {
-            var host = e.Parameters.FirstOrDefault(p => p.Id == -1001363);
-            if (host == null)
+            Parameter host;
+            if (e.ReadParameters.Any(p => p.Id == -1001363))
+                host = e.Parameters.First(p => p.Id == -1001363);
+            else
             {
                 // An instance placed on the face of an element (Host Id -1, the host stored) shows
                 // that element as its Host.
                 if (e.CategoryId is -2001330 or -2001320 or -2000100 || e.NativeMasterSymbolId == null || e.SerializedHostId is not > 0
-                    || e.Parameters.FirstOrDefault(p => p.Id == -1002108)?.Value is not -1)
+                    || e.ReadParameters.FirstOrDefault(p => p.Id == -1002108)?.Value is not -1)
                     continue;
                 host = BipHelpers.MakeBipParam(-1001363, "INSTANCE_FREE_HOST_PARAM", StorageType.String, "");
                 e.Parameters.Add(host);
@@ -1679,7 +1681,7 @@ internal static partial class ElementBuilder
                         ? Lookup.RevitUiText.Subregion : Lookup.RevitUiText.TopographySurface);
                 else if (byId.TryGetValue(hostId, out hostElement) && hostElement.CategoryId == -2005301) // OST_BoundaryConditions
                     label = names.Get(Lookup.RevitUiText.BoundaryConditions);
-                else if (e.Parameters.FirstOrDefault(p => p.Id == -1002108)?.Value is -1 && hostElement != null)
+                else if (e.ReadParameters.FirstOrDefault(p => p.Id == -1002108)?.Value is -1 && hostElement != null)
                 {
                     // On a work plane the host is the element whose face the plane lies on (GeomRef
                     // of the plane reference); a plane on a level or a reference plane has none.
@@ -1691,9 +1693,9 @@ internal static partial class ElementBuilder
                 }
             }
             else if (e.NativeMasterSymbolId != null
-                && e.Parameters.FirstOrDefault(p => p.Id == -1001352)?.Value is int levelId && levelId > 0
+                && e.ReadParameters.FirstOrDefault(p => p.Id == -1001352)?.Value is int levelId && levelId > 0
                 && byId.TryGetValue(levelId, out var level) && level.IsNativeLevel
-                && level.Parameters.FirstOrDefault(p => p.Id == -1007101)?.Value is string levelName && levelName.Length > 0
+                && level.ReadParameters.FirstOrDefault(p => p.Id == -1007101)?.Value is string levelName && levelName.Length > 0
                 && names.Get(Lookup.RevitUiText.LevelFamily) is string levelFamily)
                 label = levelFamily + " : " + levelName;
             if (label != null) { host.Value = label; host.StorageType = StorageType.String; }
@@ -1705,7 +1707,8 @@ internal static partial class ElementBuilder
     /// "Work Plane" text (SKETCH_PLANE_PARAM) of an instance placed on a datum: its sketch plane
     /// lies on a level, or the reference plane is its stored host.
     /// </summary>
-    internal static void ApplyWorkPlaneLabels(RevitFileInfo info, Lookup.RevitSystemFamilyNames? names)
+    internal static void ApplyWorkPlaneLabels(RevitFileInfo info, Lookup.RevitSystemFamilyNames? names,
+        Action<Element>? archiveParameters = null)
     {
         if (names == null) return;
         var byId = new Dictionary<int, Element>();
@@ -1713,12 +1716,12 @@ internal static partial class ElementBuilder
         string? DatumLabel(Element datum)
         {
             if (datum.IsNativeLevel)
-                return datum.Parameters.FirstOrDefault(p => p.Id == -1007101)?.Value is string { Length: > 0 } levelName
+                return datum.ReadParameters.FirstOrDefault(p => p.Id == -1007101)?.Value is string { Length: > 0 } levelName
                     && names.Get(Lookup.RevitUiText.LevelFamily) is string levelFamily ? levelFamily + " : " + levelName : null;
             return datum.CategoryId == ReferencePlaneCategoryId && !string.IsNullOrEmpty(datum.Name)
                 && names.Get(Lookup.RevitUiText.ReferencePlane) is string planeFamily ? planeFamily + " : " + datum.Name : null;
         }
-        foreach (var e in info.Elements)
+        foreach (var e in ElementsWithParameterEdits(info.Elements, archiveParameters))
         {
             string? label = null;
             if (e.AssocSketchPlaneId is > 0 && byId.TryGetValue(e.AssocSketchPlaneId.Value, out var sketchPlane)
@@ -1750,15 +1753,15 @@ internal static partial class ElementBuilder
         // The name of an electrical panel is its Panel Name (RBS_ELEC_PANEL_NAME, the element name
         // of electrical equipment), not the name of its type; the name of any other element is not
         // read here (the stored element name is not reliable for floors).
-        string? ownName = NonEmpty(type.Parameters.FirstOrDefault(p => p.Id == -1002001)?.Value as string) ?? NonEmpty(type.Name);
-        string? panelName = NonEmpty(element.Parameters.FirstOrDefault(p => p.Id == -1140078)?.Value as string)
+        string? ownName = NonEmpty(type.ReadParameters.FirstOrDefault(p => p.Id == -1002001)?.Value as string) ?? NonEmpty(type.Name);
+        string? panelName = NonEmpty(element.ReadParameters.FirstOrDefault(p => p.Id == -1140078)?.Value as string)
             ?? (element.CategoryId == -2001040 && NonEmpty(element.Name) is { } instanceName && instanceName != ownName ? instanceName : null);
         // Electrical equipment is named by its panel name; where the file gives none that is known
         // here, the type name would be wrong.
         if (panelName == null && element.CategoryId == -2001040) return null;
         string? typeName = panelName ?? ownName;
         string? family = NonEmpty(type.ValidatedSystemFamilyName)
-            ?? NonEmpty(type.Parameters.FirstOrDefault(p => p.Id == -1002002)?.Value as string)
+            ?? NonEmpty(type.ReadParameters.FirstOrDefault(p => p.Id == -1002002)?.Value as string)
             ?? NonEmpty(type.FamilyName) ?? NonEmpty(element.FamilyName);
         return typeName == null || family == null ? null : family + " : " + typeName;
     }
@@ -1792,7 +1795,7 @@ internal static partial class ElementBuilder
     /// <summary>MEP system membership of ducts (3148) and pipes (3210).</summary>
     internal static void ApplyMepSystemParams(RevitFileInfo info, ParsingState state, Lookup.RevitSystemFamilyNames? names)
     {
-        foreach (var e in info.Elements)
+        foreach (var e in ElementsWithParameterEdits(info.Elements, state.ArchiveSceneParameters))
         {
             if (!state.NativeParams.TryGetValue((uint)e.Id, out var np)) continue;
             if (np.Fields.TryGetValue("3190:m_basicSystemType", out int basicType))
