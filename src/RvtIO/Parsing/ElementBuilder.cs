@@ -771,10 +771,9 @@ internal static partial class ElementBuilder
                     grepFaceToGeoFace[grepFaceIndex] = existing;
                     continue;
                 }
-                var gf = new GeoFace
+                // V2 stashes the polygon normal in XVector.
+                var gf = new GeoFace(fp.Origin, new double[3], new double[3], fp.XVector)
                 {
-                    Origin = fp.Origin,
-                    Normal = fp.XVector, // V2 stashes the polygon normal here
                     OuterVertices = poly,
                     InnerVertices = fp.InnerVertices,
                     AlternativeOuterVertices = fp.AlternativeOuterVertices,
@@ -824,12 +823,8 @@ internal static partial class ElementBuilder
                 fp.XVector[2] * fp.YVector[0] - fp.XVector[0] * fp.YVector[2],
                 fp.XVector[0] * fp.YVector[1] - fp.XVector[1] * fp.YVector[0],
             };
-            var geoFace = new GeoFace
+            var geoFace = new GeoFace(fp.Origin, fp.XVector, fp.YVector, normal)
             {
-                Origin = fp.Origin,
-                XVector = fp.XVector,
-                YVector = fp.YVector,
-                Normal = normal,
                 Envelope = fp.Envelope,
                 RenderStyleId = fp.RenderStyleId,
                 GeometryNode = fp.GeometryNode,
@@ -5058,6 +5053,8 @@ internal static partial class ElementBuilder
         int applied = 0, replaced = 0;
         foreach (Element element in elements)
         {
+            string? previousUniqueId = element.UniqueId;
+            element.UniqueId = previousUniqueId;
             element.SerializedExportId = null;
             element.SerializedHandleExportId = null;
             // Id 0 is a valid ElemTable row (ProjectPhase / DimensionStyle) across wide and native R22 tables.
@@ -5073,9 +5070,14 @@ internal static partial class ElementBuilder
             element.SerializedExportId = ElementExportIds.ExportId(episode, originalId);
             if (element.ElementId >= 0)
                 element.SerializedHandleExportId = ElementExportIds.ExportId(episode, (ulong)element.ElementId);
-            string uniqueId = ElementExportIds.UniqueId(episode, originalId);
-            if (element.UniqueId != null && element.UniqueId != uniqueId) replaced++;
-            element.UniqueId = uniqueId;
+            if (state.KeepExportProvenance || previousUniqueId != null)
+            {
+                string uniqueId = ElementExportIds.UniqueId(episode, originalId);
+                if (previousUniqueId != null && previousUniqueId != uniqueId) replaced++;
+                element.UniqueId = uniqueId;
+            }
+            // Only the elements included in the scene need the formatted string.
+            if (!state.KeepExportProvenance) element.DeferUniqueId();
             applied++;
         }
         return (applied, replaced);

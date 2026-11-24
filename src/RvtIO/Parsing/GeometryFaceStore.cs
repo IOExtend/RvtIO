@@ -130,42 +130,42 @@ internal sealed class GeometryFaceStore(PartitionChunks.Backing storage)
         WriteArray(writer, face.EdgeIndices);
     }
 
-    private static GeoFace ReadFace(BinaryReader reader) => new()
+    private static GeoFace ReadFace(BinaryReader reader)
     {
-        RenderStyleId = ReadOptional(reader, static input => input.ReadInt32()),
-        Origin = ReadArray<double>(reader)!,
-        XVector = ReadArray<double>(reader)!,
-        YVector = ReadArray<double>(reader)!,
-        Normal = ReadArray<double>(reader)!,
-        Envelope = ReadArray<double>(reader),
-        Area = ReadOptional(reader, static input => input.ReadDouble()),
-        InnerLoops = ReadRing(reader),
-        OuterVertices = ReadRing(reader),
-        InnerVertices = ReadRings(reader),
-        AlternativeOuterVertices = ReadRing(reader),
-        AnalyticCylinderOrigin = ReadArray<double>(reader),
-        AnalyticCylinderAxis = ReadArray<double>(reader),
-        AnalyticCylinderReferenceDirection = ReadArray<double>(reader),
-        AnalyticCylinderRadius = reader.ReadDouble(),
-        MeshEdgeBounds = ReadArray<double>(reader),
-        MeshPlaneEnvelopeCorners = ReadArray<double>(reader),
-        MeshArcs = ReadArcs(reader),
-        QuadratureArea = ReadOptional(reader, static input => input.ReadDouble()),
-        CurvedSurface = reader.ReadBoolean(),
-        PlaneSurface = reader.ReadBoolean(),
-        PlaneXAxis = ReadArray<double>(reader),
-        PlaneYAxis = ReadArray<double>(reader),
-        SourceFace = reader.ReadUInt32(),
-        MeshMarker = reader.ReadUInt32(),
-        FirstSourceLoop = ReadRing(reader),
-        SourceLoops = ReadRings(reader),
-        GeometryNode = reader.ReadInt32(),
-        NodeOrder = reader.ReadInt64(),
-        GeometryStyle = reader.ReadInt32(),
-        GInfoFlags = ReadOptional(reader, static input => input.ReadUInt32()),
-        NestedRenderStyleId = ReadOptional(reader, static input => input.ReadInt32()),
-        EdgeIndices = ReadArray<int>(reader)?.ToList(),
-    };
+        int? renderStyleId = ReadOptional(reader, static input => input.ReadInt32());
+        return new(ReadArray<double>(reader)!, ReadArray<double>(reader)!, ReadArray<double>(reader)!, ReadArray<double>(reader)!)
+        {
+            RenderStyleId = renderStyleId,
+            Envelope = ReadArray<double>(reader),
+            Area = ReadOptional(reader, static input => input.ReadDouble()),
+            InnerLoops = ReadRing(reader),
+            OuterVertices = ReadRing(reader),
+            InnerVertices = ReadRings(reader),
+            AlternativeOuterVertices = ReadRing(reader),
+            AnalyticCylinderOrigin = ReadArray<double>(reader),
+            AnalyticCylinderAxis = ReadArray<double>(reader),
+            AnalyticCylinderReferenceDirection = ReadArray<double>(reader),
+            AnalyticCylinderRadius = reader.ReadDouble(),
+            MeshEdgeBounds = ReadArray<double>(reader),
+            MeshPlaneEnvelopeCorners = ReadArray<double>(reader),
+            MeshArcs = ReadArcs(reader),
+            QuadratureArea = ReadOptional(reader, static input => input.ReadDouble()),
+            CurvedSurface = reader.ReadBoolean(),
+            PlaneSurface = reader.ReadBoolean(),
+            PlaneXAxis = ReadArray<double>(reader),
+            PlaneYAxis = ReadArray<double>(reader),
+            SourceFace = reader.ReadUInt32(),
+            MeshMarker = reader.ReadUInt32(),
+            FirstSourceLoop = ReadRing(reader),
+            SourceLoops = ReadRings(reader),
+            GeometryNode = reader.ReadInt32(),
+            NodeOrder = reader.ReadInt64(),
+            GeometryStyle = reader.ReadInt32(),
+            GInfoFlags = ReadOptional(reader, static input => input.ReadUInt32()),
+            NestedRenderStyleId = ReadOptional(reader, static input => input.ReadInt32()),
+            EdgeIndices = ReadArray<int>(reader)?.ToList(),
+        };
+    }
 
     private static void WriteOptional<T>(BinaryWriter writer, T? value, Action<BinaryWriter, T> write) where T : struct
     {

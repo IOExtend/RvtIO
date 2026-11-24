@@ -107,8 +107,8 @@ public class RvtDocument
 
         ResolveElementNames();
 
-        // Build UniqueId index (only if UniqueIds are present)
-        if (info.Elements.Any(e => e.UniqueId != null))
+        // Paged scenes look up elements by numeric key and defer textual UniqueIds.
+        if (archiveParameters == null && info.Elements.Any(e => e.UniqueId != null))
         {
             _elemByUniqueId = new Dictionary<string, Element>(StringComparer.OrdinalIgnoreCase);
             foreach (var e in info.Elements)

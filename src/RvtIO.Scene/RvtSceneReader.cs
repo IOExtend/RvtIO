@@ -235,13 +235,14 @@ public static class RvtSceneReader
         foreach (var mesh in meshes.Elements)
         {
             var element = document.GetElement(mesh.ElementId);
+            string? uniqueId = element?.UniqueId;
             var sceneElement = new SceneElement
             {
                 Id = mesh.ElementId,
                 ModelId = ModelId,
                 LevelId = mesh.IsDatum ? null : storeys.GetStoreyId(mesh.ElementId),
-                SourceId = element?.UniqueId,
-                IfcGuid = element != null ? IfcGuidOf(element) : null,
+                SourceId = uniqueId,
+                IfcGuid = element != null ? IfcGuidOf(element, uniqueId) : null,
                 Kind = SceneNodeKind.Element,
                 Name = (mesh.Line != null || mesh.Arc != null) && string.IsNullOrWhiteSpace(element?.Name) ? "Model Lines" : element?.Name ?? string.Empty,
                 Category = CategoryName(element),
@@ -470,13 +471,13 @@ public static class RvtSceneReader
     /// <summary>The IFC GlobalId Revit's IFC export gives the element: the value of its built-in IfcGUID parameter (IFC_GUID)
     /// when it is a valid GlobalId, else the export id of its UniqueId (the episode GUID with its last 64 bits XORed with the
     /// element id the UniqueId ends with) in the IFC base-64 form; null without either.</summary>
-    private static string? IfcGuidOf(Element element)
+    private static string? IfcGuidOf(Element element, string? uniqueId)
     {
         if (element.ReadParameters.Where(parameter => parameter.Id == (int)BuiltInParameter.IFC_GUID)
             .Select(parameter => parameter.Value as string).FirstOrDefault(IsIfcGuid) is { } stored) return stored;
 
         // The original element id has a minimum width of eight hex digits.
-        if (element.UniqueId is not { Length: >= 45 and <= 53 } uniqueId || uniqueId[36] != '-'
+        if (uniqueId is not { Length: >= 45 and <= 53 } || uniqueId[36] != '-'
             || !Guid.TryParseExact(uniqueId.AsSpan(0, 36), "D", out var episode)
             || !long.TryParse(uniqueId.AsSpan(37), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out long originalId)
             || originalId < 0)

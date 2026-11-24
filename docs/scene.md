@@ -54,6 +54,7 @@ Parameter edits reuse their reserved slots in this stream. A slot moves to a lar
 The archived lists keep the first type references and the kinds of zero-ID references available to the resolver without loading the full lists.
 During this read, analytic mesh nodes retain the facts needed for element measurements. Shell quantities and scene tessellation read the archived polygons through the same paged face lists.
 The temporary scene document keeps the resolved parameter values and omits the provenance indexes used by the compact API and IFC export.
+Revit UniqueIds from creation history are formatted when their elements are mapped to the scene.
 
 Set `RvtSceneOptions.IncludeModelLinesAndReinforcement` to include straight model lines as line primitives and reinforcement with decoded bar paths as triangles. The native RVT-to-NWC tool enables this option.
 

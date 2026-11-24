@@ -91,6 +91,9 @@ internal static class ElementExportIds
     internal static string UniqueId(Guid episode, ulong originalElementId) =>
         $"{episode:D}-{originalElementId:x8}";
 
+    internal static string UniqueIdFromExportId(Guid exportId, ulong originalElementId) =>
+        UniqueId(XorTail(exportId, originalElementId), originalElementId);
+
     /// <summary>
     /// The export-id rule: the episode GUID with the original element id XORed into its last 64 bits.
     /// </summary>

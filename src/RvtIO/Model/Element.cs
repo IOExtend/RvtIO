@@ -1461,13 +1461,12 @@ namespace RvtIO.Model
         internal void ArchiveParameters(Func<List<Parameter>, IReadOnlyList<Parameter>?, IReadOnlyList<Parameter>?> store)
         {
             if (_parameters == null) return;
-            if (_parameters.Count == 0 || store(_parameters, _storedParameters) is not { } archived)
-            {
-                _storedParameters = null;
-                return;
-            }
+            var archived = _parameters.Count == 0 ? Array.Empty<Parameter>() : store(_parameters, _storedParameters);
             _storedParameters = archived;
-            _parameters = null;
+            if (archived != null)
+            {
+                _parameters = null;
+            }
         }
 
         /// <summary>The axis-aligned outline the element header stores: [minX, minY, minZ, maxX, maxY, maxZ] in Revit internal
@@ -1486,13 +1485,32 @@ namespace RvtIO.Model
         /// reports an outline for a roof that only holds curtain panels). Everything that reads the box of an element in the IFC export reads this one.</summary>
         internal double[]? DecodedBox => BoundingBoxIsHeaderOutline ? Geometry?.BoundingBox : BoundingBox;
 
+        private string? _uniqueId;
+        private bool _uniqueIdFromExportId;
+
         /// <summary>
         /// Revit UniqueId: the creation episode GUID followed by the original element ID in hexadecimal (at least eight
         /// digits). Both are read from the element's history in the document's element table. Null when the
         /// file holds no history for the element (for example an element found only in a stream), since its UniqueId cannot
         /// be known then.
         /// </summary>
-        public string? UniqueId { get; set; }
+        public string? UniqueId
+        {
+            get => _uniqueIdFromExportId
+                ? Parsing.ElementExportIds.UniqueIdFromExportId(SerializedExportId!.Value, (ulong)OriginalElementId!.Value)
+                : _uniqueId;
+            set
+            {
+                _uniqueIdFromExportId = false;
+                _uniqueId = value;
+            }
+        }
+
+        internal void DeferUniqueId()
+        {
+            _uniqueId = null;
+            _uniqueIdFromExportId = true;
+        }
 
         /// <summary>Fully decoded public Extensible Storage entities owned by this element, when available.</summary>
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]

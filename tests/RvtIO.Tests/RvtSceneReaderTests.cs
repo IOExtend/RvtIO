@@ -53,6 +53,32 @@ public class RvtSceneReaderTests
     }
 
     [Fact]
+    public void EmptyPagedParametersRemainEditableWithoutWritingScratch()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var first = new Element();
+        var second = new Element();
+
+        scratch.ArchiveParameters(first);
+        scratch.ArchiveParameters(second);
+
+        Assert.Same(Array.Empty<Parameter>(), first.ReadParameters);
+        Assert.Same(first.ReadParameters, second.ReadParameters);
+        Assert.Equal(0L, stream.Length);
+
+        first.Parameters.Add(new Parameter { Id = 5, Value = 12, StorageType = StorageType.Integer });
+        Assert.Empty(second.ReadParameters);
+        scratch.ArchiveParameters(first);
+        Assert.Equal(12, Assert.Single(first.ReadParameters).Value);
+
+        first.Parameters.Clear();
+        scratch.ArchiveParameters(first);
+        Assert.Same(second.ReadParameters, first.ReadParameters);
+        Assert.NotSame(first.Parameters, second.Parameters);
+    }
+
+    [Fact]
     public void ArchivedTypeReferencesUseTheFirstValidParameterAndTrackEdits()
     {
         using var stream = new MemoryStream();
@@ -505,6 +531,8 @@ public class RvtSceneReaderTests
         var faces = Enumerable.Range(0, 1024).Select(i => new GeoFace
         {
             Origin = [i, 0, 0],
+            XVector = [1, 0, 0],
+            YVector = [0, 1, 0],
             OuterVertices = [[i, 0, 0], [i + 1, 0, 0], [i, 1, 0]],
             InnerVertices = i == 1 ? [[[1.1, .1, 0], [1.2, .1, 0], [1.1, .2, 0]]] : null,
             Normal = [0, 0, 1],
@@ -520,6 +548,11 @@ public class RvtSceneReaderTests
         Assert.True(stream.Length > 64 * 1024);
         Assert.NotSame(faces, geometry.ReadFaces);
         Assert.Equal(faces.Select(face => face.RenderStyleId), geometry.ReadFaces.Select(face => face.RenderStyleId));
+        var restoredFrame = geometry.ReadFaces[1000];
+        Assert.Equal(faces[1000].Origin, restoredFrame.Origin);
+        Assert.Equal(faces[1000].XVector, restoredFrame.XVector);
+        Assert.Equal(faces[1000].YVector, restoredFrame.YVector);
+        Assert.Equal(faces[1000].Normal, restoredFrame.Normal);
         Assert.Equal(faces[1000].OuterVertices![2], geometry.ReadFaces[1000].OuterVertices![2]);
         Assert.Equal(faces[1].InnerVertices![0][1], geometry.ReadFaces[1].InnerVertices![0][1]);
         Assert.Equal(6u, Assert.Single(geometry.ReadFaces[1].MeshArcs!).Edge);

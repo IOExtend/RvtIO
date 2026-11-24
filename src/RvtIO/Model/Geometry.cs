@@ -188,21 +188,32 @@ namespace RvtIO.Model
     /// <summary>A planar face defined by origin + two direction vectors.</summary>
     public class GeoFace
     {
+        /// <summary>Creates a face with zero-initialized frame vectors.</summary>
+        public GeoFace() : this(new double[3], new double[3], new double[3], new double[3]) { }
+
+        internal GeoFace(double[] origin, double[] xVector, double[] yVector, double[] normal)
+        {
+            Origin = origin;
+            XVector = xVector;
+            YVector = yVector;
+            Normal = normal;
+        }
+
         /// <summary>GFace.m_renderStyleId: the material element id of the face (internal; not serialized).</summary>
         [System.Text.Json.Serialization.JsonIgnore]
         internal int? RenderStyleId { get; set; }
 
         /// <summary>Plane origin [x, y, z] in feet.</summary>
-        public double[] Origin { get; set; } = new double[3];
+        public double[] Origin { get; set; }
 
         /// <summary>Plane X direction vector [x, y, z].</summary>
-        public double[] XVector { get; set; } = new double[3];
+        public double[] XVector { get; set; }
 
         /// <summary>Plane Y direction vector [x, y, z].</summary>
-        public double[] YVector { get; set; } = new double[3];
+        public double[] YVector { get; set; }
 
         /// <summary>Normal = XVector x YVector (computed).</summary>
-        public double[] Normal { get; set; } = new double[3];
+        public double[] Normal { get; set; }
 
         /// <summary>2D envelope of the face in parametric space [minU, minV, maxU, maxV].</summary>
         public double[]? Envelope { get; set; }
