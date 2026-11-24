@@ -833,19 +833,28 @@ public class RvtSceneReaderTests
         Assert.False(scratch.CanRead);
     }
 
-    [SkippableFact]
-    public void ScratchReadMatchesSceneAndDiagnosticsOfARealModel()
+    [SkippableTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ScratchReadMatchesSceneAndDiagnosticsOfARealModel(bool archiveScene)
     {
         string path = TestFiles.Find("Test_2025.rvt");
         var baseline = RvtSceneReader.Read(path);
         string temporary = Path.Combine(Path.GetTempPath(), "rvtio-scratch-" + Guid.NewGuid().ToString("N"));
         using var input = File.OpenRead(path);
-        var result = RvtSceneReader.ReadStream(input, new RvtSceneOptions
+        var options = new RvtSceneOptions
         {
             ModelKey = Path.GetFileName(path),
             CreatePartitionScratch = () => new FileStream(temporary, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None,
                 bufferSize: 64 * 1024, FileOptions.DeleteOnClose),
-        });
+        };
+        using var sceneScratch = archiveScene
+            ? new FileStream(temporary + ".scene", FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None,
+                bufferSize: 64 * 1024, FileOptions.DeleteOnClose)
+            : null;
+        var result = sceneScratch == null
+            ? RvtSceneReader.ReadStream(input, options)
+            : RvtSceneReader.ReadStream(input, options, sceneScratch);
 
         Assert.NotEmpty(baseline.Document.Instances);
         Assert.Equal(baseline.Diagnostics, result.Diagnostics);
