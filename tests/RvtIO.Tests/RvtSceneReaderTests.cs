@@ -227,9 +227,21 @@ public class RvtSceneReaderTests
         Assert.Same(first.Parameters, first.ReadParameters);
         first.Parameters[1].Value = "Resolved later";
         scratch.ArchiveParameters(first);
-        Assert.True(stream.Length > persisted);
+        Assert.Equal(persisted, stream.Length);
         Assert.Equal(3, first.ReadParameters.Count);
         Assert.Equal("Resolved later", first.ReadParameters[1].Value);
+        Assert.Equal(7, second.ReadParameters[0].Value);
+
+        first.Parameters[1].Value = new string('a', 1024);
+        scratch.ArchiveParameters(first);
+        long grown = stream.Length;
+        Assert.True(grown > persisted);
+        string replacement = new('b', 1024);
+        first.Parameters[1].Value = replacement;
+        scratch.ArchiveParameters(first);
+        Assert.Equal(grown, stream.Length);
+        Assert.Equal(replacement, first.ReadParameters[1].Value);
+        Assert.Equal(7, second.ReadParameters[0].Value);
     }
 
     [Fact]

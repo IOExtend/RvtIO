@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text;
 using RvtIO.Model;
@@ -20,6 +21,7 @@ internal sealed class SceneParameterScratch(PartitionChunks.Backing storage)
     }
 
     private readonly MemoryStream output = new(64 * 1024);
+    private readonly PartitionChunks.Backing backing = storage;
     private readonly object readLock = new();
     private readonly Dictionary<(int Id, string? Name, string? BuiltIn), int> definitionIds = new();
     private readonly List<Parameter.DefinitionTemplate> definitions = new();
@@ -65,12 +67,9 @@ internal sealed class SceneParameterScratch(PartitionChunks.Backing storage)
             if (parameter.NativeElementId is long id) writer.Write(id);
         }
         var encoded = output.GetBuffer().AsSpan(0, checked((int)output.Length));
-        // Read-only passes may have materialized the editable list. Reuse its page
-        // when the next checkpoint produces exactly the same bytes.
         var archived = previous is ParameterList prior && ReferenceEquals(prior.Owner, this)
-            && prior.Count == parameters.Count && encoded.SequenceEqual(storage.Read(prior.Block))
-            ? prior
-            : new ParameterList(this, storage.Add(encoded), parameters.Count);
+            ? prior : new ParameterList(this);
+        archived.Save(encoded, parameters.Count);
         output.SetLength(0);
         if (output.Capacity > 128 * 1024) output.Capacity = 64 * 1024;
         return archived;
@@ -81,7 +80,7 @@ internal sealed class SceneParameterScratch(PartitionChunks.Backing storage)
         lock (readLock)
         {
             if (ReferenceEquals(cached, block)) return cachedParameters!;
-            using var reader = new BinaryReader(new MemoryStream(storage.Read(block), writable: false));
+            using var reader = new BinaryReader(new MemoryStream(backing.Read(block), writable: false));
             var parameters = new Parameter[count];
             Span<byte> guidBytes = stackalloc byte[16];
             for (int i = 0; i < parameters.Length; i++)
@@ -154,15 +153,33 @@ internal sealed class SceneParameterScratch(PartitionChunks.Backing storage)
         };
     }
 
-    private sealed class ParameterList(SceneParameterScratch store, PartitionChunks.Chunk block, int count)
-        : IReadOnlyList<Parameter>
+    private sealed class ParameterList(SceneParameterScratch store) : IReadOnlyList<Parameter>
     {
+        private PartitionChunks.Chunk? block;
+        private int capacity;
         internal SceneParameterScratch Owner => store;
-        internal PartitionChunks.Chunk Block => block;
-        public int Count => count;
-        public Parameter this[int index] => store.Read(block, count)[index];
-        public IEnumerator<Parameter> GetEnumerator() => ((IEnumerable<Parameter>)store.Read(block, count)).GetEnumerator();
+        public int Count { get; private set; }
+        public Parameter this[int index] => store.Read(block!, Count)[index];
+        public IEnumerator<Parameter> GetEnumerator() => ((IEnumerable<Parameter>)store.Read(block!, Count)).GetEnumerator();
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+        internal void Save(ReadOnlySpan<byte> data, int count)
+        {
+            if (block != null && data.Length <= capacity)
+            {
+                // An unchanged edit keeps its previous block and decoded cache entry.
+                if (Count == count && data.SequenceEqual(store.backing.Read(block))) return;
+                block = store.backing.Overwrite(block, data, capacity);
+            }
+            else
+            {
+                // Grow geometrically so repeated edits keep one slot while they fit.
+                int nextCapacity = (int)Math.Min((uint)int.MaxValue, BitOperations.RoundUpToPowerOf2((uint)Math.Max(256, data.Length)));
+                block = store.backing.Add(data, nextCapacity);
+                capacity = nextCapacity;
+            }
+            Count = count;
+        }
     }
 
     private static void WriteValue(BinaryWriter writer, object? value)

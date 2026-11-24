@@ -11,27 +11,52 @@ internal sealed class PartitionChunks(PartitionChunks.Backing? backing = null) :
     {
         private const int CachedChunks = 16;
         private const int CacheLimit = 8 * 1024 * 1024;
-        private readonly Dictionary<long, byte[]> cache = [];
-        private readonly Queue<long> cacheOrder = new(CachedChunks);
+        private static readonly byte[] SmallPadding = new byte[64 * 1024];
+        private readonly Dictionary<Chunk, byte[]> cache = new(ReferenceEqualityComparer.Instance);
+        private readonly Queue<Chunk> cacheOrder = new(CachedChunks);
         private int cacheBytes;
         private long end;
 
-        internal Chunk Add(ReadOnlySpan<byte> data)
+        internal Chunk Add(ReadOnlySpan<byte> data) => Add(data, data.Length);
+
+        internal Chunk Add(ReadOnlySpan<byte> data, int reservedLength)
         {
+            ArgumentOutOfRangeException.ThrowIfLessThan(reservedLength, data.Length);
             lock (stream)
             {
                 long offset = end;
-                try
-                {
-                    if (stream.Position != offset) stream.Position = offset;
-                    stream.Write(data);
-                }
-                catch (Exception failure) when (MalformedInput.Is(failure))
-                {
-                    throw new StorageFailure("Could not write the partition scratch stream.", failure);
-                }
-                end += data.Length;
+                long next = checked(offset + reservedLength);
+                WriteAt(offset, data);
+                int padding = reservedLength - data.Length;
+                // Keep small reserved slots contiguous so stream buffering can batch writes.
+                if (padding > 0 && padding <= SmallPadding.Length)
+                    WriteAt(offset + data.Length, SmallPadding.AsSpan(0, padding));
+                end = next;
                 return new Chunk(data.Length, null, offset);
+            }
+        }
+
+        internal Chunk Overwrite(Chunk chunk, ReadOnlySpan<byte> data, int reservedLength)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(reservedLength, data.Length);
+            lock (stream)
+            {
+                WriteAt(chunk.Offset, data);
+                // A new chunk identity keeps reads distinct from previously cached bytes.
+                return new Chunk(data.Length, null, chunk.Offset);
+            }
+        }
+
+        private void WriteAt(long offset, ReadOnlySpan<byte> data)
+        {
+            try
+            {
+                if (stream.Position != offset) stream.Position = offset;
+                stream.Write(data);
+            }
+            catch (Exception failure) when (MalformedInput.Is(failure))
+            {
+                throw new StorageFailure("Could not write the partition scratch stream.", failure);
             }
         }
 
@@ -40,7 +65,7 @@ internal sealed class PartitionChunks(PartitionChunks.Backing? backing = null) :
             if (chunk.Length == 0) return [];
             lock (stream)
             {
-                if (cache.TryGetValue(chunk.Offset, out var data)) return data;
+                if (cache.TryGetValue(chunk, out var data)) return data;
                 data = new byte[chunk.Length];
                 try
                 {
@@ -55,12 +80,12 @@ internal sealed class PartitionChunks(PartitionChunks.Backing? backing = null) :
                 {
                     while (cache.Count == CachedChunks || cacheBytes + data.Length > CacheLimit)
                     {
-                        long offset = cacheOrder.Dequeue();
-                        cacheBytes -= cache[offset].Length;
-                        cache.Remove(offset);
+                        var oldest = cacheOrder.Dequeue();
+                        cacheBytes -= cache[oldest].Length;
+                        cache.Remove(oldest);
                     }
-                    cache.Add(chunk.Offset, data);
-                    cacheOrder.Enqueue(chunk.Offset);
+                    cache.Add(chunk, data);
+                    cacheOrder.Enqueue(chunk);
                     cacheBytes += data.Length;
                 }
                 return data;
