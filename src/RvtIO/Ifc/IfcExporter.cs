@@ -523,10 +523,7 @@ public partial class IfcExporter
         var elementByIdForTerrain = info.Elements.GroupBy(element => element.Id)
             .ToDictionary(group => group.Key, group => group.First());
         var groupDefinitionTopographyIds = info.Elements
-            .Where(element => element.CategoryId == -2001340
-                && (element.References ?? Enumerable.Empty<int>()).Any(referenceId =>
-                    elementByIdForTerrain.TryGetValue(referenceId, out var referenced)
-                    && referenced.CategoryId == -2000095))
+            .Where(element => ProductRules.IsGroupDefinitionTopography(element, elementByIdForTerrain))
             .Select(element => element.Id).ToHashSet();
         var placedTopographies = info.Elements
             .Where(element => element.CategoryId == -2001340

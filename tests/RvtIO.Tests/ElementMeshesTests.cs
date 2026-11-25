@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using RvtIO.BuiltIns;
 using RvtIO.Internal;
 using RvtIO.Meshes;
 using RvtIO.Model;
@@ -665,6 +666,24 @@ public class ElementMeshesTests
         var set = ElementMeshes.Extract(Document(Product(1, Triangle()), blockOnly, template, withoutPhase, room, run, stair));
 
         Assert.Equal([1, 6], set.Elements.Select(element => element.ElementId));
+    }
+
+    [Fact]
+    public void GroupDefinitionTopography_IsExcludedFromSceneMeshes()
+    {
+        static GeometryData Triangle() => new() { Faces = [Face([[0, 0, 0], [1, 0, 0], [1, 1, 0]], [0, 0, 1])] };
+        var placed = Product(1, Triangle());
+        placed.CategoryId = (int)BuiltInCategory.OST_Topography;
+        var groupTerrain = Product(2, Triangle());
+        groupTerrain.CategoryId = placed.CategoryId;
+        groupTerrain.References = [4];
+        var groupMember = Product(3, Triangle());
+        groupMember.References = [4];
+        var groupType = new Element { Id = 4, CategoryId = (int)BuiltInCategory.OST_IOSModelGroups };
+
+        var set = ElementMeshes.Extract(Document(placed, groupTerrain, groupMember, groupType));
+
+        Assert.Equal([1, 3], set.Elements.Select(element => element.ElementId));
     }
 
     [Fact]

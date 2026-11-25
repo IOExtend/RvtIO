@@ -22,7 +22,7 @@ namespace RvtIO.Meshes;
 /// elements are listed themselves; a placement of a drawable element is likewise left out of an element's placements. A
 /// drawable element is listed when it has a geometry record, or, in a document whose geometry was not decoded, a bounding box.
 /// Other product rules of the IFC export are not applied, so the meshes can include elements that the IFC leaves out: the
-/// "export to IFC" flag, topography, walls that are not visible, curtain panels that are walls, family instances whose level is
+/// "export to IFC" flag, IFC site assembly, walls that are not visible, curtain panels that are walls, family instances whose level is
 /// not a project level, curtain children without bounds, openings of hidden walls, and the rebar rules.</para>
 /// <para>Faces of Geometry nodes that Revit does not take (another detail level) are left out when the element has faces of
 /// nodes it takes and no ghost node (a node Revit exports that has no decoded polygon, which also makes the element
@@ -255,6 +255,7 @@ public static class ElementMeshes
                 || designOptions.InNonPrimaryOption(element) == true || phaseFilter?.Excludes(element) == true
                 || element.CategoryId == RevealsCategoryId || ProductRules.IsWallRectangularOpening(element)
                 || ProductRules.IsValidatedStackedWallContainer(element, elementsById)
+                || ProductRules.IsGroupDefinitionTopography(element, elementsById)
                 || info.ElemTableIsExact && element.IsDiscovered
                 || element.SerializedFamilyId is > 0
                 || (!modelLine && !areaReinforcement && ProductRules.IsNonPhysicalCategory(element.Category)))

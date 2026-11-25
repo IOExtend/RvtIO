@@ -1,3 +1,5 @@
+using RvtIO.BuiltIns;
+
 namespace RvtIO.Model;
 
 /// <summary>
@@ -78,6 +80,12 @@ internal static class ProductRules
     /// <summary>A rectangular wall opening: a void, not a product of its own.</summary>
     internal static bool IsWallRectangularOpening(Element element) =>
         element.Category?.Contains("OST_SWallRectOpening", StringComparison.OrdinalIgnoreCase) == true;
+
+    /// <summary>Topography stored with a model-group definition rather than placed on the site.</summary>
+    internal static bool IsGroupDefinitionTopography(Element element, IReadOnlyDictionary<int, Element> elementsById) =>
+        element.CategoryId == (int)BuiltInCategory.OST_Topography
+        && element.References?.Any(id => elementsById.TryGetValue(id, out var referenced)
+            && referenced.CategoryId == (int)BuiltInCategory.OST_IOSModelGroups) == true;
 
     /// <summary>A StackedWall parent, whose member walls are the products; not its source record or children.</summary>
     internal static bool IsValidatedStackedWallContainer(
