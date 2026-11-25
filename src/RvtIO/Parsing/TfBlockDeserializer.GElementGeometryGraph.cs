@@ -14,6 +14,8 @@ internal static partial class TfBlockDeserializer
     internal sealed record OwnGElementGeometryGraph(int OwnerId, uint OpaqueHeader,
         IReadOnlyList<GElementGraphNode> Nodes, IReadOnlyList<GElementFaceSurfaceLink> FaceSurfaces, int End);
 
+    private enum GraphReadStep { Root, Queue, Tail, FaceSurface, Field }
+
     /// <summary>Complete, footer-exact FIFO for the physical node kinds of the r22 layout. Owned Face -> Surface links
     /// use queue indices, never handles, order or shape matching. Non-owning references and flags remain raw: this does
     /// not reconstruct runtime pointers, document lookup, active faces or extrusion validity.</summary>
@@ -34,20 +36,23 @@ internal static partial class TfBlockDeserializer
         int position = start + 14, end = start + 12 + (int)size, itemCount = 0;
         var queue = new List<(ushort ClassId, uint Handle)>();
         var nodes = new List<GElementGraphNode>();
-        string context = "root";
+        var step = GraphReadStep.Root;
+        int contextIndex = 0, contextValue = 0;
+        string? fieldName = null;
         try
         {
             nodes.Add(Node(-1, 2007, (uint)owner));
             for (int index = 0; index < queue.Count; index++)
             {
                 var entry = queue[index];
-                context = $"fifo:{index}:{entry.ClassId}";
+                step = GraphReadStep.Queue;
+                (contextIndex, contextValue) = (index, entry.ClassId);
                 if (entry.ClassId is not (2007 or 2015 or 2009 or 2092 or 1996 or 1589 or 1243 or 1254
                     or 2014 or 522 or 1850 or 1848 or 1736 or 1999 or 1257 or 1974 or 983 or 1991 or 2238))
                     throw Fail;
                 nodes.Add(Node(index, entry.ClassId, entry.Handle));
             }
-            context = "tail";
+            step = GraphReadStep.Tail;
             if (position != end) throw Fail;
             var surfaces = new List<GElementFaceSurfaceLink>();
             // A missing, external or hand pointer stays as stored in its field.
@@ -57,14 +62,26 @@ internal static partial class TfBlockDeserializer
                 var pointer = node.Fields.Single(f => f.Declaring == 1589 && f.Name == "m_pSurf")
                     .Items.Single().Pointer!;
                 if (pointer.QueueIndex is not int surface) continue;
-                context = $"face-surface:{node.QueueIndex}:{surface}";
+                step = GraphReadStep.FaceSurface;
+                (contextIndex, contextValue) = (node.QueueIndex, surface);
                 if (nodes[surface + 1].ClassId is not (522 or 983)) throw Fail;
                 surfaces.Add(new(node.QueueIndex, surface));
             }
             failure = null;
             return new(owner, BitConverter.ToUInt32(data, start + 4), nodes, surfaces, position - start);
         }
-        catch (DecodeFail) { failure = context; return null; }
+        catch (DecodeFail)
+        {
+            failure = step switch
+            {
+                GraphReadStep.Queue => $"fifo:{contextIndex}:{contextValue}",
+                GraphReadStep.Tail => "tail",
+                GraphReadStep.FaceSurface => $"face-surface:{contextIndex}:{contextValue}",
+                GraphReadStep.Field => $"field:{contextIndex}:{fieldName}:{contextValue}",
+                _ => "root",
+            };
+            return null;
+        }
 
         GElementGraphNode Node(int index, ushort cls, uint handle)
         {
@@ -75,16 +92,17 @@ internal static partial class TfBlockDeserializer
 
         IReadOnlyList<GElementGraphField> ReadFields(ushort cls, int depth)
         {
-            if (depth >= 32 || !GElementGraphSchemas.ContainsKey(cls)) throw Fail;
-            var result = new List<GElementGraphField>();
-            foreach (var field in GElementGraphFields(cls)) result.Add(Field(field, depth));
+            if (depth >= 32 || !GElementGraphFieldsByClass.TryGetValue(cls, out var fields)) throw Fail;
+            var result = new List<GElementGraphField>(fields.Length);
+            foreach (var field in fields) result.Add(Field(field, depth));
             return result;
         }
 
         GElementGraphField Field(TfField field, int depth)
         {
-            context = $"field:{field.Declaring}:{field.Name}:{position - start}";
             int first = position - start;
+            step = GraphReadStep.Field;
+            (contextIndex, contextValue, fieldName) = (field.Declaring, first, field.Name);
             int high = field.Mods >> 4;
             uint? count = high == 5 ? (uint)Raw(4, false) : high == 1 ? (uint)field.Cnt!.Value : null;
             uint length = count ?? 1;
