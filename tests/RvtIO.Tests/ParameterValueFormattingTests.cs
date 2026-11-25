@@ -44,6 +44,21 @@ public class ParameterValueFormattingTests
         Assert.NotNull(first.Guid);
     }
 
+    [Theory]
+    [InlineData(0L)]
+    [InlineData(long.MinValue)]
+    [InlineData(long.MaxValue)]
+    public void NativeReferenceCanBeClearedWithoutChangingTheCopy(long id)
+    {
+        var parameter = new Parameter { StorageType = StorageType.ElementId, Value = 7, NativeElementId = id };
+        var copy = parameter.ShallowCopy(parameter.Value);
+        parameter.NativeElementId = null;
+        Assert.Equal(7L, parameter.AsElementId64());
+        Assert.Null(parameter.SourceElementId);
+        Assert.Equal(id, copy.AsElementId64());
+        Assert.Equal(id.ToString(System.Globalization.CultureInfo.InvariantCulture), copy.SourceElementId);
+    }
+
     [Fact]
     public void SharedDisplayUnitsCanBeEditedOnEachParameterIndependently()
     {

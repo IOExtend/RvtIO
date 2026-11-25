@@ -509,24 +509,32 @@ public class WideElementRecordsTests
         Assert.Equal(ids.Wall, index.RootClasses[11]);
     }
 
-    [Fact]
-    public void BuildIndex_ReadsAFramedStreamByTheRecordsOfTheProjectBlockOnly()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void BuildIndex_ReadsAFramedStreamByTheRecordsOfTheProjectBlockOnly(bool splitRoot)
     {
         var (stream, ids) = BuildSchema();
         var schema = FileSchema.Parse(stream)!;
         byte[] header = Record(ids, 10, [], -2000011), root = Block(10, ids.Level);
+        root[^5] = 0xA7; // last byte of the root payload, before the size echo
         // the same id in the document of a loaded family, a keyed block the framing does not list
         var data = Join(header, root, Record(ids, 10, [], -5), Block(10, ids.Wall));
-        var framed = new PartitionFraming.Framed([data[..20], data[20..]],
+        int split = header.Length + 17; // between the two bytes of the root class tag
+        byte[][] chunks = splitRoot ? [data[..20], data[20..split], [], data[split..]] : [data[..20], data[20..]];
+        var framed = new PartitionFraming.Framed(chunks,
             [new(101, 10, 0, header.Length), new(102, 10, header.Length, root.Length)], 8);
-        var roots = new List<(uint Id, int Offset, int Size, int Class)>();
+        var roots = new List<(uint Id, int Class, byte[] Payload)>();
 
-        var index = WideElementRecords.BuildIndex([[data]], schema, new HashSet<uint> { 10 }, (id, _, offset, size, cls) => roots.Add((id, offset, size, cls)), [framed])!;
+        var index = WideElementRecords.BuildIndex([chunks], schema, new HashSet<uint> { 10 },
+            (id, buffer, offset, size, cls) => roots.Add((id, cls, buffer.AsSpan(offset, size).ToArray())), [framed])!;
 
         Assert.Equal(-2000011, index.HeaderCategories[10]);
         Assert.Equal(ids.Level, index.RootClasses[10]);
         Assert.Equal((1, 1), (index.Records, index.Blocks));
-        Assert.Equal([(10u, header.Length + 16, root.Length - 20, ids.Level)], roots);
+        var found = Assert.Single(roots);
+        Assert.Equal((10u, ids.Level), (found.Id, found.Class));
+        Assert.Equal(root[16..^4], found.Payload);
         // the scan takes the family's records for a second copy of the element, and the copies disagree
         var scanned = WideElementRecords.BuildIndex([[data]], schema, new HashSet<uint> { 10 })!;
         Assert.Null(scanned.HeaderCategories[10]);
@@ -534,6 +542,24 @@ public class WideElementRecordsTests
         // a framing read with another id width is not used: the stream is scanned
         var otherWidth = WideElementRecords.BuildIndex([[data]], schema, new HashSet<uint> { 10 }, null, [framed with { IdWidth = 4 }])!;
         Assert.Null(otherWidth.HeaderCategories[10]);
+    }
+
+    [Fact]
+    public void FramedIndex_AllocationDoesNotScaleWithUnindexedFamilyData()
+    {
+        var (stream, ids) = BuildSchema();
+        var schema = FileSchema.Parse(stream)!;
+        byte[] header = Record(ids, 10, [], -2000011), root = Block(10, ids.Level);
+        byte[][] chunks = [header, root, new byte[4 << 20]];
+        var frame = new PartitionFraming.Framed(chunks,
+            [new(101, 10, 0, header.Length), new(102, 10, header.Length, root.Length)], 8);
+        var wanted = new HashSet<uint> { 10 };
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        var index = WideElementRecords.BuildIndex([chunks], schema, wanted, framed: [frame])!;
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.Equal(ids.Level, index.RootClasses[10]);
+        Assert.True(allocated < chunks[2].Length, $"Indexing two project records allocated {allocated} bytes.");
     }
 
     private sealed record OutlineIds(int Header, int Outline, int Parents, int Level);

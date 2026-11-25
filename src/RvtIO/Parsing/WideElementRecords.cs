@@ -115,7 +115,8 @@ internal static class WideElementRecords
                 : ids.TryGetKey(id, out int key) && wanted.Contains((uint)key),
             onRootBlock == null ? null : (id, buf, off, size, cls, _) => onRootBlock(ids == null ? (uint)id : (uint)ids.Key(id), buf, off, size, cls), framed);
 
-    /// <summary>Indexes serialized element IDs. The root callback also receives the framed partition number when available.</summary>
+    /// <summary>Indexes serialized element IDs. Each root callback receives a payload offset in its supplied buffer
+    /// and the framed partition number when available.</summary>
     internal static Index? BuildIndexWithPartitions(
         IReadOnlyList<IReadOnlyList<byte[]>> streams, FileSchema schema, Func<long, bool> wanted,
         Action<long, byte[], int, int, int, int?>? onRootBlock, IReadOnlyList<PartitionFraming.Framed?>? framed = null)
@@ -151,43 +152,54 @@ internal static class WideElementRecords
             long total = 0;
             foreach (var c in chunks) total += c.Length;
             if (total > int.MaxValue - 64) return null;
-            var buf = new byte[total];
-            int off = 0;
-            foreach (var c in chunks) { Buffer.BlockCopy(c, 0, buf, off, c.Length); off += c.Length; }
             var recordIds = new HashSet<long>();
             var blockClasses = new Dictionary<long, int>();   // -1: the stream holds blocks of two classes for the id
-            var rootBlocks = onRootBlock == null ? null : new List<(long Id, int Offset, int Size, int Class)>();
-            void Header(int p, int size, long id)
+            var rootBlocks = onRootBlock == null ? null : new List<(long Id, byte[] Data, int Offset, int Size, int Class)>();
+            void Header(byte[] buf, int p, int size, long id)
             {
                 index.Records++;
                 if (!wanted(id)) return;
                 recordIds.Add(id);
                 RecordCategory(buf, p + width - 8, size, categoryWidth, entry, id, index, conflictCategory, conflictDesignOption, outlineTags);
             }
-            void Block(int p, int size, long id, int cls)
+            void Block(byte[] buf, int p, int size, long id, int cls)
             {
                 index.Blocks++;
                 if (!isElement[cls] || !wanted(id)) return;
                 blockClasses[id] = blockClasses.TryGetValue(id, out int prior) && prior != cls ? -1 : cls;
-                rootBlocks?.Add((id, p + width + 8, size, cls));
+                rootBlocks?.Add((id, buf, p + width + 8, size, cls));
             }
-            if (frame == null) Walk(buf, header.Id, width, known, wanted, Header, Block);
+            if (frame == null)
+            {
+                var buf = new byte[total];
+                int off = 0;
+                foreach (var c in chunks) { Buffer.BlockCopy(c, 0, buf, off, c.Length); off += c.Length; }
+                Walk(buf, header.Id, width, known, wanted, Header, Block);
+            }
             else
                 foreach (var item in frame.Items)
                 {
                     if (item.Owner > long.MaxValue) continue;
                     long owner = (long)item.Owner;
                     if (owner > uint.MaxValue && !wanted(owner)) continue;
-                    int p = (int)item.Offset;
-                    if (item.Channel == 101 && item.Length >= width + 16 && BitConverter.ToUInt16(buf, p + width + 4) == header.Id)
-                        Header(p, item.Length - width - 8, owner);
-                    else if (item.Channel == 102 && item.Length >= width + 20 && BitConverter.ToUInt16(buf, p + width + 8) is var cls && cls < known.Length && known[cls])
-                        Block(p, item.Length - width - 12, owner, cls);
+                    if (item.Channel == 101 && item.Length >= width + 16)
+                    {
+                        var (data, p, _) = frame.Bytes(item);
+                        if (BitConverter.ToUInt16(data, p + width + 4) == header.Id)
+                            Header(data, p, item.Length - width - 8, owner);
+                    }
+                    else if (item.Channel == 102 && item.Length >= width + 20)
+                    {
+                        var (data, p, _) = frame.Bytes(item);
+                        int cls = BitConverter.ToUInt16(data, p + width + 8);
+                        if (cls < known.Length && known[cls])
+                            Block(data, p, item.Length - width - 12, owner, cls);
+                    }
                 }
             // payload (class id first) of every Element-derived block whose stream holds the header record of its id
             if (rootBlocks != null)
-                foreach (var (blockId, offset, size, cls) in rootBlocks)
-                    if (recordIds.Contains(blockId)) onRootBlock!(blockId, buf, offset, size, cls, frame?.Partition);
+                foreach (var (blockId, data, offset, size, cls) in rootBlocks)
+                    if (recordIds.Contains(blockId)) onRootBlock!(blockId, data, offset, size, cls, frame?.Partition);
             foreach (var (id, cls) in blockClasses)
             {
                 if (!recordIds.Contains(id)) continue;
@@ -204,7 +216,7 @@ internal static class WideElementRecords
 
     /// <summary>The position-by-position scan: every candidate whose length echo holds is a header record or a block (item start, size, id).</summary>
     private static void Walk(byte[] b, int headerId, int w, bool[] known, Func<long, bool> wanted,
-        Action<int, int, long> header, Action<int, int, long, int> block)
+        Action<byte[], int, int, long> header, Action<byte[], int, int, long, int> block)
     {
         int n = b.Length;
         int p = 0;
@@ -217,7 +229,7 @@ internal static class WideElementRecords
             if (BitConverter.ToUInt16(b, p + w + 4) == headerId && size >= 8 && size < 4_000_000
                 && p + w + 8L + size <= n && BitConverter.ToUInt32(b, p + w + 4 + (int)size) == size)
             {
-                header(p, (int)size, id);
+                header(b, p, (int)size, id);
                 p += w + 8 + (int)size;
                 continue;
             }
@@ -227,7 +239,7 @@ internal static class WideElementRecords
             if (blockSize >= 8 && blockSize < 8_000_000 && cls < known.Length && known[cls]
                 && p + w + 12L + blockSize <= n && BitConverter.ToUInt32(b, p + w + 8 + (int)blockSize) == blockSize)
             {
-                block(p, (int)blockSize, id, cls);
+                block(b, p, (int)blockSize, id, cls);
                 p += w + 12 + (int)blockSize;
                 continue;
             }

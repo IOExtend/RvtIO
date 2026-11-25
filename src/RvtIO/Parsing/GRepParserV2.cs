@@ -27,7 +27,8 @@ internal static partial class GRepParserV2
     private static double ChordTolerance => TessellationChordToleranceFeet * (t_coarseTessellation ? 16 : 1);
 
     private sealed class DecodeStop : Exception { }
-    private static readonly DecodeStop Stop = new();
+    [ThreadStatic] private static DecodeStop? t_stop;
+    private static DecodeStop Stop => t_stop ??= new();
 
     /// <summary>
     /// Serialized class ids of the Face and Edge objects whose per-block counts feed <see
@@ -1404,6 +1405,7 @@ internal static partial class GRepParserV2
                 }
                 else if (cls == 1243) // Edge -> capture endpoints via schema walk
                 {
+                    if (EdgeHasFixedLayout.Value && TryReadCompleteEdge(c, (uint)v, qi)) return;
                     c.CapEdge = new EdgeRec { Handle = (uint)v, QueueIndex = qi };
                     foreach (var sf in qf) ReadField(c, sf, 1);
                     if (c.CapEdge.HasEndpoints) c.Edges.Add(c.CapEdge);
@@ -1757,6 +1759,59 @@ internal static partial class GRepParserV2
                 {
                     foreach (var sf in qf) ReadField(c, sf, 1);
                 }
+    }
+
+    private static readonly Lazy<bool> EdgeHasFixedLayout = new(() => TfBlockDeserializer.SerializationFields(EdgeClass) is
+        [{ Declaring: 1246, Name: "m_GInfo", Type: 14, Mods: 0 },
+         { Declaring: 1244, Name: "m_pFace", Type: 14, Mods: 19, Cnt: 2 },
+         { Declaring: 1244, Name: "m_next", Type: 14, Mods: 19, Cnt: 2 },
+         { Declaring: 1244, Name: "m_prev", Type: 14, Mods: 19, Cnt: 2 },
+         { Declaring: 1244, Name: "m_interiorEdgePnts", Type: 14, Mods: 80 },
+         { Declaring: 1244, Name: "m_firstAndLastEdgePnts", Type: 14, Mods: 16, Cnt: 2, Ref: 1248 },
+         { Declaring: 1244, Name: "m_flags", Type: 2, Mods: 0 }]);
+
+    // GNode.m_GInfo, the three handle pairs, the counted UV samples, two endpoints and flags.
+    // Fall back before consuming anything on a short or invalid item: the recovery walk
+    // uses the exact position and partial state at which the field reader stops.
+    private static bool TryReadCompleteEdge(Cur c, uint handle, int queueIndex)
+    {
+        const int prefix = 44, sampleSize = 32, tail = 2 * sampleSize + 1;
+        int start = c.Pos;
+        if (c.End - start < prefix + tail) return false;
+        var bytes = c.D.AsSpan(start, c.End - start);
+        int category = BitConverter.ToInt32(bytes[8..]);
+        if (category < -3_000_000) return false;
+        uint count = BitConverter.ToUInt32(bytes[40..]);
+        if (count == uint.MaxValue) count = 0;
+        if (count > 100_000 || count > (bytes.Length - prefix - tail) / sampleSize) return false;
+        int endPoints = prefix + (int)count * sampleSize;
+        if (handle != 0)
+            c.ObjectGInfo[(int)handle] = (BitConverter.ToInt32(bytes), BitConverter.ToInt32(bytes[4..]),
+                category, BitConverter.ToUInt32(bytes[12..]));
+        // Dry runs discard the entire edge; its fields do not enqueue any children.
+        if (c.ProbeUndo == null)
+        {
+            var edge = new EdgeRec
+            {
+                Handle = handle, QueueIndex = queueIndex, HasEndpoints = true,
+                FaceA = BitConverter.ToUInt32(bytes[16..]), FaceB = BitConverter.ToUInt32(bytes[20..]),
+                NextA = BitConverter.ToUInt32(bytes[24..]), NextB = BitConverter.ToUInt32(bytes[28..]),
+                PrevA = BitConverter.ToUInt32(bytes[32..]), PrevB = BitConverter.ToUInt32(bytes[36..]),
+                Start = System.Runtime.InteropServices.MemoryMarshal.Read<EdgeUV>(bytes[endPoints..]),
+                EndP = System.Runtime.InteropServices.MemoryMarshal.Read<EdgeUV>(bytes[(endPoints + sampleSize)..]),
+                Flags = bytes[endPoints + 2 * sampleSize],
+            };
+            if (count > 0)
+            {
+                System.Runtime.InteropServices.CollectionsMarshal.SetCount(edge.Interior, (int)count);
+                System.Runtime.InteropServices.MemoryMarshal.Cast<byte, EdgeUV>(bytes[prefix..endPoints])
+                    .CopyTo(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(edge.Interior));
+            }
+            c.Edges.Add(edge);
+        }
+        c.LastEdgeEnd = c.Pos = start + endPoints + tail;
+        c.CapEdge = null;
+        return true;
     }
 
     /// <summary>
@@ -2306,6 +2361,13 @@ internal static partial class GRepParserV2
             uint n = (uint)c.U32();
             if (n == 0xFFFFFFFF) return;
             if (n > 100000) throw Stop;
+            // A probe rolls its edge back. UV samples have fixed width and no value-dependent validation.
+            if (c.ProbeUndo != null)
+            {
+                if (32L * n > c.End - c.Pos) throw Stop;
+                c.Pos += (int)n * 32;
+                return;
+            }
             // Each EdgePnt contains the UV coordinates in both adjacent faces. Every sample is part
             // of the serialized trim polyline; dropping them collapses a closed circular edge to a
             // zero-length chord.

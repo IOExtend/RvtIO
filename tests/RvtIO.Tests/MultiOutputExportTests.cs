@@ -213,8 +213,10 @@ public class MultiOutputExportTests
         }
     }
 
-    [Fact]
-    public void MultiOutput_RvtDocumentFromInfo_DoesNotMutateSourceInfo()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void MultiOutput_DocumentPreparationDoesNotMutateSourceInfo(bool sceneOnly)
     {
         var info = new RvtIO.Model.RevitFileInfo
         {
@@ -254,7 +256,7 @@ public class MultiOutputExportTests
         string originalName = info.Elements[0].Name;
         object? originalSymbolValue = info.Elements[0].Parameters[0].Value;
 
-        var doc = RvtDocument.FromInfo(info);
+        var doc = sceneOnly ? RvtDocument.ForSceneExport(info) : RvtDocument.FromInfo(info);
         Assert.NotNull(doc);
 
         // Document element has synthesized params and resolved names
@@ -268,6 +270,25 @@ public class MultiOutputExportTests
         Assert.Equal(originalParamCount, info.Elements[0].Parameters.Count);
         Assert.Equal(originalName, info.Elements[0].Name);
         Assert.Equal(originalSymbolValue, info.Elements[0].Parameters[0].Value);
+    }
+
+    [Fact]
+    public void SceneExport_ResolvesZeroAndWideReferencesOnlyInTheSceneView()
+    {
+        const long wideId = (long)int.MaxValue + 1;
+        var ids = new RvtIO.Parsing.ElementIdMap([]);
+        var phase = new RvtIO.Model.Parameter { Id = -1012100, StorageType = RvtIO.Model.StorageType.ElementId, Value = 0 };
+        var wide = new RvtIO.Model.Parameter { StorageType = RvtIO.Model.StorageType.ElementId, Value = ids.Key(wideId) };
+        var info = new RvtIO.Model.RevitFileInfo
+        {
+            ElementIds = ids,
+            Elements = [new() { Id = 0, CategoryId = -2000112 }, new() { Id = 1, Parameters = [phase, wide] }],
+        };
+        var parameters = RvtDocument.ForSceneExport(info).GetElement(1)!.Parameters;
+        Assert.True(parameters[0].HasResolvedZeroElementId);
+        Assert.Equal(wideId, parameters[1].AsElementId64());
+        Assert.False(phase.HasResolvedZeroElementId);
+        Assert.Null(wide.SourceElementId);
     }
 
     [Fact]

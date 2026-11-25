@@ -219,6 +219,11 @@ public partial class RvtFileReader
         var blockGeometry = ParseBlocks(state, diag, progress, unreadableGReps,
             overlapGeometry: progress == null && unreadableGReps != null
                 && !OperatingSystem.IsBrowser() && (state.WideSchema == null || state.R22View));
+        // ParseBlocks has finished adding record/block-only IDs. The scalar walk and
+        // geometry recovery only read that set; neither consumes the scanned strings.
+        // Snapshot the ID set: the background geometry decode still runs while the scan reads it.
+        var scanIds = new HashSet<uint>(state.AllKnownIds);
+        var stringScan = blockGeometry != null ? Task.Run(ScanElementStrings) : null;
         // The anchored walk reaches blocks spanning chunks and decodes the native parameter stores.
         try
         {
@@ -226,7 +231,15 @@ public partial class RvtFileReader
             progress?.Report(new("parameter-stream"));
             RunTfStreamWalk(state, progress, unreadableGReps, blockGeometry);
         }
-        finally { blockGeometry?.GetAwaiter().GetResult(); }
+        finally
+        {
+            // Join both background tasks. A single failure keeps its type; two surface together instead of one hiding the other.
+            try { Task.WaitAll(new Task?[] { blockGeometry, stringScan }.OfType<Task>().ToArray()); }
+            catch (AggregateException failure) when (failure.InnerExceptions.Count == 1)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure.InnerExceptions[0]).Throw();
+            }
+        }
         unreadableGReps = null;
         blockGeometry = null;
         if (state.WideSchema == null) ReadOwnDocumentUnits(root, state, diag);
@@ -238,7 +251,9 @@ public partial class RvtFileReader
         progress?.Report(new("element-properties"));
         // The catalog reads finalized native captures. The string scan writes only its name candidates.
         UserParameterCatalog? userParameters = null;
-        if (OperatingSystem.IsBrowser() || progress != null)
+        if (stringScan != null)
+            userParameters = UserParameterCatalog.Build(state);
+        else if (OperatingSystem.IsBrowser() || progress != null)
         {
             ScanElementStrings();
             userParameters = UserParameterCatalog.Build(state);
@@ -251,7 +266,7 @@ public partial class RvtFileReader
             Parallel.For(0, chunks.Count, chunkIndex =>
             {
                 var localStrings = new Dictionary<uint, List<string>>();
-                StringScanner.ScanChunk(chunks[chunkIndex], state.AllKnownIds, localStrings);
+                StringScanner.ScanChunk(chunks[chunkIndex], scanIds, localStrings);
                 if (localStrings.Count > 0) partialResults[chunkIndex] = localStrings;
             });
             MergeElemScanStringsInChunkOrder(partialResults, state.ElemScanStrings);
@@ -776,6 +791,7 @@ public partial class RvtFileReader
             .OrderBy(k => k).ToList();
 
         state.SymbolPlacementGeometry = new(ReferenceEqualityComparer.Instance);
+        state.ReaderParameterDefinitions = ElementBuilder.ReaderParameterDefinitions(state);
         BuildOrderedElements(state.ElemTable.OrderBy(x => x.Key).ToArray(), rvtInfo.Elements,
             (entry, parameterIds) => ElementBuilder.CreateElemTableElement(entry.Key, entry.Value, state, parameterIds));
 
@@ -828,6 +844,7 @@ public partial class RvtFileReader
             _ => null,
         };
         var elementsById = ElementBuilder.PostProcess(rvtInfo, state, diag);
+        state.ReaderParameterDefinitions = null;
         state.SymbolPlacementGeometry = null;
         if (state.GridAxes is { } axes)
         {
@@ -852,25 +869,25 @@ public partial class RvtFileReader
         // reader without a requested locale (the legacy profile) is unchanged
         var familyNames = systemFamilyNames
             ?? Lookup.RevitSystemFamilyNames.LoadPreviousReleaseFamilies(rvtInfo.Metadata.RevitVersion, systemFamilyLocale, _options.SystemFamilyNameLocale);
-        int systemFamilyTypes = ElementBuilder.ApplyValidatedSystemFamilyNames(rvtInfo.Elements, state, familyNames);
+        int systemFamilyTypes = ElementBuilder.ApplyValidatedSystemFamilyNames(rvtInfo.Elements, state, familyNames, elementsById);
         ReadCompactLookupText(rvtInfo);
-        ElementBuilder.ApplyValidatedStairOccurrenceNames(rvtInfo.Elements, familyNames);
+        ElementBuilder.ApplyValidatedStairOccurrenceNames(rvtInfo.Elements, familyNames, elementsById);
         ElementBuilder.ApplyHostLabels(rvtInfo, systemFamilyNames, state.ElemClassIdx, elementsById);
         ElementBuilder.ApplyWorkPlaneLabels(rvtInfo, systemFamilyNames);
         ElementBuilder.ApplyColumnLocationMarks(rvtInfo, state.OwnDocumentUnitOptions?.Value, state.ElemClassIdx);
         ElementBuilder.ApplyMepSystemParams(rvtInfo, state, systemFamilyNames);
         ElementBuilder.ApplyConnectorGraph(rvtInfo, state);
-        ElementBuilder.ApplyStairNameParameterScopes(rvtInfo.Elements, state);
+        ElementBuilder.ApplyStairNameParameterScopes(rvtInfo.Elements, state, elementsById);
         diag?.WriteLine($"System family names: locale={rvtInfo.Metadata.SavedLocale ?? "?"}, " +
             $"resources={(systemFamilyNames != null ? "loaded" : "unavailable")}, types={systemFamilyTypes}");
         LogPhase("Names and parameters applied");
-        int wallTopAttachments = ElementBuilder.ApplyWallJoinedToTop(rvtInfo.Elements, state);
+        int wallTopAttachments = ElementBuilder.ApplyWallJoinedToTop(rvtInfo.Elements, state, elementsById);
         diag?.WriteLine($"Wall top attachment: roots={state.WallJoinedToTop.Count}, "
             + $"duplicate={state.WallJoinedToTop.Values.Count(v => v.BlockCount != 1)}, "
             + $"unread={state.WallJoinedToTop.Values.Count(v => v.BlockCount == 1 && v.JoinedToTop == null)}, "
             + $"top={state.WallJoinedToTop.Values.Count(v => v.BlockCount == 1 && v.JoinedToTop == true)}, "
             + $"walls={wallTopAttachments}");
-        int wallEndJoins = ElementBuilder.ApplyWallEndJoins(rvtInfo.Elements, state);
+        int wallEndJoins = ElementBuilder.ApplyWallEndJoins(rvtInfo.Elements, state, elementsById);
         diag?.WriteLine($"Wall end joins: roots={state.WallEndJoins.Count}, "
             + $"duplicate={state.WallEndJoins.Values.Count(v => v.BlockCount != 1)}, "
             + $"unread={state.WallEndJoins.Values.Count(v => v.BlockCount == 1 && v.Joins == null)}, walls={wallEndJoins}"
@@ -878,14 +895,14 @@ public partial class RvtFileReader
                 ? "; unread by reason: " + string.Join(", ", state.WallEndJoinFailures
                     .OrderByDescending(entry => entry.Value).Take(8).Select(entry => $"{entry.Key}={entry.Value}"))
                 : ""));
-        var (namedMaterials, ceilingTypes) = ElementBuilder.ApplyCeilingFinishSource(rvtInfo.Elements, state);
+        var (namedMaterials, ceilingTypes) = ElementBuilder.ApplyCeilingFinishSource(rvtInfo.Elements, state, elementsById);
         diag?.WriteLine($"Ceiling finish source: materials={namedMaterials}/{state.MaterialNames.Count}, "
             + $"ceiling types={ceilingTypes}/{state.CeilingCompoundStructureLayerSource.Count}");
-        int hostLayerTypes = ElementBuilder.ApplyHostTypeCompoundStructures(rvtInfo.Elements, state);
+        int hostLayerTypes = ElementBuilder.ApplyHostTypeCompoundStructures(rvtInfo.Elements, state, elementsById);
         diag?.WriteLine($"Host type compound structures: types={hostLayerTypes}/{state.HostTypeCompoundStructures.Count}");
-        int ceilingThicknessTypes = ElementBuilder.ApplyCompoundCeilingTypeThickness(rvtInfo.Elements, state);
+        int ceilingThicknessTypes = ElementBuilder.ApplyCompoundCeilingTypeThickness(rvtInfo.Elements, state, elementsById);
         diag?.WriteLine($"Own computed ceiling thickness: types={ceilingThicknessTypes}/{state.CompoundCeilingTypeThicknessFeet.Count}");
-        int wallThicknessOccurrences = ElementBuilder.ApplyBasicWallTypeThickness(rvtInfo.Elements, state);
+        int wallThicknessOccurrences = ElementBuilder.ApplyBasicWallTypeThickness(rvtInfo.Elements, state, elementsById);
         diag?.WriteLine($"Own computed wall thickness: occurrences={wallThicknessOccurrences}/{state.BasicWallTypeThicknessFeet.Count}");
         rvtInfo.SerializedDocumentGuid = state.DocumentDetachGuid;
         ReadCompactFormatSettings(rvtInfo, state);
@@ -959,21 +976,24 @@ public partial class RvtFileReader
     }
 
     internal static void MergeElemScanStringsInChunkOrder(
-        IReadOnlyList<Dictionary<uint, List<string>>?> partialResults,
+        Dictionary<uint, List<string>>?[] partialResults,
         Dictionary<uint, List<string>> elemScanStrings)
     {
         // HashSet-backed dedupe: rebar-heavy models attribute thousands of strings per
         // element, and List.Contains per insert made this merge quadratic.
         var mergeSeen = new Dictionary<uint, HashSet<string>>();
-        for (int chunkIndex = 0; chunkIndex < partialResults.Count; chunkIndex++)
+        for (int chunkIndex = 0; chunkIndex < partialResults.Length; chunkIndex++)
         {
             var partial = partialResults[chunkIndex];
+            partialResults[chunkIndex] = null;
             if (partial == null) continue;
 
             foreach (var (eid, strings) in partial)
             {
-                if (!elemScanStrings.TryGetValue(eid, out var list))
-                    elemScanStrings[eid] = list = new List<string>();
+                // ScanChunk has already deduplicated each local list. Transfer the first
+                // one; only owners seen in another chunk need a cross-chunk membership set.
+                if (elemScanStrings.TryAdd(eid, strings)) continue;
+                var list = elemScanStrings[eid];
                 if (!mergeSeen.TryGetValue(eid, out var seen))
                     mergeSeen[eid] = seen = new HashSet<string>(list);
                 foreach (var s in strings)

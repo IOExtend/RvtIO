@@ -230,11 +230,16 @@ namespace RvtIO.Model
     /// <summary>An edge connecting two 3D points.</summary>
     public class GeoEdge
     {
+        /// <summary>Creates an edge with two independent zero-valued points.</summary>
+        public GeoEdge() : this(new double[3], new double[3]) { }
+
+        internal GeoEdge(double[] start, double[] end) => (Start, End) = (start, end);
+
         /// <summary>Start point [x, y, z] in feet.</summary>
-        public double[] Start { get; set; } = new double[3];
+        public double[] Start { get; set; }
 
         /// <summary>End point [x, y, z] in feet.</summary>
-        public double[] End { get; set; } = new double[3];
+        public double[] End { get; set; }
     }
 
     /// <summary>

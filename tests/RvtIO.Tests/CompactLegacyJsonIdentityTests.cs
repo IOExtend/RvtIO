@@ -36,7 +36,7 @@ public class CompactLegacyJsonIdentityTests
         return info;
     }
 
-    private static string Serialize(RevitFileInfo info)
+    private static string Serialize(RevitFileInfo info, bool cacheKeys)
     {
         var options = new JsonSerializerOptions
         {
@@ -44,16 +44,19 @@ public class CompactLegacyJsonIdentityTests
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
             NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
             Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-            Converters = { new JsonStringEnumConverter(), new ParameterListConverter() },
+            Converters = { new JsonStringEnumConverter() },
         };
         info.BuildParameterDefinitionTable();
+        options.Converters.Add(cacheKeys ? new ParameterListConverter(info.ParameterDefinitions!.Keys, options.Encoder) : new ParameterListConverter());
         return JsonSerializer.Serialize(info, options).Replace("\r\n", "\n");
     }
 
-    [Fact]
-    public void LegacyDumpOfASyntheticFile_IsUnchanged()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void LegacyDumpOfASyntheticFile_IsUnchanged(bool cacheKeys)
     {
-        string json = Serialize(Synthetic());
+        string json = Serialize(Synthetic(), cacheKeys);
         string hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json))).ToLowerInvariant();
         Assert.True(hash == ExpectedSha256, $"legacy JSON changed (SHA-256 {hash}):\n{json}");
     }

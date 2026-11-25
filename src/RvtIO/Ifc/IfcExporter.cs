@@ -736,12 +736,17 @@ public partial class IfcExporter
 
 
         var elemById = new Dictionary<int, Element>();
+        var stairRuns = new Dictionary<int, List<Element>>();
         var elementIdOccurrenceCounts = new Dictionary<int, int>();
         var elementOrderById = new Dictionary<int, int>();
         for (int elementIndex = 0; elementIndex < info.Elements.Count; elementIndex++)
         {
             var e = info.Elements[elementIndex];
-            elemById.TryAdd(e.Id, e);
+            if (elemById.TryAdd(e.Id, e) && e.SerializedStairRunInput is { } run)
+            {
+                if (!stairRuns.TryGetValue(run.StairsId, out var group)) stairRuns.Add(run.StairsId, group = []);
+                group.Add(e);
+            }
             elementIdOccurrenceCounts.TryGetValue(e.Id, out int occurrenceCount);
             elementIdOccurrenceCounts[e.Id] = occurrenceCount + 1;
             elementOrderById.TryAdd(e.Id, elementIndex);
@@ -4636,7 +4641,7 @@ public partial class IfcExporter
                 elem, ifcType, elemById, elementIdOccurrenceCounts, CurrentProfile);
             string elemName = elemTypeName.Length == 0 ? elem.Id.ToString() : $"{elemTypeName}:{elem.Id}";
             if (CurrentProfile && IsRunLengthRuleCurrent(elem, ifcType, elemById, elementIdOccurrenceCounts)
-                && RunLengthTreadsCurrent(elem, elemById) is int lengthTreads)
+                && RunLengthTreadsCurrent(elem, elemById, stairRuns) is int lengthTreads)
                 LengthRuleRunsCurrent[elem.Id] = lengthTreads;
             if (ifcType == "IFCSTAIR")
                 elemName = ResolveNativeStairName(elem, elemById, elementIdOccurrenceCounts, CurrentProfile) ?? elemName;
@@ -4696,7 +4701,7 @@ public partial class IfcExporter
                 "IFCRAMP" =>
                     $"{S(productGlobalId)},{R(ownerHistId)},{S(elemName)},$,{S(elemTypeName)},{R(elemPlacementId)},{shapeArg},{S(elem.Id.ToString())},.NOTDEFINED.",
                 "IFCSTAIRFLIGHT" =>
-                    $"{S(productGlobalId)},{R(ownerHistId)},{S(elemName)},$,{S(elemTypeName)},{R(elemPlacementId)},{shapeArg},{S(elem.Id.ToString())},{(CurrentProfile ? StairFlightAttributes(elem, elemById) : "$,$,$,$")}",
+                    $"{S(productGlobalId)},{R(ownerHistId)},{S(elemName)},$,{S(elemTypeName)},{R(elemPlacementId)},{shapeArg},{S(elem.Id.ToString())},{(CurrentProfile ? StairFlightAttributes(elem, elemById, stairRuns) : "$,$,$,$")}",
                 "IFCCOLUMN" or "IFCBEAM" or "IFCMEMBER" or "IFCPLATE"
                     or "IFCRAMPFLIGHT"
                     or "IFCCURTAINWALL" or "IFCFURNISHINGELEMENT" or "IFCFLOWSEGMENT"
@@ -4908,7 +4913,7 @@ public partial class IfcExporter
                         w, elem, elemEntityId, ownerHistId, ifcType,
                         quantityTakeOffReferenceValueId.Value,
                         elemById, elementIdOccurrenceCounts,
-                        propertySingleValueIds, CurrentProfile);
+                        propertySingleValueIds, stairRuns, CurrentProfile);
                 }
                 if (quantityTakeOffReferenceValueId.HasValue && CurrentProfile && ifcType == "IFCRAMP")
                 {
@@ -8763,8 +8768,10 @@ public partial class IfcExporter
                     continue;
                 }
 
-                if (!TryOrientExactFacetedShell(geo.Faces, facetedIndices,
-                        out var orientedFaces,
+                List<GeoFace> orientedFaces;
+                if (exactShells is [var complete] && complete.Indices.Count == facetedIndices.Count)
+                    orientedFaces = complete.Faces;
+                else if (!TryOrientExactFacetedShell(geo.Faces, facetedIndices, out orientedFaces,
                         triangulateNonPlanarFaces: !preserveValidatedPlanarFaces))
                     orientedFaces = facetedIndices.Select(index => geo.Faces[index]).ToList();
                 // Two independently authored BReps may share source faces.
@@ -9416,6 +9423,7 @@ public partial class IfcExporter
 
         var parent = new Dictionary<(long X, long Y, long Z),
             (long X, long Y, long Z)>();
+        static bool Finite(double[] p) => p.Length >= 3 && double.IsFinite(p[0]) && double.IsFinite(p[1]) && double.IsFinite(p[2]);
         IEnumerable<IReadOnlyList<double[]>> Rings(GeoFace face)
         {
             if (face.OuterVertices is { Count: > 0 } outer) yield return outer;
@@ -9424,7 +9432,7 @@ public partial class IfcExporter
         foreach (int faceIndex in indices)
             foreach (var ring in Rings(faces[faceIndex]))
                 foreach (var point in ring)
-                    if (point.Length >= 3 && point.Take(3).All(double.IsFinite))
+                    if (Finite(point))
                     {
                         var key = IfcPrecisionKeyFeet(point);
                         parent.TryAdd(key, key);
@@ -9473,7 +9481,7 @@ public partial class IfcExporter
         {
             double[] Point(double[] point)
             {
-                if (point.Length < 3 || !point.Take(3).All(double.IsFinite))
+                if (!Finite(point))
                     return (double[])point.Clone();
                 var key = IfcPrecisionKeyFeet(point);
                 // Alternative display rings are copied for metadata fidelity but do not participate
@@ -9497,16 +9505,14 @@ public partial class IfcExporter
             changed = false;
             foreach (int faceIndex in indices)
             {
-                if (!FaceCollapsesAtIfcPrecision(Materialize(faces[faceIndex]))) continue;
+                bool? collapsed = null;
                 foreach (var ring in Rings(faces[faceIndex]))
                 {
                     for (int edgeIndex = 0; edgeIndex < ring.Count; edgeIndex++)
                     {
                         var first = ring[edgeIndex];
                         var second = ring[(edgeIndex + 1) % ring.Count];
-                        if (first.Length < 3 || second.Length < 3
-                            || !first.Take(3).All(double.IsFinite)
-                            || !second.Take(3).All(double.IsFinite))
+                        if (!Finite(first) || !Finite(second))
                             continue;
                         double dx = second[0] - first[0];
                         double dy = second[1] - first[1];
@@ -9517,7 +9523,11 @@ public partial class IfcExporter
                             continue;
                         var firstKey = IfcPrecisionKeyFeet(first);
                         var secondKey = IfcPrecisionKeyFeet(second);
-                        if (firstKey != secondKey && Union(firstKey, secondKey))
+                        // Only a short edge between distinct bins can change this face's unions.
+                        // Test collapse once, before the first such union changes the current mapping.
+                        if (firstKey != secondKey
+                            && (collapsed ??= FaceCollapsesAtIfcPrecision(Materialize(faces[faceIndex])))
+                            && Union(firstKey, secondKey))
                         {
                             contracted = true;
                             changed = true;
@@ -9566,6 +9576,7 @@ public partial class IfcExporter
                         if (dxFeet * dxFeet + dyFeet * dyFeet + dzFeet * dzFeet
                             <= precisionSquared)
                             return true;
+                        if (boundaryRoots.Count == 0) continue;
                         var first = IfcPrecisionKeyFeet(firstPoint);
                         var second = IfcPrecisionKeyFeet(secondPoint);
                         var dx = (System.Numerics.BigInteger)second.X - first.X;
@@ -9602,9 +9613,10 @@ public partial class IfcExporter
 
         // A collapsed strip can leave a sub-precision boundary cycle even when none of its
         // surviving facets is itself degenerate.
+        (List<int> Sources, List<GeoFace> Faces) prepared;
         while (true)
         {
-            var prepared = PrepareFaces();
+            prepared = PrepareFaces();
             var faceMap = Enumerable.Range(0, prepared.Faces.Count)
                 .ToDictionary(index => index, index => prepared.Faces[index]);
             var preparedIndices = Enumerable.Range(0, prepared.Faces.Count).ToList();
@@ -9703,9 +9715,8 @@ public partial class IfcExporter
         }
         if (!contracted) return false;
 
-        var finalFaces = PrepareFaces();
-        retainedSourceIndices.AddRange(finalFaces.Sources);
-        var contractedFaces = finalFaces.Faces;
+        retainedSourceIndices.AddRange(prepared.Sources);
+        var contractedFaces = prepared.Faces;
         bool oriented = contractedFaces.Count >= 4
             && TryOrientExactFacetedShell(contractedFaces,
                 Enumerable.Range(0, contractedFaces.Count).ToList(), out orientedFaces);
@@ -63625,7 +63636,7 @@ public partial class IfcExporter
         string ifcType, int referenceValueId,
         IReadOnlyDictionary<int, Element> elementsById,
         IReadOnlyDictionary<int, int> elementIdOccurrenceCounts,
-        Dictionary<(string PropertyName, string ValueExpr), int> valuePool, bool currentProfile = false)
+        Dictionary<(string PropertyName, string ValueExpr), int> valuePool, Dictionary<int, List<Element>> stairRuns, bool currentProfile)
     {
         (string psetName, string seedPrefix) = ifcType switch
         {
@@ -63694,9 +63705,9 @@ public partial class IfcExporter
             }
         }
         if (ifcType == "IFCSTAIRFLIGHT")
-            AddStairFlightProperties(w, elem, elementsById, valueIds, currentProfile);
+            AddStairFlightProperties(w, elem, elementsById, valueIds, currentProfile, stairRuns);
         else if (ifcType == "IFCSTAIR" && stairType != null)
-            AddStairTreadCount(w, elem, elementsById, stairType, valueIds, currentProfile);
+            AddStairTreadCount(w, elem, elementsById, stairType, valueIds, stairRuns, currentProfile);
         int psetId = w.Add("IFCPROPERTYSET",
             $"{S(IfcGuid.FromName($"{seedPrefix}-pset:{elem.Id}"))},{R(ownerHistId)},{S(psetName)},$,{StepWriter.List(valueIds.Select(R))}");
         w.Add("IFCRELDEFINESBYPROPERTIES",
@@ -63712,12 +63723,13 @@ public partial class IfcExporter
         StairRunIndexSpan(numbers) - (current && run.SerializedStairRunInput?.Style == TfBlockDeserializer.StairRunStyle.Sketched && numbers.EndWithRiser == 0 ? 1 : 0);
 
     private static bool StairRunCountsAgree(Element run, IReadOnlyDictionary<int, Element> elementsById,
-        TfBlockDeserializer.StairRunNumbers numbers, bool current = false)
+        TfBlockDeserializer.StairRunNumbers numbers, bool current, Dictionary<int, List<Element>>? stairRuns)
     {
         int stairsId = run.SerializedStairRunInput!.StairsId;
         if (!elementsById.TryGetValue(stairsId, out var stairs) || stairs.SerializedActualNumberOfRisers is not int stored)
             return true;
-        int runsOfStairs = elementsById.Values.Count(other => other.SerializedStairRunInput?.StairsId == stairsId);
+        int runsOfStairs = stairRuns == null ? elementsById.Values.Count(other => other.SerializedStairRunInput?.StairsId == stairsId)
+            : stairRuns.GetValueOrDefault(stairsId)?.Count ?? 0;
         return runsOfStairs != 1 || stored == StairRunRisers(run, numbers, current);
     }
 
@@ -63730,14 +63742,15 @@ public partial class IfcExporter
     /// Pset_StairCommon.NumberOfTreads of a stair: the sum of the tread counts of its runs.
     /// </summary>
     private static void AddStairTreadCount(StepWriter w, Element stair,
-        IReadOnlyDictionary<int, Element> elementsById, Element stairType, List<int> valueIds, bool current = false)
+        IReadOnlyDictionary<int, Element> elementsById, Element stairType, List<int> valueIds, Dictionary<int, List<Element>> stairRuns, bool current)
     {
         if (HasStairCommonOverrideCandidate(stair, stairType, "NumberOfTreads", "Pset_StairCommon")) return;
         int treads = 0, runs = 0;
-        foreach (var run in elementsById.Values)
+        if (!stairRuns.TryGetValue(stair.Id, out var owned)) return;
+        foreach (var run in owned)
         {
             if (run.SerializedStairRunInput is not { Numbers: { } numbers } input || input.StairsId != stair.Id) continue;
-            if (!StairRunCountsAgree(run, elementsById, numbers, current) || StairRunTreads(run, numbers, current) is not int runTreads) return;
+            if (!StairRunCountsAgree(run, elementsById, numbers, current, stairRuns) || StairRunTreads(run, numbers, current) is not int runTreads) return;
             treads += runTreads; runs++;
         }
         if (runs == 0 || treads <= 0) return;
@@ -63767,7 +63780,7 @@ public partial class IfcExporter
     /// run type, the walking line offset (half the run width.
     /// </summary>
     private static void AddStairFlightProperties(StepWriter w, Element run,
-        IReadOnlyDictionary<int, Element> elementsById, List<int> valueIds, bool currentProfile = false)
+        IReadOnlyDictionary<int, Element> elementsById, List<int> valueIds, bool currentProfile, Dictionary<int, List<Element>> stairRuns)
     {
         if (run.SerializedStairRunInput is not { Numbers: { } numbers } input || input.OwnerId != run.Id
             || !elementsById.TryGetValue(run.FamilyTypeId > 0 ? run.FamilyTypeId : run.TypeId, out var runType)
@@ -63781,7 +63794,7 @@ public partial class IfcExporter
         string Length(string measure, double millimetres) => $"{measure}({D17(millimetres)})";
 
         int risers = StairRunIndexSpan(numbers), countedRisers = StairRunRisers(run, numbers, currentProfile);
-        bool countsAgree = StairRunCountsAgree(run, elementsById, numbers, currentProfile);
+        bool countsAgree = StairRunCountsAgree(run, elementsById, numbers, currentProfile, stairRuns);
         if (countsAgree && countedRisers > 0 && Free("NumberOfRiser")) Add("NumberOfRiser", $"IFCCOUNTMEASURE({D17(countedRisers)})");
         if (countsAgree && Free("NumberOfTreads") && StairRunTreads(run, numbers, currentProfile) is int treads && treads > 0)
             Add("NumberOfTreads", $"IFCCOUNTMEASURE({D17(treads)})");

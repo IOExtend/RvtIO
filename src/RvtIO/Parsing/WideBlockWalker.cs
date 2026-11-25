@@ -85,7 +85,7 @@ internal sealed partial class WideBlockWalker
     internal const string AllItemsKeyPrefix = "all:";
 
     private readonly Dictionary<int, SchemaClass> _classes;
-    private readonly ConcurrentDictionary<int, (SchemaClass Declaring, SchemaField Field)[]> _chains = new();
+    private readonly ConcurrentDictionary<int, StoredField[]> _chains = new();
     private readonly Func<SchemaClass, SchemaField, string?> _keyOf;
     private readonly HashSet<int> _recordClasses;
     private readonly ConcurrentDictionary<(int, string), string?> _keys = new();
@@ -140,18 +140,38 @@ internal sealed partial class WideBlockWalker
 
     private readonly ElementIdMap? _ids;
 
-    private (SchemaClass Declaring, SchemaField Field)[] Chain(int classId) => _chains.GetOrAdd(classId, id =>
+    private sealed class StoredField(SchemaClass declaring, SchemaField field)
+    {
+        internal readonly SchemaClass Declaring = declaring;
+        internal readonly SchemaField Field = field;
+        internal readonly string QualifiedName = declaring.Name + "." + field.Name;
+        private string? _key;
+        private volatile bool _resolved;
+
+        // Resolve only fields the walk reaches. Different chains can inherit the same field.
+        internal string? Key(WideBlockWalker walker)
+        {
+            if (!_resolved)
+            {
+                _key = walker.KeyOf(Declaring, Field);
+                _resolved = true;
+            }
+            return _key;
+        }
+    }
+
+    private StoredField[] Chain(int classId) => _chains.GetOrAdd(classId, static (id, classes) =>
     {
         var order = new List<SchemaClass>();
         for (int guard = 0; id != 0 && guard < 64; guard++)
         {
-            if (!_classes.TryGetValue(id, out var c)) throw new Fail("class " + id + " has no schema");
+            if (!classes.TryGetValue(id, out var c)) throw new Fail("class " + id + " has no schema");
             order.Add(c);
             id = c.Base;
         }
         order.Reverse();
-        return order.SelectMany(c => c.Fields.Where(f => f.Stored).Select(f => (c, f))).ToArray();
-    });
+        return order.SelectMany(c => c.Fields.Where(f => f.Stored).Select(f => new StoredField(c, f))).ToArray();
+    }, _classes);
 
     /// <summary>True when the class derives from (or is) the named class.</summary>
     internal bool IsA(int classId, string baseName)
@@ -177,7 +197,11 @@ internal sealed partial class WideBlockWalker
         int failedAt = -1;
         try
         {
-            foreach (var (declaring, field) in Chain(classId)) { ctx.RootField = declaring.Name + "." + field.Name; ReadField(ctx, declaring, field, 0, null); }
+            foreach (var field in Chain(classId))
+            {
+                ctx.RootField = field.QualifiedName;
+                ReadField(ctx, field.Declaring, field.Field, field.Key(this), 0, null);
+            }
             walk.RootRead = true;
             if (!rootOnly)
             {
@@ -307,7 +331,7 @@ internal sealed partial class WideBlockWalker
         Dictionary<string, object?>? record = entityCell ? new EntityFields() : entityFields;
         if (record == null && _recordClasses.Contains(classId)) record = new();
         if (record != null && c.AtRoot) record[RootFieldKey] = c.RootField;
-        foreach (var (declaring, field) in Chain(classId)) ReadField(c, declaring, field, depth, record);
+        foreach (var field in Chain(classId)) ReadField(c, field.Declaring, field.Field, field.Key(this), depth, record);
         if (entityCell)
             (c.Walk.EntityCells ??= [])[c.QueueIndex] = record!.GetValueOrDefault("m_entityMap");
         else if (record != null && entityFields == null)
@@ -321,7 +345,7 @@ internal sealed partial class WideBlockWalker
         EntityFields? values = c.Walk.EntityPayloads?.GetValueOrDefault(c.QueueIndex);
         foreach (var field in _entityLayouts[-1 - queued]!)
         {
-            ReadField(c, _entityBlob, field, depth, values);
+            ReadField(c, _entityBlob, field, KeyOf(_entityBlob, field), depth, values);
             values?.TryAdd(field.Name, UnavailableEntityValue);
         }
     }
@@ -351,12 +375,11 @@ internal sealed partial class WideBlockWalker
         return true;
     }
 
-    private void ReadField(Context c, SchemaClass declaring, SchemaField f, int depth, Dictionary<string, object?>? record)
+    private void ReadField(Context c, SchemaClass declaring, SchemaField f, string? key, int depth, Dictionary<string, object?>? record)
     {
         int hi = f.Mods >> 4;
         c.Declaring = declaring;
         c.Field = f;
-        string? key = KeyOf(declaring, f);
         if (hi == 6)
         {
             Scalar(c, declaring, f, key, depth, record, null);
@@ -397,8 +420,11 @@ internal sealed partial class WideBlockWalker
         Scalar(c, declaring, f, key, depth, record, null);
     }
 
-    private string? KeyOf(SchemaClass declaring, SchemaField f) =>
-        _keys.GetOrAdd((declaring.Id, f.Name), _ => _keyOf(declaring, f));
+    private string? KeyOf(SchemaClass declaring, SchemaField f)
+    {
+        var key = (declaring.Id, f.Name);
+        return _keys.TryGetValue(key, out var value) ? value : _keys.GetOrAdd(key, _keyOf(declaring, f));
+    }
 
     private void Scalar(Context c, SchemaClass declaring, SchemaField f, string? key, int depth, Dictionary<string, object?>? record, object? unused)
     {

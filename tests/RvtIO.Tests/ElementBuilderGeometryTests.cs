@@ -197,7 +197,7 @@ public class ElementBuilderGeometryTests
     {
         double[] identity = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0];
         var symbol = TriangleAt(0);
-        var cache = new Dictionary<GRepData, GeometryData?>(ReferenceEqualityComparer.Instance);
+        var cache = new System.Collections.Concurrent.ConcurrentDictionary<GRepData, Lazy<GeometryData?>>(ReferenceEqualityComparer.Instance);
         var state = new ParsingState { SymbolPlacementGeometry = cache };
         state.GrepBlocks[1] = symbol;
         state.GrepBlocks[2] = new GRepData
@@ -216,14 +216,14 @@ public class ElementBuilderGeometryTests
         Assert.NotSame(clippedFace.OuterVertices[0], clippedFace.Origin);
         Assert.Null(clippedFace.QuadratureArea);
 
-        var localGeometry = Assert.IsType<GeometryData>(cache[symbol]);
+        var localGeometry = Assert.IsType<GeometryData>(cache[symbol].Value);
         clippedFace.OuterVertices[0][0] = 100;
         var translated = (double[])identity.Clone();
         translated[9] = 10;
         var placed = Assert.IsType<GeometryData>(ElementBuilder.BuildPlacedSymbolGeometry(1, translated, state, []));
         var placedFace = Assert.Single(placed.Faces);
 
-        Assert.Same(localGeometry, Assert.Single(cache).Value);
+        Assert.Same(localGeometry, Assert.Single(cache).Value.Value);
         Assert.Equal(0, Assert.Single(localGeometry.Faces).OuterVertices![0][0]);
         Assert.Equal([10, 0, 0, 11, 1, 0], placed.BoundingBox!);
         Assert.Equal(7.0, placedFace.QuadratureArea);
@@ -239,7 +239,7 @@ public class ElementBuilderGeometryTests
         fine.Coarse = TriangleAt(10);
         fine.Medium = TriangleAt(20);
         fine.CoarseQuantities = TriangleAt(30);
-        var cache = new Dictionary<GRepData, GeometryData?>(ReferenceEqualityComparer.Instance);
+        var cache = new System.Collections.Concurrent.ConcurrentDictionary<GRepData, Lazy<GeometryData?>>(ReferenceEqualityComparer.Instance);
         var state = new ParsingState { SymbolPlacementGeometry = cache };
         state.GrepBlocks[1] = fine;
 
