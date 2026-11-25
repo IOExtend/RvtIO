@@ -7,9 +7,10 @@ internal static class FullJsonOutput
     private const int Batch = 64;
     private const int BufferLimit = 2 << 20;
 
-    internal static void Write(FileStream output, RevitFileInfo model, JsonSerializerOptions options)
+    // workerCount lets tests exercise the parallel path on a single-CPU machine.
+    internal static void Write(FileStream output, RevitFileInfo model, JsonSerializerOptions options, int? workerCount = null)
     {
-        int workers = Math.Min(8, Environment.ProcessorCount);
+        int workers = workerCount ?? Math.Min(8, Environment.ProcessorCount);
         if (model.Elements.Count < 4096 || workers < 2)
         {
             JsonSerializer.Serialize(output, model, options);

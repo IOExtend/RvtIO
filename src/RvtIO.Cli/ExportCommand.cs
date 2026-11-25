@@ -121,7 +121,7 @@ internal static partial class Program
 
         var swRead = System.Diagnostics.Stopwatch.StartNew();
         ExportInput input;
-        try { input = ReadExportInput(rvtPath, options, compactJsonPath != null, args.Contains("--dev-solids"), args.Contains("--dev-native")); }
+        try { input = ReadExportInput(rvtPath, options, compactJsonPath != null, args.SkipLast(1).Contains("--dev-solids"), args.Contains("--dev-native")); }
         catch (RvtInputException ex)
         {
             return EndRun(reportPath, ExportReport.Failed(inputName, inputBytes, ex.Kind, ex.Message, RvtExitCodes.InputError, readDiagnostics, raiseLimits, allowPartial, null, strict),

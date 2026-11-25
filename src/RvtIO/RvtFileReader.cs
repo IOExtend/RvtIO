@@ -233,8 +233,12 @@ public partial class RvtFileReader
         }
         finally
         {
-            try { blockGeometry?.GetAwaiter().GetResult(); }
-            finally { stringScan?.GetAwaiter().GetResult(); }
+            // Join both background tasks. A single failure keeps its type; two surface together instead of one hiding the other.
+            try { Task.WaitAll(new Task?[] { blockGeometry, stringScan }.OfType<Task>().ToArray()); }
+            catch (AggregateException failure) when (failure.InnerExceptions.Count == 1)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure.InnerExceptions[0]).Throw();
+            }
         }
         unreadableGReps = null;
         blockGeometry = null;
