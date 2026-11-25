@@ -49,7 +49,7 @@ internal sealed class BuildingStoreyResolver
         // that level, in the building where no storey is that low.
         Element? offStoreyLevel = null;
         foreach (int parameterId in baseLevelParameters)
-            if (parameterSource.Parameters.FirstOrDefault(parameter => parameter.Id == parameterId)?.Value is int levelId)
+            if (parameterSource.ReadParameters.FirstOrDefault(parameter => parameter.Id == parameterId)?.Value is int levelId)
             {
                 if (_storeyIds.TryGetValue(levelId, out int storeyId)) return storeyId;
                 if (_currentProfile && offStoreyLevel == null
@@ -67,7 +67,7 @@ internal sealed class BuildingStoreyResolver
         // A column whose base level is a Level that is not a project storey stands in the highest storey at or
         // below that level, and in the building where no storey is that low.
         if (_currentProfile && elem.CategoryId is -2001330 or -2000100
-            && parameterSource.Parameters.FirstOrDefault(parameter => parameter.Id == -1001350)?.Value is int columnBaseLevelId
+            && parameterSource.ReadParameters.FirstOrDefault(parameter => parameter.Id == -1001350)?.Value is int columnBaseLevelId
             && _elemById.TryGetValue(columnBaseLevelId, out var columnBaseLevel) && columnBaseLevel.CategoryId == -2000240)
             return _storeyIds.TryGetValue(columnBaseLevelId, out int baseStoreyId)
                 ? baseStoreyId
@@ -81,7 +81,7 @@ internal sealed class BuildingStoreyResolver
             foreach (int parameterId in elem.CategoryId is -2000035 or -2000120
                          ? new[] { -1001952, -1002062, -1114000, -1001350, -1001365, -1001383, -1002063, -1001352 }
                          : new[] { -1001952, -1002062, -1114000, -1001350, -1001365, -1001383, -1002063 })
-                if (elem.Parameters.FirstOrDefault(parameter => parameter.Id == parameterId)?.Value is int assocLevelId)
+                if (elem.ReadParameters.FirstOrDefault(parameter => parameter.Id == parameterId)?.Value is int assocLevelId)
                 {
                     if (_storeyIds.TryGetValue(assocLevelId, out int assocStoreyId)) return assocStoreyId;
                     if (offStoreyLevel == null
@@ -95,7 +95,7 @@ internal sealed class BuildingStoreyResolver
             }
         }
         // Try to find LEVEL_PARAM or BASE_LEVEL_PARAM in element's parameters
-        else foreach (var p in elem.Parameters)
+        else foreach (var p in elem.ReadParameters)
         {
             if (p.StorageType == StorageType.ElementId && p.Value is int refId && refId > 0)
             {
@@ -223,11 +223,11 @@ internal sealed class BuildingStoreyResolver
         var candidates = elements
             .Where(element => IsProjectLevel(element)
                 && !string.IsNullOrWhiteSpace(element.Name)
-                && element.Parameters.Any(parameter => parameter.Id == -1007102
+                && element.ReadParameters.Any(parameter => parameter.Id == -1007102
                     && parameter.StorageType == StorageType.Double
                     && parameter.Value is double elevation
                     && double.IsFinite(elevation))
-                && element.Parameters.Any(parameter => parameter.Id == -1007111
+                && element.ReadParameters.Any(parameter => parameter.Id == -1007111
                     && parameter.StorageType == StorageType.Integer
                     && parameter.Value is int isBuildingStory
                     && isBuildingStory == 1))
@@ -242,7 +242,7 @@ internal sealed class BuildingStoreyResolver
     internal static double GetElevation(Element level)
     {
         // Look for LEVEL_ELEV parameter
-        foreach (var p in level.Parameters)
+        foreach (var p in level.ReadParameters)
         {
             string? pName = p.Definition?.Name;
             if (pName != null && pName.Contains("LEVEL_ELEV") && p.StorageType == StorageType.Double && p.Value is double d)

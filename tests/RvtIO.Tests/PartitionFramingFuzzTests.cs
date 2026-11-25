@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using OpenMcdf;
 using RvtIO.Parsing;
+using RvtIO.Writing;
 using Xunit;
 
 namespace RvtIO.Tests;
@@ -123,6 +124,167 @@ public class PartitionFramingFuzzTests
                 Assert.True(Frame(raw) == (true, null, 3), $"tail at {tail}, byte {at} = {value:X2}");
             }
         }
+    }
+
+    [Fact]
+    public void StreamWalkMatchesInflatedSegmentsAndChecksTrailingPageTails()
+    {
+        byte[] raw = PaddedLargeStream();
+        var reference = new List<byte[]>();
+        Assert.True(PartitionFraming.Walk(raw, FramingTags(), 4, _ => { }, out var failure, out _, segmentBytes: reference), failure);
+        using var input = new MemoryStream(raw, writable: false);
+        input.Position = input.Length;
+        var streamed = new List<byte[]>();
+        Assert.True(PartitionFraming.WalkStream(input, FramingTags(), 4, _ => { }, out failure, out _, onSegment: streamed.Add), failure);
+        Assert.Equal(reference.Count, streamed.Count);
+        for (int i = 0; i < reference.Count; i++) Assert.Equal(reference[i], streamed[i]);
+
+        raw[TailOffsets(raw.Length)[^1]] = 1;
+        Assert.False(PartitionFraming.WalkStream(input, FramingTags(), 4, _ => Assert.Fail("Unexpected record"),
+            out failure, out _, onSegment: _ => Assert.Fail("Unexpected segment")));
+        Assert.Equal("page-framing", failure);
+    }
+
+    [Fact]
+    public void StreamWalkSpansMemberBoundariesInsideTheRecordHeaderAndFooter()
+    {
+        var tags = FramingTags();
+        using var raw = new MemoryStream();
+        using var writer = new BinaryWriter(raw);
+        writer.Write(9UL);
+        writer.Write(tags.ContentMarker);
+        writer.Write(0U);
+        writer.Write(1U);
+        byte[] body = [12, 34, 56, 78, 90];
+        for (uint channel = 101; channel <= 103; channel++)
+        {
+            using var item = new MemoryStream();
+            using var itemWriter = new BinaryWriter(item);
+            itemWriter.Write(123U);
+            if (channel != 101) itemWriter.Write(456U);
+            itemWriter.Write(body.Length);
+            itemWriter.Write(body);
+            itemWriter.Write(body.Length);
+            byte[] bytes = item.ToArray();
+            Member(bytes[..3], 2, false);
+            Member(bytes[3..^3], 3, false);
+            Member(bytes[^3..], 1, true);
+
+            void Member(byte[] fragment, uint flags, bool last)
+            {
+                byte[] gzip = GzipMember.Write(fragment);
+                int size = gzip.Length + 8;
+                writer.Write(tags.SegmentMarker);
+                writer.Write(flags);
+                writer.Write(last ? 1 : 0);
+                writer.Write(size);
+                writer.Write(last ? body.Length : 0);
+                writer.Write(channel);
+                writer.Write(0U);
+                writer.Write(gzip);
+                writer.Write(tags.SegmentCheckback);
+                writer.Write(size);
+            }
+        }
+        writer.Write(tags.SegmentMarker);
+        writer.Write(new byte[16]);
+        writer.Write(tags.SignatureMarker);
+        writer.Write(0UL);
+        writer.Write(tags.ContentMarker);
+        writer.Write(0U);
+        writer.Write(uint.MaxValue);
+
+        var reference = new List<(int Channel, long Offset, ulong Owner, byte[] Body)>();
+        var streamed = new List<(int Channel, long Offset, ulong Owner, byte[] Body)>();
+        Assert.True(PartitionFraming.Walk(raw.ToArray(), tags, 4, r => reference.Add((r.Channel, r.Offset, r.Owner, r.Body.ToArray())),
+            out var failure, out _), failure);
+        Assert.True(PartitionFraming.WalkStream(raw, tags, 4, r => streamed.Add((r.Channel, r.Offset, r.Owner, r.Body.ToArray())),
+            out failure, out _), failure);
+        Assert.Equal(3, streamed.Count);
+        for (int i = 0; i < streamed.Count; i++)
+        {
+            Assert.Equal((reference[i].Channel, reference[i].Offset, reference[i].Owner),
+                (streamed[i].Channel, streamed[i].Offset, streamed[i].Owner));
+            Assert.Equal(reference[i].Body, streamed[i].Body);
+        }
+    }
+
+    [Fact]
+    public void StreamWalkCanSeekToAPartitionBlockBeyondTenGiB()
+    {
+        var tags = FramingTags();
+        const uint signatureBytes = 3_000_000_000;
+        const uint secondaryCount = 3_900_000_000;
+        using var head = new MemoryStream();
+        using var writer = new BinaryWriter(head);
+        writer.Write(9UL);
+        writer.Write(tags.ContentMarker);
+        writer.Write(0UL);
+        writer.Write(tags.SegmentMarker);
+        writer.Write(new byte[16]);
+        writer.Write(tags.SignatureMarker);
+        writer.Write(signatureBytes);
+        long secondaryAt = head.Length + signatureBytes;
+        long nextBlock = secondaryAt + sizeof(uint) + 2L * secondaryCount;
+        Assert.True(nextBlock > 10L * 1024 * 1024 * 1024);
+
+        using var trailer = new MemoryStream();
+        using var tail = new BinaryWriter(trailer);
+        tail.Write(tags.ContentMarker);
+        tail.Write(uint.MaxValue);
+        tail.Write(tags.ContentKey);
+        tail.Write(0U);
+        tail.Write(new byte[16]);
+        tail.Write(tags.SegmentMarker);
+        tail.Write(new byte[16]);
+        tail.Write(tags.SignatureMarker);
+        tail.Write(0UL);
+        tail.Write(tags.ContentMarker);
+        tail.Write(0U);
+        tail.Write(uint.MaxValue);
+
+        long end = nextBlock + trailer.Length;
+        using var input = new SparsePartitionStream(Physical(end - 1) + 1);
+        input.Set(0, head.ToArray());
+        input.Set(secondaryAt, BitConverter.GetBytes(secondaryCount));
+        input.Set(nextBlock, trailer.ToArray());
+        Assert.True(PartitionFraming.WalkStream(input, tags, 4, _ => Assert.Fail("Unexpected record"), out var failure, out int blocks), failure);
+        Assert.Equal(2, blocks);
+        Assert.InRange(input.LargestRead, 1, PagedGzipStream.PageDataLength);
+    }
+
+    private static long Physical(long logical)
+        => logical + logical / PagedGzipStream.PageDataLength * PagedGzipStream.SegmentLength;
+
+    private sealed class SparsePartitionStream(long length) : Stream
+    {
+        private readonly Dictionary<long, byte> contents = [];
+        public override long Length => length;
+        public override long Position { get; set; }
+        public override bool CanRead => true;
+        public override bool CanSeek => true;
+        public override bool CanWrite => false;
+        internal int LargestRead { get; private set; }
+
+        internal void Set(long offset, byte[] bytes)
+        {
+            for (int i = 0; i < bytes.Length; i++) contents[Physical(offset + i)] = bytes[i];
+        }
+
+        public override int Read(Span<byte> buffer)
+        {
+            int count = (int)Math.Min(buffer.Length, Length - Position);
+            LargestRead = Math.Max(LargestRead, count);
+            for (int i = 0; i < count; i++) buffer[i] = contents.GetValueOrDefault(Position + i);
+            Position += count;
+            return count;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() { }
+        public override void SetLength(long value) => throw new NotSupportedException();
     }
 
     [Fact]

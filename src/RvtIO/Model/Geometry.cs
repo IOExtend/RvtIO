@@ -18,8 +18,36 @@ namespace RvtIO.Model
         /// <summary>The m_bbox of the root representation (feet, in the frame of the geometry), which may exceed the tight box.</summary>
         internal double[]? RootBoundingBox { get; set; }
 
+        private List<GeoFace>? residentFaces = new();
+        private IReadOnlyList<GeoFace>? storedFaces;
+
         /// <summary>List of geometry nodes (GGroups containing faces/edges).</summary>
-        public List<GeoFace> Faces { get; set; } = new();
+        public List<GeoFace> Faces
+        {
+            get
+            {
+                if (storedFaces != null)
+                {
+                    residentFaces = storedFaces.ToList();
+                    storedFaces = null;
+                }
+                return residentFaces!;
+            }
+            set
+            {
+                residentFaces = value;
+                storedFaces = null;
+            }
+        }
+
+        internal IReadOnlyList<GeoFace> ReadFaces => storedFaces ?? residentFaces!;
+
+        internal void ArchiveFaces(Func<List<GeoFace>, IReadOnlyList<GeoFace>> store)
+        {
+            if (residentFaces is not { Count: > 0 } faces) return;
+            storedFaces = store(faces);
+            residentFaces = null;
+        }
 
         /// <summary>Classifier-only faces: no boundary and no rendered geometry.</summary>
         internal List<GeoFace>? InactiveFaces { get; set; }
@@ -27,13 +55,57 @@ namespace RvtIO.Model
         /// <summary>The Geometry nodes written as triangle sets, in the frame of <see cref="Faces"/> (see GRepParserV2.BuildNodes).</summary>
         internal List<RvtIO.Parsing.GeometryNode>? MeshNodes { get; set; }
 
+        private MeshNodeSummary[]? sceneMeshNodes;
+
+        private readonly record struct MeshNodeSummary(int Node, bool Curved,
+            (double Area, double Volume)? Measures, uint[]? Markers);
+
+        internal int MeshNodeCount => MeshNodes?.Count ?? sceneMeshNodes?.Length ?? 0;
+
+        // The scene tessellates the polygons. Keep the analytic node facts used to compute element properties.
+        internal void KeepSceneMeshNodeFacts()
+        {
+            if (MeshNodes is not { Count: > 0 } nodes) return;
+            sceneMeshNodes = nodes.Select(node => new MeshNodeSummary(node.Node,
+                node.Faces.Any(face => face.SurfaceKind != RvtIO.Geometry.Meshing.SurfaceKind.Plane),
+                node.SourceMeasures, node.SourceMeasures.HasValue ? node.Faces.Select(face => (uint)face.Marker).ToArray() : null)).ToArray();
+            MeshNodes = null;
+        }
+
+        internal bool TryGetMeshNodeMeasures(int node, IEnumerable<uint> markers, out (double Area, double Volume) measures)
+        {
+            if (sceneMeshNodes != null)
+            {
+                foreach (var summary in sceneMeshNodes)
+                {
+                    if (summary.Node != node) continue;
+                    if (summary.Measures is { } source && markers.ToHashSet().SetEquals(summary.Markers!))
+                    {
+                        measures = source;
+                        return true;
+                    }
+                    break;
+                }
+            }
+            else if (MeshNodes?.FirstOrDefault(item => item.Node == node) is { SourceMeasures: { } source } original
+                && markers.ToHashSet().SetEquals(original.Faces.Select(face => (uint)face.Marker)))
+            {
+                measures = source;
+                return true;
+            }
+            measures = default;
+            return false;
+        }
+
         /// <summary>The surface integrals of the Geometry nodes (see GRepData.NodeMeasures), under the node ids of <see cref="Faces"/>.</summary>
         internal List<RvtIO.Parsing.MeshNodeMeasure>? NodeMeasures { get; set; }
 
         /// <summary>A Geometry node written as a triangle set has a face that is not a plane (a round end, a hole): the body is the face meshes,
         /// whatever the dense polygons of the planar faces close into.</summary>
-        internal bool HasCurvedFace(IReadOnlyCollection<int>? nodes = null) => MeshNodes?.Any(node => (nodes == null || nodes.Contains(node.Node))
-            && node.Faces.Any(face => face.SurfaceKind != RvtIO.Geometry.Meshing.SurfaceKind.Plane)) == true;
+        internal bool HasCurvedFace(IReadOnlyCollection<int>? nodes = null) => sceneMeshNodes != null
+            ? sceneMeshNodes.Any(node => node.Curved && (nodes == null || nodes.Contains(node.Node)))
+            : MeshNodes?.Any(node => (nodes == null || nodes.Contains(node.Node))
+                && node.Faces.Any(face => face.SurfaceKind != RvtIO.Geometry.Meshing.SurfaceKind.Plane)) == true;
 
         /// <summary>List of edges with 3D coordinates.</summary>
         public List<GeoEdge>? Edges { get; set; }
@@ -116,21 +188,32 @@ namespace RvtIO.Model
     /// <summary>A planar face defined by origin + two direction vectors.</summary>
     public class GeoFace
     {
+        /// <summary>Creates a face with zero-initialized frame vectors.</summary>
+        public GeoFace() : this(new double[3], new double[3], new double[3], new double[3]) { }
+
+        internal GeoFace(double[] origin, double[] xVector, double[] yVector, double[] normal)
+        {
+            Origin = origin;
+            XVector = xVector;
+            YVector = yVector;
+            Normal = normal;
+        }
+
         /// <summary>GFace.m_renderStyleId: the material element id of the face (internal; not serialized).</summary>
         [System.Text.Json.Serialization.JsonIgnore]
         internal int? RenderStyleId { get; set; }
 
         /// <summary>Plane origin [x, y, z] in feet.</summary>
-        public double[] Origin { get; set; } = new double[3];
+        public double[] Origin { get; set; }
 
         /// <summary>Plane X direction vector [x, y, z].</summary>
-        public double[] XVector { get; set; } = new double[3];
+        public double[] XVector { get; set; }
 
         /// <summary>Plane Y direction vector [x, y, z].</summary>
-        public double[] YVector { get; set; } = new double[3];
+        public double[] YVector { get; set; }
 
         /// <summary>Normal = XVector x YVector (computed).</summary>
-        public double[] Normal { get; set; } = new double[3];
+        public double[] Normal { get; set; }
 
         /// <summary>2D envelope of the face in parametric space [minU, minV, maxU, maxV].</summary>
         public double[]? Envelope { get; set; }

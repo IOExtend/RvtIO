@@ -20,7 +20,7 @@ internal static partial class ElementBuilder
         {
             if (e.CategoryId != -2001320 || e.NativeMasterSymbolId == null
                 || e.CurveDriverLineDirection is not { } direction || e.FramingCopingDistance != -1
-                || e.Geometry?.Faces is not { Count: > 0 } faces
+                || e.Geometry?.ReadFaces is not { Count: > 0 } faces
                 || e.Parameters.FirstOrDefault(p => p.Id == IndependentJustificationParamId)?.Value is not (null or 0))
                 continue;
             double min = double.MaxValue, max = double.MinValue;

@@ -13,6 +13,8 @@ namespace RvtIO.Model
         internal Parameter ShallowCopy(object? value)
         {
             var copy = (Parameter)MemberwiseClone();
+            copy._definition = Definition;
+            copy._metadata = _metadata?.Copy();
             if (!Equals(copy._value, value))
                 copy.HasResolvedZeroElementId = false;
             copy._value = value;
@@ -20,11 +22,46 @@ namespace RvtIO.Model
         }
 
         private object? _value;
+        private object? _definition;
+        private Metadata? _metadata;
+
+        internal bool HasSupplementalMetadata => _metadata != null;
+
+        private sealed class Metadata
+        {
+            internal Guid? Guid;
+            internal string? ForgeId;
+            internal string? SpecType;
+            internal string? UnitSymbol;
+            internal double? ConversionFactor;
+            internal long? NativeElementId;
+
+            internal Metadata Copy() => (Metadata)MemberwiseClone();
+        }
+
+        internal sealed record DefinitionTemplate(int Id, string? Name, string? BuiltIn)
+        {
+            internal DefinitionTemplate(int id, string name) : this(id, name, name) { }
+        }
+
+        /// <summary>Creates an empty parameter with its own mutable definition.</summary>
+        public Parameter() => _definition = new Definition();
+
+        internal Parameter(DefinitionTemplate? definition) => _definition = definition;
+
+        internal Parameter(Definition definition) => _definition = definition;
 
         /// <summary>GUID of shared/external parameters (parsed from ForgeId). Null for built-in params.
         /// Invariant per definition id - serialized once in the document's ParameterDefinitions table.</summary>
         [JsonIgnore]
-        public Guid? Guid { get; set; }
+        public Guid? Guid
+        {
+            get => _metadata?.Guid;
+            set
+            {
+                if (value != null || _metadata != null) (_metadata ??= new()).Guid = value;
+            }
+        }
 
         /// <summary>
         /// For built-in params: the BIP enum int value (same as Definition.Id, negative).
@@ -36,7 +73,25 @@ namespace RvtIO.Model
         /// <summary>Definition (name/BIP). Invariant per <see cref="Id"/>; hoisted into the
         /// document-level ParameterDefinitions table for JSON, so it is not serialized inline.</summary>
         [JsonIgnore]
-        public Definition Definition { get; set; } = new();
+        public Definition Definition
+        {
+            get => _definition is DefinitionTemplate template
+                ? (Definition)(_definition = new Definition { Id = template.Id, Name = template.Name, BuiltInParameter = template.BuiltIn })
+                : (Definition)_definition!;
+            set => _definition = value;
+        }
+
+        internal string? DefinitionName => _definition is DefinitionTemplate template ? template.Name : ((Definition?)_definition)?.Name;
+
+        internal static bool IsHostQuantityPlaceholder(Parameter parameter) => parameter.Id is -1012805 or -1012806 or -1012807
+            && ((parameter.Value is double number && number <= 0) || (parameter.Value is int integer && integer <= 0));
+
+        internal (int Id, string? Name, string? BuiltIn)? DefinitionFields => _definition switch
+        {
+            DefinitionTemplate template => (template.Id, template.Name, template.BuiltIn),
+            Definition definition => (definition.Id, definition.Name, definition.BuiltInParameter),
+            _ => null,
+        };
 
         /// <summary>Storage type. Invariant per definition id - lives in ParameterDefinitions.</summary>
         [JsonIgnore]
@@ -66,23 +121,51 @@ namespace RvtIO.Model
         /// <summary>Forge TypeId string for user-defined/shared params (e.g. "autodesk.parameter.aec.revit.external.-1:GUID-1.0.0").
         /// Invariant per definition id - lives in ParameterDefinitions.</summary>
         [JsonIgnore]
-        public string? ForgeId { get; set; }
+        public string? ForgeId
+        {
+            get => _metadata?.ForgeId;
+            set
+            {
+                if (value != null || _metadata != null) (_metadata ??= new()).ForgeId = value;
+            }
+        }
 
         /// <summary>Measurement spec type (e.g. "autodesk.spec.aec:length-2.0.0").
         /// Resolved from ForgeId via 0x0B3A blocks, or from BIP name heuristics.</summary>
         [JsonIgnore]
-        public string? SpecType { get; set; }
+        public string? SpecType
+        {
+            get => _metadata?.SpecType;
+            set
+            {
+                if (value != null || _metadata != null) (_metadata ??= new()).SpecType = value;
+            }
+        }
 
         /// <summary>Display unit symbol (e.g. "mm", "m^2", "degC").
         /// Resolved from SpecType via 0x0FBD ForgeTypeId spec registry.
         /// Invariant per definition id - lives in ParameterDefinitions.</summary>
         [JsonIgnore]
-        public string? UnitSymbol { get; set; }
+        public string? UnitSymbol
+        {
+            get => _metadata?.UnitSymbol;
+            set
+            {
+                if (value != null || _metadata != null) (_metadata ??= new()).UnitSymbol = value;
+            }
+        }
 
         /// <summary>Conversion factor from Revit internal units to display units.
         /// E.g. for length: feet -> mm = 304.8.</summary>
         [JsonIgnore]
-        public double? ConversionFactor { get; set; }
+        public double? ConversionFactor
+        {
+            get => _metadata?.ConversionFactor;
+            set
+            {
+                if (value != null || _metadata != null) (_metadata ??= new()).ConversionFactor = value;
+            }
+        }
 
         /// <summary>True when this parameter's value came from an approximate fallback
         /// (e.g. dominant bounding-box dimension) rather than an exact decoded source (e.g.
@@ -185,10 +268,30 @@ namespace RvtIO.Model
             return false;
         }
 
+        [Flags]
+        internal enum ZeroReferenceKinds : byte
+        {
+            None = 0,
+            Resolved = 1,
+            Phase = 2,
+            DimensionStyle = 4,
+        }
+
+        internal ZeroReferenceKinds ClassifyZeroReference()
+        {
+            var kinds = HasResolvedZeroElementId ? ZeroReferenceKinds.Resolved : ZeroReferenceKinds.None;
+            if (StorageType != StorageType.ElementId || Value is not int id || id != 0) return kinds;
+            if (IsPhaseElementIdParameter(Id)) kinds |= ZeroReferenceKinds.Phase;
+            if (IsTypeElementIdParameter(Id)) kinds |= ZeroReferenceKinds.DimensionStyle;
+            return kinds;
+        }
+
         /// <summary>Marks <see cref="HasResolvedZeroElementId"/> on each parameter whose <c>0</c> element-id
         /// value resolves to a real target element with id <c>0</c> in its domain.</summary>
-        internal static void ResolveZeroElementIds(RevitFileInfo info, RvtIO.Internal.ParsingState? state = null)
+        internal static void ResolveZeroElementIds(RevitFileInfo info, RvtIO.Internal.ParsingState? state = null,
+            Action<Element>? archiveParameters = null)
         {
+            archiveParameters ??= state?.ArchiveSceneParameters;
             bool hasZeroPhase = HasZeroProjectPhase(info, state);
             bool hasZeroDimStyle = HasZeroDimensionStyle(info, state);
             if (state != null)
@@ -196,20 +299,22 @@ namespace RvtIO.Model
                 info.SerializedHasZeroProjectPhase = hasZeroPhase;
                 info.SerializedHasZeroDimensionStyle = hasZeroDimStyle;
             }
+            var relevant = ZeroReferenceKinds.Resolved;
+            if (hasZeroPhase) relevant |= ZeroReferenceKinds.Phase;
+            if (hasZeroDimStyle) relevant |= ZeroReferenceKinds.DimensionStyle;
             foreach (var element in info.Elements)
             {
-                foreach (var parameter in element.Parameters)
+                if (element.ArchivedZeroReferences is { } kinds && (kinds & relevant) == 0) continue;
+                int index = -1;
+                foreach (var parameter in element.ReadParameters)
                 {
-                    if (parameter.StorageType == StorageType.ElementId && parameter.Value is int eid && eid == 0)
-                    {
-                        parameter.HasResolvedZeroElementId =
-                            IsValidZeroElementIdTarget(element, parameter.Id, hasZeroPhase, hasZeroDimStyle);
-                    }
-                    else if (parameter.HasResolvedZeroElementId)
-                    {
-                        parameter.HasResolvedZeroElementId = false;
-                    }
+                    index++;
+                    bool resolves = parameter.StorageType == StorageType.ElementId && parameter.Value is int eid && eid == 0
+                        && IsValidZeroElementIdTarget(element, parameter.Id, hasZeroPhase, hasZeroDimStyle);
+                    if (parameter.HasResolvedZeroElementId != resolves)
+                        element.Parameters[index].HasResolvedZeroElementId = resolves;
                 }
+                archiveParameters?.Invoke(element);
             }
         }
 
@@ -301,7 +406,14 @@ namespace RvtIO.Model
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public string? SourceElementId => NativeElementId?.ToString(CultureInfo.InvariantCulture);
 
-        internal long? NativeElementId { get; set; }
+        internal long? NativeElementId
+        {
+            get => _metadata?.NativeElementId;
+            set
+            {
+                if (value != null || _metadata != null) (_metadata ??= new()).NativeElementId = value;
+            }
+        }
 
         /// <summary>
         /// Get a formatted display string for the value.

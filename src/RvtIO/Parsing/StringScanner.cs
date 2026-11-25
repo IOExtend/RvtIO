@@ -57,12 +57,13 @@ internal static class StringScanner
     }
 
     /// <summary>Scan a chunk for element name strings near element IDs.</summary>
-    public static void ScanChunk(byte[] d, HashSet<uint> elemSet, Dictionary<uint, List<string>> elemStrings)
+    public static void ScanChunk(byte[] d, HashSet<uint> elemSet, Dictionary<uint, List<string>> elemStrings,
+        bool firstNameOnly = false)
     {
         // Each string is found once in a linear pass and attributed to the known ids at i in (j-600, j+100],
         // the positions whose window [i-100, i+600) contains the string at j. Scanning a window per id would
         // revalidate the same bytes many times, because id arrays pack known ids back to back.
-        var seenPerEid = new Dictionary<uint, HashSet<string>>();
+        var seenPerEid = firstNameOnly ? null : new Dictionary<uint, HashSet<string>>();
         for (int j = 0; j + 6 <= d.Length; j++)
         {
             uint sLen = BitConverter.ToUInt32(d, j);
@@ -101,6 +102,11 @@ internal static class StringScanner
                 if (eid == 0 || !elemSet.Contains(eid)) continue;
                 if (!elemStrings.TryGetValue(eid, out var list))
                     elemStrings[eid] = list = new List<string>();
+                if (seenPerEid == null)
+                {
+                    if (list.Count == 0) list.Add(s);
+                    continue;
+                }
                 if (!seenPerEid.TryGetValue(eid, out var seen))
                     seenPerEid[eid] = seen = new HashSet<string>();
                 if (seen.Add(s)) list.Add(s);

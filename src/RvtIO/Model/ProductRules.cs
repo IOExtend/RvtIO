@@ -17,17 +17,17 @@ internal static class ProductRules
     /// an instance whose own geometry is null is not exported (for example the floor-hosted family
     /// "Assignment - Rectangular opening (floor)"). Faces whose flags are not known (placed from a nested symbol) count as filled.</summary>
     internal static bool HasOnlyUnfilledFaces(Element element) =>
-        element.Geometry?.Faces is { Count: > 0 } faces
+        element.Geometry?.ReadFaces is { Count: > 0 } faces
         && faces.All(face => face.GInfoFlags is uint flags && (flags & FaceFillFlag) == 0);
 
     /// <summary>Whether the element names its created phase (PHASE_CREATED) in its own record graph. Preview and type records
     /// inherit the parameter during parameter propagation without referencing that phase.</summary>
     internal static bool HasProjectPhaseReference(Element e)
     {
-        int? phase = e.Parameters.FirstOrDefault(p => p.Id == -1012100)?.Value is int n ? n : null; // PHASE_CREATED
+        int? phase = e.ReadParameters.FirstOrDefault(p => p.Id == -1012100)?.Value is int n ? n : null; // PHASE_CREATED
         // Id 0 is a phase of Revit 2023 and later (the first project phase, a row of its
         // element table); the earlier layouts number phases from 1.
-        return phase is > 0 && (e.References?.Contains(phase.Value) == true || e.SerializedCreatedPhaseId == phase.Value)
+        return phase is > 0 && (e.ReadReferences?.Contains(phase.Value) == true || e.SerializedCreatedPhaseId == phase.Value)
             || phase == 0 && e.SerializedCreatedPhaseId == 0;
     }
 
@@ -36,7 +36,7 @@ internal static class ProductRules
     {
         var typeElementIds = new HashSet<int>();
         foreach (var e in elements)
-            foreach (var p in e.Parameters)
+            foreach (var p in e.ReadParameters)
                 if (p.Id is -1002050 or -1002052 && p.Value is int typeId && typeId > 0)
                     typeElementIds.Add(typeId);
         return typeElementIds;

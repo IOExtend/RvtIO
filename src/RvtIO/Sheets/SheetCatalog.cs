@@ -119,7 +119,7 @@ public sealed class SheetCatalog
         {
             if (!Compact.CompactUniverse.IsTableRow(element, info.ElemTableIsExact)) continue;
             if (element.LookupParameter(BuiltInParameter.VIEWPORT_DETAIL_NUMBER) == null) continue;
-            if (element.References is not { Count: > 0 } references) continue;
+            if (element.ReadReferences is not { Count: > 0 } references) continue;
             int sheetId = 0;
             foreach (int reference in references)
             {

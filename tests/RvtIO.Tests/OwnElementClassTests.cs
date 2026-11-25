@@ -228,8 +228,57 @@ public class OwnElementClassTests
         Assert.DoesNotContain(999u, state.BlockOnlyIds);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ParseBlocks_KeepsTheLegacyScanOrderWithScratchSegments(bool storeSegments)
+    {
+        byte[] known = Frame(0x07D7), discovered = Frame(0x07D7);
+        BitConverter.GetBytes(456u).CopyTo(discovered, 0);
+        using var scratch = new MemoryStream();
+        var segments = new PartitionChunks(storeSegments ? new PartitionChunks.Backing(scratch) : null);
+        segments.Add(known);
+        segments.Add(discovered);
+        var state = new ParsingState
+        {
+            AllKnownIds = [123],
+            Chunks = segments,
+            NonRecordChunks = segments,
+        };
+
+        RvtFileReader.ParseBlocks(state, null);
+
+        Assert.Equal([456u], state.BlockOnlyIds);
+        Assert.Equal(4, state.BlockClassInventory[0x07D7].Count);
+        Assert.Equal(storeSegments ? known.Length + discovered.Length : 0, scratch.Length);
+    }
+
     [Fact]
-    public void TheGeometryOfARecordThatRunsIntoTheNextSegmentOrIsOverTheSizeLimit_IsNotDecoded()
+    public void FramedScheduleRecoveryKeepsTheSourceRecordLocation()
+    {
+        byte[] schedule = Frame(1012);
+        using var scratch = new MemoryStream();
+        var segments = new PartitionChunks(new PartitionChunks.Backing(scratch));
+        segments.Add(schedule[..15]);
+        segments.Add(schedule[15..]);
+        var item = new PartitionFraming.ProjectItem(102, 123, 0, schedule.Length);
+        var frame = new PartitionFraming.Framed(segments, [item], 4);
+        var state = new ParsingState { AllKnownIds = [123], FramedPartitions = [frame] };
+        var deferred = new List<(PartitionFraming.Framed Frame, PartitionFraming.ProjectItem Item, ushort Class, uint Owner)>();
+
+        RvtFileReader.RecordFramedRoots(state, deferred);
+
+        var source = Assert.Single(deferred);
+        Assert.Same(frame, source.Frame);
+        Assert.Equal(item, source.Item);
+        Assert.Equal((1012, 123u), ((int)source.Class, source.Owner));
+        Assert.Equal(schedule.Length, scratch.Length);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TheGeometryOfARecordThatRunsIntoTheNextSegmentOrIsOverTheSizeLimit_IsNotDecoded(bool storeSegments)
     {
         byte[] crossing = Frame(0x07D7), whole = Frame(0x07D7);
         BitConverter.GetBytes(456u).CopyTo(whole, 0);
@@ -241,10 +290,15 @@ public class OwnElementClassTests
         BitConverter.GetBytes((ushort)0x07D7).CopyTo(large, 12);
         BitConverter.GetBytes(size).CopyTo(large, 16 + (int)size - 4);
         byte[] stream = [.. crossing, .. whole, .. large];
+        using var scratch = new MemoryStream();
+        var segments = new PartitionChunks(storeSegments ? new PartitionChunks.Backing(scratch) : null);
+        segments.Add(stream[..10]);
+        segments.Add(stream[10..]);
         var state = new ParsingState
         {
             AllKnownIds = [123, 456, 789],
-            FramedPartitions = [new PartitionFraming.Framed([stream[..10], stream[10..]],
+            Chunks = segments,
+            FramedPartitions = [new PartitionFraming.Framed(segments,
                 [new(103, 123, 0, crossing.Length), new(103, 456, crossing.Length, whole.Length),
                  new(103, 789, crossing.Length + whole.Length, large.Length)], 4)],
         };
@@ -254,6 +308,15 @@ public class OwnElementClassTests
 
         Assert.Equal(3, state.BlockClassInventory[0x07D7].Count);
         Assert.Equal([456u], pending.Select(p => p.Eid));
+        if (storeSegments)
+        {
+            Assert.Equal(stream.Length, scratch.Length);
+            var job = Assert.Single(pending);
+            Assert.Empty(job.Chunk);
+            var (data, start) = job.Stored!.Value.Read();
+            Assert.Equal(0, start);
+            Assert.Equal(whole, data);
+        }
     }
 
     // TESTFILE.rvt is saved in five increments; reading it with and without the removal of the superseded copies changes the records around

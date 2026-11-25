@@ -22,6 +22,39 @@ public class HighElementIdParsingTests
         Assert.True(state.Records.ContainsKey(ElementId));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RecordParser_RetainsTheExactBodyInItsAlreadyStoredSegment(bool r25)
+    {
+        byte[] body = [0xAD, 0x14, 0x02, 0xF8];
+        int start = r25 ? 16 : 12;
+        byte[] chunk = new byte[start + body.Length + (r25 ? 4 : 0)];
+        if (r25)
+        {
+            BitConverter.GetBytes(ElementId).CopyTo(chunk, 0);
+            BitConverter.GetBytes(body.Length).CopyTo(chunk, 12);
+            BitConverter.GetBytes(body.Length).CopyTo(chunk, start + body.Length);
+        }
+        else WriteRecord(chunk, 0, ElementId);
+        body.CopyTo(chunk, start);
+
+        using var scratch = new MemoryStream();
+        var chunks = new PartitionChunks(new PartitionChunks.Backing(scratch));
+        chunks.Add(chunk);
+        var state = new ParsingState();
+        state.AllKnownIds.Add(ElementId);
+
+        if (r25) RecordParser.ParseChunkR25(chunk, state, chunks);
+        else RecordParser.ParseChunk(chunk, state, chunks);
+
+        var record = state.Records[ElementId];
+        byte[] first = record.Body;
+        Assert.Equal(body, first);
+        Assert.NotSame(first, record.Body);
+        Assert.Equal(chunk.Length, scratch.Length);
+    }
+
     [Fact]
     public void RecordParser_AcceptsStructurallyAdjacentUnknownHighIds()
     {

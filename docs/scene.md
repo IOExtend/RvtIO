@@ -40,7 +40,25 @@ closed one is an `ArgumentException`.
 Set `RvtSceneOptions.ReadProgress` to observe the reader phases and work counts during `Read(path)`; it is the
 `RvtReaderOptions.Progress` of that read (see [the public API](public-api.md)), including its guarantees on order and thread.
 Pass an `IProgress<RvtReadProgress>` of your own when order matters, as `Progress<T>` can deliver updates late and out of order.
-The final reader update, `complete`, marks the end of the file read. Mesh extraction and scene mapping follow it and report nothing.
+The final reader update, `complete`, marks the end of the file read. Set `RvtSceneOptions.MeshProgress` to receive completed
+and total drawable element counts during mesh extraction. Updates are reported on the calling thread. An empty drawable set
+reports `(0, 0)` once. Scene mapping follows mesh extraction.
+
+`RvtSceneOptions.CreatePartitionScratch` passes a scratch stream factory to the file reader for path and stream reads. Use it to
+read inflated partitions through private temporary storage as described in the [public API](public-api.md).
+
+Use `ReadStream(stream, options, triangleScratch)` to keep expanded body faces, large element reference lists, resolved parameters, intermediate triangle meshes and
+the scene's triangle buffers in another temporary stream. Pass an empty, readable, writable, seekable stream; the caller owns it and
+keeps it open until it has finished using the returned scene. It must be separate from the input and partition scratch.
+Parameter edits reuse their reserved slots in this stream. A slot moves to a larger allocation when its contents grow beyond its capacity.
+Derived curve, sheet, room and instance properties are written back as each element is updated, keeping the edited parameter lists out of the managed heap between updates.
+The partition scratch also holds provisional native field edits until category resolution determines which edits apply.
+The archived lists also retain the first type references, the kinds of zero-ID references, the first positive creation phase, and whether a host quantity placeholder needs removal.
+Geometry block indexes carry the available detail alternatives alongside symbol links. Quantity checks inspect the index before decoding geometry.
+During this read, analytic mesh nodes retain the facts needed for element measurements. Shell quantities and scene tessellation read the archived polygons through the same paged face lists.
+The temporary scene document keeps the resolved parameter values and omits the provenance indexes used by the compact API and IFC export.
+Element records allocate storage for optional MEP, room, validated type-reference, curve driver, and instance placement facts when those facts are present.
+Revit UniqueIds from creation history are formatted when their elements are mapped to the scene.
 
 Set `RvtSceneOptions.IncludeModelLinesAndReinforcement` to include straight model lines as line primitives and reinforcement with decoded bar paths as triangles. The native RVT-to-NWC tool enables this option.
 

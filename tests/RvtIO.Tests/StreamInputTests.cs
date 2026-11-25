@@ -1,5 +1,7 @@
+using System.Buffers.Binary;
 using System.Runtime.CompilerServices;
 using IOScene;
+using OpenMcdf;
 using RvtIO.Meshes;
 using RvtIO.Scene;
 using Xunit;
@@ -491,6 +493,31 @@ public sealed class StreamInputTests
             var document = RvtDocument.OpenStream(stream);
             Assert.Equal(expected.Elements.Select(e => e.Id), document.Elements.Select(e => e.Id));
         }
+    }
+
+    [Theory]
+    [InlineData("Partitions", true)]
+    [InlineData("Partitions", false)]
+    [InlineData("Global", true)]
+    public void WideCompoundStreamSizesAreAllowedOnlyForStreamedPartitions(string storage, bool useScratch)
+    {
+        using var file = new MemoryStream();
+        using (var container = RootStorage.Create(file, OpenMcdf.Version.V4, StorageModeFlags.LeaveOpen))
+        using (var payload = container.CreateStorage(storage).CreateStream("0"))
+            payload.Write(new byte[4096]);
+
+        var bytes = file.ToArray();
+        int directory = (BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(48)) + 1) * 4096;
+        int entry = directory + 2 * 128; // root and storage precede the single stream entry
+        BinaryPrimitives.WriteInt64LittleEndian(bytes.AsSpan(entry + 120), (long)Array.MaxLength + 4096);
+        using var changed = new MemoryStream(bytes);
+        var reader = new RvtFileReader(new RvtReaderOptions { CreatePartitionScratch = useScratch ? () => new MemoryStream() : null });
+
+        // No data was added to the container. Streaming must still verify the declared end of the stream.
+        if (storage == "Partitions" && useScratch)
+            Assert.Equal("truncated-or-damaged", Assert.Throws<RvtInputException>(() => reader.ReadStream(changed)).Kind);
+        else
+            Assert.Equal("array-length", Assert.Throws<RvtLimitException>(() => reader.ReadStream(changed)).Hit.Limit);
     }
 
     [Fact]

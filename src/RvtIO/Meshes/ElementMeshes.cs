@@ -41,7 +41,12 @@ public static class ElementMeshes
 
     /// <summary>The meshes of the drawable elements of <paramref name="document"/>.</summary>
     /// <exception cref="ArgumentNullException"><paramref name="document"/> is null.</exception>
-    public static MeshSet Extract(RvtDocument document, ElementMeshOptions? options = null)
+    public static MeshSet Extract(RvtDocument document, ElementMeshOptions? options = null) =>
+        ExtractCore(document, options, null);
+
+    internal static MeshSet ExtractCore(RvtDocument document, ElementMeshOptions? options,
+        Func<IReadOnlyList<TriangleMesh>, IReadOnlyList<TriangleMesh>>? store,
+        IProgress<(int Completed, int Total)>? progress = null)
     {
         ArgumentNullException.ThrowIfNull(document);
         options ??= new ElementMeshOptions();
@@ -50,6 +55,9 @@ public static class ElementMeshes
         var drawableIds = drawable.Select(item => item.Element.Id).ToHashSet();
         var symbolCache = new Dictionary<int, SymbolMeshes?>();
         var placedSymbols = new Dictionary<int, IReadOnlyList<TriangleMesh>>();
+
+        IReadOnlyList<TriangleMesh> Keep(IReadOnlyList<TriangleMesh> meshes) =>
+            store != null && meshes.Count > 0 ? store(meshes) : meshes;
 
         bool IsMaterial(int id) => document.GetElement(id)?.CategoryId == MaterialsCategoryId;
         int MaterialOf(GeoFace face)
@@ -71,10 +79,10 @@ public static class ElementMeshes
             if (document.GetElement(symbolId)?.Geometry is { PlacedSymbolClipped: false, PlacedSymbolBox: false } geometry)
             {
                 bool ghosts = geometry.GhostNodes is { Count: > 0 };
-                var (meshes, failed) = Triangulate(geometry.Faces, MaterialOf, ghosts);
+                var (meshes, failed) = Triangulate(geometry.ReadFaces, MaterialOf, ghosts);
                 if (meshes.Count > 0)
-                    symbol = new SymbolMeshes(meshes, failed + geometry.UntriangulatedFaces, geometry.UntriangulatedFaces,
-                        DropsUntakenNodes(geometry.Faces, ghosts), geometry.Faces.Any(face => face.GeometryNode < 0), ghosts);
+                    symbol = new SymbolMeshes(Keep(meshes), failed + geometry.UntriangulatedFaces, geometry.UntriangulatedFaces,
+                        DropsUntakenNodes(geometry.ReadFaces, ghosts), geometry.ReadFaces.Any(face => face.GeometryNode < 0), ghosts);
             }
             symbolCache[symbolId] = symbol;
             return symbol;
@@ -85,7 +93,7 @@ public static class ElementMeshes
         {
             if (geometry.ExactMappedInstances is not { Count: > 0 } mapped || geometry.PlacedSymbolClipped || geometry.PlacedSymbolBox)
                 return null;
-            bool dropsUntaken = DropsUntakenNodes(geometry.Faces, geometry.GhostNodes is { Count: > 0 });
+            bool dropsUntaken = DropsUntakenNodes(geometry.ReadFaces, geometry.GhostNodes is { Count: > 0 });
             var placements = new List<SymbolPlacement>(mapped.Count);
             int failed = 0;
             int untriangulatedInSymbols = 0;
@@ -108,8 +116,15 @@ public static class ElementMeshes
         }
 
         var elements = new List<ElementMesh>();
+        var clock = progress == null ? null : System.Diagnostics.Stopwatch.StartNew();
+        progress?.Report((0, drawable.Count));
         foreach (var (element, body) in drawable)
         {
+            if (clock?.ElapsedMilliseconds >= 500 && elements.Count > 0)
+            {
+                progress!.Report((elements.Count, drawable.Count));
+                clock.Restart();
+            }
             if (options.IncludeModelLinesAndReinforcement && IsStairContainer(element, body, drawableIds))
             {
                 elements.Add(new ElementMesh
@@ -136,7 +151,7 @@ public static class ElementMeshes
                     Line = line,
                     Arc = arc,
                     LinePairs = linePairs,
-                    Meshes = rebar == null ? [] : [rebar],
+                    Meshes = rebar == null ? [] : Keep([rebar]),
                     Coverage = line != null || arc != null || linePairs != null || rebar != null ? MeshCoverage.Complete
                         : info.WideLayoutNotRewritten ? MeshCoverage.Undecoded : MeshCoverage.NoGeometry,
                 });
@@ -157,17 +172,18 @@ public static class ElementMeshes
                 });
                 continue;
             }
-            var (meshes, failed) = Triangulate(body.Faces, MaterialOf, body.GhostNodes is { Count: > 0 });
+            var (meshes, failed) = Triangulate(body.ReadFaces, MaterialOf, body.GhostNodes is { Count: > 0 });
             // A face left out of the reader's triangulation of its trim loops (see GeometryData.UntriangulatedFaces).
             failed += body.UntriangulatedFaces;
             elements.Add(new ElementMesh
             {
                 ElementId = element.Id,
-                Meshes = meshes,
+                Meshes = Keep(meshes),
                 Coverage = CoverageOf(meshes.Count > 0, body, failed, false),
                 UntriangulatedFaces = failed,
             });
         }
+        if (drawable.Count > 0) progress?.Report((drawable.Count, drawable.Count));
         if (options.IncludeDatumGeometry)
         {
             var existing = elements.Select(element => element.ElementId).ToHashSet();
@@ -285,7 +301,7 @@ public static class ElementMeshes
         if (element.CategoryId is not ((int)BuiltInCategory.OST_Lines or (int)BuiltInCategory.OST_RoomSeparationLines
             or (int)BuiltInCategory.OST_MEPSpaceSeparationLines) || element.OwnerViewId != null
             || !element.RootClassIs("CurveElem")
-            || !element.Parameters.Any(p => p.Id == (int)BuiltInParameter.CURVE_IS_DETAIL && p.Value is 0))
+            || !element.ReadParameters.Any(p => p.Id == (int)BuiltInParameter.CURVE_IS_DETAIL && p.Value is 0))
             return null;
         return element.NativeModelArc ?? (element.Location is { CurveType: "Line" } line ? line : null);
     }
@@ -305,7 +321,7 @@ public static class ElementMeshes
         if (!(length > 0 && double.IsFinite(length))) return null;
         var normal = direction / length;
         var origin = Pt3.From(plane.Origin);
-        var faces = host.Faces.Where(face => face.OuterVertices is { Count: >= 3 } loop &&
+        var faces = host.ReadFaces.Where(face => face.OuterVertices is { Count: >= 3 } loop &&
             loop.All(point => point.Length == 3 && Math.Abs(normal.Dot(Pt3.From(point) - origin)) <= tolerance))
             .Take(2).ToArray();
         if (faces.Length != 1) return null;

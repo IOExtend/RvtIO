@@ -70,7 +70,7 @@ internal static partial class ElementBuilder
             if (element.OwnWallTrimmedAxis != null || element.CategoryId != -2000011
                 || element.Location is not { CurveType: "Line", DriverOrigin: { Length: 3 } o, DriverDirection: { Length: 3 } d,
                     DriverEndParams: { Length: 2 } endParams }
-                || element.Geometry?.Faces is not { Count: > 0 } faces) continue;
+                || element.Geometry?.ReadFaces is not { Count: > 0 } faces) continue;
             var solidFaces = element.Geometry.BrepSolids is { Count: > 0 } solids
                 ? solids[0].FaceIndices.Where(i => (uint)i < (uint)faces.Count).Select(i => faces[i]) : faces;
             if (SolidTrimmedRange(solidFaces, o, d, endParams) is not var (lo, hi)) continue;

@@ -176,9 +176,35 @@ internal static partial class GRepParserV2
         public Dictionary<uint, bool> FaceHasFirstLoop = new();
         public HashSet<int> LastLoops = new();
 
-        public int U32() { if (Pos + 4 > End) throw Stop; int v = BitConverter.ToInt32(D, Pos); Pos += 4; return v; }
-        public double F64() { if (Pos + 8 > End) throw Stop; double v = BitConverter.ToDouble(D, Pos); Pos += 8; return v; }
-        public void Take(int n) { if (Pos + n > End) throw Stop; Pos += n; }
+        public int U32() => TryU32(out int value) ? value : throw Stop;
+
+        public bool TryU32(out int value)
+        {
+            value = 0;
+            if (End - Pos < sizeof(int)) return false;
+            value = BitConverter.ToInt32(D, Pos);
+            Pos += sizeof(int);
+            return true;
+        }
+        public double F64() => TryF64(out double value) ? value : throw Stop;
+
+        public bool TryF64(out double value)
+        {
+            value = 0;
+            if (End - Pos < sizeof(double)) return false;
+            value = BitConverter.ToDouble(D, Pos);
+            Pos += sizeof(double);
+            return true;
+        }
+
+        public void Take(int n) { if (!TryTake(n)) throw Stop; }
+
+        public bool TryTake(int n)
+        {
+            if (n > End - Pos) return false;
+            Pos += n;
+            return true;
+        }
         public bool CanRead(int n) => Pos + n <= End;
     }
 
@@ -1264,12 +1290,17 @@ internal static partial class GRepParserV2
 
     private static void WalkQueueItem(Cur c, int qi)
     {
+        if (!TryWalkQueueItem(c, qi)) throw Stop;
+    }
+
+    private static bool TryWalkQueueItem(Cur c, int qi)
+    {
                 var (cls, v) = c.Queue[qi];
                 c.CurrentQueueIndex = qi;
                 c.CurrentObjectHandle = v;
                 c.CurrentObjectClass = cls;
                 var qf = TfBlockDeserializer.SerializationFields(cls);
-                if (qf == null) throw Stop;
+                if (qf == null) return false;
                 // Blob-headed items: refresh the class's tag base (tag = base + ordinal).
                 if (qf.Count > 0 && qf[0].Name == "m_GInfo" && c.CanRead(16))
                 {
@@ -1317,6 +1348,10 @@ internal static partial class GRepParserV2
                 {
                     // Layout: [Envelope 4xf64 uv][orient u8] then Plane: [O,X,Y] (105 total) /
                     // CylSurf|ConeSurf: [O,X,Y,Z][R] (137).
+                    // Check the length first: a block replayed from scratch is an exact-size buffer, so the
+                    // envelope reads below must not run past it before the guard can raise Stop.
+                    int need = cls == 522 ? 105 : 137;
+                    if (!c.CanRead(need)) throw Stop;
                     var env = new double[4];
                     for (int k = 0; k < 4; k++) env[k] = BitConverter.ToDouble(c.D, c.Pos + 8 * k);
                     int fp = c.Pos + 33;
@@ -1325,8 +1360,6 @@ internal static partial class GRepParserV2
                         Kind = cls == 522 ? SurfKind.Plane : cls == 983 ? SurfKind.Cylinder : SurfKind.Cone,
                         Env = env, Orient = c.D[c.Pos + 32],
                     };
-                    int need = cls == 522 ? 105 : 137;
-                    if (!c.CanRead(need)) throw Stop;
                     for (int k = 0; k < 3; k++)
                     {
                         sr.O[k] = BitConverter.ToDouble(c.D, fp + 8 * k);
@@ -1517,7 +1550,7 @@ internal static partial class GRepParserV2
                         HermiteNodes = new List<HermiteNode>(),
                     };
                     uint count = BitConverter.ToUInt32(c.D, c.Pos + 33);
-                    if (count == 0xFFFFFFFF) { c.Take(37); return; }
+                    if (count == 0xFFFFFFFF) { c.Take(37); return true; }
                     if (count > 1_000_000 || !c.CanRead(37 + 56 * (int)count)) throw Stop;
                     int nodePos = c.Pos + 37;
                     bool valid = true;
@@ -1658,8 +1691,10 @@ internal static partial class GRepParserV2
                 }
                 else
                 {
-                    foreach (var sf in qf) ReadField(c, sf, 1);
+                    foreach (var sf in qf)
+                        if (!TryReadField(c, sf, 1)) return false;
                 }
+                return true;
     }
 
     /// <summary>
@@ -1894,7 +1929,11 @@ internal static partial class GRepParserV2
             c.Pos = off;
             bool ok = true;
             int want = Math.Min(10, c.Queue.Count - qj);
-            try { for (int k = 0; k < want; k++) WalkQueueItem(c, qj + k); }
+            try
+            {
+                for (int k = 0; k < want; k++)
+                    if (!TryWalkQueueItem(c, qj + k)) { ok = false; break; }
+            }
             catch (DecodeStop) { ok = false; }
             // Roll the dry run back - the caller's loop re-walks for real.
             c.Pos = snap.Pos;
@@ -1969,20 +2008,25 @@ internal static partial class GRepParserV2
 
     private static void ReadField(Cur c, TfBlockDeserializer.TfField f, int depth)
     {
+        if (!TryReadField(c, f, depth)) throw Stop;
+    }
+
+    // Resync tests many false candidates. Reject malformed headers and array counts without an exception
+    // while advancing the real walk to the same failing byte as the ordinary scalar reads.
+    private static bool TryReadField(Cur c, TfBlockDeserializer.TfField f, int depth)
+    {
         if (depth > 48) throw Stop;
 
         if (f.Name == "m_GInfo")
         {
             // GInfo is a declared four-field value object, not opaque padding: tag, control
             // command, category ElementId, flags.
-            int tag = c.U32();
-            int control = c.U32();
-            int categoryId = c.U32();
-            uint flags = (uint)c.U32();
-            if (categoryId < -3_000_000) throw Stop;
+            if (!c.TryU32(out int tag) || !c.TryU32(out int control) || !c.TryU32(out int categoryId)
+                || !c.TryU32(out int rawFlags) || categoryId < -3_000_000) return false;
+            uint flags = (uint)rawFlags;
             if (c.CurrentObjectHandle != 0)
                 c.ObjectGInfo[c.CurrentObjectHandle] = (tag, control, categoryId, flags);
-            return;
+            return true;
         }
 
         // GRep.m_bBox / m_tightbBox are two inline XYZ points. Capture them only on the root
@@ -1999,22 +2043,22 @@ internal static partial class GRepParserV2
                 if (f.Name == "m_tightbBox") c.RootTightBoundingBox = box;
                 else c.RootBoundingBox = box;
             }
-            return;
+            return true;
         }
 
         // Surface(523).m_Envelope has NO ref in the schema but is serialized INLINE as Envelope = 2
         // uv corners x 16 bytes = 32.
-        if (f.Name == "m_Envelope" && f.Declaring == 523) { c.Take(32); return; }
+        if (f.Name == "m_Envelope" && f.Declaring == 523) { c.Take(32); return true; }
 
         // FamilyDB serializes these POD entries as int[2], as in the exact Tf reader.
         if (c.RootClass == 1829 && f is { Declaring: 1829, Name: "m_dummyHostInsertionFaceTags",
                 Type: 13, Mods: 80, Ref: null, Cnt: null })
         {
             uint count = (uint)c.U32();
-            if (count == uint.MaxValue) return;
+            if (count == uint.MaxValue) return true;
             if (count > 1_000_000 || count > (c.End - c.Pos) / 8) throw Stop;
             c.Take((int)count * 8);
-            return;
+            return true;
         }
         if (c.RootClass == 1829 && f is { Declaring: 1763, Name: "second", Type: 14, Mods: 0, Ref: 1763 })
         {
@@ -2026,59 +2070,59 @@ internal static partial class GRepParserV2
 
         // FamilySymbol's embedded complex-cut BRep reaches the geometry walker through
         // FamSymHandleMgr.
-        if (f.Declaring == 140 && f.Name == "m_foreignElemIdRef") { c.Take(4); return; }
+        if (f.Declaring == 140 && f.Name == "m_foreignElemIdRef") { c.Take(4); return true; }
         if (f.Declaring == 1729 && f.Name == "m_handleMap")
         {
             uint count = (uint)c.U32();
-            if (count == 0xFFFFFFFF) return;
+            if (count == 0xFFFFFFFF) return true;
             if (count > 100_000) throw Stop;
             var fields = TfBlockDeserializer.SerializationFields(1730) ?? throw Stop;
             for (uint index = 0; index < count; index++)
                 foreach (var field in fields) ReadField(c, field, depth + 1);
-            return;
+            return true;
         }
         if (f.Declaring == 1730 && f.Name == "second")
         {
             var fields = TfBlockDeserializer.SerializationFields(1727) ?? throw Stop;
             foreach (var field in fields) ReadField(c, field, depth + 1);
-            return;
+            return true;
         }
-        if (f.Declaring == 1758 && f.Name == "m_flags") { c.Take(3); return; }
-        if (f.Declaring == 322 && f.Name == "second") { c.Take(4); return; }
+        if (f.Declaring == 1758 && f.Name == "m_flags") { c.Take(3); return true; }
+        if (f.Declaring == 322 && f.Name == "second") { c.Take(4); return true; }
         if (f.Declaring == 714 && f.Name == "m_params")
         {
             ReadInlineContainer(c, 715, depth);
-            return;
+            return true;
         }
         if (f.Declaring == 714 && f.Name == "m_geomRefHandles")
         {
             ReadInlineStruct(c, 716, depth);
-            return;
+            return true;
         }
         if (f.Declaring == 716 && f.Name == "m_offsetGeomMap")
         {
             ReadInlineContainer(c, 717, depth);
-            return;
+            return true;
         }
         if (f.Declaring == 496 && f.Name == "m_PatternPositionMap")
         {
             ReadInlineContainer(c, 497, depth);
-            return;
+            return true;
         }
         if (f.Declaring == 496 && f.Name == "m_substituteFaceMap")
         {
             ReadInlineContainer(c, 498, depth);
-            return;
+            return true;
         }
         if (f.Declaring == 497 && f.Name == "second")
         {
             ReadInlineStruct(c, 78, depth);
-            return;
+            return true;
         }
         if (f.Declaring == 498 && f.Name == "second")
         {
             ReadInlineStruct(c, 91, depth);
-            return;
+            return true;
         }
 
         // GHermiteSpline stores its nodes inline. One node is a 3D point, a 3D tangent and a curve
@@ -2086,11 +2130,12 @@ internal static partial class GRepParserV2
         // does not carry an item-class reference.
         if (f.Declaring == 2020 && f.Name == "m_NodeArray")
         {
-            uint n = (uint)c.U32();
-            if (n == 0xFFFFFFFF) return;
-            if (n > 1_000_000) throw Stop;
+            if (!c.TryU32(out int count)) return false;
+            uint n = (uint)count;
+            if (n == 0xFFFFFFFF) return true;
+            if (n > 1_000_000) return false;
             c.Take(56 * (int)n);
-            return;
+            return true;
         }
 
         // GeomGenerator history entries have class-declared fixed widths: FaceHistEntry=16,
@@ -2099,7 +2144,7 @@ internal static partial class GRepParserV2
             or "m_edgeHistTable" or "m_edgeHistTableReverse")
         {
             uint n = (uint)c.U32();
-            if (n == 0xFFFFFFFF) return;
+            if (n == 0xFFFFFFFF) return true;
             if (n > 100000) throw Stop;
             int recordSize = f.Name switch
             {
@@ -2108,7 +2153,7 @@ internal static partial class GRepParserV2
                 _ => 20,
             };
             c.Take(recordSize * (int)n);
-            return;
+            return true;
         }
         // Exact spatial fallback also needs the sentinel's own face/first/last/open contract, not
         // only the back-references found on adjacent Edge objects.
@@ -2126,31 +2171,31 @@ internal static partial class GRepParserV2
                     if (!c.CanRead(1)) throw Stop;
                     loop.Open = c.D[c.Pos++]; break;
             }
-            return;
+            return true;
         }
         // Edge back-references to its two adjacent faces (2xu32 fixed array).
         if (f.Name == "m_pFace" && c.CapEdge != null)
         {
             uint a = (uint)c.U32(), b = (uint)c.U32();
             c.CapEdge.FaceA = a; c.CapEdge.FaceB = b;
-            return;
+            return true;
         }
         if (f.Name == "m_next" && c.CapEdge != null)
         {
             c.CapEdge.NextA = (uint)c.U32();
             c.CapEdge.NextB = (uint)c.U32();
-            return;
+            return true;
         }
         if (f.Name == "m_prev" && c.CapEdge != null)
         {
             c.CapEdge.PrevA = (uint)c.U32();
             c.CapEdge.PrevB = (uint)c.U32();
-            return;
+            return true;
         }
         if (f.Name == "m_interiorEdgePnts")
         {
             uint n = (uint)c.U32();
-            if (n == 0xFFFFFFFF) return;
+            if (n == 0xFFFFFFFF) return true;
             if (n > 100000) throw Stop;
             // Each EdgePnt contains the UV coordinates in both adjacent faces. Every sample is part
             // of the serialized trim polyline; dropping them collapses a closed circular edge to a
@@ -2160,39 +2205,42 @@ internal static partial class GRepParserV2
                 var point = ReadUV(c);
                 c.CapEdge?.Interior.Add(point);
             }
-            return;
+            return true;
         }
         if (f.Name == "m_firstAndLastEdgePnts")
         {
             var s = ReadUV(c);
             var e = ReadUV(c);
             if (c.CapEdge != null) { c.CapEdge.Start = s; c.CapEdge.EndP = e; c.CapEdge.HasEndpoints = true; }
-            return;
+            return true;
         }
         if (f.Name == "m_flags" && c.CapEdge != null)
         {
             if (!c.CanRead(1)) throw Stop;
             c.CapEdge.Flags = c.D[c.Pos++];
-            return;
+            return true;
         }
 
         int hi = f.Mods >> 4;
-        if (hi == 6) { ReadString(c); return; }
+        if (hi == 6) return TryReadString(c);
         if (hi == 1)
         {
             int n = f.Cnt ?? 0;
-            for (int i = 0; i < n; i++) ReadScalar(c, f, depth);
-            return;
+            for (int i = 0; i < n; i++)
+                if (!TryReadScalar(c, f, depth)) return false;
+            return true;
         }
         if (hi == 5)
         {
-            uint n = (uint)c.U32();
-            if (n == 0xFFFFFFFF) return;
-            if (n > 1_000_000) throw Stop;
-            for (uint i = 0; i < n; i++) ReadScalar(c, f, depth);
-            return;
+            if (!c.TryU32(out int count)) return false;
+            uint n = (uint)count;
+            if (n == 0xFFFFFFFF) return true;
+            if (n > 1_000_000) return false;
+            for (uint i = 0; i < n; i++)
+                if (!TryReadScalar(c, f, depth)) return false;
+            return true;
         }
-        ReadScalar(c, f, depth);
+        return TryReadScalar(c, f, depth);
     }
 
     private static void ReadInlineContainer(Cur c, int classId, int depth)
@@ -2210,13 +2258,13 @@ internal static partial class GRepParserV2
         foreach (var field in fields) ReadField(c, field, depth + 1);
     }
 
-    private static void ReadScalar(Cur c, TfBlockDeserializer.TfField f, int depth)
+    private static bool TryReadScalar(Cur c, TfBlockDeserializer.TfField f, int depth)
     {
         switch (f.Type)
         {
             case 0x01: case 0x02: case 0x03:
             {
-                if (!c.CanRead(1)) throw Stop;
+                if (!c.CanRead(1)) return false;
                 byte value = c.D[c.Pos++];
                 bool captureConditionCut = c.CurrentObjectClass is 1995 or 1996
                     && f.Name == "m_negateDirCondition";
@@ -2230,11 +2278,11 @@ internal static partial class GRepParserV2
                         values[f.Name] = fieldValues = new();
                     fieldValues.Add(value);
                 }
-                return;
+                return true;
             }
             case 0x04:
             {
-                int value = c.U32();
+                if (!c.TryU32(out int value)) return false;
                 bool captureModelCondition = c.CurrentObjectClass is 1999 or 2002;
                 if (c.CurrentQueueIndex >= 0
                     && ((c.Debug && c.CurrentObjectClass is >= 1992 and <= 2015)
@@ -2244,12 +2292,12 @@ internal static partial class GRepParserV2
                         c.QueueInts[c.CurrentQueueIndex] = values = new();
                     values[f.Name] = value;
                 }
-                return;
+                return true;
             }
-            case 0x05: case 0x06: c.Take(4); return;
+            case 0x05: case 0x06: return c.TryTake(4);
             case 0x07:
             {
-                double value = c.F64();
+                if (!c.TryF64(out double value)) return false;
                 if (c.Debug && c.CurrentQueueIndex >= 0 && c.CurrentObjectClass is >= 1992 and <= 2003)
                 {
                     if (!c.QueueDoubles.TryGetValue(c.CurrentQueueIndex, out var values))
@@ -2258,19 +2306,19 @@ internal static partial class GRepParserV2
                         values[f.Name] = fieldValues = new();
                     fieldValues.Add(value);
                 }
-                return;
+                return true;
             }
-            case 0x0A: c.Take(8); return;
-            case 0x08: ReadString(c); return;
-            case 0x09: c.Take(16); return;
+            case 0x0A: return c.TryTake(8);
+            case 0x08: return TryReadString(c);
+            case 0x09: return c.TryTake(16);
             // POD array item: ref 524(Envelope)/1248(EdgePnt) = 2xf64 UV (16b); else 3xf64 point
             // (24b). field already loops cnt times for fixed arrays (hi==1).
-            case 0x0D: c.Take((f.Mods >> 4) == 1 ? (f.Ref is 524 or 1248 ? 16 : 24) : 8 * (f.Cnt ?? 3)); return;
+            case 0x0D: return c.TryTake((f.Mods >> 4) == 1 ? (f.Ref is 524 or 1248 ? 16 : 24) : 8 * (f.Cnt ?? 3));
             case 0x0E:
             {
                 int lo = f.Mods & 0x0F;
-                if (lo == 3) { c.Take(4); return; }
-                if (lo is 1 or 2) { ReadPtr(c, f.Name); return; }
+                if (lo == 3) return c.TryTake(4);
+                if (lo is 1 or 2) return TryReadPtr(c, f.Name);
                 if (f.Ref == 20)
                 {
                     // GPolyMesh.m_materialID: the material of the mesh (the mesh has no faces to
@@ -2281,53 +2329,49 @@ internal static partial class GRepParserV2
                             c.QueueInts[c.CurrentQueueIndex] = meshValues = new();
                         meshValues[f.Name] = BitConverter.ToInt32(c.D, c.Pos);
                     }
-                    c.Take(4);
-                    return;
+                    return c.TryTake(4);
                 }
                 if (f.Ref.HasValue)
                 {
-                    var sub = TfBlockDeserializer.SerializationFields(f.Ref.Value) ?? throw Stop;
-                    foreach (var sf in sub) ReadField(c, sf, depth + 1);
-                    return;
+                    var sub = TfBlockDeserializer.SerializationFields(f.Ref.Value);
+                    if (sub == null) return false;
+                    foreach (var sf in sub)
+                        if (!TryReadField(c, sf, depth + 1)) return false;
+                    return true;
                 }
-                ReadPoly(c, f.Name);
-                return;
+                return TryReadPoly(c, f.Name);
             }
-            default: throw Stop;
+            default: return false;
         }
     }
 
-    private static void ReadString(Cur c)
+    private static bool TryReadString(Cur c)
     {
-        uint n = (uint)c.U32();
-        if (n > 100000) throw Stop;
-        c.Take(2 * (int)n);
+        return c.TryU32(out int count) && (uint)count <= 100000 && c.TryTake(2 * count);
     }
 
-    private static void ReadPtr(Cur c, string? field = null)
+    private static bool TryReadPtr(Cur c, string field)
     {
-        int v = c.U32();
+        if (!c.TryU32(out int v)) return false;
         if (field == "m_pFirstLoop" && c.CurrentObjectClass == 1589)
             c.FaceHasFirstLoop[(uint)c.CurrentObjectHandle] = v != 0;
         else if (field == "m_nextLoop" && v == 0 && c.CurrentObjectClass is 1254 or 1257 && c.CurrentQueueIndex >= 0)
             c.LastLoops.Add(c.CurrentQueueIndex);
-        if (v == 0) return;
-        if (!c.CanRead(2)) throw Stop;
-        ushort cls = BitConverter.ToUInt16(c.D, c.Pos); c.Pos += 2;
-        if (cls == 4) { ReadGInfoTail(c); return; }
-        if (!TfBlockDeserializer.Schemas.ContainsKey(cls)) throw Stop;
-        Enqueue(c, cls, v, field ?? "<pointer>");
+        if (v == 0) return true;
+        return TryReadReference(c, v, field);
     }
 
-    private static void ReadPoly(Cur c, string field)
+    private static bool TryReadPoly(Cur c, string field)
+        => c.TryU32(out int v) && (v != -1 || TryReadReference(c, v, field));
+
+    private static bool TryReadReference(Cur c, int handle, string field)
     {
-        uint v = (uint)c.U32();
-        if (v == 0 || v != 0xFFFFFFFF) return; // null or plain handle
-        if (!c.CanRead(2)) throw Stop;
+        if (!c.CanRead(2)) return false;
         ushort cls = BitConverter.ToUInt16(c.D, c.Pos); c.Pos += 2;
-        if (cls == 4) { ReadGInfoTail(c); return; }
-        if (!TfBlockDeserializer.Schemas.ContainsKey(cls)) throw Stop;
-        Enqueue(c, cls, (int)v, field);
+        if (cls == 4) return TryReadGInfoTail(c);
+        if (!TfBlockDeserializer.Schemas.ContainsKey(cls)) return false;
+        Enqueue(c, cls, handle, field);
+        return true;
     }
 
     private static void Enqueue(Cur c, ushort cls, int handle, string field)
@@ -2343,15 +2387,13 @@ internal static partial class GRepParserV2
         }
     }
 
-    private static void ReadGInfoTail(Cur c)
+    private static bool TryReadGInfoTail(Cur c)
     {
-        if (!c.CanRead(2)) throw Stop;
+        if (!c.CanRead(2)) return false;
         ushort tk = BitConverter.ToUInt16(c.D, c.Pos); c.Pos += 2;
-        if ((tk & 0xFF) != 8) throw Stop;
+        if ((tk & 0xFF) != 8) return false;
         int kind = tk >> 8;
-        if (kind == 0) return;
-        if (kind == 1) { c.Take(6 * 8 + 2 * 4); return; }
-        throw Stop;
+        return kind == 0 || kind == 1 && c.TryTake(6 * 8 + 2 * 4);
     }
 
     private static EdgeUV ReadUV(Cur c)

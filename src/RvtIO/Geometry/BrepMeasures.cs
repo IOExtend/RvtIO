@@ -89,9 +89,10 @@ internal static class BrepMeasures
         HashSet<(long X, long Y, long Z)>? splitVertices = null)
     {
         var result = new List<ShellInfo>();
-        if (geometry?.Faces is not { Count: > 0 } faces) return result;
-        IEnumerable<(List<GeoFace> Faces, bool Closed)> shells = geometry.BrepSolids is { Count: > 0 } solids
-            ? solids.Select(solid => (solid.FaceIndices.Where(i => (uint)i < (uint)faces.Count).Select(i => faces[i]).ToList(), solid.IsClosed))
+        if (geometry?.ReadFaces is not { Count: > 0 } faces) return result;
+        IEnumerable<(IReadOnlyList<GeoFace> Faces, bool Closed)> shells = geometry.BrepSolids is { Count: > 0 } solids
+            ? solids.Select(solid => ((IReadOnlyList<GeoFace>)solid.FaceIndices.Where(i => (uint)i < (uint)faces.Count)
+                .Select(i => faces[i]).ToList(), solid.IsClosed))
             : [(faces, false)];
         foreach (var (shellFaces, closed) in shells)
         {
@@ -112,9 +113,8 @@ internal static class BrepMeasures
             bool sourceMeasured = false;
             if (closed && shellFaces.Select(face => face.GeometryNode).Distinct().ToList() is [var nodeId]
                 && geometry.NodeMeasures?.Any(measure => measure.Node == nodeId && measure.Volume < 0) != true  // a cutting node has no solid to measure
-                && geometry.MeshNodes?.FirstOrDefault(node => node.Node == nodeId) is { SourceMeasures: { } measures } source
-                && shellFaces.Select(face => face.SourceFace != 0 ? face.SourceFace : face.MeshMarker).ToHashSet()
-                    .SetEquals(source.Faces.Select(face => (uint)face.Marker)))
+                && geometry.TryGetMeshNodeMeasures(nodeId,
+                    shellFaces.Select(face => face.SourceFace != 0 ? face.SourceFace : face.MeshMarker), out var measures))
             {
                 area = measures.Area;
                 volume = measures.Volume;
@@ -132,9 +132,9 @@ internal static class BrepMeasures
         if (geometry is not { UntriangulatedFaces: 0, BrepSolids: [{ IsClosed: true } solid],
                 NodeMeasures: [{ Node: > 0, Volume: > 0 } measure] }
             || !double.IsFinite(measure.Volume)
-            || solid.FaceIndices.Count != geometry.Faces.Count
-            || geometry.Faces.Any(face => face.CurvedSurface || face.GeometryNode != measure.Node)
-            || !FacetedShell.TryOrientExactFacetedShell(geometry.Faces, solid.FaceIndices,
+            || solid.FaceIndices.Count != geometry.ReadFaces.Count
+            || geometry.ReadFaces.Any(face => face.CurvedSurface || face.GeometryNode != measure.Node)
+            || !FacetedShell.TryOrientExactFacetedShell(geometry.ReadFaces, solid.FaceIndices,
                 out var faces, out geometricVolume, triangulateNonPlanarFaces: false))
             return null;
         return new ShellInfo(faces, Closed: true, measure.Volume, measure.Area);
@@ -216,10 +216,10 @@ internal static class BrepMeasures
     /// (a cutting node, whose measure has a negative volume, is not taken). Null unless every node of the geometry has its integrals.</summary>
     internal static (double Volume, double Area)? NodeSolidTotalsCurrent(GeometryData? geometry)
     {
-        if (geometry?.NodeMeasures is not { Count: > 0 } measures || geometry.Faces.Count == 0) return null;
+        if (geometry?.NodeMeasures is not { Count: > 0 } measures || geometry.ReadFaces.Count == 0) return null;
         var byNode = new Dictionary<int, RvtIO.Parsing.MeshNodeMeasure>();
         foreach (var measure in measures) byNode.TryAdd(measure.Node, measure);
-        if (geometry.Faces.Any(face => face.GeometryNode > 0 && !byNode.ContainsKey(face.GeometryNode))) return null;
+        if (geometry.ReadFaces.Any(face => face.GeometryNode > 0 && !byNode.ContainsKey(face.GeometryNode))) return null;
         var taken = byNode.Values.Where(measure => measure.Volume > 0).ToList();
         if (taken.Count == 0) return null;
         return (taken.Sum(measure => measure.Volume) * CubicFeetToCubicMetres, taken.Sum(measure => measure.Area) * SquareFeetToSquareMetres);

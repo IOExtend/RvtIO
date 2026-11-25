@@ -28,7 +28,7 @@ internal static class RecordRouting
         /// <summary>SHA-256 over all items (the three channels in file order) of one element in one partition stream.</summary>
         internal Dictionary<(ulong Owner, int Partition), byte[]> Digests { get; } = [];
         /// <summary>Stored length of each partition stream: the reader decompresses the longest first.</summary>
-        internal Dictionary<int, int> StreamLengths { get; } = [];
+        internal Dictionary<int, long> StreamLengths { get; } = [];
         internal List<Item> Items { get; } = [];
         internal Dictionary<int, List<int>> SegmentLengths { get; } = [];
         internal int KeyedRecords { get; set; }
@@ -46,6 +46,12 @@ internal static class RecordRouting
 
     /// <summary>Walks one partition stream into the census; false (with the reason) when its framing does not hold.</summary>
     internal static bool Collect(Census census, int partition, byte[] raw, out string? failure)
+        => CollectCore(census, partition, raw, null, out failure);
+
+    internal static bool CollectStream(Census census, int partition, Stream stream, out string? failure)
+        => CollectCore(census, partition, null, stream, out failure);
+
+    private static bool CollectCore(Census census, int partition, byte[]? raw, Stream? stream, out string? failure)
     {
         var lengths = new List<int>();
         var holders = new List<(ulong Owner, long Offset, int Length)>();
@@ -54,7 +60,7 @@ internal static class RecordRouting
         bool ok;
         try
         {
-            ok = PartitionFraming.Walk(raw, census.Tags, census.IdWidth, r =>
+            void CollectRecord(PartitionFraming.Record r)
             {
                 if (r.Owner == (census.IdWidth == 8 ? ulong.MaxValue : uint.MaxValue)) return;
                 if (r.Block != 0) { if (r.Channel == 101) keyed++; return; }
@@ -62,7 +68,9 @@ internal static class RecordRouting
                 if (!hashers.TryGetValue(r.Owner, out var hasher))
                     hashers[r.Owner] = hasher = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
                 hasher.AppendData(r.Item.Span);
-            }, out failure, out _, lengths);
+            }
+            ok = stream == null ? PartitionFraming.Walk(raw!, census.Tags, census.IdWidth, CollectRecord, out failure, out _, lengths)
+                : PartitionFraming.WalkStream(stream, census.Tags, census.IdWidth, CollectRecord, out failure, out _, lengths);
             if (!ok) return false;
             foreach (var (owner, hasher) in hashers) census.Digests[(owner, partition)] = hasher.GetHashAndReset();
         }
@@ -70,7 +78,7 @@ internal static class RecordRouting
         {
             foreach (var hasher in hashers.Values) hasher.Dispose();
         }
-        census.StreamLengths[partition] = raw.Length;
+        census.StreamLengths[partition] = raw?.LongLength ?? stream!.Length;
         census.SegmentLengths[partition] = lengths;
         census.KeyedRecords += keyed;
         foreach (var (owner, offset, length) in holders)
@@ -131,24 +139,33 @@ internal static class RecordRouting
     /// <summary>The chunks of one partition stream without the given byte ranges of its inflated stream. Null when the chunks are
     /// not the segments of the framing (same count, same lengths), so a range could not be placed exactly.</summary>
     internal static List<byte[]>? Prune(IReadOnlyList<byte[]> chunks, IReadOnlyList<int> segmentLengths, IReadOnlyList<(long Start, int Length)> ranges)
+        => PruneCore(chunks, segmentLengths, ranges)?.ToList();
+
+    internal static PartitionChunks? PrunePartition(PartitionChunks chunks, IReadOnlyList<int> segmentLengths, IReadOnlyList<(long Start, int Length)> ranges)
+        => PruneCore(chunks, segmentLengths, ranges);
+
+    private static PartitionChunks? PruneCore(IReadOnlyList<byte[]> chunks, IReadOnlyList<int> segmentLengths, IReadOnlyList<(long Start, int Length)> ranges)
     {
         if (chunks.Count != segmentLengths.Count) return null;
         for (int i = 0; i < chunks.Count; i++)
-            if (chunks[i].Length != segmentLengths[i]) return null;
-        var result = new List<byte[]>(chunks.Count);
+            if (PartitionChunks.LengthAt(chunks, i) != segmentLengths[i]) return null;
+        var stored = chunks as PartitionChunks;
+        var result = new PartitionChunks(stored?.Store);
         long chunkStart = 0;
         int next = 0;
-        foreach (var chunk in chunks)
+        for (int i = 0; i < chunks.Count; i++)
         {
-            long chunkEnd = chunkStart + chunk.Length;
+            long chunkEnd = chunkStart + segmentLengths[i];
             // a chunk no range reaches is kept as it is (the framing of the stream holds on to it as well)
             if (next >= ranges.Count || ranges[next].Start >= chunkEnd)
             {
-                result.Add(chunk);
+                if (stored == null) result.Add(chunks[i]);
+                else result.Add(stored.Reference(i));
                 chunkStart = chunkEnd;
                 continue;
             }
-            var kept = new MemoryStream(chunk.Length);
+            var chunk = chunks[i];
+            using var kept = new MemoryStream(chunk.Length);
             long position = chunkStart;
             while (next < ranges.Count && ranges[next].Start < chunkEnd)
             {

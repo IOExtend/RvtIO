@@ -86,26 +86,29 @@ public class ElementExportIdTests
         Assert.Null(ElementBuilder.BuildUniqueId(8, state)); // index beyond the dump's list
     }
 
-    [Fact]
-    public void ApplyExportIds_GivesTheUniqueIdOfTheElementHistoryAndNoneWithout()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ApplyExportIds_GivesTheUniqueIdOfTheElementHistoryAndNoneWithout(bool keepExportProvenance)
     {
         var episodes = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
         var state = new ParsingState
         {
+            KeepExportProvenance = keepExportProvenance,
             HistoryEpisodeGuids = episodes.Select(g => g.ToString("D")).ToList(),
             EpisodeTableX = 3,
             // 5: created in the last episode; 6: renumbered from 4 in the first; 9: a creation date beyond the list.
             ElemRecHistories = new() { [5] = new(5, 0), [6] = new(4, 2), [9] = new(9, 3), [13] = new(-1, 0) },
         };
         var created = new Element { Id = 5 };
-        var renumbered = new Element { Id = 6 };
+        var renumbered = new Element { Id = 6, UniqueId = $"{episodes[0]:D}-00000006" };
         var outsideList = new Element { Id = 9 };
         var withoutRow = new Element { Id = 12 };
         var invalidOriginal = new Element { Id = 13 };
 
         var (applied, replaced) = ElementBuilder.ApplyExportIds([created, renumbered, outsideList, withoutRow, invalidOriginal], state);
 
-        Assert.Equal((2, 0), (applied, replaced));
+        Assert.Equal((2, 1), (applied, replaced));
         Assert.Equal($"{episodes[2]:D}-00000005", created.UniqueId);
         Assert.Equal(ElementExportIds.ExportId(episodes[2], 5), created.SerializedExportId);
         Assert.Equal($"{episodes[0]:D}-00000004", renumbered.UniqueId);
@@ -119,14 +122,17 @@ public class ElementExportIdTests
         Assert.Null(invalidOriginal.SerializedExportId);
     }
 
-    [Fact]
-    public void ApplyExportIds_MatchesRevit2027ForAWallAboveUInt32()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ApplyExportIds_MatchesRevit2027ForAWallAboveUInt32(bool keepExportProvenance)
     {
         // A generated two-wall model reopened in Revit 2027.2 and exported to IFC2x3.
         const long elementId = 4_295_967_297;
         const int key = int.MaxValue;
         var state = new ParsingState
         {
+            KeepExportProvenance = keepExportProvenance,
             HistoryEpisodeGuids = ["95db5b0a-a7bf-4747-af03-b1f5fe59fca1"],
             EpisodeTableX = 1,
             ElemRecHistories = new() { [key] = new(elementId, 0) },
@@ -140,6 +146,13 @@ public class ElementExportIdTests
         Assert.Equal(Guid.Parse("95db5b0a-a7bf-4747-af03-b1f4fe56bee0"), wall.SerializedExportId);
         Assert.Equal(wall.SerializedExportId, wall.SerializedHandleExportId);
         Assert.Equal("2LsriAfxz7Hwy3iVJ_LhxW", IfcExporter.ResolveExactElementGlobalId(wall, new HashSet<Guid>()));
+
+        state.ElemRecHistories!.Clear();
+        Assert.Equal((0, 0), ElementBuilder.ApplyExportIds([wall], state));
+        Assert.Null(wall.SerializedExportId);
+        Assert.Equal("95db5b0a-a7bf-4747-af03-b1f5fe59fca1-1000f4241", wall.UniqueId);
+        wall.UniqueId = "explicit identity";
+        Assert.Equal("explicit identity", wall.UniqueId);
     }
 
     [Fact]

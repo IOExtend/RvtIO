@@ -51,23 +51,32 @@ internal static class PartitionFraming
         /// <summary>Where the bytes of the item are: in its segment when it lies in one, else in a copy (an item can run into the next segment
         /// of its chain); Copied tells which.</summary>
         internal (byte[] Data, int Start, bool Copied) Bytes(ProjectItem item)
+            => Bytes(item, out _);
+
+        internal (byte[] Data, int Start, bool Copied) Bytes(ProjectItem item, out PartitionChunks.Block? stored)
         {
+            stored = null;
             if (starts == null)
             {
                 var at = new long[Segments.Count];
-                for (int i = 1; i < at.Length; i++) at[i] = at[i - 1] + Segments[i - 1].Length;
+                for (int i = 1; i < at.Length; i++) at[i] = at[i - 1] + PartitionChunks.LengthAt(Segments, i - 1);
                 starts = at;
             }
             int s = Array.BinarySearch(starts, item.Offset);
             if (s < 0) s = ~s - 1;
-            while (s < starts.Length - 1 && starts[s + 1] <= item.Offset && Segments[s].Length == 0) s++;
+            while (s < starts.Length - 1 && starts[s + 1] <= item.Offset && PartitionChunks.LengthAt(Segments, s) == 0) s++;
             int from = (int)(item.Offset - starts[s]);
-            if (from + (long)item.Length <= Segments[s].Length) return (Segments[s], from, false);
+            if (from + (long)item.Length <= PartitionChunks.LengthAt(Segments, s))
+            {
+                stored = (Segments as PartitionChunks)?.StoredBlock(s, from, item.Length);
+                return (Segments[s], from, false);
+            }
             var copy = new byte[item.Length];
             for (int done = 0; done < item.Length; s++, from = 0)
             {
-                int n = Math.Min(item.Length - done, Segments[s].Length - from);
-                Buffer.BlockCopy(Segments[s], from, copy, done, n);
+                var segment = Segments[s];
+                int n = Math.Min(item.Length - done, segment.Length - from);
+                Buffer.BlockCopy(segment, from, copy, done, n);
                 done += n;
             }
             return (copy, 0, true);
@@ -86,15 +95,24 @@ internal static class PartitionFraming
     /// with the reason in <paramref name="failure"/> when the framing does not hold. <paramref name="idWidth"/> is 4 or 8.</summary>
     internal static bool Walk(byte[] raw, Tags tags, int idWidth, Action<Record> onRecord, out string? failure, out int blocks,
         List<int>? segmentLengths = null, List<byte[]>? segmentBytes = null)
+        => WalkCore(() => new Cursor(raw, paged: true), tags, idWidth, onRecord, out failure, out blocks,
+            segmentLengths, segmentBytes is null ? null : segmentBytes.Add, incremental: false);
+
+    internal static bool WalkStream(Stream raw, Tags tags, int idWidth, Action<Record> onRecord, out string? failure, out int blocks,
+        List<int>? segmentLengths = null, Action<byte[]>? onSegment = null)
+        => WalkCore(() => new Cursor(raw), tags, idWidth, onRecord, out failure, out blocks, segmentLengths, onSegment, incremental: true);
+
+    private static bool WalkCore(Func<Cursor> open, Tags tags, int idWidth, Action<Record> onRecord,
+        out string? failure, out int blocks, List<int>? segmentLengths, Action<byte[]>? onSegment, bool incremental)
     {
         failure = null;
         blocks = 0;
         try
         {
-            var input = new Cursor(raw, paged: true);
+            var input = open();
             Require(input.U32() == 9 && input.U32() == 0, "format");
             var keys = new HashSet<string>();
-            long inflated = 0; // output of all finished chains
+            long inflated = 0; // bytes of records already emitted
             while (true)
             {
                 Require(input.U16() == tags.ContentMarker, "content-marker");
@@ -113,7 +131,7 @@ internal static class PartitionFraming
                 HashSet<ulong>[] owners = [new(), new(), new()];
                 using var chain = new MemoryStream();
                 uint? chainIndex = null;
-                long countSum = 0, sizeSum = 0;
+                long countSum = 0, sizeSum = 0, actualCount = 0, actualSize = 0;
                 while (true)
                 {
                     Require(input.U16() == tags.SegmentMarker, "segment-marker");
@@ -136,22 +154,24 @@ internal static class PartitionFraming
                     int before = (int)chain.Length;
                     Inflate(payload, chain);
                     segmentLengths?.Add((int)chain.Length - before);
-                    segmentBytes?.Add(chain.GetBuffer().AsSpan(before, (int)chain.Length - before).ToArray());
+                    onSegment?.Invoke(chain.GetBuffer().AsSpan(before, (int)chain.Length - before).ToArray());
                     countSum += count;
                     sizeSum += unc;
-                    if (mode is not (0 or 1)) continue;
-
+                    bool final = mode is 0 or 1;
+                    if (!final && !incremental) continue;
                     var memory = chain.GetBuffer().AsMemory(0, checked((int)chain.Length));
                     var records = new Cursor(memory);
-                    long actualCount = 0, actualSize = 0;
+                    int committed = 0;
+                    int headerSize = idWidth + (index == 101 ? 4 : 8);
                     while (records.Remaining > 0)
                     {
-                        int begin = records.Position;
+                        if (!final && records.Remaining < headerSize) break;
                         ulong owner = idWidth == 8 ? records.U64() : records.U32();
                         uint extra = index != 101 ? records.U32() : 0;
                         uint bodySize = records.U32();
                         Require(bodySize <= int.MaxValue, "record-length");
-                        int bodyAt = records.Position;
+                        if (!final && records.Remaining < (long)bodySize + 4) break;
+                        int bodyAt = (int)records.Position;
                         records.Bytes((int)bodySize);
                         Require(records.U32() == bodySize, "record-footer");
                         actualCount++;
@@ -159,14 +179,20 @@ internal static class PartitionFraming
                         // the channel census only counts real owners; the id -1 record is the chain terminator of the block
                         bool terminator = owner == (idWidth == 8 ? ulong.MaxValue : uint.MaxValue);
                         if (!terminator) owners[index - 101].Add(owner);
-                        onRecord(new Record(blocks, key, (int)index, owner, extra, memory.Slice(bodyAt, (int)bodySize), memory.Slice(begin, records.Position - begin), inflated + begin));
+                        int finish = (int)records.Position;
+                        onRecord(new Record(blocks, key, (int)index, owner, extra, memory.Slice(bodyAt, (int)bodySize),
+                            memory.Slice(committed, finish - committed), inflated + committed));
+                        committed = finish;
                     }
+                    inflated += committed;
+                    // A record may straddle many members; retain only its unfinished suffix between members.
+                    memory.Span[committed..].CopyTo(chain.GetBuffer());
+                    chain.SetLength(memory.Length - committed);
+                    chain.Position = chain.Length;
+                    if (!final) continue;
                     Require(actualCount == countSum && actualSize == sizeSum, "chain-counts");
-                    inflated += chain.Length;
-                    chain.SetLength(0);
-                    chain.Position = 0;
                     chainIndex = null;
-                    countSum = sizeSum = 0;
+                    countSum = sizeSum = actualCount = actualSize = 0;
                 }
                 Require(owners[0].Count == expectedOwners && owners[0].SetEquals(owners[1]) && owners[0].SetEquals(owners[2]), "owner-census");
                 Require(input.U16() == tags.SignatureMarker, "signature-marker");
@@ -230,34 +256,86 @@ internal static class PartitionFraming
         if (!condition) throw new InvalidDataException(reason);
     }
 
-    private sealed class Cursor(ReadOnlyMemory<byte> bytes, bool paged = false)
+    private sealed class Cursor
     {
-        private readonly int length = paged ? PayloadLength(bytes.Span) : bytes.Length;
+        private readonly ReadOnlyMemory<byte> bytes;
+        private readonly bool paged;
+        private readonly long length;
+        private readonly Stream? stream;
+        private readonly byte[]? page;
+        private readonly byte[] scalar = new byte[16];
+        private long pageStart = -1;
 
-        internal int Position { get; private set; }
-        internal int Remaining => length - Position;
-        internal ReadOnlySpan<byte> Bytes(int count) => Take(count).Span;
+        internal Cursor(ReadOnlyMemory<byte> bytes, bool paged = false)
+        {
+            this.bytes = bytes;
+            this.paged = paged;
+            length = paged ? PayloadLength(bytes.Span) : bytes.Length;
+        }
+
+        internal Cursor(Stream stream)
+        {
+            this.stream = stream;
+            paged = true;
+            page = new byte[PagedGzipStream.PageDataLength];
+            long rawLength = stream.Length;
+            long tails = 0;
+            Span<byte> tag = stackalloc byte[2];
+            for (long offset = PagedGzipStream.PageDataLength; offset < rawLength;)
+            {
+                long remaining = rawLength - offset;
+                Require(remaining >= PagedGzipStream.SegmentLength, "page-framing");
+                if (remaining > PagedGzipStream.SegmentLength)
+                {
+                    stream.Position = offset;
+                    stream.ReadExactly(tag);
+                    Require(tag[0] == 0 && (tag[1] & 0x0f) == 0, "page-framing");
+                }
+                tails++;
+                if (remaining <= PagedGzipStream.PageStride) break;
+                offset += PagedGzipStream.PageStride;
+            }
+            length = rawLength - tails * PagedGzipStream.SegmentLength;
+        }
+
+        internal long Position { get; private set; }
+        internal long Remaining => length - Position;
+        internal ReadOnlySpan<byte> Bytes(int count)
+        {
+            if (stream == null) return Take(count).Span;
+            Require(count >= 0 && count <= Remaining && count <= scalar.Length, "bounds");
+            var target = scalar.AsSpan(0, count);
+            ReadPaged(Position, target);
+            Position += count;
+            return target;
+        }
 
         /// <summary>The next <paramref name="count"/> bytes: a view of the stream where they lie, a copy only when a page tail runs through them.</summary>
         internal ReadOnlyMemory<byte> Take(int count)
         {
             Require(count >= 0 && count <= Remaining, "bounds");
-            int start = Position;
+            long start = Position;
             Position += count;
             if (count == 0) return default;
-            if (!paged) return bytes.Slice(start, count);
+            if (stream != null)
+            {
+                var result = new byte[count];
+                ReadPaged(start, result);
+                return result;
+            }
+            if (!paged) return bytes.Slice((int)start, count);
 
-            int inPage = start % PagedGzipStream.PageDataLength;
+            int inPage = (int)(start % PagedGzipStream.PageDataLength);
             int available = PagedGzipStream.PageDataLength - inPage;
-            if (count <= available) return bytes.Slice(PhysicalOffset(start), count);
+            if (count <= available) return bytes.Slice((int)PhysicalOffset(start), count);
 
             // The inflater needs one contiguous gzip member. Only values spanning a page tail need a copy.
             var value = new byte[count];
             for (int copied = 0; copied < count;)
             {
-                int offset = start + copied;
-                int take = Math.Min(count - copied, PagedGzipStream.PageDataLength - offset % PagedGzipStream.PageDataLength);
-                bytes.Span.Slice(PhysicalOffset(offset), take).CopyTo(value.AsSpan(copied));
+                long offset = start + copied;
+                int take = Math.Min(count - copied, PagedGzipStream.PageDataLength - (int)(offset % PagedGzipStream.PageDataLength));
+                bytes.Span.Slice((int)PhysicalOffset(offset), take).CopyTo(value.AsSpan(copied));
                 copied += take;
             }
             return value;
@@ -268,11 +346,30 @@ internal static class PartitionFraming
         internal void Skip(long count)
         {
             Require(count >= 0 && count <= Remaining, "signature-bounds");
-            Position += (int)count;
+            Position += count;
         }
 
-        private static int PhysicalOffset(int logicalOffset) => logicalOffset
+        private static long PhysicalOffset(long logicalOffset) => logicalOffset
             + logicalOffset / PagedGzipStream.PageDataLength * PagedGzipStream.SegmentLength;
+
+        private void ReadPaged(long offset, Span<byte> target)
+        {
+            while (!target.IsEmpty)
+            {
+                int inside = (int)(offset % PagedGzipStream.PageDataLength);
+                long start = offset - inside;
+                if (pageStart != start)
+                {
+                    stream!.Position = PhysicalOffset(start);
+                    stream.ReadExactly(page.AsSpan(0, (int)Math.Min(page!.Length, length - start)));
+                    pageStart = start;
+                }
+                int count = Math.Min(target.Length, page!.Length - inside);
+                page.AsSpan(inside, count).CopyTo(target);
+                target = target[count..];
+                offset += count;
+            }
+        }
 
         private static int PayloadLength(ReadOnlySpan<byte> raw)
         {

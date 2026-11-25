@@ -84,6 +84,7 @@ public class GRepBlockDecodeTests
         var applied = new List<int>();
         int caller = Environment.CurrentManagedThreadId;
         int retained = 0;
+        var updates = new List<int>();
 
         BlockParser.DecodeGRepBlocksInOrder(count,
             index =>
@@ -99,10 +100,20 @@ public class GRepBlockDecodeTests
                 retained--;
                 applied.Add(index);
             },
-            sequential: true);
+            sequential: true,
+            progress: (completed, total) =>
+            {
+                Assert.Equal(caller, Environment.CurrentManagedThreadId);
+                Assert.Equal(count, total);
+                Assert.Equal(applied.Count, completed);
+                updates.Add(completed);
+            });
 
         Assert.Equal(0, retained);
         Assert.Equal(Enumerable.Range(0, count), applied);
+        Assert.Equal(0, updates[0]);
+        Assert.Equal(count, updates[^1]);
+        Assert.Equal(updates.Distinct().Order(), updates);
     }
 
     [Fact]
@@ -139,6 +150,25 @@ public class GRepBlockDecodeTests
         Faces = [new GRepFace()],
         Solids = [new GRepSolid { IsClosed = true, FaceIndices = [0] }],
     };
+
+    [Fact]
+    public void ApplyPendingGReps_ReportsStartAndCompletionOfItsPass()
+    {
+        var state = new ParsingState();
+        var updates = new List<(int Completed, int Total)>();
+        var pending = new List<BlockParser.PendingGRep>
+        {
+            new(new byte[16], 7, 0, 0, IsFamilyCut: false),
+            new(new byte[16], 8, 0, 0, IsFamilyCut: false),
+        };
+
+        BlockParser.ApplyPendingGReps(state, pending, (completed, total) => updates.Add((completed, total)));
+
+        Assert.Equal((0, 2), updates[0]);
+        Assert.Equal((2, 2), updates[^1]);
+        Assert.All(updates, update => Assert.Equal(2, update.Total));
+        Assert.Empty(state.GrepBlocks);
+    }
 
     [Fact]
     public void ApplyPendingGRep_KeepsTheFirstAuthoredFamilyCutterOfAnElement()

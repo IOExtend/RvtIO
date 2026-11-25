@@ -28,7 +28,8 @@ public static class RvtContainerCheck
         using var root = OpenVerified(file, info.Name, out _, surfaceStreamFailures: false);
     }
 
-    internal static RootStorage OpenVerified(Stream stream, string name, out ReadOnlyStreamView view, bool surfaceStreamFailures = true)
+    internal static RootStorage OpenVerified(Stream stream, string name, out ReadOnlyStreamView view,
+        bool surfaceStreamFailures = true, bool streamPartitions = false)
     {
         ArgumentNullException.ThrowIfNull(stream);
         if (!stream.CanRead || !stream.CanSeek)
@@ -53,7 +54,7 @@ public static class RvtContainerCheck
         {
             var buffer = new byte[1 << 20];
             int visited = 0;
-            Walk(root, "", buffer, ref visited);
+            Walk(root, "", buffer, ref visited, streamPartitions);
             return root;
         }
         catch (Exception ex)
@@ -72,18 +73,26 @@ public static class RvtContainerCheck
     // Bounds the total work when a damaged directory points several entries at the same children.
     private const int MaxEntries = 200_000;
 
-    private static void Walk(Storage storage, string prefix, byte[] buffer, ref int visited, int depth = 0)
+    internal static RvtLimitException ArrayLengthLimit(string name, long length) =>
+        new(new ReaderLimitHit(name, "array-length", Array.MaxLength, Raisable: false,
+            $"stream '{name}' is {length.ToString("N0", CultureInfo.InvariantCulture)} bytes, more than the {Array.MaxLength.ToString("N0", CultureInfo.InvariantCulture)} bytes the platform holds in one array"));
+
+    private static void Walk(Storage storage, string prefix, byte[] buffer, ref int visited, bool streamPartitions, int depth = 0)
     {
         if (depth > MaxDepth) throw new InvalidDataException($"storage nesting deeper than {MaxDepth} levels at '{prefix}'");
         foreach (var entry in storage.EnumerateEntries())
         {
             if (++visited > MaxEntries) throw new InvalidDataException($"more than {MaxEntries} directory entries");
             string name = prefix + entry.Name;
-            if (entry.Type == EntryType.Storage) { Walk(storage.OpenStorage(entry.Name), name + "/", buffer, ref visited, depth + 1); continue; }
+            if (entry.Type == EntryType.Storage)
+            {
+                Walk(storage.OpenStorage(entry.Name), name + "/", buffer, ref visited, streamPartitions, depth + 1);
+                continue;
+            }
             if (entry.Type != EntryType.Stream) continue;
-            if (entry.Length > Array.MaxLength)
-                throw new RvtLimitException(new ReaderLimitHit(name, "array-length", Array.MaxLength, Raisable: false,
-                    $"stream '{name}' is {entry.Length.ToString("N0", CultureInfo.InvariantCulture)} bytes, more than the {Array.MaxLength.ToString("N0", CultureInfo.InvariantCulture)} bytes the platform holds in one array"));
+            if (entry.Length > Array.MaxLength
+                && !(streamPartitions && depth == 1 && prefix.Equals("Partitions/", StringComparison.OrdinalIgnoreCase)))
+                throw ArrayLengthLimit(name, entry.Length);
             using var stream = storage.OpenStream(entry.Name);
             long total = 0;
             int read;

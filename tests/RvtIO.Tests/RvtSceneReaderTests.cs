@@ -1,8 +1,10 @@
 using System.Globalization;
+using System.Reflection;
 using IOScene;
 using RvtIO.BuiltIns;
 using RvtIO.Meshes;
 using RvtIO.Model;
+using RvtIO.Parsing;
 using RvtIO.Scene;
 using Xunit;
 
@@ -13,6 +15,328 @@ namespace RvtIO.Tests;
 /// incomplete geometry and those of a damaged read.</summary>
 public class RvtSceneReaderTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void SceneNameCandidatesKeepElementAndParameterNamePriorities(bool keepExportProvenance)
+    {
+        var state = new RvtIO.Internal.ParsingState { KeepExportProvenance = keepExportProvenance };
+        state.ElementNameTable[1] = "Table name";
+        state.NativeElementNames[1] = "Native name";
+        state.NativeElementNames[2] = "Native name";
+        state.WideNames[2] = "Wide name";
+        state.WideNames[3] = "Wide name";
+        state.WideNames[4] = " ";
+        state.ElemStrings[1] = ["Block name", "&Block caption"];
+        state.ElemStrings[4] = ["1234", "First block name", "Later block name"];
+        state.ElemStrings[5] = ["1234", "autodesk.parameter.key"];
+        state.ElemStrings[6] = ["&First caption", "&Later caption"];
+        state.ElemScanStrings[4] = ["Scan name"];
+        state.ElemScanStrings[5] = ["1234", "First scan name", "Later scan name"];
+        state.ElemScanStrings[7] = ["&Scan caption"];
+        state.ForgeParamDefs[1] = ("autodesk.parameter.key", "Forge caption");
+        state.ForgeParamDefs[6] = ("autodesk.parameter.other", null);
+
+        ElementBuilder.CompactSceneNameCandidates(state);
+
+        Assert.Equal("Table name", ElementBuilder.ResolveElementName(1, state));
+        Assert.Equal("Native name", ElementBuilder.ResolveElementName(2, state));
+        Assert.Equal("Wide name", ElementBuilder.ResolveElementName(3, state));
+        Assert.Equal("First block name", ElementBuilder.ResolveElementName(4, state));
+        Assert.Equal("First scan name", ElementBuilder.ResolveElementName(5, state));
+        Assert.Null(ElementBuilder.ResolveElementName(8, state));
+        var captions = ElementBuilder.CollectParameterDefinitionNames(state);
+        Assert.Equal(2, captions.Count);
+        Assert.Equal("Forge caption", captions[1]);
+        Assert.Equal("First caption", captions[6]);
+        Assert.Equal(keepExportProvenance ? 4 : 0, state.ElemStrings.Count);
+        Assert.Equal(keepExportProvenance ? 3 : 0, state.ElemScanStrings.Count);
+    }
+
+    [Fact]
+    public void EmptyPagedParametersRemainEditableWithoutWritingScratch()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var first = new Element();
+        var second = new Element();
+
+        scratch.ArchiveParameters(first);
+        scratch.ArchiveParameters(second);
+
+        Assert.Same(Array.Empty<Parameter>(), first.ReadParameters);
+        Assert.Same(first.ReadParameters, second.ReadParameters);
+        Assert.Equal(0L, stream.Length);
+
+        first.Parameters.Add(new Parameter { Id = 5, Value = 12, StorageType = StorageType.Integer });
+        Assert.Empty(second.ReadParameters);
+        scratch.ArchiveParameters(first);
+        Assert.Equal(12, Assert.Single(first.ReadParameters).Value);
+
+        first.Parameters.Clear();
+        scratch.ArchiveParameters(first);
+        Assert.Same(second.ReadParameters, first.ReadParameters);
+        Assert.NotSame(first.Parameters, second.Parameters);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TypeReferenceScanSkipsOnlyTheInstanceBeingResolved(bool paged)
+    {
+        var levelA = new Element { Id = 10, TypeId = 400, CategoryId = -2000240 };
+        var levelB = new Element { Id = 11, TypeId = 400, CategoryId = -2000240 };
+        levelA.Parameters.Add(new Parameter { Id = -1007102, Value = 4d, StorageType = StorageType.Double });
+        var wall = new Element { Id = 12, TypeId = 400, CategoryId = -2000011, BoundingBox = [0, 0, 9, 1, 1, 12] };
+        var nextWall = new Element { Id = 13, TypeId = 400, CategoryId = -2000011, BoundingBox = [0, 0, 10, 1, 1, 12] };
+        var type = new Element { Id = 400 };
+        type.SetReferences(Enumerable.Range(1000, 64).Prepend(levelB.Id).Prepend(levelA.Id), editable: !paged);
+        var info = new RevitFileInfo { Elements = [levelA, levelB, wall, nextWall, type] };
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        if (paged)
+        {
+            scratch.ArchiveGeometry(type);
+            scratch.ArchiveParameters(levelA);
+        }
+        var state = new RvtIO.Internal.ParsingState
+        {
+            KeepExportProvenance = !paged,
+            ArchiveSceneParameters = paged ? scratch.ArchiveParameters : null,
+        };
+
+        typeof(ElementBuilder).GetMethod("EnrichTypeLevelBips", BindingFlags.Static | BindingFlags.NonPublic)!
+            .Invoke(null, [info, state]);
+
+        Assert.Equal(levelB.Id, FamilyLevel(levelA));
+        Assert.Equal(levelA.Id, FamilyLevel(levelB));
+        Assert.Equal(levelA.Id, FamilyLevel(wall));
+        Assert.Equal(5d, Elevation(wall));
+        Assert.Equal(6d, Elevation(nextWall));
+
+        static int FamilyLevel(Element element) =>
+            Assert.IsType<int>(Assert.Single(element.ReadParameters, parameter => parameter.Id == -1001352).Value);
+        static double Elevation(Element element) =>
+            Assert.IsType<double>(Assert.Single(element.ReadParameters, parameter => parameter.Id == -1001360).Value);
+    }
+
+    [Fact]
+    public void CurveLengthsKeepStoredAndDerivedValuesOnParameterPages()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var derived = new Element { Id = 1, Location = new LocationCurve { Length = 3 } };
+        var stored = new Element
+        {
+            Id = 2,
+            Location = new LocationCurve { Length = 3 },
+            Parameters =
+            [
+                new Parameter { Id = -1004005, StorageType = StorageType.Double, Value = 5d },
+            ],
+        };
+        scratch.ArchiveParameters(derived);
+        scratch.ArchiveParameters(stored);
+
+        ElementBuilder.AddCurveLengths(new RevitFileInfo { Elements = [derived, stored] }, scratch.ArchiveParameters);
+
+        static double Length(Element element)
+        {
+            Assert.IsNotType<List<Parameter>>(element.ReadParameters);
+            return Assert.IsType<double>(Assert.Single(element.ReadParameters, parameter => parameter.Id == -1004005).Value);
+        }
+        Assert.Equal(3d, Length(derived));
+        Assert.Equal(5d, Length(stored));
+    }
+
+    [Fact]
+    public void RoomAndSheetPassesArchiveTheirEditsBeforeTheNextPass()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var room = new Element { Id = 1, CategoryId = -2000160, Name = "Office", SerializedRoomPhaseId = 0 };
+        var sheet = new Element { Id = 2, CategoryId = -2003100, References = [3] };
+        var view = new Element { Id = 3, CategoryId = -2000279 };
+        var info = new RevitFileInfo { Elements = [room, sheet, view] };
+        var index = info.Elements.ToDictionary(element => element.Id);
+        var state = new RvtIO.Internal.ParsingState
+        {
+            ArchiveSceneParameters = scratch.ArchiveParameters,
+            SheetInfo = { [2] = ("A-01", "2026-11-24") },
+            ViewNames = { [3] = "Plan" },
+        };
+
+        ElementBuilder.ApplyRoomParams(info, scratch.ArchiveParameters, index);
+        typeof(ElementBuilder).GetMethod("ApplySheetParams", BindingFlags.Static | BindingFlags.NonPublic)!
+            .Invoke(null, [info, state, index]);
+
+        Assert.Equal("Office", Value(room, -1006900));
+        Assert.Equal(0, Value(room, -1012112));
+        Assert.Equal("A-01", Value(sheet, -1007401));
+        Assert.Equal("A-01", Value(view, -1006601));
+        Assert.Equal("Plan", Value(view, -1005112));
+
+        static object? Value(Element element, int id)
+        {
+            Assert.IsNotType<List<Parameter>>(element.ReadParameters);
+            return Assert.Single(element.ReadParameters, parameter => parameter.Id == id).Value;
+        }
+    }
+
+    [Fact]
+    public void DetailCurveFlagsAreUpdatedOnParameterPages()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var modelCurve = new Element { Id = 1, SerializedOwnerDbViewId = 0 };
+        var detailCurve = new Element
+        {
+            Id = 2,
+            SerializedOwnerDbViewId = 42,
+            Parameters = [new Parameter { Id = -1004011, StorageType = StorageType.Integer, Value = 0 }],
+        };
+        var other = new Element { Id = 3, SerializedOwnerDbViewId = 42 };
+        var data = new RevitFileInfo { Elements = [modelCurve, detailCurve, other] };
+        scratch.ArchiveParameters(detailCurve);
+
+        ElementBuilder.ApplyDetailCurveFlag(data, new Dictionary<uint, ushort> { [1] = 838, [2] = 838, [3] = 839 },
+            scratch.ArchiveParameters);
+
+        Assert.Equal(0, Flag(modelCurve));
+        Assert.Equal(1, Flag(detailCurve));
+        Assert.Empty(other.ReadParameters);
+
+        static int Flag(Element element)
+        {
+            Assert.IsNotType<List<Parameter>>(element.ReadParameters);
+            return Assert.IsType<int>(Assert.Single(element.ReadParameters, parameter => parameter.Id == -1004011).Value);
+        }
+    }
+
+    [Fact]
+    public void ArchivedTypeReferencesUseTheFirstValidParameterAndTrackEdits()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var element = new Element
+        {
+            Parameters =
+            [
+                TypeParameter("ELEM_TYPE_PARAM", -1),
+                TypeParameter("ELEM_FAMILY_AND_TYPE_PARAM", 7),
+                TypeParameter("ELEM_TYPE_PARAM", 10),
+                TypeParameter("ELEM_TYPE_PARAM", 12),
+            ],
+        };
+
+        scratch.ArchiveParameters(element);
+        Assert.Equal(10, element.FamilyTypeId);
+        Assert.Equal(7, element.GetTypeReferenceId(includeFamilyAndType: true));
+
+        element.Parameters[1].Value = 0;
+        element.Parameters[2].Definition!.Name = "Unrelated";
+        Assert.Equal(12, element.FamilyTypeId);
+        Assert.Equal(12, element.GetTypeReferenceId(includeFamilyAndType: true));
+
+        scratch.ArchiveParameters(element);
+        Assert.Equal(12, element.FamilyTypeId);
+        Assert.Equal(12, element.GetTypeReferenceId(includeFamilyAndType: true));
+        Assert.IsNotType<List<Parameter>>(element.ReadParameters);
+
+        static Parameter TypeParameter(string name, int value) => new()
+        {
+            Definition = new Definition { Name = name },
+            StorageType = StorageType.ElementId,
+            Value = value,
+        };
+    }
+
+    [Fact]
+    public void ArchivedPhaseVoteAndQuantityPlaceholderFollowParameterEdits()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var element = new Element
+        {
+            Parameters =
+            [
+                new Parameter { Id = -1012100, StorageType = StorageType.ElementId, Value = -1 },
+                new Parameter { Id = -1012100, StorageType = StorageType.ElementId, Value = 0 },
+                new Parameter { Id = -1012100, StorageType = StorageType.ElementId, Value = 12 },
+                new Parameter { Id = -1012100, StorageType = StorageType.ElementId, Value = 13 },
+                new Parameter { Id = -1012805, StorageType = StorageType.Double, Value = 0d },
+                new Parameter { Id = -1012807, StorageType = StorageType.String, Value = "0" },
+            ],
+        };
+
+        scratch.ArchiveParameters(element);
+        var stored = element.ReadParameters;
+        Assert.Equal(12, element.FirstPositiveCreatedPhase);
+        Assert.True(element.HasHostQuantityPlaceholder);
+        Assert.Same(stored, element.ReadParameters);
+
+        element.Parameters[2].Value = -1;
+        element.Parameters[4].Value = 1d;
+        Assert.Equal(13, element.FirstPositiveCreatedPhase);
+        Assert.False(element.HasHostQuantityPlaceholder);
+
+        scratch.ArchiveParameters(element);
+        Assert.Equal(13, element.FirstPositiveCreatedPhase);
+        Assert.False(element.HasHostQuantityPlaceholder);
+        Assert.IsNotType<List<Parameter>>(element.ReadParameters);
+    }
+
+    [Fact]
+    public void ArchivedZeroReferencesAreResolvedAndClearedAsTargetsChange()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var element = new Element
+        {
+            Parameters =
+            [
+                new Parameter { Id = (int)BuiltInParameter.PHASE_CREATED, StorageType = StorageType.ElementId, Value = 0 },
+                new Parameter { Id = 99, StorageType = StorageType.ElementId, Value = 0, HasResolvedZeroElementId = true },
+            ],
+        };
+        var info = new RevitFileInfo { Elements = [element], SerializedHasZeroProjectPhase = true };
+        scratch.ArchiveParameters(element);
+
+        Parameter.ResolveZeroElementIds(info, archiveParameters: scratch.ArchiveParameters);
+
+        Assert.True(element.ReadParameters[0].HasResolvedZeroElementId);
+        Assert.False(element.ReadParameters[1].HasResolvedZeroElementId);
+        Assert.IsNotType<List<Parameter>>(element.ReadParameters);
+
+        info.SerializedHasZeroProjectPhase = false;
+        Parameter.ResolveZeroElementIds(info, archiveParameters: scratch.ArchiveParameters);
+
+        Assert.All(element.ReadParameters, parameter => Assert.False(parameter.HasResolvedZeroElementId));
+        Assert.Equal(Parameter.ZeroReferenceKinds.Phase, element.ArchivedZeroReferences);
+        Assert.IsNotType<List<Parameter>>(element.ReadParameters);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void NativeFactsAreOptionalWithoutChangingSceneParameterValues(bool keepExportProvenance)
+    {
+        const int parameterId = -1001105;
+        var state = new RvtIO.Internal.ParsingState { KeepExportProvenance = keepExportProvenance };
+        var native = new RvtIO.Parsing.TfBlockDeserializer.NativeParams { RootParameterStoresComplete = true };
+        native.Doubles.Add((parameterId, 17.25));
+        state.NativeParams[1] = native;
+        var element = new Element { Id = 1 };
+        var data = new RevitFileInfo { Elements = [element] };
+
+        RvtIO.Parsing.ElementBuilder.ApplyNativeParams(data, state);
+
+        var value = Assert.Single(element.Parameters, parameter => parameter.Id == parameterId);
+        Assert.Equal(17.25, value.Value);
+        Assert.Equal(keepExportProvenance, element.NativeStoredParameterIds?.Contains(parameterId) == true);
+        Assert.Equal(keepExportProvenance, element.NativeParameterStoreIds?.Contains(parameterId) == true);
+    }
+
     private const double Foot = 0.3048;
     private const int Wall = 100, Door = 101, Empty = 102, Broken = 103, Type = 200, Symbol = 300, Concrete = 500;
 
@@ -101,6 +425,328 @@ public class RvtSceneReaderTests
     };
 
     private static RvtSceneResult Map() => RvtSceneReader.Read(Document(), Meshes(), new RvtSceneOptions { ModelKey = "model.rvt" });
+
+    [Fact]
+    public void PagedReferencesPreserveOrderAndRestoreTheEditableList()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var element = new Element();
+        var source = Enumerable.Range(0, 17_000).Select(i => i % 1037).ToArray();
+        element.SetReferences(source, editable: false);
+        scratch.ArchiveGeometry(element);
+
+        var stored = element.ReadReferences;
+        Assert.NotNull(stored);
+        Assert.IsNotType<int[]>(stored);
+        Assert.Equal(source, stored);
+        Assert.Equal(source[16_384], stored[16_384]);
+        var editable = element.References;
+        Assert.NotNull(editable);
+        editable[16_384] = 42;
+        editable.RemoveAt(0);
+        Assert.Same(editable, element.References);
+        Assert.Equal(16_999, element.ReadReferences!.Count);
+        Assert.Equal(42, element.ReadReferences[16_383]);
+        Assert.Equal(source[16_384], stored[16_384]);
+    }
+
+    [Fact]
+    public void ScratchScenePreservesGeometryPropertiesPlacementsAndDiagnostics()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var meshes = Meshes();
+        var stored = new MeshSet
+        {
+            Symbols = meshes.Symbols.ToDictionary(pair => pair.Key, pair => scratch.Store(pair.Value)),
+            Elements = meshes.Elements.Select(element => new ElementMesh
+            {
+                ElementId = element.ElementId,
+                Meshes = scratch.Store(element.Meshes),
+                Placements = element.Placements,
+                Coverage = element.Coverage,
+                UntriangulatedFaces = element.UntriangulatedFaces,
+            }).ToArray(),
+        };
+
+        var expected = Map();
+        var actual = RvtSceneReader.Map(Document(), stored, "model.rvt", scratch: scratch);
+
+        Assert.True(stream.Length > 0);
+        Assert.Equal(SceneJson.Write(expected.Document), SceneJson.Write(actual.Document));
+        Assert.Equal(expected.Diagnostics, actual.Diagnostics);
+    }
+
+    [Fact]
+    public void ScratchSceneArrayReadsAcrossPageBoundariesAndWithInterleavedWrites()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var values = Enumerable.Range(0, 8000).Select(i => new Vector3d(i, -i, i * .5)).ToArray();
+        var stored = scratch.Store(values);
+        var later = scratch.Store(new[] { 5, 7 });
+
+        Assert.Equal(values, stored);
+        Assert.Equal(values, stored.ReadAll());
+        Assert.Equal(values[2730], stored[2730]);
+        Assert.Equal(7, later[1]);
+        Assert.Equal(values[^1], stored[^1]);
+        Assert.Throws<ArgumentOutOfRangeException>(() => stored[values.Length]);
+    }
+
+    [Fact]
+    public void ResolvedParameterPagesPreserveOrderFlagsAndPropertyValues()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var reference = new Parameter
+        {
+            Id = -1012100, Definition = new Definition { Id = -1012100, Name = "Phase", BuiltInParameter = "PHASE_CREATED" },
+            Value = 0, StorageType = StorageType.ElementId, NativeElementId = 4294967311, HasResolvedZeroElementId = true,
+            FromNativeFields = true, IsReadOnly = true,
+        };
+        var text = new Parameter
+        {
+            Id = 1200, Value = "\ud800", StorageType = StorageType.String, Guid = Guid.Empty,
+            Definition = new Definition { Id = 1200, Name = "Exact text" },
+        };
+        var distance = new Parameter
+        {
+            Id = 1201, Value = 2.25, StorageType = StorageType.Double, ForgeId = "length",
+            SpecType = "autodesk.spec.aec:length-2.0.0", UnitSymbol = "mm", ConversionFactor = 304.8,
+            IsApproximate = true,
+        };
+        var missing = new Parameter { Id = 1202, Value = false, StorageType = StorageType.Integer, HasNoRevitValue = true };
+        var first = new Element { Parameters = [reference, text, distance, missing], SerializedCreatedPhaseId = 0 };
+        var second = new Element { Parameters = [new Parameter { Id = -1002050, Value = 7 }] };
+        var original = first.Parameters;
+        scratch.ArchiveParameters(first);
+        scratch.ArchiveParameters(second);
+
+        var archived = first.ReadParameters;
+        Assert.NotSame(original, archived);
+        Assert.Equal(original.Select(p => p.Id), archived.Select(p => p.Id));
+        Assert.Equal(7, second.ReadParameters[0].Value);
+        Assert.Equal(reference.SourceElementId, archived[0].SourceElementId);
+        Assert.True(archived[0].HasRevitValue);
+        Assert.True(archived[0].FromNativeFields);
+        Assert.True(archived[0].IsReadOnly);
+        Assert.Equal(reference.Definition.BuiltInParameter, archived[0].Definition.BuiltInParameter);
+        Assert.Equal(text.Value, first.LookupParameter("Exact text")!.Value);
+        Assert.Equal(Guid.Empty, archived[1].Guid);
+        Assert.Equal(distance.AsValueString(), archived[2].AsValueString());
+        Assert.Equal(distance.SpecType, archived[2].SpecType);
+        Assert.True(archived[2].IsApproximate);
+        Assert.False(archived[3].HasRevitValue);
+        Assert.Equal(false, archived[3].Value);
+        Assert.Contains(7, ProductRules.TypeElementIds([first, second]));
+        Assert.True(ProductRules.HasProjectPhaseReference(first));
+        Assert.Same(archived, first.ReadParameters);
+
+        long persisted = stream.Length;
+        Assert.Equal(4, first.Parameters.Count);
+        scratch.ArchiveParameters(first);
+        Assert.Equal(persisted, stream.Length);
+        Assert.Same(archived, first.ReadParameters);
+
+        first.Parameters.RemoveAt(3);
+        Assert.Same(first.Parameters, first.ReadParameters);
+        first.Parameters[1].Value = "Resolved later";
+        scratch.ArchiveParameters(first);
+        Assert.Equal(persisted, stream.Length);
+        Assert.Equal(3, first.ReadParameters.Count);
+        Assert.Equal("Resolved later", first.ReadParameters[1].Value);
+        Assert.Equal(7, second.ReadParameters[0].Value);
+
+        first.Parameters[1].Value = new string('a', 1024);
+        scratch.ArchiveParameters(first);
+        long grown = stream.Length;
+        Assert.True(grown > persisted);
+        string replacement = new('b', 1024);
+        first.Parameters[1].Value = replacement;
+        scratch.ArchiveParameters(first);
+        Assert.Equal(grown, stream.Length);
+        Assert.Equal(replacement, first.ReadParameters[1].Value);
+        Assert.Equal(7, second.ReadParameters[0].Value);
+    }
+
+    [Fact]
+    public void ParameterPagesRestoreIndependentDefinitions()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        string inlineName = new('x', 513);
+        var first = new Element { Parameters = [WithName("Caption"), WithName(inlineName), new() { Definition = null! }] };
+        var second = new Element { Parameters = [WithName("Caption")] };
+        scratch.ArchiveParameters(first);
+        scratch.ArchiveParameters(second);
+
+        var definition = first.Parameters[0].Definition;
+        definition.Name = "Edited";
+        scratch.ArchiveParameters(first);
+        Assert.Equal("Edited", first.ReadParameters[0].DefinitionName);
+        Assert.Equal("Caption", second.ReadParameters[0].DefinitionName);
+        Assert.Equal("BUILT_IN", second.ReadParameters[0].Definition.BuiltInParameter);
+        Assert.Equal(inlineName, first.ReadParameters[1].DefinitionName);
+        Assert.Null(first.ReadParameters[2].Definition);
+
+        static Parameter WithName(string name) =>
+            new() { Id = -7, Definition = new Definition { Id = -7, Name = name, BuiltInParameter = "BUILT_IN" } };
+    }
+
+    [Fact]
+    public void FirstModelResolutionPassKeepsTypesAndElevationsOnParameterPages()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var type = new Element { Id = 5001, Name = "Type", CategoryId = -2000011, Category = "OST_Walls" };
+        var instance = new Element
+        {
+            Id = 5002, CategoryId = -2000011, Category = "OST_Walls", BoundingBox = [0, 0, 12, 1, 1, 13],
+            Parameters =
+            [
+                new() { Id = -1002050, StorageType = StorageType.ElementId, Value = type.Id },
+                new() { Id = -1007102, StorageType = StorageType.Double, Value = 10.0 },
+            ],
+        };
+        scratch.ArchiveParameters(instance);
+        var info = new RevitFileInfo { Elements = [type, instance] };
+        int passes = 0;
+
+        ElementBuilder.PostProcess(info, new RvtIO.Internal.ParsingState
+        {
+            ArchiveSceneParameters = scratch.ArchiveParameters,
+        }, passCompleted: () =>
+        {
+            if (++passes != 1) return;
+            Assert.Equal(type.Id, instance.TypeId);
+            Assert.IsNotType<List<Parameter>>(instance.ReadParameters);
+            Assert.Equal(2.0, instance.ReadParameters.First(p => p.Id == -1001360).Value);
+        });
+
+        Assert.True(passes > 0);
+    }
+
+    [Fact]
+    public void WorksharingOwnersUseTheEmittedCategoryWithoutRetainingParameterLists()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var info = new RevitFileInfo
+        {
+            Elements =
+            [
+                new() { CategoryId = -2000260, Parameters = [Category(-2000011)] },
+                new() { Parameters = [Category(-2000260)] },
+                new() { Parameters = [Category(7)] },
+                new() { Parameters = [Category(-2000011), new() { Id = -1002067, Value = "Stored owner" }] },
+            ],
+        };
+        foreach (var element in info.Elements) scratch.ArchiveParameters(element);
+
+        ElementBuilder.ApplyEditedByCategoryRules(info, new RvtIO.Internal.ParsingState
+        {
+            LocalUsername = "Local owner",
+            ArchiveSceneParameters = scratch.ArchiveParameters,
+        });
+
+        Assert.Equal("Local owner", Owner(info.Elements[0]));
+        Assert.Equal("", Owner(info.Elements[1]));
+        Assert.Null(Owner(info.Elements[2]));
+        Assert.Equal("Stored owner", Owner(info.Elements[3]));
+        Assert.All(info.Elements, element => Assert.IsNotType<List<Parameter>>(element.ReadParameters));
+
+        static Parameter Category(int value) => new() { Id = -1140362, Value = value };
+        static object? Owner(Element element) => element.ReadParameters.FirstOrDefault(p => p.Id == -1002067)?.Value;
+    }
+
+    [Fact]
+    public void StoredPhasesAreUpdatedAndRearchivedOneElementAtATime()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var info = new RevitFileInfo
+        {
+            Elements =
+            [
+                new() { Id = 1, SerializedCreatedPhaseId = 7, Parameters = [ExistingPhase(-1)] },
+                new() { Id = 2, SerializedCreatedPhaseId = 8, Parameters = [ExistingPhase(3)] },
+            ],
+        };
+        foreach (var element in info.Elements) scratch.ArchiveParameters(element);
+
+        var edited = new List<int>();
+        ElementBuilder.ApplyStoredPhases(info, new Dictionary<uint, ushort> { [7] = 3065 },
+            archiveParameters: element =>
+            {
+                scratch.ArchiveParameters(element);
+                edited.Add(element.Id);
+            });
+
+        Assert.Equal([1, 2], edited);
+        Assert.Equal(7, info.Elements[0].ReadParameters[0].Value);
+        Assert.Equal(3, info.Elements[1].ReadParameters[0].Value);
+        Assert.All(info.Elements, element => Assert.IsNotType<List<Parameter>>(element.ReadParameters));
+
+        static Parameter ExistingPhase(int value) =>
+            new() { Id = -1012100, StorageType = StorageType.ElementId, Value = value };
+    }
+
+    [Fact]
+    public void ExpandedFacePagesPreserveFaceOrderAndRestoreMutableLists()
+    {
+        using var stream = new MemoryStream();
+        var scratch = new SceneMeshScratch(stream);
+        var faces = Enumerable.Range(0, 1024).Select(i => new GeoFace
+        {
+            Origin = [i, 0, 0],
+            XVector = [1, 0, 0],
+            YVector = [0, 1, 0],
+            OuterVertices = [[i, 0, 0], [i + 1, 0, 0], [i, 1, 0]],
+            InnerVertices = i == 1 ? [[[1.1, .1, 0], [1.2, .1, 0], [1.1, .2, 0]]] : null,
+            Normal = [0, 0, 1],
+            GeometryNode = i % 2 == 0 ? 4 : -7,
+            RenderStyleId = i,
+            MeshArcs = i == 1 ? [new([1, 2, 3], [1, 0, 0], [0, 1, 0], .5, .25, .75, 6)] : null,
+            GInfoFlags = i == 0 ? 0x200u : null,
+            EdgeIndices = i == 0 ? [0, 2, 1] : null,
+        }).ToList();
+        var geometry = new GeometryData { Faces = faces };
+        scratch.ArchiveGeometry(new Element { Geometry = geometry });
+
+        Assert.True(stream.Length > 64 * 1024);
+        Assert.NotSame(faces, geometry.ReadFaces);
+        Assert.Equal(faces.Select(face => face.RenderStyleId), geometry.ReadFaces.Select(face => face.RenderStyleId));
+        var restoredFrame = geometry.ReadFaces[1000];
+        Assert.Equal(faces[1000].Origin, restoredFrame.Origin);
+        Assert.Equal(faces[1000].XVector, restoredFrame.XVector);
+        Assert.Equal(faces[1000].YVector, restoredFrame.YVector);
+        Assert.Equal(faces[1000].Normal, restoredFrame.Normal);
+        Assert.Equal(faces[1000].OuterVertices![2], geometry.ReadFaces[1000].OuterVertices![2]);
+        Assert.Equal(faces[1].InnerVertices![0][1], geometry.ReadFaces[1].InnerVertices![0][1]);
+        Assert.Equal(6u, Assert.Single(geometry.ReadFaces[1].MeshArcs!).Edge);
+        Assert.Equal(0x200u, geometry.ReadFaces[0].GInfoFlags);
+        Assert.Equal(faces[0].EdgeIndices, geometry.ReadFaces[0].EdgeIndices);
+
+        var restored = geometry.Faces;
+        restored[0].GeometryNode = 42;
+        restored.RemoveAt(restored.Count - 1);
+        Assert.Same(restored, geometry.Faces);
+        Assert.Equal(1023, geometry.ReadFaces.Count);
+        Assert.Equal(42, geometry.ReadFaces[0].GeometryNode);
+    }
+
+    [Fact]
+    public void SceneReaderRequiresSeparateTriangleScratch()
+    {
+        using var stream = new MemoryStream();
+        var options = new RvtSceneOptions { ModelKey = "model.rvt" };
+        Assert.Throws<ArgumentException>(() => RvtSceneReader.ReadStream(stream, options, stream));
+        using var nonempty = new MemoryStream([7]);
+        Assert.Throws<ArgumentException>(() => RvtSceneReader.ReadStream(stream, options, nonempty));
+        Assert.Empty(stream.ToArray());
+    }
 
     /// <summary>The scene of one drawable element.</summary>
     private static SceneDocument MapOne(Element element) => RvtSceneReader.Read(RvtDocument.FromInfo(new RevitFileInfo { Elements = [element] }),
@@ -591,7 +1237,7 @@ public class RvtSceneReaderTests
     public void PathReaderForwardsProgressAndCountsWithoutChangingScene()
     {
         byte[] extraPartition = [1, 2, 3];
-        var progress = new ReadProgressLog();
+        var progress = new ProgressLog<RvtReadProgress>();
         var baseline = ReadSyntheticFile(extraPartition, new RvtSceneOptions { ModelKey = "model" });
         var result = ReadSyntheticFile(extraPartition, new RvtSceneOptions { ModelKey = "model", ReadProgress = progress });
 
@@ -599,7 +1245,7 @@ public class RvtSceneReaderTests
         Assert.Equal(new RvtReadProgress("complete", 1, 1), progress.Updates[^1]);
         Assert.Equal([0L, 1L, 2L], progress.Updates.Where(update => update.Phase == "partitions").Select(update => update.Completed));
         Assert.All(progress.Updates.Where(update => update.Phase == "partitions"), update => Assert.Equal(2, update.Total));
-        var blocks = progress.Updates.Where(update => update.Phase == "element-blocks").ToArray();
+        var blocks = progress.Updates.Where(update => update.Phase == "element-blocks" && update.GeometryBlocks == null).ToArray();
         Assert.Equal(Enumerable.Range(0, blocks.Length).Select(index => (long)index), blocks.Select(update => update.Completed));
         Assert.Equal(blocks[^1].Total, blocks[^1].Completed);
         ReadProgressTests.AssertWellFormed(progress.Updates, ReadProgressTests.ProjectPhases);
@@ -637,10 +1283,10 @@ public class RvtSceneReaderTests
         try
         {
             CliExitCodeTests.WriteSyntheticRvt(path, [1, 2, 3]);
-            var fromPath = new ReadProgressLog();
+            var fromPath = new ProgressLog<RvtReadProgress>();
             RvtSceneReader.Read(path, new RvtSceneOptions { ModelKey = "model", ReadProgress = fromPath });
 
-            var fromStream = new ReadProgressLog();
+            var fromStream = new ProgressLog<RvtReadProgress>();
             using var stream = File.OpenRead(path);
             RvtSceneReader.ReadStream(stream, new RvtSceneOptions { ModelKey = "model", ReadProgress = fromStream });
 
@@ -649,6 +1295,60 @@ public class RvtSceneReaderTests
             ReadProgressTests.AssertWellFormed(fromStream.Updates, ReadProgressTests.ProjectPhases);
         }
         finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void ScratchReadKeepsTheSceneAndRecoveryDiagnosticsAndClosesScratch()
+    {
+        var baseline = ReadSyntheticFile([1, 2, 3], new RvtSceneOptions { ModelKey = "model" });
+        using var scratch = new MemoryStream();
+        var result = ReadSyntheticFile([1, 2, 3], new RvtSceneOptions
+        {
+            ModelKey = "model",
+            CreatePartitionScratch = () => scratch,
+        });
+
+        Assert.Equal(SceneJson.Write(baseline.Document), SceneJson.Write(result.Document));
+        Assert.Equal(baseline.Diagnostics, result.Diagnostics);
+        Assert.False(scratch.CanRead);
+    }
+
+    [SkippableTheory]
+    [InlineData("Test_2022.rvt", true)]
+    [InlineData("Test_2025.rvt", false)]
+    [InlineData("Test_2025.rvt", true)]
+    public void ScratchReadMatchesSceneAndDiagnosticsOfARealModel(string fileName, bool archiveScene)
+    {
+        string path = TestFiles.Find(fileName);
+        var baseline = RvtSceneReader.Read(path);
+        string temporary = Path.Combine(Path.GetTempPath(), "rvtio-scratch-" + Guid.NewGuid().ToString("N"));
+        using var input = File.OpenRead(path);
+        var meshProgress = new ProgressLog<(int Completed, int Total)>();
+        var options = new RvtSceneOptions
+        {
+            ModelKey = Path.GetFileName(path),
+            MeshProgress = meshProgress,
+            CreatePartitionScratch = () => new FileStream(temporary, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None,
+                bufferSize: 64 * 1024, FileOptions.DeleteOnClose),
+        };
+        using var sceneScratch = archiveScene
+            ? new FileStream(temporary + ".scene", FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None,
+                bufferSize: 64 * 1024, FileOptions.DeleteOnClose)
+            : null;
+        var result = sceneScratch == null
+            ? RvtSceneReader.ReadStream(input, options)
+            : RvtSceneReader.ReadStream(input, options, sceneScratch);
+
+        Assert.NotEmpty(baseline.Document.Instances);
+        Assert.Equal(baseline.Diagnostics, result.Diagnostics);
+        Assert.Equal(SceneJson.Write(baseline.Document), SceneJson.Write(result.Document));
+        int total = meshProgress.Updates[0].Total;
+        Assert.True(total > 0);
+        Assert.Equal((0, total), meshProgress.Updates[0]);
+        Assert.Equal((total, total), meshProgress.Updates[^1]);
+        Assert.All(meshProgress.Updates, update => Assert.Equal(total, update.Total));
+        Assert.False(File.Exists(temporary));
+        Assert.True(input.CanRead);
     }
 
     [Fact]
@@ -663,10 +1363,23 @@ public class RvtSceneReaderTests
         Assert.Equal(1, stream.ReadByte());
     }
 
-    private sealed class ReadProgressLog : IProgress<RvtReadProgress>
+    [Fact]
+    public void EmptySceneReportsZeroDrawableElements()
     {
-        public List<RvtReadProgress> Updates { get; } = [];
-        public void Report(RvtReadProgress value) => Updates.Add(value);
+        var meshProgress = new ProgressLog<(int Completed, int Total)>();
+        RvtSceneReader.Read(RvtDocument.FromInfo(new RevitFileInfo()), new RvtSceneOptions
+        {
+            ModelKey = "empty",
+            MeshProgress = meshProgress,
+        });
+
+        Assert.Equal((0, 0), Assert.Single(meshProgress.Updates));
+    }
+
+    private sealed class ProgressLog<T> : IProgress<T>
+    {
+        public List<T> Updates { get; } = [];
+        public void Report(T value) => Updates.Add(value);
     }
 
     [Fact]

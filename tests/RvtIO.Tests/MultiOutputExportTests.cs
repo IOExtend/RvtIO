@@ -214,6 +214,138 @@ public class MultiOutputExportTests
     }
 
     [Fact]
+    public void CopiedElementCanReplaceDrawingStairAndWallFactsIndependently()
+    {
+        var original = new RvtIO.Model.Element
+        {
+            Text = "Original",
+            ViewOrigin = [1, 2, 3],
+            SerializedStairTypeId = 42,
+            SerializedStairTypeLinkIsResolved = true,
+            SerializedStairCopyLevelIds = [10, 20],
+            OwnWallCutoutInstanceIds = [30, 40],
+            SerializedWallFlipped = false,
+            IsSerializedStackedWallType = true,
+        };
+        var copy = original.ShallowCopy();
+
+        Assert.Same(original.ViewOrigin, copy.ViewOrigin);
+        Assert.Same(original.SerializedStairCopyLevelIds, copy.SerializedStairCopyLevelIds);
+        Assert.Same(original.OwnWallCutoutInstanceIds, copy.OwnWallCutoutInstanceIds);
+        copy.Text = null;
+        copy.ViewOrigin = null;
+        copy.SerializedStairTypeId = 17;
+        copy.SerializedStairTypeLinkIsResolved = false;
+        copy.OwnWallCutoutInstanceIds = null;
+        copy.SerializedWallFlipped = true;
+        copy.IsSerializedStackedWallType = false;
+
+        Assert.Equal("Original", original.Text);
+        Assert.Equal([1d, 2d, 3d], original.ViewOrigin);
+        Assert.Equal(42, original.SerializedStairTypeId);
+        Assert.True(original.SerializedStairTypeLinkIsResolved);
+        Assert.Equal([30, 40], original.OwnWallCutoutInstanceIds);
+        Assert.False(original.SerializedWallFlipped);
+        Assert.True(original.IsSerializedStackedWallType);
+        Assert.Null(copy.Text);
+        Assert.Null(copy.ViewOrigin);
+        Assert.Equal(17, copy.SerializedStairTypeId);
+        Assert.False(copy.SerializedStairTypeLinkIsResolved);
+        Assert.Null(copy.OwnWallCutoutInstanceIds);
+        Assert.True(copy.SerializedWallFlipped);
+        Assert.False(copy.IsSerializedStackedWallType);
+    }
+
+    [Fact]
+    public void CopiedElementCanReplaceMepRoomAndTypeFactsIndependently()
+    {
+        var original = new RvtIO.Model.Element
+        {
+            SerializedConnectorSystems = [0, 9],
+            SerializedMepSystem = ("Supply", 0),
+            SerializedPlanBoundary = [(1, 2), (3, 4)],
+            SerializedRoomIsLocationless = false,
+            SerializedRoomPlanAreaSquareFeet = 0,
+            SerializedSystemTypeId = 0,
+            ValidatedWindowTypeReferenceName = "Window type",
+            ValidatedWindowTypeReferenceIsExplicit = true,
+        };
+        var copy = original.ShallowCopy();
+
+        Assert.Same(original.SerializedConnectorSystems, copy.SerializedConnectorSystems);
+        Assert.Same(original.SerializedPlanBoundary, copy.SerializedPlanBoundary);
+        Assert.Equal(("Supply", 0), copy.SerializedMepSystem);
+        Assert.False(copy.SerializedRoomIsLocationless);
+        Assert.Equal(0, copy.SerializedRoomPlanAreaSquareFeet);
+        Assert.Equal(0, copy.SerializedSystemTypeId);
+
+        copy.SerializedConnectorSystems = null;
+        copy.SerializedMepSystem = null;
+        copy.SerializedPlanBoundary = null;
+        copy.SerializedRoomIsLocationless = true;
+        copy.SerializedSystemTypeId = null;
+        copy.ValidatedWindowTypeReferenceName = null;
+        copy.ValidatedWindowTypeReferenceIsExplicit = false;
+
+        Assert.Equal([0, 9], original.SerializedConnectorSystems);
+        Assert.Equal(("Supply", 0), original.SerializedMepSystem);
+        Assert.Equal([(1d, 2d), (3d, 4d)], original.SerializedPlanBoundary);
+        Assert.False(original.SerializedRoomIsLocationless);
+        Assert.Equal(0, original.SerializedSystemTypeId);
+        Assert.Equal("Window type", original.ValidatedWindowTypeReferenceName);
+        Assert.True(original.ValidatedWindowTypeReferenceIsExplicit);
+        Assert.Null(copy.SerializedConnectorSystems);
+        Assert.Null(copy.SerializedMepSystem);
+        Assert.Null(copy.SerializedPlanBoundary);
+        Assert.True(copy.SerializedRoomIsLocationless);
+        Assert.Null(copy.SerializedSystemTypeId);
+        Assert.Null(copy.ValidatedWindowTypeReferenceName);
+        Assert.False(copy.ValidatedWindowTypeReferenceIsExplicit);
+    }
+
+    [Fact]
+    public void CopiedElementCanReplaceCurveDriverAndPlacementFactsIndependently()
+    {
+        var original = new RvtIO.Model.Element
+        {
+            CurveDriverLineZ = (0, 3),
+            CurveDriverLineLength = 0,
+            InstanceOriginXY = (0, 0),
+            InstanceUsesOffsetPosition = false,
+            NativeStructuralType = 0,
+            FamilyLevelRefs = (4, 0, 5, 2),
+        };
+        var copy = original.ShallowCopy();
+
+        Assert.Equal((0d, 3d), copy.CurveDriverLineZ);
+        Assert.Equal(0d, copy.CurveDriverLineLength);
+        Assert.Equal((0d, 0d), copy.InstanceOriginXY);
+        Assert.False(copy.InstanceUsesOffsetPosition);
+        Assert.Equal(0, copy.NativeStructuralType);
+        Assert.Equal((4, 0d, 5, 2d), copy.FamilyLevelRefs);
+
+        copy.CurveDriverLineZ = null;
+        copy.CurveDriverLineLength = 10;
+        copy.InstanceOriginXY = (7, 9);
+        copy.InstanceUsesOffsetPosition = true;
+        copy.NativeStructuralType = null;
+        copy.FamilyLevelRefs = null;
+
+        Assert.Equal((0d, 3d), original.CurveDriverLineZ);
+        Assert.Equal(0d, original.CurveDriverLineLength);
+        Assert.Equal((0d, 0d), original.InstanceOriginXY);
+        Assert.False(original.InstanceUsesOffsetPosition);
+        Assert.Equal(0, original.NativeStructuralType);
+        Assert.Equal((4, 0d, 5, 2d), original.FamilyLevelRefs);
+        Assert.Null(copy.CurveDriverLineZ);
+        Assert.Equal(10d, copy.CurveDriverLineLength);
+        Assert.Equal((7d, 9d), copy.InstanceOriginXY);
+        Assert.True(copy.InstanceUsesOffsetPosition);
+        Assert.Null(copy.NativeStructuralType);
+        Assert.Null(copy.FamilyLevelRefs);
+    }
+
+    [Fact]
     public void MultiOutput_RvtDocumentFromInfo_DoesNotMutateSourceInfo()
     {
         var info = new RvtIO.Model.RevitFileInfo

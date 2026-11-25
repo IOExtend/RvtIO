@@ -80,7 +80,7 @@ public class RvtDocument
     /// <summary>Number of elements in the document.</summary>
     public int ElementCount => _info.Elements.Count;
 
-    private RvtDocument(RevitFileInfo info, string? sourcePath = null)
+    private RvtDocument(RevitFileInfo info, string? sourcePath = null, Action<Element>? archiveParameters = null)
     {
         _info = info;
         _sourcePath = sourcePath;
@@ -97,25 +97,18 @@ public class RvtDocument
         _typeElementIds = new HashSet<int>();
         foreach (var e in info.Elements)
         {
-            foreach (var p in e.Parameters)
-            {
-                if (p.Definition?.Name is "ELEM_TYPE_PARAM" or "ELEM_FAMILY_AND_TYPE_PARAM"
-                    && p.Value is int typeId && typeId > 0)
-                {
-                    _typeElementIds.Add(typeId);
-                    break;
-                }
-            }
+            int typeId = e.GetTypeReferenceId(includeFamilyAndType: true);
+            if (typeId > 0) _typeElementIds.Add(typeId);
         }
 
-        SynthesizeMissingParams();
-        info.AttachSourceElementIds();
-        Parameter.ResolveZeroElementIds(_info);
+        SynthesizeMissingParams(archiveParameters);
+        info.AttachSourceElementIds(archiveParameters);
+        Parameter.ResolveZeroElementIds(_info, archiveParameters: archiveParameters);
 
         ResolveElementNames();
 
-        // Build UniqueId index (only if UniqueIds are present)
-        if (info.Elements.Any(e => e.UniqueId != null))
+        // Paged scenes look up elements by numeric key and defer textual UniqueIds.
+        if (archiveParameters == null && info.Elements.Any(e => e.UniqueId != null))
         {
             _elemByUniqueId = new Dictionary<string, Element>(StringComparer.OrdinalIgnoreCase);
             foreach (var e in info.Elements)
@@ -130,7 +123,7 @@ public class RvtDocument
     /// Synthesize standard Revit BIPs that the binary parser may not have extracted.
     /// Runs once during construction to ensure API compatibility with Revit.
     /// </summary>
-    private void SynthesizeMissingParams()
+    private void SynthesizeMissingParams(Action<Element>? archiveParameters)
     {
         foreach (var elem in _info.Elements)
         {
@@ -154,13 +147,13 @@ public class RvtDocument
 
             // ELEM_TYPE_PARAM for elements that don't have it but reference a type element:
             // walls often don't get it from the binary, but their References include the type ID.
-            if (elem.FamilyTypeId <= 0 && elem.References != null && elem.References.Count > 0)
+            if (elem.FamilyTypeId <= 0 && elem.ReadReferences != null && elem.ReadReferences.Count > 0)
             {
                 // Look for a referenced element with same category that:
                 // a) is already known as a type (in _typeElementIds), OR
                 // b) has the same CategoryId and no geometry/bbox (likely a type definition)
                 int? candidateTypeId = null;
-                foreach (var refId in elem.References)
+                foreach (var refId in elem.ReadReferences)
                 {
                     if (refId <= 0 || refId == elem.Id) continue;
                     if (!_elemById.TryGetValue(refId, out var refElem)) continue;
@@ -207,6 +200,7 @@ public class RvtDocument
                 FixEmptyElementIdParam(elem, "SYMBOL_ID_PARAM", (int)BuiltInParameter.SYMBOL_ID_PARAM, familyTypeId);
                 FixEmptyElementIdParam(elem, "ELEM_FAMILY_PARAM", (int)BuiltInParameter.ELEM_FAMILY_PARAM, familyTypeId);
             }
+            archiveParameters?.Invoke(elem);
         }
     }
 
@@ -309,8 +303,9 @@ public class RvtDocument
         var p = elem.LookupParameter(paramName);
         if (p != null && !p.HasValue)
         {
-            p.Value = value;
-            p.StorageType = StorageType.ElementId;
+            var editable = elem.Parameters.First(parameter => parameter.DefinitionName == paramName);
+            editable.Value = value;
+            editable.StorageType = StorageType.ElementId;
         }
         else if (p == null)
         {
@@ -342,10 +337,10 @@ public class RvtDocument
     /// <exception cref="ArgumentNullException"><paramref name="stream"/> is null.</exception>
     /// <exception cref="ArgumentException"><paramref name="stream"/> is not readable or not seekable, or is closed.</exception>
     /// <exception cref="RvtInputException">The stream is empty, is not a compound file, or is cut or damaged.</exception>
-    /// <exception cref="RvtLimitException">A stream is longer than one array can hold, or a file with no project
-    /// partitions contains a source element ID above the range of document-local keys.</exception>
+    /// <exception cref="RvtLimitException">A stream that requires an array is longer than one array can hold, or a file
+    /// with no project partitions contains a source element ID above the range of document-local keys.</exception>
     public static RvtDocument OpenStream(Stream stream, RvtReaderOptions? options = null)
-        => new(new RvtFileReader(options).ReadStream(stream));
+        => new(new RvtFileReader(options).ReadStream(stream), archiveParameters: options?.ArchiveSceneParameters);
 
     /// <summary>
     /// Wrap an existing RevitFileInfo as a queryable Document.

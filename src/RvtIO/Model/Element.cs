@@ -14,8 +14,204 @@ namespace RvtIO.Model
     /// <summary>A Revit element: an instance or a type, with its identity, parameters and geometry.</summary>
     public class Element
     {
-        /// <summary>A copy that shares all members with this element; the caller replaces what it changes.</summary>
-        internal Element ShallowCopy() => (Element)MemberwiseClone();
+        // Specialized tuples are absent on most elements. Boxing the present values
+        // keeps the empty fields reference-sized while preserving shallow-copy semantics.
+        private object? _mediumSolidTotals;
+        private object? _columnAttachment;
+        private object? _ownSingleFamilyCutout;
+        private object? _serializedAreaScheme;
+
+        // Most parsed records carry neither drawing fields nor stair or railing data.
+        private DrawingData? _drawing;
+
+        private sealed class DrawingData
+        {
+            internal string? Text;
+            internal double[]? TextPosition;
+            internal double? TextFontSizePoints;
+            internal int? ViewportScale;
+            internal int? ImageWidth;
+            internal int? ImageHeight;
+            internal double[]? ViewOrigin;
+            internal double[]? ViewHorizontalDirection;
+            internal double[]? ViewVerticalDirection;
+            internal double[]? ViewDirection;
+            internal int? ViewportViewId;
+            internal double[]? ViewportOffset;
+
+            internal DrawingData ShallowCopy() => (DrawingData)MemberwiseClone();
+        }
+
+        private StairAndRailingData? _stairAndRailing;
+
+        private sealed class StairAndRailingData
+        {
+            internal int? SerializedBaseRailingSymbolId;
+            internal int? SerializedStairsRailingAttrId;
+            internal double? SerializedRailingTopHeightFeet;
+            internal int? SerializedStairTypeId;
+            internal int? SerializedStairBaseLevelId;
+            internal bool SerializedStairTypeLinkIsResolved;
+            internal ushort? SerializedStairsTypeClassId;
+            internal Internal.StairComponentSource.CoreComponent[]? SerializedStairCore;
+            internal int[]? SerializedStairCopyLevelIds;
+            internal Parsing.TfBlockDeserializer.StairRunInput? SerializedStairRunInput;
+            internal string? ValidatedStairOccurrenceName;
+            internal List<Parameter>? SerializedStairNameParameters;
+            internal int? SerializedRailingStairHostId;
+            internal double? SerializedStairsTypeMinInsideTreadFeet;
+            internal double? SerializedStairRunTypeNosingFeet;
+            internal int? SerializedActualNumberOfRisers;
+            internal double? SerializedActualRiserHeightFeet;
+            internal double? SerializedActualTreadDepthFeet;
+            internal string? ValidatedStairComponentTypeName;
+
+            internal StairAndRailingData ShallowCopy() => (StairAndRailingData)MemberwiseClone();
+        }
+
+        private WallData? _wall;
+
+        private sealed class WallData
+        {
+            internal IReadOnlyList<int>? OwnWallCutoutInstanceIds;
+            internal IReadOnlyList<Parsing.TfBlockDeserializer.OwnWallCutoutStep>? OwnWallCutoutSteps;
+            internal double[][]? OwnWallAxisLine;
+            internal double[][]? OwnWallTrimmedAxis;
+            internal int? OwnWallCrossSection;
+            internal Parsing.TfBlockDeserializer.OwnWallHelperInput? OwnWallHelper;
+            internal double? ValidatedWallTypeThicknessFeet;
+            internal GeometryData? OwnPrimaryPlanarBody;
+            internal double[]? OwnWallSide0NormalCurrent;
+            internal GeometryData? OwnCurrentCutPairBodyCurrent;
+            internal bool? SerializedWallFlipped;
+            internal bool? SerializedWallJoinedToTop;
+            internal IReadOnlyList<Parsing.TfBlockDeserializer.WallEndJoin>? SerializedWallEndJoins;
+            internal int? SerializedCurtainWallFunction;
+            internal string? SerializedCurtainWallTypeName;
+            internal string? SerializedBasicWallTypeName;
+            internal bool IsSerializedStackedWallType;
+            internal int? SerializedBasicWallTypeFunction;
+            internal int? SerializedCurtainHostId;
+            internal int[]? SerializedCurtainPanelOrder;
+
+            internal WallData ShallowCopy() => (WallData)MemberwiseClone();
+        }
+
+        private MepData? _mep;
+
+        private sealed class MepData
+        {
+            internal IReadOnlyList<(int Index, int Direction, int SystemType)>? SerializedMepConnectors;
+            internal IReadOnlyList<(int Index, int Direction, IReadOnlyList<(int Id, int Index, int Type)> Refs)>? SerializedConnectorGraph;
+            internal IReadOnlyList<int>? SerializedConnectorSystems;
+            internal IReadOnlyList<int>? SerializedConnectorModes;
+            internal (string Name, int TypeId)? SerializedMepSystem;
+            internal int? SerializedCurveSystemTypeId;
+            internal int? SerializedCircuitBaseEquipmentId;
+            internal string? ValidatedDuctTypeName;
+            internal string? ValidatedMepTypeName;
+            internal string? ValidatedMepFamilyName;
+            internal int? SerializedMepCurveTypeId;
+
+            internal MepData ShallowCopy() => (MepData)MemberwiseClone();
+        }
+
+        private SpaceData? _space;
+
+        private sealed class SpaceData
+        {
+            internal GeometryData? SerializedSpaceBoundary;
+            internal GeometryData? SerializedCurvedSpaceBoundary;
+            internal GeometryData? SerializedLiteralSpaceBoundary;
+            internal IReadOnlyList<(double X, double Y)>? SerializedPlanBoundary;
+            internal int? SerializedRoomPhaseId;
+            internal double? SerializedRoomPlanAreaSquareFeet;
+            internal int? SerializedRoomId;
+            internal bool? SerializedRoomIsLocationless;
+            internal bool? SerializedZoneIsDefault;
+            internal int? SerializedSpaceZoneId;
+            internal Dictionary<string, double>? NativeRoomFields;
+            internal int? EnergyBuildingTypeId;
+
+            internal SpaceData ShallowCopy() => (SpaceData)MemberwiseClone();
+        }
+
+        private TypeReferenceData? _typeReferences;
+
+        private sealed class TypeReferenceData
+        {
+            internal int? SerializedSystemTypeId;
+            internal ushort? SerializedSystemTypeClassId;
+            internal string? ValidatedFloorTypeReferenceName;
+            internal string? ValidatedFloorOwnTypeName;
+            internal bool ValidatedFloorTypeReferenceIsExplicit;
+            internal bool ValidatedFloorTypeReferenceIsBlocked;
+            internal int? SerializedCeilingTypeId;
+            internal string? ValidatedCeilingTypeReferenceName;
+            internal bool ValidatedCeilingTypeReferenceIsExplicit;
+            internal bool ValidatedCeilingTypeReferenceIsBlocked;
+            internal string? ValidatedWindowTypeReferenceName;
+            internal bool ValidatedWindowTypeReferenceIsExplicit;
+            internal bool ValidatedWindowTypeReferenceIsBlocked;
+            internal string? ValidatedProxyTypeReferenceName;
+            internal bool ValidatedProxyTypeReferenceIsExplicit;
+            internal bool ValidatedProxyTypeReferenceIsBlocked;
+            internal string? ValidatedDistributionTypeReferenceName;
+            internal bool ValidatedDistributionTypeReferenceIsExplicit;
+            internal bool ValidatedDistributionTypeReferenceIsBlocked;
+            internal string? ValidatedRoofOrRailingTypeReferenceName;
+            internal bool ValidatedRoofOrRailingTypeReferenceIsExplicit;
+            internal bool ValidatedRoofOrRailingTypeReferenceIsBlocked;
+            internal string? ValidatedSystemFamilyName;
+            internal string? ValidatedCorniceTypeName;
+
+            internal TypeReferenceData ShallowCopy() => (TypeReferenceData)MemberwiseClone();
+        }
+
+        private CurveDriverData? _curveDriver;
+
+        private sealed class CurveDriverData
+        {
+            internal LocationCurve? NativeModelArc;
+            internal (double StartZ, double EndZ)? CurveDriverLineZ;
+            internal (double X, double Y, double Z)? CurveDriverLineDirection;
+            internal double? CurveDriverLineLength;
+            internal int? CurveDriverRefLevelId;
+            internal double? CurveDriverRotation;
+
+            internal CurveDriverData ShallowCopy() => (CurveDriverData)MemberwiseClone();
+        }
+
+        private FamilyPlacementData? _familyPlacement;
+
+        private sealed class FamilyPlacementData
+        {
+            internal (double X, double Y)? InstanceOriginXY;
+            internal double? InstanceOriginZ;
+            internal bool? InstanceUsesOffsetPosition;
+            internal bool? InstanceIsVertical;
+            internal int? NativeStructuralType;
+            internal (int BaseLevel, double BaseOffset, int TopLevel, double TopOffset)? FamilyLevelRefs;
+            internal double? FramingCopingDistance;
+            internal double? SymbolFramingLength;
+
+            internal FamilyPlacementData ShallowCopy() => (FamilyPlacementData)MemberwiseClone();
+        }
+
+        /// <summary>A copy that shares member values with this element; the caller replaces what it changes.</summary>
+        internal Element ShallowCopy()
+        {
+            var copy = (Element)MemberwiseClone();
+            copy._drawing = _drawing?.ShallowCopy();
+            copy._stairAndRailing = _stairAndRailing?.ShallowCopy();
+            copy._wall = _wall?.ShallowCopy();
+            copy._mep = _mep?.ShallowCopy();
+            copy._space = _space?.ShallowCopy();
+            copy._typeReferences = _typeReferences?.ShallowCopy();
+            copy._curveDriver = _curveDriver?.ShallowCopy();
+            copy._familyPlacement = _familyPlacement?.ShallowCopy();
+            return copy;
+        }
 
         /// <summary>The document-local element key used by the existing 32-bit APIs. Use <see cref="ElementId"/>
         /// for the ID as stored in the RVT.</summary>
@@ -81,26 +277,68 @@ namespace RvtIO.Model
 
         /// <summary>Start/end z of the FamInstCurveDriver drive curve (CurveDriver.m_pCrv GLine), project coordinates (feet).</summary>
         [JsonIgnore]
-        internal (double StartZ, double EndZ)? CurveDriverLineZ { get; set; }
+        internal (double StartZ, double EndZ)? CurveDriverLineZ
+        {
+            get => _curveDriver?.CurveDriverLineZ;
+            set
+            {
+                if (value != null || _curveDriver != null) (_curveDriver ??= new()).CurveDriverLineZ = value;
+            }
+        }
 
         /// <summary>The circular drive curve owned by this curve element, in internal coordinates.</summary>
-        internal LocationCurve? NativeModelArc { get; set; }
+        internal LocationCurve? NativeModelArc
+        {
+            get => _curveDriver?.NativeModelArc;
+            set
+            {
+                if (value != null || _curveDriver != null) (_curveDriver ??= new()).NativeModelArc = value;
+            }
+        }
 
         /// <summary>Unit direction of the straight drive curve (CurveDriver.m_pCrv GLine dirVec); absent for an arc driver.</summary>
         [JsonIgnore]
-        internal (double X, double Y, double Z)? CurveDriverLineDirection { get; set; }
+        internal (double X, double Y, double Z)? CurveDriverLineDirection
+        {
+            get => _curveDriver?.CurveDriverLineDirection;
+            set
+            {
+                if (value != null || _curveDriver != null) (_curveDriver ??= new()).CurveDriverLineDirection = value;
+            }
+        }
 
         /// <summary>Length of the straight drive curve (CurveDriver.m_pCrv GLine: the end-parameter span times the stored direction vector), feet.</summary>
         [JsonIgnore]
-        internal double? CurveDriverLineLength { get; set; }
+        internal double? CurveDriverLineLength
+        {
+            get => _curveDriver?.CurveDriverLineLength;
+            set
+            {
+                if (value != null || _curveDriver != null) (_curveDriver ??= new()).CurveDriverLineLength = value;
+            }
+        }
 
         /// <summary>StructuralUserData.m_copingDistance as stored (-1 when the member has no coped end).</summary>
         [JsonIgnore]
-        internal double? FramingCopingDistance { get; set; }
+        internal double? FramingCopingDistance
+        {
+            get => _familyPlacement?.FramingCopingDistance;
+            set
+            {
+                if (value != null || _familyPlacement != null) (_familyPlacement ??= new()).FramingCopingDistance = value;
+            }
+        }
 
         /// <summary>FamInstCurveDriver.m_refLevelId as stored (-1 when the driver has no reference level of its own).</summary>
         [JsonIgnore]
-        internal int? CurveDriverRefLevelId { get; set; }
+        internal int? CurveDriverRefLevelId
+        {
+            get => _curveDriver?.CurveDriverRefLevelId;
+            set
+            {
+                if (value != null || _curveDriver != null) (_curveDriver ??= new()).CurveDriverRefLevelId = value;
+            }
+        }
 
         /// <summary>Material whose appearance came from a shading (0x09B6) payload or its shading holder.</summary>
         [JsonIgnore]
@@ -108,11 +346,25 @@ namespace RvtIO.Model
 
         /// <summary>FamilyInstance.m_instOrigin z as stored (the placement height relative to the instance's host/level).</summary>
         [JsonIgnore]
-        internal double? InstanceOriginZ { get; set; }
+        internal double? InstanceOriginZ
+        {
+            get => _familyPlacement?.InstanceOriginZ;
+            set
+            {
+                if (value != null || _familyPlacement != null) (_familyPlacement ??= new()).InstanceOriginZ = value;
+            }
+        }
 
         /// <summary>FamilyInstance.m_refs FamilyLevelRef pair as stored: base (first) and top (second) level and offset.</summary>
         [JsonIgnore]
-        internal (int BaseLevel, double BaseOffset, int TopLevel, double TopOffset)? FamilyLevelRefs { get; set; }
+        internal (int BaseLevel, double BaseOffset, int TopLevel, double TopOffset)? FamilyLevelRefs
+        {
+            get => _familyPlacement?.FamilyLevelRefs;
+            set
+            {
+                if (value != null || _familyPlacement != null) (_familyPlacement ??= new()).FamilyLevelRefs = value;
+            }
+        }
 
         /// <summary>Parameters set by the NativeFieldParameters table with their validated presence domains, the
         /// parameter's state before the table set it (null: it did not exist) and the value the table left.</summary>
@@ -129,7 +381,14 @@ namespace RvtIO.Model
 
         /// <summary>StructCurveDriverBase.m_rotation as stored.</summary>
         [JsonIgnore]
-        internal double? CurveDriverRotation { get; set; }
+        internal double? CurveDriverRotation
+        {
+            get => _curveDriver?.CurveDriverRotation;
+            set
+            {
+                if (value != null || _curveDriver != null) (_curveDriver ??= new()).CurveDriverRotation = value;
+            }
+        }
 
         /// <summary>Element.m_createdPhaseId / m_demolishedPhaseId as stored.</summary>
         [JsonIgnore]
@@ -159,11 +418,22 @@ namespace RvtIO.Model
         /// <summary>The volume (cubic metres) and surface (square metres) of the taken solids of a column at the Medium level when it
         /// differs from the Fine one; null when the element has no alternatives or its Medium solids have no surface integrals.</summary>
         [JsonIgnore]
-        internal (double Volume, double Area)? MediumSolidTotals { get; set; }
+        internal (double Volume, double Area)? MediumSolidTotals
+        {
+            get => ((double Volume, double Area)?)_mediumSolidTotals;
+            set => _mediumSolidTotals = value;
+        }
 
         /// <summary>EnergyDataSettings.m_buildingTypeId as stored (the project's HVAC load building type).</summary>
         [JsonIgnore]
-        internal int? EnergyBuildingTypeId { get; set; }
+        internal int? EnergyBuildingTypeId
+        {
+            get => _space?.EnergyBuildingTypeId;
+            set
+            {
+                if (value != null || _space != null) (_space ??= new()).EnergyBuildingTypeId = value;
+            }
+        }
 
         /// <summary>The instance's own geometry symbol (InstanceInfo m_symbolId) as stored.</summary>
         [JsonIgnore]
@@ -171,23 +441,55 @@ namespace RvtIO.Model
 
         /// <summary>Framing length regenerated into an instance symbol: StructSetbackSymFamRef.m_Length, equal at both ends.</summary>
         [JsonIgnore]
-        internal double? SymbolFramingLength { get; set; }
+        internal double? SymbolFramingLength
+        {
+            get => _familyPlacement?.SymbolFramingLength;
+            set
+            {
+                if (value != null || _familyPlacement != null) (_familyPlacement ??= new()).SymbolFramingLength = value;
+            }
+        }
 
         /// <summary>The attachment record of a column end (AttachInfo 699): <c>IsTop</c> is m_baseOrTop = 1.</summary>
         [JsonIgnore]
-        internal (bool IsTop, double Offset, int Justification)? ColumnAttachment { get; set; }
+        internal (bool IsTop, double Offset, int Justification)? ColumnAttachment
+        {
+            get => ((bool IsTop, double Offset, int Justification)?)_columnAttachment;
+            set => _columnAttachment = value;
+        }
 
         /// <summary>FamilyInstance.m_useOffsetPos as stored: whether the instance keeps its offset when its grid moves.</summary>
         [JsonIgnore]
-        internal bool? InstanceUsesOffsetPosition { get; set; }
+        internal bool? InstanceUsesOffsetPosition
+        {
+            get => _familyPlacement?.InstanceUsesOffsetPosition;
+            set
+            {
+                if (value != null || _familyPlacement != null) (_familyPlacement ??= new()).InstanceUsesOffsetPosition = value;
+            }
+        }
 
         /// <summary>FamilyInstance.m_instOrigin x and y as stored (project coordinates, feet).</summary>
         [JsonIgnore]
-        internal (double X, double Y)? InstanceOriginXY { get; set; }
+        internal (double X, double Y)? InstanceOriginXY
+        {
+            get => _familyPlacement?.InstanceOriginXY;
+            set
+            {
+                if (value != null || _familyPlacement != null) (_familyPlacement ??= new()).InstanceOriginXY = value;
+            }
+        }
 
         /// <summary>FamilyInstance.m_bVertical as stored.</summary>
         [JsonIgnore]
-        internal bool? InstanceIsVertical { get; set; }
+        internal bool? InstanceIsVertical
+        {
+            get => _familyPlacement?.InstanceIsVertical;
+            set
+            {
+                if (value != null || _familyPlacement != null) (_familyPlacement ??= new()).InstanceIsVertical = value;
+            }
+        }
 
         /// <summary>FamilyInstance.m_assocSketchPlaneId as stored.</summary>
         [JsonIgnore]
@@ -217,32 +519,74 @@ namespace RvtIO.Model
         /// <summary>Complete planar boundary cache of this unique OST_Rooms owner, in
         /// project coordinates (feet). Kept out of physical geometry and public JSON.</summary>
         [JsonIgnore]
-        internal GeometryData? SerializedSpaceBoundary { get; set; }
+        internal GeometryData? SerializedSpaceBoundary
+        {
+            get => _space?.SerializedSpaceBoundary;
+            set
+            {
+                if (value != null || _space != null) (_space ??= new()).SerializedSpaceBoundary = value;
+            }
+        }
 
         /// <summary>The cache of a room whose boundary also holds analytic cylinders (a round wall): the current profile body of the room is
         /// written from the face meshes of its Geometry node. Kept apart from <see cref="SerializedSpaceBoundary"/> (planar boundaries
         /// only), which the legacy profile target and the room area read.</summary>
-        internal GeometryData? SerializedCurvedSpaceBoundary { get; set; }
+        internal GeometryData? SerializedCurvedSpaceBoundary
+        {
+            get => _space?.SerializedCurvedSpaceBoundary;
+            set
+            {
+                if (value != null || _space != null) (_space ??= new()).SerializedCurvedSpaceBoundary = value;
+            }
+        }
 
         /// <summary>The planar cache of a room read literally (loops of the coedges as they are, no welding, no closed-shell validation): the
         /// body of a room whose welded cache is refused or is no manifold shell. See GRepParserV2.ParseLiteralPlanarSpaceBoundary.</summary>
-        internal GeometryData? SerializedLiteralSpaceBoundary { get; set; }
+        internal GeometryData? SerializedLiteralSpaceBoundary
+        {
+            get => _space?.SerializedLiteralSpaceBoundary;
+            set
+            {
+                if (value != null || _space != null) (_space ??= new()).SerializedLiteralSpaceBoundary = value;
+            }
+        }
 
         /// <summary>The outline (feet, plan coordinates) of a room or area that has no geometry block, from its circuit in the level room plan: the profile
         /// The current profile extrudes for it. Null when there is none or the circuit cannot be read exactly (see Parsing.RoomPlanBoundary).</summary>
-        internal IReadOnlyList<(double X, double Y)>? SerializedPlanBoundary { get; set; }
+        internal IReadOnlyList<(double X, double Y)>? SerializedPlanBoundary
+        {
+            get => _space?.SerializedPlanBoundary;
+            set
+            {
+                if (value != null || _space != null) (_space ??= new()).SerializedPlanBoundary = value;
+            }
+        }
 
         /// <summary>The planar boundary of a room, else its curved one: what the current profile export reads.</summary>
         internal GeometryData? SerializedSpaceBoundaryCurrent => SerializedSpaceBoundary ?? SerializedCurvedSpaceBoundary;
 
         /// <summary>RoomElem.m_phaseId from a unique, validated room owner root.</summary>
         [JsonIgnore]
-        internal int? SerializedRoomPhaseId { get; set; }
+        internal int? SerializedRoomPhaseId
+        {
+            get => _space?.SerializedRoomPhaseId;
+            set
+            {
+                if (value != null || _space != null) (_space ??= new()).SerializedRoomPhaseId = value;
+            }
+        }
 
         /// <summary>The area (square feet) of the circuit RoomElem.m_cachedCircuitId names in the single level room plan
         /// that holds this room, less its islands.</summary>
         [JsonIgnore]
-        internal double? SerializedRoomPlanAreaSquareFeet { get; set; }
+        internal double? SerializedRoomPlanAreaSquareFeet
+        {
+            get => _space?.SerializedRoomPlanAreaSquareFeet;
+            set
+            {
+                if (value != null || _space != null) (_space ??= new()).SerializedRoomPlanAreaSquareFeet = value;
+            }
+        }
 
         /// <summary>Exact serialized Element.m_docAccess handle.</summary>
         [JsonIgnore]
@@ -277,58 +621,149 @@ namespace RvtIO.Model
         /// <summary>The plain text of a text note, decoded from the RTF string Revit stores for it; null for every other
         /// element and for a text note whose block was not decoded.</summary>
         [JsonIgnore]
-        public string? Text { get; set; }
+        public string? Text
+        {
+            get => _drawing?.Text;
+            set
+            {
+                if (value != null || _drawing != null) (_drawing ??= new()).Text = value;
+            }
+        }
 
         /// <summary>The position of a text note in the coordinates of its view (feet), [x, y, z]; null when not
         /// decoded.</summary>
         [JsonIgnore]
-        public double[]? TextPosition { get; set; }
+        public double[]? TextPosition
+        {
+            get => _drawing?.TextPosition;
+            set
+            {
+                if (value != null || _drawing != null) (_drawing ??= new()).TextPosition = value;
+            }
+        }
 
         /// <summary>The font size of the text note in points, when the stored RTF declares one.</summary>
         [JsonIgnore]
-        public double? TextFontSizePoints { get; set; }
+        public double? TextFontSizePoints
+        {
+            get => _drawing?.TextFontSizePoints;
+            set
+            {
+                if (value != null || _drawing != null) (_drawing ??= new()).TextFontSizePoints = value;
+            }
+        }
 
         /// <summary>The view scale of a viewport (the denominator), decoded from the viewport record; null when the
         /// reader did not decode it.</summary>
         [JsonIgnore]
-        public int? ViewportScale { get; set; }
+        public int? ViewportScale
+        {
+            get => _drawing?.ViewportScale;
+            set
+            {
+                if (value != null || _drawing != null) (_drawing ??= new()).ViewportScale = value;
+            }
+        }
 
         /// <summary>The pixel width of an image symbol, when the reader decoded it.</summary>
         [JsonIgnore]
-        public int? ImageWidth { get; set; }
+        public int? ImageWidth
+        {
+            get => _drawing?.ImageWidth;
+            set
+            {
+                if (value != null || _drawing != null) (_drawing ??= new()).ImageWidth = value;
+            }
+        }
 
         /// <summary>The pixel height of an image symbol, when the reader decoded it.</summary>
         [JsonIgnore]
-        public int? ImageHeight { get; set; }
+        public int? ImageHeight
+        {
+            get => _drawing?.ImageHeight;
+            set
+            {
+                if (value != null || _drawing != null) (_drawing ??= new()).ImageHeight = value;
+            }
+        }
 
         /// <summary>The origin of a view's plane (feet), [x, y, z]; null when the reader did not decode it.</summary>
         [JsonIgnore]
-        public double[]? ViewOrigin { get; set; }
+        public double[]? ViewOrigin
+        {
+            get => _drawing?.ViewOrigin;
+            set
+            {
+                if (value != null || _drawing != null) (_drawing ??= new()).ViewOrigin = value;
+            }
+        }
 
         /// <summary>The horizontal axis of a view's plane, a unit vector; null when not decoded.</summary>
         [JsonIgnore]
-        public double[]? ViewHorizontalDirection { get; set; }
+        public double[]? ViewHorizontalDirection
+        {
+            get => _drawing?.ViewHorizontalDirection;
+            set
+            {
+                if (value != null || _drawing != null) (_drawing ??= new()).ViewHorizontalDirection = value;
+            }
+        }
 
         /// <summary>The vertical axis of a view's plane, a unit vector; null when not decoded.</summary>
         [JsonIgnore]
-        public double[]? ViewVerticalDirection { get; set; }
+        public double[]? ViewVerticalDirection
+        {
+            get => _drawing?.ViewVerticalDirection;
+            set
+            {
+                if (value != null || _drawing != null) (_drawing ??= new()).ViewVerticalDirection = value;
+            }
+        }
 
         /// <summary>The direction a view looks at, a unit vector; null when not decoded.</summary>
         [JsonIgnore]
-        public double[]? ViewDirection { get; set; }
+        public double[]? ViewDirection
+        {
+            get => _drawing?.ViewDirection;
+            set
+            {
+                if (value != null || _drawing != null) (_drawing ??= new()).ViewDirection = value;
+            }
+        }
 
         /// <summary>For a viewport: the element id of the view it displays; null when the reader did not decode it.</summary>
         [JsonIgnore]
-        public int? ViewportViewId { get; set; }
+        public int? ViewportViewId
+        {
+            get => _drawing?.ViewportViewId;
+            set
+            {
+                if (value != null || _drawing != null) (_drawing ??= new()).ViewportViewId = value;
+            }
+        }
 
         /// <summary>For a viewport: the offset of the displayed view on the sheet (feet), [x, y, z]; null when not
         /// decoded.</summary>
         [JsonIgnore]
-        public double[]? ViewportOffset { get; set; }
+        public double[]? ViewportOffset
+        {
+            get => _drawing?.ViewportOffset;
+            set
+            {
+                if (value != null || _drawing != null) (_drawing ??= new()).ViewportOffset = value;
+            }
+        }
 
         /// <summary>Exact BaseRailing.m_baseRailingSymbolId stored by this occurrence.</summary>
         [JsonIgnore]
-        internal int? SerializedBaseRailingSymbolId { get; set; }
+        internal int? SerializedBaseRailingSymbolId
+        {
+            get => _stairAndRailing?.SerializedBaseRailingSymbolId;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedBaseRailingSymbolId = value;
+            }
+        }
 
         /// <summary>Own unique InstanceInfo.m_symbolId resolving to a FamilySymbol
         /// with known semantic kind/owner prefix. The original symbol,
@@ -344,57 +779,145 @@ namespace RvtIO.Model
         /// <summary>One active own computed-symbol cut with paired InstanceInfo transform;
         /// only a unique, non-inplace family with no nested instances is admitted.</summary>
         [JsonIgnore]
-        internal (int SymbolId, int HostId, double[] Transform, FamilyCutLoopData Loop)? OwnSingleFamilyCutout { get; set; }
+        internal (int SymbolId, int HostId, double[] Transform, FamilyCutLoopData Loop)? OwnSingleFamilyCutout
+        {
+            get => ((int SymbolId, int HostId, double[] Transform, FamilyCutLoopData Loop)?)_ownSingleFamilyCutout;
+            set => _ownSingleFamilyCutout = value;
+        }
 
         /// <summary>Own phase-4 cutout instance IDs in source order, not inferred inverse hosts.</summary>
         [JsonIgnore]
-        internal IReadOnlyList<int>? OwnWallCutoutInstanceIds { get; set; }
+        internal IReadOnlyList<int>? OwnWallCutoutInstanceIds
+        {
+            get => _wall?.OwnWallCutoutInstanceIds;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).OwnWallCutoutInstanceIds = value;
+            }
+        }
 
         [JsonIgnore]
-        internal IReadOnlyList<Parsing.TfBlockDeserializer.OwnWallCutoutStep>? OwnWallCutoutSteps { get; set; }
+        internal IReadOnlyList<Parsing.TfBlockDeserializer.OwnWallCutoutStep>? OwnWallCutoutSteps
+        {
+            get => _wall?.OwnWallCutoutSteps;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).OwnWallCutoutSteps = value;
+            }
+        }
 
         [JsonIgnore]
-        internal double[][]? OwnWallAxisLine { get; set; }
+        internal double[][]? OwnWallAxisLine
+        {
+            get => _wall?.OwnWallAxisLine;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).OwnWallAxisLine = value;
+            }
+        }
 
         /// <summary>The location line of a straight own wall, bounded by its trimmed curve: start and end
         /// point, feet. Null when the side faces of the wall are not both known.</summary>
         [JsonIgnore]
-        internal double[][]? OwnWallTrimmedAxis { get; set; }
+        internal double[][]? OwnWallTrimmedAxis
+        {
+            get => _wall?.OwnWallTrimmedAxis;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).OwnWallTrimmedAxis = value;
+            }
+        }
 
         [JsonIgnore]
-        internal int? OwnWallCrossSection { get; set; }
+        internal int? OwnWallCrossSection
+        {
+            get => _wall?.OwnWallCrossSection;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).OwnWallCrossSection = value;
+            }
+        }
 
         /// <summary>Profile helper of the own wall root; null when the root is not readable or not unique.</summary>
         [JsonIgnore]
-        internal Parsing.TfBlockDeserializer.OwnWallHelperInput? OwnWallHelper { get; set; }
+        internal Parsing.TfBlockDeserializer.OwnWallHelperInput? OwnWallHelper
+        {
+            get => _wall?.OwnWallHelper;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).OwnWallHelper = value;
+            }
+        }
 
         /// <summary>Exact BaseRailing.m_stairsRailingAttrId stored by this occurrence.</summary>
         [JsonIgnore]
-        internal int? SerializedStairsRailingAttrId { get; set; }
+        internal int? SerializedStairsRailingAttrId
+        {
+            get => _stairAndRailing?.SerializedStairsRailingAttrId;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedStairsRailingAttrId = value;
+            }
+        }
 
         /// <summary>Exact BaseRailingAttr.m_topRailHeight reached through
         /// <see cref="SerializedStairsRailingAttrId"/>, in Revit internal feet.</summary>
         [JsonIgnore]
-        internal double? SerializedRailingTopHeightFeet { get; set; }
+        internal double? SerializedRailingTopHeightFeet
+        {
+            get => _stairAndRailing?.SerializedRailingTopHeightFeet;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedRailingTopHeightFeet = value;
+            }
+        }
 
         /// <summary>Exact StairsElement.m_typeId from this occurrence's unique complete
         /// class-3681 root, after resolving one unique class-3742 StairsType target.</summary>
         [JsonIgnore]
-        internal int? SerializedStairTypeId { get; set; }
+        internal int? SerializedStairTypeId
+        {
+            get => _stairAndRailing?.SerializedStairTypeId;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedStairTypeId = value;
+            }
+        }
 
         /// <summary>Exact StairsElement.m_baseLevelId of the same class-3681 root (STAIRS_BASE_LEVEL_PARAM).</summary>
         [JsonIgnore]
-        internal int? SerializedStairBaseLevelId { get; set; }
+        internal int? SerializedStairBaseLevelId
+        {
+            get => _stairAndRailing?.SerializedStairBaseLevelId;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedStairBaseLevelId = value;
+            }
+        }
 
         /// <summary>True only while <see cref="SerializedStairTypeId"/> resolves to the
         /// unique materialized stair type validated by its own exact class-3742 root.</summary>
         [JsonIgnore]
-        internal bool SerializedStairTypeLinkIsResolved { get; set; }
+        internal bool SerializedStairTypeLinkIsResolved
+        {
+            get => _stairAndRailing?.SerializedStairTypeLinkIsResolved ?? false;
+            set
+            {
+                if (value || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedStairTypeLinkIsResolved = value;
+            }
+        }
 
         /// <summary>Exact raw Tf class of this materialized StairsType target. Kept after
         /// public TypeId normalization so the exporter can revalidate the raw boundary.</summary>
         [JsonIgnore]
-        internal ushort? SerializedStairsTypeClassId { get; set; }
+        internal ushort? SerializedStairsTypeClassId
+        {
+            get => _stairAndRailing?.SerializedStairsTypeClassId;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedStairsTypeClassId = value;
+            }
+        }
 
         /// <summary>Own semantic class from a single validated Element base prefix;
         /// not the first geometry frame or the public normalized TypeId.</summary>
@@ -416,7 +939,14 @@ namespace RvtIO.Model
         /// <summary>FamilyInstance.m_structType as stored (StructuralType: 0 non-structural, 1 beam, 2 brace, 3 column, 4 footing, 5 unknown
         /// framing); null when the walk did not read it.</summary>
         [JsonIgnore]
-        internal int? NativeStructuralType { get; set; }
+        internal int? NativeStructuralType
+        {
+            get => _familyPlacement?.NativeStructuralType;
+            set
+            {
+                if (value != null || _familyPlacement != null) (_familyPlacement ??= new()).NativeStructuralType = value;
+            }
+        }
 
         /// <summary>ElementHeader.m_designOptionId of a file with 64-bit ids; null when not decoded.</summary>
         [JsonIgnore]
@@ -486,30 +1016,72 @@ namespace RvtIO.Model
         /// <summary>Own helper core, reciprocally owned and equal to the native typed
         /// inverse ownership set. Ordering is not an API naming ordinal.</summary>
         [JsonIgnore]
-        internal Internal.StairComponentSource.CoreComponent[]? SerializedStairCore { get; set; }
+        internal Internal.StairComponentSource.CoreComponent[]? SerializedStairCore
+        {
+            get => _stairAndRailing?.SerializedStairCore;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedStairCore = value;
+            }
+        }
         /// <summary>Levels a multistory stair is repeated on, in stored order.</summary>
         [JsonIgnore]
-        internal int[]? SerializedStairCopyLevelIds { get; set; }
+        internal int[]? SerializedStairCopyLevelIds
+        {
+            get => _stairAndRailing?.SerializedStairCopyLevelIds;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedStairCopyLevelIds = value;
+            }
+        }
 
         /// <summary>Single complete own run graph's native style and cached API path
         /// directions, with independent semantic class and reciprocal ElemRec owner.</summary>
         [JsonIgnore]
-        internal Parsing.TfBlockDeserializer.StairRunInput? SerializedStairRunInput { get; set; }
+        internal Parsing.TfBlockDeserializer.StairRunInput? SerializedStairRunInput
+        {
+            get => _stairAndRailing?.SerializedStairRunInput;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedStairRunInput = value;
+            }
+        }
 
         /// <summary>Native IDS_STAIR instance name from the saved locale's resource,
         /// admitted only for a complete own native stair/type/core. Not the type Name.</summary>
         [JsonIgnore]
-        internal string? ValidatedStairOccurrenceName { get; set; }
+        internal string? ValidatedStairOccurrenceName
+        {
+            get => _stairAndRailing?.ValidatedStairOccurrenceName;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).ValidatedStairOccurrenceName = value;
+            }
+        }
 
         /// <summary>Own complete parameter-store scope for native instance naming;
         /// null is unvalidated, an empty list is validated absence. Never public heuristics.</summary>
         [JsonIgnore]
-        internal List<Parameter>? SerializedStairNameParameters { get; set; }
+        internal List<Parameter>? SerializedStairNameParameters
+        {
+            get => _stairAndRailing?.SerializedStairNameParameters;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedStairNameParameters = value;
+            }
+        }
 
         /// <summary>Own single class-485 BaseRailing.m_stairsId, separately from
         /// ElemRec ownership, registered lists, and the adjustment start component.</summary>
         [JsonIgnore]
-        internal int? SerializedRailingStairHostId { get; set; }
+        internal int? SerializedRailingStairHostId
+        {
+            get => _stairAndRailing?.SerializedRailingStairHostId;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedRailingStairHostId = value;
+            }
+        }
 
         /// <summary>Material.m_name from this material's own single MaterialElem root.</summary>
         [JsonIgnore]
@@ -543,21 +1115,56 @@ namespace RvtIO.Model
         /// <summary>Own basic-wall type getter, bound through the exact occurrence type link.
         /// Separate from legacy Layers and propagated parameters; internal feet.</summary>
         [JsonIgnore]
-        internal double? ValidatedWallTypeThicknessFeet { get; set; }
+        internal double? ValidatedWallTypeThicknessFeet
+        {
+            get => _wall?.ValidatedWallTypeThicknessFeet;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).ValidatedWallTypeThicknessFeet = value;
+            }
+        }
 
         // Kept separate until the writer has completed the host/void contract.
         [JsonIgnore]
-        internal GeometryData? OwnPrimaryPlanarBody { get; set; }
+        internal GeometryData? OwnPrimaryPlanarBody
+        {
+            get => _wall?.OwnPrimaryPlanarBody;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).OwnPrimaryPlanarBody = value;
+            }
+        }
 
         [System.Text.Json.Serialization.JsonIgnore]
-        internal double[]? OwnWallSide0NormalCurrent { get; set; }
+        internal double[]? OwnWallSide0NormalCurrent
+        {
+            get => _wall?.OwnWallSide0NormalCurrent;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).OwnWallSide0NormalCurrent = value;
+            }
+        }
 
         [System.Text.Json.Serialization.JsonIgnore]
-        internal GeometryData? OwnCurrentCutPairBodyCurrent { get; set; }
+        internal GeometryData? OwnCurrentCutPairBodyCurrent
+        {
+            get => _wall?.OwnCurrentCutPairBodyCurrent;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).OwnCurrentCutPairBodyCurrent = value;
+            }
+        }
 
         /// <summary>VWall.m_isFlipped read from the wall's own native record; null when not decoded.</summary>
         [JsonIgnore]
-        internal bool? SerializedWallFlipped { get; set; }
+        internal bool? SerializedWallFlipped
+        {
+            get => _wall?.SerializedWallFlipped;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).SerializedWallFlipped = value;
+            }
+        }
 
         /// <summary>GroupMembership.m_groupId of the element: the model group instance it belongs to.</summary>
         [JsonIgnore]
@@ -565,15 +1172,33 @@ namespace RvtIO.Model
 
         /// <summary>FamInstDesignPropertyManager.m_idRoom of a family instance: the room it is in.</summary>
         [JsonIgnore]
-        internal int? SerializedRoomId { get; set; }
+        internal int? SerializedRoomId
+        {
+            get => _space?.SerializedRoomId;
+            set
+            {
+                if (value != null || _space != null) (_space ??= new()).SerializedRoomId = value;
+            }
+        }
 
         /// <summary>AreaMeasureElem.m_areaElemName and m_areaElemDescription of an area scheme.</summary>
         [JsonIgnore]
-        internal (string Name, string Description)? SerializedAreaScheme { get; set; }
+        internal (string Name, string Description)? SerializedAreaScheme
+        {
+            get => ((string Name, string Description)?)_serializedAreaScheme;
+            set => _serializedAreaScheme = value;
+        }
 
         /// <summary>RoomElem.m_bIsLocationless: the room or area is not placed in a plan.</summary>
         [JsonIgnore]
-        internal bool? SerializedRoomIsLocationless { get; set; }
+        internal bool? SerializedRoomIsLocationless
+        {
+            get => _space?.SerializedRoomIsLocationless;
+            set
+            {
+                if (value != null || _space != null) (_space ??= new()).SerializedRoomIsLocationless = value;
+            }
+        }
 
         /// <summary>True for the defining (template) instance of a group type and for its members: they are stored
         /// in the file but are not elements of the model.</summary>
@@ -591,34 +1216,76 @@ namespace RvtIO.Model
 
         /// <summary>StairsType.m_minTreadWidthOnInsideBoundary in feet (own stairs type root).</summary>
         [JsonIgnore]
-        internal double? SerializedStairsTypeMinInsideTreadFeet { get; set; }
+        internal double? SerializedStairsTypeMinInsideTreadFeet
+        {
+            get => _stairAndRailing?.SerializedStairsTypeMinInsideTreadFeet;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedStairsTypeMinInsideTreadFeet = value;
+            }
+        }
 
         /// <summary>StairsRunType.m_nosingLength in feet (own stairs run type root).</summary>
         [JsonIgnore]
-        internal double? SerializedStairRunTypeNosingFeet { get; set; }
+        internal double? SerializedStairRunTypeNosingFeet
+        {
+            get => _stairAndRailing?.SerializedStairRunTypeNosingFeet;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedStairRunTypeNosingFeet = value;
+            }
+        }
 
         /// <summary>Family instance connectors in stored order: Connector.m_nIndex, the stored hvac (2381) or
         /// piping (2382) connector calculation direction and its system type (null when the domains are mixed
         /// or the connector objects do not match the calculations one to one).</summary>
         [JsonIgnore]
-        internal IReadOnlyList<(int Index, int Direction, int SystemType)>? SerializedMepConnectors { get; set; }
+        internal IReadOnlyList<(int Index, int Direction, int SystemType)>? SerializedMepConnectors
+        {
+            get => _mep?.SerializedMepConnectors;
+            set
+            {
+                if (value != null || _mep != null) (_mep ??= new()).SerializedMepConnectors = value;
+            }
+        }
 
         /// <summary>Every connector of the element in stored order: Connector.m_nIndex, the stored flow direction
         /// (SegmentConnectorCalculation.m_eDirection, 0 when none) and Connector.m_arrRefs, the connected
         /// (element id, connector index, connection type) entries. The element's own other connectors are among them.</summary>
         [JsonIgnore]
-        internal IReadOnlyList<(int Index, int Direction, IReadOnlyList<(int Id, int Index, int Type)> Refs)>? SerializedConnectorGraph { get; set; }
+        internal IReadOnlyList<(int Index, int Direction, IReadOnlyList<(int Id, int Index, int Type)> Refs)>? SerializedConnectorGraph
+        {
+            get => _mep?.SerializedConnectorGraph;
+            set
+            {
+                if (value != null || _mep != null) (_mep ??= new()).SerializedConnectorGraph = value;
+            }
+        }
 
         /// <summary>The MEP system element each connector of <see cref="SerializedConnectorGraph"/> belongs to, in the
         /// same order (the connector's m_idSystem from the segment calculation of a curve or the hvac/piping
         /// calculation of a family instance; 0 or negative for none).</summary>
         [JsonIgnore]
-        internal IReadOnlyList<int>? SerializedConnectorSystems { get; set; }
+        internal IReadOnlyList<int>? SerializedConnectorSystems
+        {
+            get => _mep?.SerializedConnectorSystems;
+            set
+            {
+                if (value != null || _mep != null) (_mep ??= new()).SerializedConnectorSystems = value;
+            }
+        }
 
         /// <summary>The mode of each connector of <see cref="SerializedConnectorGraph"/>, in the same order; null when the walk of
         /// the file does not know the mode (Revit 2022 layout).</summary>
         [JsonIgnore]
-        internal IReadOnlyList<int>? SerializedConnectorModes { get; set; }
+        internal IReadOnlyList<int>? SerializedConnectorModes
+        {
+            get => _mep?.SerializedConnectorModes;
+            set
+            {
+                if (value != null || _mep != null) (_mep ??= new()).SerializedConnectorModes = value;
+            }
+        }
 
         /// <summary>The vertical extent (feet) of a Grid's finite surface: the interval of levels the grid belongs to.
         /// Null for a grid whose surface was not decoded.</summary>
@@ -632,23 +1299,58 @@ namespace RvtIO.Model
         /// <summary>MEPCurve.m_idSystemType, the system type an MEP curve (duct, flex duct, pipe) stores itself, also when it
         /// belongs to no system (its System Type parameter is then -1); null when the element stores none.</summary>
         [JsonIgnore]
-        internal int? SerializedCurveSystemTypeId { get; set; }
+        internal int? SerializedCurveSystemTypeId
+        {
+            get => _mep?.SerializedCurveSystemTypeId;
+            set
+            {
+                if (value != null || _mep != null) (_mep ??= new()).SerializedCurveSystemTypeId = value;
+            }
+        }
 
         /// <summary>ZoneElement.m_bDefault of an HVAC zone (whether it is the default zone); null for other elements.</summary>
         [JsonIgnore]
-        internal bool? SerializedZoneIsDefault { get; set; }
+        internal bool? SerializedZoneIsDefault
+        {
+            get => _space?.SerializedZoneIsDefault;
+            set
+            {
+                if (value != null || _space != null) (_space ??= new()).SerializedZoneIsDefault = value;
+            }
+        }
 
         /// <summary>RoomElem.m_zoneElementId of a space: the HVAC zone it belongs to; null when it belongs to none.</summary>
         [JsonIgnore]
-        internal int? SerializedSpaceZoneId { get; set; }
+        internal int? SerializedSpaceZoneId
+        {
+            get => _space?.SerializedSpaceZoneId;
+            set
+            {
+                if (value != null || _space != null) (_space ??= new()).SerializedSpaceZoneId = value;
+            }
+        }
 
         /// <summary>RbsSystem.m_strName and m_typeId of an MEP system element (piping or duct system); null for other elements.</summary>
         [JsonIgnore]
-        internal (string Name, int TypeId)? SerializedMepSystem { get; set; }
+        internal (string Name, int TypeId)? SerializedMepSystem
+        {
+            get => _mep?.SerializedMepSystem;
+            set
+            {
+                if (value != null || _mep != null) (_mep ??= new()).SerializedMepSystem = value;
+            }
+        }
 
         /// <summary>The base equipment (panel) of an electrical circuit, from its connector manager; null for other elements and for a circuit with none.</summary>
         [JsonIgnore]
-        internal int? SerializedCircuitBaseEquipmentId { get; set; }
+        internal int? SerializedCircuitBaseEquipmentId
+        {
+            get => _mep?.SerializedCircuitBaseEquipmentId;
+            set
+            {
+                if (value != null || _mep != null) (_mep ??= new()).SerializedCircuitBaseEquipmentId = value;
+            }
+        }
 
         /// <summary>Own SymbolInfo type name with the original localized system family,
         /// used for LayerSet metadata and IFC floor/ceiling Type.Name; the name remains
@@ -659,7 +1361,14 @@ namespace RvtIO.Model
         /// <summary>Whether the wall's own root carries a top attachment
         /// (JoinToRoofGStep with m_baseOrTop = 1); null when unvalidated.</summary>
         [JsonIgnore]
-        internal bool? SerializedWallJoinedToTop { get; set; }
+        internal bool? SerializedWallJoinedToTop
+        {
+            get => _wall?.SerializedWallJoinedToTop;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).SerializedWallJoinedToTop = value;
+            }
+        }
 
         /// <summary>The export id of the element: its episode GUID with the last
         /// 32 bits XORed with the original element id (Global/History and Global/ElemTable);
@@ -675,34 +1384,83 @@ namespace RvtIO.Model
         /// <summary>Own wall/floor/ceiling type link, validated against one unique
         /// materialized type's exact root and category. Never a public type guess.</summary>
         [JsonIgnore]
-        internal int? SerializedSystemTypeId { get; set; }
+        internal int? SerializedSystemTypeId
+        {
+            get => _typeReferences?.SerializedSystemTypeId;
+            set
+            {
+                if (value != null || _typeReferences != null) (_typeReferences ??= new()).SerializedSystemTypeId = value;
+            }
+        }
 
         /// <summary>Exact own native root class of that wall/floor/ceiling type.
         /// Kept independently of localization and the public TypeId normalization.</summary>
         [JsonIgnore]
-        internal ushort? SerializedSystemTypeClassId { get; set; }
+        internal ushort? SerializedSystemTypeClassId
+        {
+            get => _typeReferences?.SerializedSystemTypeClassId;
+            set
+            {
+                if (value != null || _typeReferences != null) (_typeReferences ??= new()).SerializedSystemTypeClassId = value;
+            }
+        }
 
         /// <summary>Control joins of the wall's own driver: per end (0 start, 1 end) the joined
         /// element and its joined end; null when the wall block is not read exactly.</summary>
         [JsonIgnore]
-        internal IReadOnlyList<Parsing.TfBlockDeserializer.WallEndJoin>? SerializedWallEndJoins { get; set; }
+        internal IReadOnlyList<Parsing.TfBlockDeserializer.WallEndJoin>? SerializedWallEndJoins
+        {
+            get => _wall?.SerializedWallEndJoins;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).SerializedWallEndJoins = value;
+            }
+        }
 
         /// <summary>Exact StairsElement.m_actualNumberOfRisers occurrence value.</summary>
         [JsonIgnore]
-        internal int? SerializedActualNumberOfRisers { get; set; }
+        internal int? SerializedActualNumberOfRisers
+        {
+            get => _stairAndRailing?.SerializedActualNumberOfRisers;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedActualNumberOfRisers = value;
+            }
+        }
 
         /// <summary>Exact StairsElement.m_actualRiserHeight in Revit internal feet.</summary>
         [JsonIgnore]
-        internal double? SerializedActualRiserHeightFeet { get; set; }
+        internal double? SerializedActualRiserHeightFeet
+        {
+            get => _stairAndRailing?.SerializedActualRiserHeightFeet;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedActualRiserHeightFeet = value;
+            }
+        }
 
         /// <summary>Exact StairsElement.m_actualTreadDepth in Revit internal feet.</summary>
         [JsonIgnore]
-        internal double? SerializedActualTreadDepthFeet { get; set; }
+        internal double? SerializedActualTreadDepthFeet
+        {
+            get => _stairAndRailing?.SerializedActualTreadDepthFeet;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).SerializedActualTreadDepthFeet = value;
+            }
+        }
 
         /// <summary>Exact WallType.m_function serialized by this element's own
         /// NewCurtainWallType root block (0=Interior, 1=Exterior, ...).</summary>
         [JsonIgnore]
-        internal int? SerializedCurtainWallFunction { get; set; }
+        internal int? SerializedCurtainWallFunction
+        {
+            get => _wall?.SerializedCurtainWallFunction;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).SerializedCurtainWallFunction = value;
+            }
+        }
 
         /// <summary>FUNCTION_PARAM stored by this FamilySymbol's own FamilyParams prefix (the first
         /// matching NamedParam, its separate integer member), accepted only for a unique root block
@@ -747,7 +1505,14 @@ namespace RvtIO.Model
         /// <summary>Values of the schema fields the room of a family instance is found from
         /// (<see cref="RvtIO.Parsing.TfBlockDeserializer.RoomRuleFieldKeys"/>), keyed Declaring:Name; a field the record did not hold is
         /// absent.</summary>
-        internal Dictionary<string, double>? NativeRoomFields { get; set; }
+        internal Dictionary<string, double>? NativeRoomFields
+        {
+            get => _space?.NativeRoomFields;
+            set
+            {
+                if (value != null || _space != null) (_space ??= new()).NativeRoomFields = value;
+            }
+        }
 
         /// <summary>Tf class tag of the element's record (the class the record is an instance of, by its schema name); null when the
         /// record was not walked.</summary>
@@ -762,16 +1527,37 @@ namespace RvtIO.Model
         /// <summary>Own unique NewCurtainWallType SymbolInfo name, not a mark or an
         /// occurrence-name fallback. Kept separate from public identity/name fields.</summary>
         [JsonIgnore]
-        internal string? SerializedCurtainWallTypeName { get; set; }
+        internal string? SerializedCurtainWallTypeName
+        {
+            get => _wall?.SerializedCurtainWallTypeName;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).SerializedCurtainWallTypeName = value;
+            }
+        }
 
         /// <summary>Own unique BasicWallType SymbolInfo name, independent of public name fallbacks.</summary>
         [JsonIgnore]
-        internal string? SerializedBasicWallTypeName { get; set; }
+        internal string? SerializedBasicWallTypeName
+        {
+            get => _wall?.SerializedBasicWallTypeName;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).SerializedBasicWallTypeName = value;
+            }
+        }
 
         /// <summary>Own unique StackedWallType root. Such a type's placed parent wall is
         /// a container, not a separate IFC wall product; its component walls remain sources.</summary>
         [JsonIgnore]
-        internal bool IsSerializedStackedWallType { get; set; }
+        internal bool IsSerializedStackedWallType
+        {
+            get => _wall?.IsSerializedStackedWallType ?? false;
+            set
+            {
+                if (value || _wall != null) (_wall ??= new()).IsSerializedStackedWallType = value;
+            }
+        }
 
         /// <summary>Element name (first useful string found near this element in the binary stream).</summary>
         public string? Name { get; set; }
@@ -782,49 +1568,105 @@ namespace RvtIO.Model
         /// block. This is isolated from <see cref="Name"/>: it may override only floor/slab-
         /// opening Reference properties, never IFC identity fields.</summary>
         [JsonIgnore]
-        internal string? ValidatedFloorTypeReferenceName { get; set; }
+        internal string? ValidatedFloorTypeReferenceName
+        {
+            get => _typeReferences?.ValidatedFloorTypeReferenceName;
+            set
+            {
+                if (value != null || _typeReferences != null) (_typeReferences ??= new()).ValidatedFloorTypeReferenceName = value;
+            }
+        }
 
         /// <summary>The own name of the floor type (its unique HostObjAttr root, validated), set when no Reference parameter
         /// decides the floor Reference. The current IFC profile prefers it to <see cref="ValidatedFloorTypeReferenceName"/>, which
         /// ends in a text parameter of a type that carries some.</summary>
         [JsonIgnore]
-        internal string? ValidatedFloorOwnTypeName { get; set; }
+        internal string? ValidatedFloorOwnTypeName
+        {
+            get => _typeReferences?.ValidatedFloorOwnTypeName;
+            set
+            {
+                if (value != null || _typeReferences != null) (_typeReferences ??= new()).ValidatedFloorOwnTypeName = value;
+            }
+        }
 
         /// <summary>True when <see cref="ValidatedFloorTypeReferenceName"/> came from an
         /// explicit instance/type Reference parameter rather than the terminal type name.
         /// Such a value can create the main product Pset even when the parsed element name
         /// is missing.</summary>
         [JsonIgnore]
-        internal bool ValidatedFloorTypeReferenceIsExplicit { get; set; }
+        internal bool ValidatedFloorTypeReferenceIsExplicit
+        {
+            get => _typeReferences?.ValidatedFloorTypeReferenceIsExplicit ?? false;
+            set
+            {
+                if (value || _typeReferences != null) (_typeReferences ??= new()).ValidatedFloorTypeReferenceIsExplicit = value;
+            }
+        }
 
         /// <summary>An exact floor/type relationship was validated, but a higher-priority
         /// Reference parameter could not be reproduced deterministically. Lower-priority
         /// name source must not leak past that parameter.</summary>
         [JsonIgnore]
-        internal bool ValidatedFloorTypeReferenceIsBlocked { get; set; }
+        internal bool ValidatedFloorTypeReferenceIsBlocked
+        {
+            get => _typeReferences?.ValidatedFloorTypeReferenceIsBlocked ?? false;
+            set
+            {
+                if (value || _typeReferences != null) (_typeReferences ??= new()).ValidatedFloorTypeReferenceIsBlocked = value;
+            }
+        }
 
         /// <summary>Exact Ceiling.m_ceilingAttributesId carried from this occurrence's
         /// own class-642 root block after owner, class, uniqueness and category validation.
         /// It is isolated from the public type graph and must never rewrite
         /// <see cref="TypeId"/> or type-related parameters.</summary>
         [JsonIgnore]
-        internal int? SerializedCeilingTypeId { get; set; }
+        internal int? SerializedCeilingTypeId
+        {
+            get => _typeReferences?.SerializedCeilingTypeId;
+            set
+            {
+                if (value != null || _typeReferences != null) (_typeReferences ??= new()).SerializedCeilingTypeId = value;
+            }
+        }
 
         /// <summary>Exact ceiling QTO Reference source reached through
         /// <see cref="SerializedCeilingTypeId"/>. It is isolated from product identity,
         /// public names, the structural type graph and material resolution.</summary>
         [JsonIgnore]
-        internal string? ValidatedCeilingTypeReferenceName { get; set; }
+        internal string? ValidatedCeilingTypeReferenceName
+        {
+            get => _typeReferences?.ValidatedCeilingTypeReferenceName;
+            set
+            {
+                if (value != null || _typeReferences != null) (_typeReferences ??= new()).ValidatedCeilingTypeReferenceName = value;
+            }
+        }
 
         /// <summary>True when the validated ceiling Reference came from an explicit
         /// instance/serialized-type parameter rather than terminal type-name source.</summary>
         [JsonIgnore]
-        internal bool ValidatedCeilingTypeReferenceIsExplicit { get; set; }
+        internal bool ValidatedCeilingTypeReferenceIsExplicit
+        {
+            get => _typeReferences?.ValidatedCeilingTypeReferenceIsExplicit ?? false;
+            set
+            {
+                if (value || _typeReferences != null) (_typeReferences ??= new()).ValidatedCeilingTypeReferenceIsExplicit = value;
+            }
+        }
 
         /// <summary>The exact ceiling relationship was validated, but a higher-priority
         /// Reference parameter could not be reproduced deterministically.</summary>
         [JsonIgnore]
-        internal bool ValidatedCeilingTypeReferenceIsBlocked { get; set; }
+        internal bool ValidatedCeilingTypeReferenceIsBlocked
+        {
+            get => _typeReferences?.ValidatedCeilingTypeReferenceIsBlocked ?? false;
+            set
+            {
+                if (value || _typeReferences != null) (_typeReferences ??= new()).ValidatedCeilingTypeReferenceIsBlocked = value;
+            }
+        }
 
         /// <summary>Exact window Reference source reached through the instance's own
         /// directly-decoded FamilyInstance.m_masterSymbolId (never the general TypeId/
@@ -835,19 +1677,40 @@ namespace RvtIO.Model
         /// from <see cref="Name"/>: it may override only Pset_QuantityTakeOff/Pset_WindowCommon
         /// Reference, never IFC identity fields.</summary>
         [JsonIgnore]
-        internal string? ValidatedWindowTypeReferenceName { get; set; }
+        internal string? ValidatedWindowTypeReferenceName
+        {
+            get => _typeReferences?.ValidatedWindowTypeReferenceName;
+            set
+            {
+                if (value != null || _typeReferences != null) (_typeReferences ??= new()).ValidatedWindowTypeReferenceName = value;
+            }
+        }
 
         /// <summary>True when <see cref="ValidatedWindowTypeReferenceName"/> came from an
         /// explicit instance/type Reference parameter rather than the resolved symbol's
         /// name-table terminal name.</summary>
         [JsonIgnore]
-        internal bool ValidatedWindowTypeReferenceIsExplicit { get; set; }
+        internal bool ValidatedWindowTypeReferenceIsExplicit
+        {
+            get => _typeReferences?.ValidatedWindowTypeReferenceIsExplicit ?? false;
+            set
+            {
+                if (value || _typeReferences != null) (_typeReferences ??= new()).ValidatedWindowTypeReferenceIsExplicit = value;
+            }
+        }
 
         /// <summary>An exact window/symbol relationship was validated, but a higher-priority
         /// Reference parameter could not be reproduced deterministically. Lower-priority
         /// name-table source must not leak past that parameter.</summary>
         [JsonIgnore]
-        internal bool ValidatedWindowTypeReferenceIsBlocked { get; set; }
+        internal bool ValidatedWindowTypeReferenceIsBlocked
+        {
+            get => _typeReferences?.ValidatedWindowTypeReferenceIsBlocked ?? false;
+            set
+            {
+                if (value || _typeReferences != null) (_typeReferences ??= new()).ValidatedWindowTypeReferenceIsBlocked = value;
+            }
+        }
 
         /// <summary>Exact IfcBuildingElementProxy Reference source, same mechanism and
         /// precedence as <see cref="ValidatedWindowTypeReferenceName"/> - the instance's own
@@ -860,74 +1723,186 @@ namespace RvtIO.Model
         /// Isolated from <see cref="Name"/>: it may override only Pset_QuantityTakeOff/
         /// Pset_BuildingElementProxyCommon Reference, never IFC identity fields.</summary>
         [JsonIgnore]
-        internal string? ValidatedProxyTypeReferenceName { get; set; }
+        internal string? ValidatedProxyTypeReferenceName
+        {
+            get => _typeReferences?.ValidatedProxyTypeReferenceName;
+            set
+            {
+                if (value != null || _typeReferences != null) (_typeReferences ??= new()).ValidatedProxyTypeReferenceName = value;
+            }
+        }
 
         /// <summary>True when <see cref="ValidatedProxyTypeReferenceName"/> came from an
         /// explicit instance/type Reference parameter rather than the resolved symbol's
         /// name-table terminal name.</summary>
         [JsonIgnore]
-        internal bool ValidatedProxyTypeReferenceIsExplicit { get; set; }
+        internal bool ValidatedProxyTypeReferenceIsExplicit
+        {
+            get => _typeReferences?.ValidatedProxyTypeReferenceIsExplicit ?? false;
+            set
+            {
+                if (value || _typeReferences != null) (_typeReferences ??= new()).ValidatedProxyTypeReferenceIsExplicit = value;
+            }
+        }
 
         /// <summary>An exact proxy/symbol relationship was validated, but a higher-priority
         /// Reference parameter could not be reproduced deterministically. Lower-priority
         /// name-table source must not leak past that parameter.</summary>
         [JsonIgnore]
-        internal bool ValidatedProxyTypeReferenceIsBlocked { get; set; }
+        internal bool ValidatedProxyTypeReferenceIsBlocked
+        {
+            get => _typeReferences?.ValidatedProxyTypeReferenceIsBlocked ?? false;
+            set
+            {
+                if (value || _typeReferences != null) (_typeReferences ??= new()).ValidatedProxyTypeReferenceIsBlocked = value;
+            }
+        }
 
         /// <summary>Own FamilyInstance -> FamilySymbol -> SymbolInfo validation, confined to
         /// distribution-flow QTO/Common Reference. Never changes product/type identity.</summary>
         [JsonIgnore]
-        internal string? ValidatedDistributionTypeReferenceName { get; set; }
+        internal string? ValidatedDistributionTypeReferenceName
+        {
+            get => _typeReferences?.ValidatedDistributionTypeReferenceName;
+            set
+            {
+                if (value != null || _typeReferences != null) (_typeReferences ??= new()).ValidatedDistributionTypeReferenceName = value;
+            }
+        }
         [JsonIgnore]
-        internal bool ValidatedDistributionTypeReferenceIsExplicit { get; set; }
+        internal bool ValidatedDistributionTypeReferenceIsExplicit
+        {
+            get => _typeReferences?.ValidatedDistributionTypeReferenceIsExplicit ?? false;
+            set
+            {
+                if (value || _typeReferences != null) (_typeReferences ??= new()).ValidatedDistributionTypeReferenceIsExplicit = value;
+            }
+        }
         [JsonIgnore]
-        internal bool ValidatedDistributionTypeReferenceIsBlocked { get; set; }
+        internal bool ValidatedDistributionTypeReferenceIsBlocked
+        {
+            get => _typeReferences?.ValidatedDistributionTypeReferenceIsBlocked ?? false;
+            set
+            {
+                if (value || _typeReferences != null) (_typeReferences ??= new()).ValidatedDistributionTypeReferenceIsBlocked = value;
+            }
+        }
 
         /// <summary>Own RoofAttributes/StairsRailingAttr name for QTO Reference only.</summary>
         [JsonIgnore]
-        internal string? ValidatedRoofOrRailingTypeReferenceName { get; set; }
+        internal string? ValidatedRoofOrRailingTypeReferenceName
+        {
+            get => _typeReferences?.ValidatedRoofOrRailingTypeReferenceName;
+            set
+            {
+                if (value != null || _typeReferences != null) (_typeReferences ??= new()).ValidatedRoofOrRailingTypeReferenceName = value;
+            }
+        }
         [JsonIgnore]
-        internal bool ValidatedRoofOrRailingTypeReferenceIsExplicit { get; set; }
+        internal bool ValidatedRoofOrRailingTypeReferenceIsExplicit
+        {
+            get => _typeReferences?.ValidatedRoofOrRailingTypeReferenceIsExplicit ?? false;
+            set
+            {
+                if (value || _typeReferences != null) (_typeReferences ??= new()).ValidatedRoofOrRailingTypeReferenceIsExplicit = value;
+            }
+        }
         [JsonIgnore]
-        internal bool ValidatedRoofOrRailingTypeReferenceIsBlocked { get; set; }
+        internal bool ValidatedRoofOrRailingTypeReferenceIsBlocked
+        {
+            get => _typeReferences?.ValidatedRoofOrRailingTypeReferenceIsBlocked ?? false;
+            set
+            {
+                if (value || _typeReferences != null) (_typeReferences ??= new()).ValidatedRoofOrRailingTypeReferenceIsBlocked = value;
+            }
+        }
 
         /// <summary>Localized system family name of THIS type element (Revit's own resource
         /// string for its exact root class). Set only on type elements; occurrences read it
         /// through their type link. Never derived from names or marks.</summary>
         [JsonIgnore]
-        internal string? ValidatedSystemFamilyName { get; set; }
+        internal string? ValidatedSystemFamilyName
+        {
+            get => _typeReferences?.ValidatedSystemFamilyName;
+            set
+            {
+                if (value != null || _typeReferences != null) (_typeReferences ??= new()).ValidatedSystemFamilyName = value;
+            }
+        }
 
         /// <summary>THIS stair component type's own SymbolInfo name, independent of
         /// the public Name/TypeId propagation. Never a borrowed level or occurrence name.</summary>
         [JsonIgnore]
-        internal string? ValidatedStairComponentTypeName { get; set; }
+        internal string? ValidatedStairComponentTypeName
+        {
+            get => _stairAndRailing?.ValidatedStairComponentTypeName;
+            set
+            {
+                if (value != null || _stairAndRailing != null) (_stairAndRailing ??= new()).ValidatedStairComponentTypeName = value;
+            }
+        }
 
         /// <summary>THIS CorniceAttr type's own SymbolInfo name. Never a borrowed
         /// public Name; used only with its original system family for IFC type naming.</summary>
         [JsonIgnore]
-        internal string? ValidatedCorniceTypeName { get; set; }
+        internal string? ValidatedCorniceTypeName
+        {
+            get => _typeReferences?.ValidatedCorniceTypeName;
+            set
+            {
+                if (value != null || _typeReferences != null) (_typeReferences ??= new()).ValidatedCorniceTypeName = value;
+            }
+        }
 
         /// <summary>THIS circular duct type's own SymbolInfo name, independent of
         /// general Name propagation; used only for IFC type-object naming.</summary>
         [JsonIgnore]
-        internal string? ValidatedDuctTypeName { get; set; }
+        internal string? ValidatedDuctTypeName
+        {
+            get => _mep?.ValidatedDuctTypeName;
+            set
+            {
+                if (value != null || _mep != null) (_mep ??= new()).ValidatedDuctTypeName = value;
+            }
+        }
 
         /// <summary>THIS pipe, flex pipe, pipe insulation or cable tray type's own SymbolInfo name; the name table can hold a
         /// different string for these types.</summary>
         [JsonIgnore]
-        internal string? ValidatedMepTypeName { get; set; }
+        internal string? ValidatedMepTypeName
+        {
+            get => _mep?.ValidatedMepTypeName;
+            set
+            {
+                if (value != null || _mep != null) (_mep ??= new()).ValidatedMepTypeName = value;
+            }
+        }
 
         /// <summary>Localized system family name of THIS pipe, flex pipe, pipe insulation or cable tray type. Kept apart
         /// from <see cref="ValidatedSystemFamilyName"/>: only the current profile naming reads it (the legacy profile has no such
         /// products).</summary>
         [JsonIgnore]
-        internal string? ValidatedMepFamilyName { get; set; }
+        internal string? ValidatedMepFamilyName
+        {
+            get => _mep?.ValidatedMepFamilyName;
+            set
+            {
+                if (value != null || _mep != null) (_mep ??= new()).ValidatedMepFamilyName = value;
+            }
+        }
 
         /// <summary>The type of THIS MEP curve occurrence (pipe, flex pipe, pipe insulation, duct, cable tray) read
         /// from its own RbsCurve.m_idType and checked against the type's exact root class. The general
         /// FamilyTypeId can name another element's symbol for these occurrences.</summary>
         [JsonIgnore]
-        internal int? SerializedMepCurveTypeId { get; set; }
+        internal int? SerializedMepCurveTypeId
+        {
+            get => _mep?.SerializedMepCurveTypeId;
+            set
+            {
+                if (value != null || _mep != null) (_mep ??= new()).SerializedMepCurveTypeId = value;
+            }
+        }
 
         /// <summary>Exact FamilyInstance.m_masterSymbolId decoded for THIS occurrence
         /// (schema field presence, not an identity/name value). Set only when the native
@@ -945,13 +1920,14 @@ namespace RvtIO.Model
         internal bool TypeFromNativePointer { get; set; }
 
         /// <summary>Closed-shell quantities of the solids at the Coarse, Medium and Fine detail levels (index 0, 1, 2); null at a level whose
-        /// solids are not all closed shells of plane faces. See <c>ElementBuilder.ApplyInstanceQuantities</c>.</summary>
+        /// solids are not all closed shells of plane faces. Null until quantities are collected.
+        /// See <c>ElementBuilder.ApplyInstanceQuantities</c>.</summary>
         [JsonIgnore]
-        internal Parsing.SolidQuantities.Shell?[] LevelShells { get; set; } = new Parsing.SolidQuantities.Shell?[3];
+        internal Parsing.SolidQuantities.Shell?[]? LevelShells { get; set; }
 
-        /// <summary>Number of solids at Coarse, Medium and Fine.</summary>
+        /// <summary>Number of solids at Coarse, Medium and Fine. Null until quantities are collected.</summary>
         [JsonIgnore]
-        internal int[] LevelSolidCounts { get; set; } = new int[3];
+        internal int[]? LevelSolidCounts { get; set; }
 
         /// <summary>Revit BuiltInCategory ID (e.g. -2000011 = OST_Walls).</summary>
         public int? CategoryId { get; set; }
@@ -959,8 +1935,66 @@ namespace RvtIO.Model
         /// <summary>BuiltInCategory name (e.g. "OST_Walls").</summary>
         public string? Category { get; set; }
 
+        private List<Parameter>? _parameters = new();
+        private IReadOnlyList<Parameter>? _storedParameters;
+
         /// <summary>The parameters of the element.</summary>
-        public List<Parameter> Parameters { get; set; } = new();
+        public List<Parameter> Parameters
+        {
+            get
+            {
+                if (_parameters == null && _storedParameters != null)
+                    _parameters = _storedParameters.ToList();
+                return _parameters!;
+            }
+            set
+            {
+                _parameters = value;
+                _storedParameters = null;
+            }
+        }
+
+        internal IReadOnlyList<Parameter> ReadParameters => _parameters ?? _storedParameters!;
+
+        internal interface IArchivedParameters : IReadOnlyList<Parameter>
+        {
+            int FamilyTypeId { get; }
+            int FamilyAndTypeReferenceId { get; }
+            Parameter.ZeroReferenceKinds ZeroReferences { get; }
+            int FirstPositiveCreatedPhase { get; }
+            bool HasHostQuantityPlaceholder { get; }
+        }
+
+        internal int FirstPositiveCreatedPhase
+        {
+            get
+            {
+                if (_parameters == null && _storedParameters is IArchivedParameters archived)
+                    return archived.FirstPositiveCreatedPhase;
+                foreach (var parameter in ReadParameters)
+                    if (parameter.Id == -1012100 && parameter.Value is int phase && phase > 0) return phase;
+                return -1;
+            }
+        }
+
+        internal bool HasHostQuantityPlaceholder =>
+            _parameters == null && _storedParameters is IArchivedParameters archived
+                ? archived.HasHostQuantityPlaceholder
+                : ReadParameters.Any(Parameter.IsHostQuantityPlaceholder);
+
+        internal Parameter.ZeroReferenceKinds? ArchivedZeroReferences =>
+            _parameters == null && _storedParameters is IArchivedParameters archived ? archived.ZeroReferences : null;
+
+        internal void ArchiveParameters(Func<List<Parameter>, IReadOnlyList<Parameter>?, IReadOnlyList<Parameter>?> store)
+        {
+            if (_parameters == null) return;
+            var archived = _parameters.Count == 0 ? Array.Empty<Parameter>() : store(_parameters, _storedParameters);
+            _storedParameters = archived;
+            if (archived != null)
+            {
+                _parameters = null;
+            }
+        }
 
         /// <summary>The axis-aligned outline the element header stores: [minX, minY, minZ, maxX, maxY, maxZ] in Revit internal
         /// units (feet, project coordinates) - the box the application reports. Null when the header stores no outline; the
@@ -978,13 +2012,32 @@ namespace RvtIO.Model
         /// reports an outline for a roof that only holds curtain panels). Everything that reads the box of an element in the IFC export reads this one.</summary>
         internal double[]? DecodedBox => BoundingBoxIsHeaderOutline ? Geometry?.BoundingBox : BoundingBox;
 
+        private string? _uniqueId;
+        private bool _uniqueIdFromExportId;
+
         /// <summary>
         /// Revit UniqueId: the creation episode GUID followed by the original element ID in hexadecimal (at least eight
         /// digits). Both are read from the element's history in the document's element table. Null when the
         /// file holds no history for the element (for example an element found only in a stream), since its UniqueId cannot
         /// be known then.
         /// </summary>
-        public string? UniqueId { get; set; }
+        public string? UniqueId
+        {
+            get => _uniqueIdFromExportId
+                ? Parsing.ElementExportIds.UniqueIdFromExportId(SerializedExportId!.Value, (ulong)OriginalElementId!.Value)
+                : _uniqueId;
+            set
+            {
+                _uniqueIdFromExportId = false;
+                _uniqueId = value;
+            }
+        }
+
+        internal void DeferUniqueId()
+        {
+            _uniqueId = null;
+            _uniqueIdFromExportId = true;
+        }
 
         /// <summary>Fully decoded public Extensible Storage entities owned by this element, when available.</summary>
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -1007,10 +2060,39 @@ namespace RvtIO.Model
 
         /// <summary>WallType.m_function from a unique validated own BasicWallType root.</summary>
         [JsonIgnore]
-        internal int? SerializedBasicWallTypeFunction { get; set; }
+        internal int? SerializedBasicWallTypeFunction
+        {
+            get => _wall?.SerializedBasicWallTypeFunction;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).SerializedBasicWallTypeFunction = value;
+            }
+        }
 
         /// <summary>IDs of directly referenced elements.</summary>
-        public List<int>? References { get; set; }
+        public List<int>? References
+        {
+            get
+            {
+                if (_references != null && _references is not List<int>)
+                    _references = _references.ToList();
+                return (List<int>?)_references;
+            }
+            set => _references = value;
+        }
+
+        private IReadOnlyList<int>? _references;
+        internal IReadOnlyList<int>? ReadReferences => _references;
+
+        internal void SetReferences(IEnumerable<int> references, bool editable) =>
+            _references = editable ? references.ToList() : references.ToArray();
+
+        internal void ArchiveReferences(Func<int[], IReadOnlyList<int>> store)
+        {
+            // Short arrays already take less space than an index into scratch.
+            if (_references is int[] { Length: > 32 } values)
+                _references = store(values);
+        }
 
         /// <summary>Strings found near referenced elements, grouped by their TypeId.</summary>
         public Dictionary<string, List<string>>? RefStrings { get; set; }
@@ -1100,7 +2182,14 @@ namespace RvtIO.Model
         /// <summary>Own direct CurtainCellFamRef/MullionFamRef membership, distinct from
         /// the host which this instance can cut. Attached only from a unique native root.</summary>
         [JsonIgnore]
-        internal int? SerializedCurtainHostId { get; set; }
+        internal int? SerializedCurtainHostId
+        {
+            get => _wall?.SerializedCurtainHostId;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).SerializedCurtainHostId = value;
+            }
+        }
 
         /// <summary>The geometry of an instance whose own Faces are all unfilled (a void or cut helper, see
         /// <see cref="ProductRules.HasOnlyUnfilledFaces"/>) while its computed symbol has filled ones: the symbol's geometry placed by the
@@ -1113,7 +2202,14 @@ namespace RvtIO.Model
         /// drivers one after the other): the order they are exported in. Null for any other element and for a wall whose
         /// root did not decode exactly.</summary>
         [JsonIgnore]
-        internal int[]? SerializedCurtainPanelOrder { get; set; }
+        internal int[]? SerializedCurtainPanelOrder
+        {
+            get => _wall?.SerializedCurtainPanelOrder;
+            set
+            {
+                if (value != null || _wall != null) (_wall ??= new()).SerializedCurtainPanelOrder = value;
+            }
+        }
 
         /// <summary>Exact host-of-host m_hostId reached through this element's own
         /// serialized m_hostId and the raw NativeParams record of that direct host.
@@ -1143,8 +2239,8 @@ namespace RvtIO.Model
         /// </summary>
         public Parameter? LookupParameter(string name)
         {
-            foreach (var p in Parameters)
-                if (p.Definition?.Name == name) return p;
+            foreach (var p in ReadParameters)
+                if (p.DefinitionName == name) return p;
             return null;
         }
 
@@ -1154,8 +2250,8 @@ namespace RvtIO.Model
         public Parameter? LookupParameter(BuiltIns.BuiltInParameter bip)
         {
             int bipId = (int)bip;
-            foreach (var p in Parameters)
-                if (p.Definition?.Id == bipId) return p;
+            foreach (var p in ReadParameters)
+                if (p.DefinitionFields?.Id == bipId) return p;
             return null;
         }
 
@@ -1165,8 +2261,8 @@ namespace RvtIO.Model
         public IReadOnlyList<Parameter> GetParameters(string name)
         {
             var result = new List<Parameter>();
-            foreach (var p in Parameters)
-                if (p.Definition?.Name == name) result.Add(p);
+            foreach (var p in ReadParameters)
+                if (p.DefinitionName == name) result.Add(p);
             return result;
         }
 
@@ -1175,17 +2271,22 @@ namespace RvtIO.Model
         /// Returns -1 if no type reference found.
         /// </summary>
         [JsonIgnore]
-        public int FamilyTypeId
+        public int FamilyTypeId => GetTypeReferenceId(includeFamilyAndType: false);
+
+        internal int GetTypeReferenceId(bool includeFamilyAndType)
         {
-            get
-            {
-                foreach (var p in Parameters)
-                {
-                    if (p.Definition?.Name is "ELEM_TYPE_PARAM" && p.Value is int id && id > 0)
-                        return id;
-                }
-                return -1;
-            }
+            if (_parameters == null && _storedParameters is IArchivedParameters archived)
+                return includeFamilyAndType ? archived.FamilyAndTypeReferenceId : archived.FamilyTypeId;
+            return FindTypeReferenceId(ReadParameters, includeFamilyAndType);
+        }
+
+        internal static int FindTypeReferenceId(IReadOnlyList<Parameter> parameters, bool includeFamilyAndType)
+        {
+            foreach (var parameter in parameters)
+                if (parameter.Value is int id && id > 0 && (parameter.DefinitionName is "ELEM_TYPE_PARAM"
+                    || includeFamilyAndType && parameter.DefinitionName is "ELEM_FAMILY_AND_TYPE_PARAM"))
+                    return id;
+            return -1;
         }
 
         /// <summary>

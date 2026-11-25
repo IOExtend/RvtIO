@@ -31,13 +31,19 @@ internal static class OwnPartitionParts
     internal static Dictionary<uint, WallParts>? Read(byte[] raw, out string? failure) => Read(raw, Revit2022, 4, out failure);
 
     internal static Dictionary<uint, WallParts>? Read(byte[] raw, Classes classes, int idWidth, out string? failure)
+        => Read(raw, null, classes, idWidth, out failure);
+
+    internal static Dictionary<uint, WallParts>? Read(Stream raw, Classes classes, int idWidth, out string? failure)
+        => Read(null, raw, classes, idWidth, out failure);
+
+    private static Dictionary<uint, WallParts>? Read(byte[]? raw, Stream? stream, Classes classes, int idWidth, out string? failure)
     {
         var nodes = new Dictionary<uint, byte[]>();
         var geometry = new Dictionary<uint, byte[]>();
         var ambiguous = new HashSet<uint>();
         try
         {
-            bool walked = PartitionFraming.Walk(raw, classes.Tags, idWidth, record =>
+            void Collect(PartitionFraming.Record record)
             {
                 ulong terminator = idWidth == 8 ? ulong.MaxValue : uint.MaxValue;
                 if (record.Owner == terminator) return;
@@ -57,7 +63,10 @@ internal static class OwnPartitionParts
                 // A repeated deposit replaces the previous one, including a different root class.
                 if (wanted) selected[owner] = SHA256.HashData(record.Item.Span);
                 else selected.Remove(owner);
-            }, out failure, out _);
+            }
+            bool walked = stream == null
+                ? PartitionFraming.Walk(raw!, classes.Tags, idWidth, Collect, out failure, out _)
+                : PartitionFraming.WalkStream(stream, classes.Tags, idWidth, Collect, out failure, out _);
             if (!walked) return null;
         }
         catch (InvalidDataException exception)

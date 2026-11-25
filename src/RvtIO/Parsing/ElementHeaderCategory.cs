@@ -26,6 +26,7 @@ internal static class ElementHeaderCategory
     // releases into it), whose class tags are those of the embedded format schema.
     private static readonly Lazy<ushort> OutlineTag = new(() => (ushort)TagOfShippedSchema("Outline"));
     private static readonly Lazy<ushort> ParentsTag = new(() => (ushort)TagOfShippedSchema("ElementParents"));
+    private static readonly ElementHeaderBox AbsentOutline = new(false, null);
 
     private static int TagOfShippedSchema(string name)
     {
@@ -107,7 +108,7 @@ internal static class ElementHeaderCategory
             return null;
         at += 6;
 
-        if (!present) return new ElementHeaderBox(false, null);
+        if (!present) return AbsentOutline;
         if (at + OutlineLength > recordEnd) return null;
         var box = new double[6];
         for (int d = 0; d < 6; d++) box[d] = BitConverter.ToDouble(buffer, (int)at + sizeof(double) * d);

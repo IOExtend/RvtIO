@@ -1,3 +1,4 @@
+using System.Text;
 using RvtIO.Internal;
 using RvtIO.Parsing;
 using Xunit;
@@ -31,6 +32,49 @@ public class ElemScanStringsMergeTests
             ReverseCompletedResults(), state.ElemScanStrings);
 
         Assert.Equal(B, ElementBuilder.ResolveElementName(ElementId, state));
+    }
+
+    [Fact]
+    public void FirstNameOnly_PreservesTheFirstValidNameAcrossChunks()
+    {
+        byte[][] chunks =
+        [
+            NameChunk("autodesk.parameter.invalid", B, Same),
+            NameChunk(A, Same, C),
+        ];
+        var all = Scan(firstNameOnly: false);
+        var firstOnly = Scan(firstNameOnly: true);
+        Assert.Equal([B, Same, A, C], all[ElementId]);
+        Assert.Equal([B], firstOnly[ElementId]);
+
+        Dictionary<uint, List<string>> Scan(bool firstNameOnly)
+        {
+            var partials = new Dictionary<uint, List<string>>[chunks.Length];
+            for (int i = chunks.Length - 1; i >= 0; i--)
+            {
+                partials[i] = new();
+                StringScanner.ScanChunk(chunks[i], [ElementId], partials[i], firstNameOnly);
+            }
+
+            var names = new Dictionary<uint, List<string>>();
+            foreach (var partial in partials)
+                RvtFileReader.MergeElemScanStringsInChunkOrder([partial], names, firstNameOnly: firstNameOnly);
+            return names;
+        }
+
+        static byte[] NameChunk(params string[] names)
+        {
+            var bytes = new byte[256];
+            using var stream = new MemoryStream(bytes);
+            using var writer = new BinaryWriter(stream, Encoding.Unicode);
+            writer.Write(ElementId);
+            foreach (string name in names)
+            {
+                writer.Write(name.Length);
+                writer.Write(Encoding.Unicode.GetBytes(name));
+            }
+            return bytes;
+        }
     }
 
     private static Dictionary<uint, List<string>>?[] ReverseCompletedResults()

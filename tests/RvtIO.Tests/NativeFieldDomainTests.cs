@@ -2,6 +2,7 @@ using System.Text.Json;
 using RvtIO.Internal;
 using RvtIO.Model;
 using RvtIO.Parsing;
+using RvtIO.Scene;
 using Xunit;
 
 namespace RvtIO.Tests;
@@ -13,8 +14,27 @@ public class NativeFieldDomainTests
 
     private static Dictionary<uint, ushort> Classes(params (uint Id, ushort Class)[] items) => items.ToDictionary(i => i.Id, i => i.Class);
 
-    [Fact]
-    public void ParameterCreatedByTheTable_IsRemovedOutsideItsDomains_AndKeptInsideThem()
+    private static void Prune(RevitFileInfo info, IReadOnlyDictionary<uint, ushort> classes, bool paged)
+    {
+        using var stream = new MemoryStream();
+        var effects = paged ? new NativeTableEffectsScratch(new PartitionChunks.Backing(stream)) : null;
+        if (effects != null)
+        {
+            foreach (var element in info.Elements)
+            {
+                effects.Archive(element);
+                Assert.Null(element.NativeTableAddedParams);
+                Assert.Null(element.NativeTableCreatedParams);
+                Assert.Null(element.NativeTablePrevious);
+            }
+        }
+        ElementBuilder.PruneNativeFieldTableOutsideDomains(info, classes, effectsScratch: effects);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ParameterCreatedByTheTable_IsRemovedOutsideItsDomains_AndKeptInsideThem(bool paged)
     {
         var inside = new Element { Id = 1, CategoryId = -2000011 };
         inside.Parameters.Add(P(-1006000, StorageType.Integer, 5));
@@ -30,7 +50,7 @@ public class NativeFieldDomainTests
         classWide.NativeTableCreatedParams = [-1006000];
         var info = new RevitFileInfo { Elements = [inside, wrongCategory, classWide] };
 
-        ElementBuilder.PruneNativeFieldTableOutsideDomains(info, Classes((1, 10), (2, 10), (3, 10)));
+        Prune(info, Classes((1, 10), (2, 10), (3, 10)), paged);
 
         Assert.Equal(5, Value(inside, -1006000));
         Assert.Null(Value(wrongCategory, -1006000));
@@ -38,34 +58,41 @@ public class NativeFieldDomainTests
         Assert.Null(inside.NativeTableAddedParams);
     }
 
-    [Fact]
-    public void OverwrittenValue_IsGivenBack_WhenNoRowAppliesToTheFinalDomain()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void OverwrittenValue_IsGivenBack_WhenNoRowAppliesToTheFinalDomain(bool paged)
     {
         var element = new Element { Id = 1, CategoryId = -2000023 };
         element.Parameters.Add(P(-1006001, StorageType.String, "wrong"));
         element.NativeTableAddedParams = [(-1006001, ["10/-2000011"], StorageType.String, "wrong", false)];
-        element.NativeTablePrevious = new() { [-1006001] = ("original", StorageType.String, false) };
+        string original = new string('x', 40_000) + '\ud800';
+        element.NativeTablePrevious = new() { [-1006001] = (original, StorageType.String, false) };
 
-        ElementBuilder.PruneNativeFieldTableOutsideDomains(new RevitFileInfo { Elements = [element] }, Classes((1, 10)));
+        Prune(new RevitFileInfo { Elements = [element] }, Classes((1, 10)), paged);
 
-        Assert.Equal("original", Value(element, -1006001));
+        Assert.Equal(original, Value(element, -1006001));
     }
 
-    [Fact]
-    public void LaterPassValue_IsNotTouched()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void LaterPassValue_IsNotTouched(bool paged)
     {
         var element = new Element { Id = 1, CategoryId = -2000023 };
         element.Parameters.Add(P(-1006001, StorageType.String, "decided later"));
         element.NativeTableAddedParams = [(-1006001, ["10/-2000011"], StorageType.String, "table", false)];
         element.NativeTablePrevious = new() { [-1006001] = ("original", StorageType.String, false) };
 
-        ElementBuilder.PruneNativeFieldTableOutsideDomains(new RevitFileInfo { Elements = [element] }, Classes((1, 10)));
+        Prune(new RevitFileInfo { Elements = [element] }, Classes((1, 10)), paged);
 
         Assert.Equal("decided later", Value(element, -1006001));
     }
 
-    [Fact]
-    public void InDomainRow_WinsOverALaterOutOfDomainRow()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void InDomainRow_WinsOverALaterOutOfDomainRow(bool paged)
     {
         var element = new Element { Id = 1, CategoryId = -2000011 };
         element.Parameters.Add(P(-1006002, StorageType.String, ""));
@@ -75,13 +102,15 @@ public class NativeFieldDomainTests
             (-1006002, ["10/-2000016"], StorageType.String, "", false),
         ];
 
-        ElementBuilder.PruneNativeFieldTableOutsideDomains(new RevitFileInfo { Elements = [element] }, Classes((1, 10)));
+        Prune(new RevitFileInfo { Elements = [element] }, Classes((1, 10)), paged);
 
         Assert.Equal("450x200", Value(element, -1006002));
     }
 
-    [Fact]
-    public void NegativeElementIdOptionInNativeFieldTable_IsKeptInDomain_AndPrunedOutsideDomain()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NegativeElementIdOptionInNativeFieldTable_IsKeptInDomain_AndPrunedOutsideDomain(bool paged)
     {
         var inDomain = new Element { Id = 10, CategoryId = -2000150 };
         var outOfDomain = new Element { Id = 11, CategoryId = -2000575 };
@@ -90,7 +119,15 @@ public class NativeFieldDomainTests
         var npOut = new TfBlockDeserializer.NativeParams();
         npOut.Fields["174:m_centerlineTickMarkStyleId"] = -2;
 
-        var state = new ParsingState();
+        using var partitionStream = new MemoryStream();
+        using var sceneStream = new MemoryStream();
+        var scratch = new SceneMeshScratch(sceneStream);
+        var state = new ParsingState
+        {
+            KeepExportProvenance = !paged,
+            Chunks = paged ? new PartitionChunks(new PartitionChunks.Backing(partitionStream)) : [],
+            ArchiveSceneParameters = paged ? scratch.ArchiveParameters : null,
+        };
         state.ElemClassIdx[10] = 174;
         state.ElemClassIdx[11] = 174;
         state.NativeParams[10] = npIn;
@@ -98,6 +135,7 @@ public class NativeFieldDomainTests
 
         var info = new RevitFileInfo { Elements = [inDomain, outOfDomain] };
         ElementBuilder.PostProcess(info, state);
+        if (paged) Assert.True(partitionStream.Length > 0);
 
         var keptParam = Assert.Single(inDomain.Parameters, p => p.Id == -1006445);
         Assert.Equal(-2, keptParam.Value);

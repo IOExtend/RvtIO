@@ -52,7 +52,8 @@ public static class RvtSceneReader
         if (key.Length == 0) throw new ArgumentException("The model key is empty.", nameof(options));
         var readDiagnostics = new RvtReadDiagnostics();
         var document = RvtDocument.Open(path, ReaderOptions(readDiagnostics, options));
-        return Map(document, ElementMeshes.Extract(document, MeshOptions(options)), key, ReadDiagnostics(readDiagnostics));
+        var meshes = ElementMeshes.ExtractCore(document, MeshOptions(options), null, options?.MeshProgress);
+        return Map(document, meshes, key, ReadDiagnostics(readDiagnostics));
     }
 
     /// <summary>Reads a scene and its diagnostics from a readable, seekable RVT stream with the same
@@ -66,15 +67,51 @@ public static class RvtSceneReader
     /// <exception cref="ArgumentException"><paramref name="stream"/> is not readable or not seekable, or is closed, or
     /// <see cref="RvtSceneOptions.ModelKey"/> is null or empty.</exception>
     /// <exception cref="RvtInputException">The stream is empty, is not a compound file, or is cut or damaged.</exception>
-    /// <exception cref="RvtLimitException">A stream is longer than one array can hold, or a file with no project
-    /// partitions contains a source element ID above the range of document-local keys.</exception>
-    public static RvtSceneResult ReadStream(Stream stream, RvtSceneOptions options)
+    /// <exception cref="RvtLimitException">A stream that requires an array is longer than one array can hold, or a file
+    /// with no project partitions contains a source element ID above the range of document-local keys.</exception>
+    public static RvtSceneResult ReadStream(Stream stream, RvtSceneOptions options) =>
+        ReadStreamCore(stream, options, null);
+
+    /// <summary>Reads a scene and keeps its triangle buffers, intermediate faces and element parameters in a separate temporary stream.
+    /// The caller owns that stream and keeps it open until the scene is no longer needed.</summary>
+    /// <param name="stream">The readable, seekable RVT input.</param>
+    /// <param name="options">The options of the read, including the required model key.</param>
+    /// <param name="triangleScratch">An empty, readable, writable, seekable stream distinct from the input
+    /// and any partition scratch stream. Its contents are written during conversion and read while rendering or exporting the scene.</param>
+    /// <exception cref="ArgumentException">The triangle scratch stream is not empty or separate, or does not support
+    /// reading, writing and seeking.</exception>
+    public static RvtSceneResult ReadStream(Stream stream, RvtSceneOptions options, Stream triangleScratch)
+    {
+        ArgumentNullException.ThrowIfNull(triangleScratch);
+        if (ReferenceEquals(stream, triangleScratch) || !triangleScratch.CanRead || !triangleScratch.CanWrite
+            || !triangleScratch.CanSeek || triangleScratch.Length != 0)
+            throw new ArgumentException("Use a separate, empty, readable, writable, seekable triangle scratch stream.", nameof(triangleScratch));
+        return ReadStreamCore(stream, options, triangleScratch);
+    }
+
+    private static RvtSceneResult ReadStreamCore(Stream stream, RvtSceneOptions options, Stream? triangleScratch)
     {
         ArgumentNullException.ThrowIfNull(options);
         string key = RequiredKey(options);
         var readDiagnostics = new RvtReadDiagnostics();
-        var document = RvtDocument.OpenStream(stream, ReaderOptions(readDiagnostics, options));
-        return Map(document, ElementMeshes.Extract(document, MeshOptions(options)), key, ReadDiagnostics(readDiagnostics));
+        var readerOptions = ReaderOptions(readDiagnostics, options);
+        if (triangleScratch != null && readerOptions.CreatePartitionScratch is { } createPartitionScratch)
+            readerOptions.CreatePartitionScratch = () =>
+            {
+                var partitionScratch = createPartitionScratch();
+                if (ReferenceEquals(partitionScratch, triangleScratch))
+                    throw new ArgumentException("Partition scratch must be separate from triangle scratch.", nameof(options));
+                return partitionScratch;
+            };
+        var scratch = triangleScratch == null ? null : new SceneMeshScratch(triangleScratch);
+        if (scratch != null)
+        {
+            readerOptions.ArchiveSceneGeometry = scratch.ArchiveGeometry;
+            readerOptions.ArchiveSceneParameters = scratch.ArchiveParameters;
+        }
+        var document = RvtDocument.OpenStream(stream, readerOptions);
+        var meshes = ElementMeshes.ExtractCore(document, MeshOptions(options), scratch == null ? null : scratch.Store, options.MeshProgress);
+        return Map(document, meshes, key, ReadDiagnostics(readDiagnostics), scratch);
     }
 
     private static RvtReaderOptions ReaderOptions(RvtReadDiagnostics diagnostics, RvtSceneOptions? options)
@@ -85,6 +122,7 @@ public static class RvtSceneReader
             SeparateFacesWithDistinctOpenings = true,
             Diagnostics = diagnostics,
             Progress = options?.ReadProgress,
+            CreatePartitionScratch = options?.CreatePartitionScratch,
         };
 
     /// <summary>The scene diagnostics of a read: <c>read-cut</c> for each stream a reader limit cut, then for each stream read, in
@@ -124,7 +162,8 @@ public static class RvtSceneReader
     public static RvtSceneResult Read(RvtDocument document, RvtSceneOptions? options)
     {
         ArgumentNullException.ThrowIfNull(document);
-        return Map(document, ElementMeshes.Extract(document, MeshOptions(options)), RequiredKey(options));
+        var meshes = ElementMeshes.ExtractCore(document, MeshOptions(options), null, options?.MeshProgress);
+        return Map(document, meshes, RequiredKey(options));
     }
 
     /// <summary>Turns an opened document into a scene with meshes the caller extracted from it, for example with
@@ -155,7 +194,8 @@ public static class RvtSceneReader
         : throw new ArgumentException("A document has no file name: give the model key in RvtSceneOptions.ModelKey.", nameof(options));
 
     /// <summary>The scene of the meshes of <paramref name="document"/>; the element facts come from the document.</summary>
-    private static RvtSceneResult Map(RvtDocument document, MeshSet meshes, string modelKey, IEnumerable<SceneDiagnostic>? diagnostics = null)
+    internal static RvtSceneResult Map(RvtDocument document, MeshSet meshes, string modelKey,
+        IEnumerable<SceneDiagnostic>? diagnostics = null, SceneMeshScratch? scratch = null)
     {
         var scene = new SceneDocument { Title = modelKey };
         scene.Models.Add(new SceneModel
@@ -187,7 +227,7 @@ public static class RvtSceneReader
 
         var symbols = new Dictionary<int, List<(int GeometryId, int? MaterialId)>>();
         foreach (var (symbolId, symbolMeshes) in meshes.Symbols.OrderBy(symbol => symbol.Key))
-            symbols[symbolId] = symbolMeshes.Select(mesh => (AddGeometry(scene, mesh, default), MaterialOf(mesh.MaterialId))).ToList();
+            symbols[symbolId] = symbolMeshes.Select(mesh => (AddGeometry(scene, mesh, default, scratch), MaterialOf(mesh.MaterialId))).ToList();
 
         var typeSets = new Dictionary<int, int?>();
         var coverage = new Dictionary<MeshCoverage, int>();
@@ -195,13 +235,14 @@ public static class RvtSceneReader
         foreach (var mesh in meshes.Elements)
         {
             var element = document.GetElement(mesh.ElementId);
+            string? uniqueId = element?.UniqueId;
             var sceneElement = new SceneElement
             {
                 Id = mesh.ElementId,
                 ModelId = ModelId,
                 LevelId = mesh.IsDatum ? null : storeys.GetStoreyId(mesh.ElementId),
-                SourceId = element?.UniqueId,
-                IfcGuid = element != null ? IfcGuidOf(element) : null,
+                SourceId = uniqueId,
+                IfcGuid = element != null ? IfcGuidOf(element, uniqueId) : null,
                 Kind = SceneNodeKind.Element,
                 Name = (mesh.Line != null || mesh.Arc != null) && string.IsNullOrWhiteSpace(element?.Name) ? "Model Lines" : element?.Name ?? string.Empty,
                 Category = CategoryName(element),
@@ -210,12 +251,12 @@ public static class RvtSceneReader
             if (sceneElement.SourceId == null) withoutUniqueId++;
             if (element != null)
             {
-                if (AddPropertySet(scene, "Instance", "revit:instance", element.Parameters, element) is int instanceSet)
+                if (AddPropertySet(scene, "Instance", "revit:instance", element.ReadParameters, element) is int instanceSet)
                     sceneElement.PropertySetIds.Add(instanceSet);
                 if (document.GetTypeElement(element) is { } type)
                 {
                     if (!typeSets.TryGetValue(type.Id, out int? typeSet))
-                        typeSets[type.Id] = typeSet = AddPropertySet(scene, "Type", "revit:type", type.Parameters);
+                        typeSets[type.Id] = typeSet = AddPropertySet(scene, "Type", "revit:type", type.ReadParameters);
                     if (typeSet is int set) sceneElement.PropertySetIds.Add(set);
                 }
             }
@@ -277,7 +318,7 @@ public static class RvtSceneReader
                 foreach (var own in mesh.Meshes)
                     scene.Instances.Add(new SceneInstance
                     {
-                        ElementId = mesh.ElementId, GeometryId = AddGeometry(scene, own, origin), Transform = transform, MaterialId = MaterialOf(own.MaterialId),
+                        ElementId = mesh.ElementId, GeometryId = AddGeometry(scene, own, origin, scratch), Transform = transform, MaterialId = MaterialOf(own.MaterialId),
                     });
             }
             if (scene.Instances.Count > instancesBefore) withGeometry++;
@@ -381,7 +422,7 @@ public static class RvtSceneReader
             if (DisplayText(parameter) is not { } text) continue;
             properties.Add(new SceneProperty
             {
-                Name = parameter.Definition?.Name ?? parameter.Id.ToString(CultureInfo.InvariantCulture),
+                Name = parameter.DefinitionName ?? parameter.Id.ToString(CultureInfo.InvariantCulture),
                 Key = parameter.Id < 0 ? "revit:bip:" + parameter.Id.ToString(CultureInfo.InvariantCulture) : null,
                 Value = SceneValue.FromText(text),
             });
@@ -430,13 +471,13 @@ public static class RvtSceneReader
     /// <summary>The IFC GlobalId Revit's IFC export gives the element: the value of its built-in IfcGUID parameter (IFC_GUID)
     /// when it is a valid GlobalId, else the export id of its UniqueId (the episode GUID with its last 64 bits XORed with the
     /// element id the UniqueId ends with) in the IFC base-64 form; null without either.</summary>
-    private static string? IfcGuidOf(Element element)
+    private static string? IfcGuidOf(Element element, string? uniqueId)
     {
-        if (element.Parameters.Where(parameter => parameter.Id == (int)BuiltInParameter.IFC_GUID)
+        if (element.ReadParameters.Where(parameter => parameter.Id == (int)BuiltInParameter.IFC_GUID)
             .Select(parameter => parameter.Value as string).FirstOrDefault(IsIfcGuid) is { } stored) return stored;
 
         // The original element id has a minimum width of eight hex digits.
-        if (element.UniqueId is not { Length: >= 45 and <= 53 } uniqueId || uniqueId[36] != '-'
+        if (uniqueId is not { Length: >= 45 and <= 53 } || uniqueId[36] != '-'
             || !Guid.TryParseExact(uniqueId.AsSpan(0, 36), "D", out var episode)
             || !long.TryParse(uniqueId.AsSpan(37), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out long originalId)
             || originalId < 0)
@@ -465,7 +506,7 @@ public static class RvtSceneReader
     }
 
     /// <summary>Adds the mesh as a geometry in metres, its vertices relative to <paramref name="origin"/> (feet).</summary>
-    private static int AddGeometry(SceneDocument scene, TriangleMesh mesh, MeshVector origin)
+    private static int AddGeometry(SceneDocument scene, TriangleMesh mesh, MeshVector origin, SceneMeshScratch? scratch)
     {
         var vertices = new Vector3d[mesh.Positions.Length / 3];
         for (int vertex = 0; vertex < vertices.Length; vertex++)
@@ -477,7 +518,13 @@ public static class RvtSceneReader
         for (int vertex = 0; vertex < normals.Length; vertex++)
             normals[vertex] = new Vector3d(mesh.Normals[3 * vertex], mesh.Normals[3 * vertex + 1], mesh.Normals[3 * vertex + 2]);
         int id = scene.Geometries.Count + 1;
-        scene.Geometries.Add(new SceneGeometry { Id = id, Topology = SceneTopology.Triangles, Vertices = vertices, Indices = mesh.Indices, Normals = normals });
+        scene.Geometries.Add(new SceneGeometry
+        {
+            Id = id, Topology = SceneTopology.Triangles,
+            Vertices = scratch == null ? vertices : scratch.Store(vertices),
+            Indices = scratch == null ? mesh.Indices : scratch.Store(mesh.Indices),
+            Normals = scratch == null ? normals : scratch.Store(normals),
+        });
         return id;
     }
 

@@ -84,6 +84,7 @@ public class ElementHeaderBoundingBoxTests
         Assert.NotNull(verdict);
         Assert.False(verdict.Present);
         Assert.Null(verdict.Box);
+        Assert.Same(verdict, ElementHeaderCategory.ReadBoundingBox(Record(AbsentBody()), 0));
     }
 
     [Theory]
@@ -195,11 +196,13 @@ public class ElementHeaderBoundingBoxTests
         ElementHeaderCategory.Record(state, Record(AbsentBody()), 0, 101);
         Assert.False(Assert.IsType<ElementHeaderBox>(state.HeaderBoundingBoxes[101]).Present);
     }
-    [Fact]
-    public void Applier_PutsTheStoredOutlineOnTheElementAndClearsTheUnstoredOne()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Applier_PutsTheStoredOutlineOnTheElementAndClearsTheUnstoredOne(bool keepExportProvenance)
     {
         double[] box = [-1.0, -1.0, 0.0, 1.0, 1.0, 2.0];
-        var state = new ParsingState();
+        var state = new ParsingState { KeepExportProvenance = keepExportProvenance };
         state.HeaderBoundingBoxes[100] = new ElementHeaderBox(true, box);
         state.HeaderBoundingBoxes[101] = new ElementHeaderBox(false, null);
         state.HeaderBoundingBoxes[102] = null;                                   // the records disagree
@@ -217,7 +220,8 @@ public class ElementHeaderBoundingBoxTests
         Assert.False(disagreeing.BoundingBoxIsHeaderOutline);
         Assert.Equal([9, 9, 9, 9, 9, 9], disagreeing.BoundingBox);
         Assert.Equal([9, 9, 9, 9, 9, 9], unrecorded.BoundingBox);
-        Assert.Same(box, state.HeaderBoundingBoxes[103]!.Box);
+        if (keepExportProvenance) Assert.Same(box, state.HeaderBoundingBoxes[103]!.Box);
+        else Assert.Empty(state.HeaderBoundingBoxes);
     }
 
     [Fact]

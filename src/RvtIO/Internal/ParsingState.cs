@@ -1,9 +1,12 @@
+using System.Diagnostics.CodeAnalysis;
 using RvtIO.Parsing;
 
 namespace RvtIO.Internal;
 
 internal class ParsingState
 {
+    internal bool KeepExportProvenance { get; init; } = true;
+    internal Action<Model.Element>? ArchiveSceneParameters { get; init; }
     public Dictionary<uint, OwnPartitionParts.WallParts>? OwnPartitionWallParts { get; set; }
     public Dictionary<uint, int> OwnWallSide0Ids { get; } = new();
     /// <summary>Face-history table of the first BaseWallGStep of the current own wall root (see
@@ -89,17 +92,22 @@ internal class ParsingState
 
     /// <summary>ElementHeader.m_categroryId of the element records the continuous walk accepted (see <see cref="ElementHeaderCategory"/>);
     /// a null value marks an id whose records disagree or whose header could not be read.</summary>
-    public Dictionary<uint, int?> HeaderCategories { get; } = new();
+    public Dictionary<uint, int?> HeaderCategories { get; private set; } = new();
 
     // Categories proved by the current project's own framed header and a compatible root.
     internal Dictionary<uint, int?> CurrentFramedCategories { get; } = new();
 
     /// <summary>ElementHeader.m_designOptionId per element id (files with 64-bit ids; null: the records of the id disagree).</summary>
-    public Dictionary<uint, int?> HeaderDesignOptions { get; } = new();
+    public Dictionary<uint, int?> HeaderDesignOptions { get; private set; } = new();
 
     /// <summary>The axis-aligned outline the ElementHeader of the element's records stores (see <see cref="Parsing.ElementHeaderCategory"/>):
     /// a verdict when the records agree it is there or agree there is none, null when they disagree or no record was read.</summary>
-    public Dictionary<uint, Parsing.ElementHeaderBox?> HeaderBoundingBoxes { get; } = new();
+    public Dictionary<uint, Parsing.ElementHeaderBox?> HeaderBoundingBoxes { get; private set; } = new();
+
+    internal void ReleaseSceneHeaderBoundingBoxes()
+    {
+        if (!KeepExportProvenance) HeaderBoundingBoxes = new();
+    }
 
     /// <summary>The file's own class schema when its element ids are 64-bit (Revit 2025 layout, see <see cref="Parsing.WideElementRecords"/>);
     /// null for the 32-bit layouts, which keep the shipped Revit 2022 tables.</summary>
@@ -150,12 +158,55 @@ internal class ParsingState
     public HashSet<uint> AllKnownIds { get; set; } = new();
     public Dictionary<uint, List<string>> ElemStrings { get; set; } = new();
     public Dictionary<uint, List<string>> ElemScanStrings { get; set; } = new();
+    internal Dictionary<uint, string>? SceneFallbackNames { get; set; }
+    internal Dictionary<int, string>? SceneParameterNames { get; set; }
     public Dictionary<uint, List<double>> ElemDoubles { get; set; } = new();
     public Dictionary<uint, Dictionary<int, double>> ElemBipDoubles { get; set; } = new();
     public Dictionary<uint, Dictionary<uint, string>> ElemParamStrings { get; set; } = new();
     public Dictionary<uint, Dictionary<int, int>> ElemBipInts { get; set; } = new();
+    private ElementValueStore<int, double>? storedBipDoubles;
+    private ElementValueStore<int, int>? storedBipInts;
+    private ElementValueStore<uint, string>? storedParamStrings;
+
+    internal void ArchiveElementValues()
+    {
+        if (KeepExportProvenance || PartitionScratch is not { } scratch) return;
+        storedBipDoubles = new(scratch, ElemBipDoubles, static (w, v) => w.Write(v), static (w, v) => w.Write(v),
+            static r => r.ReadInt32(), static r => r.ReadDouble());
+        ElemBipDoubles = new();
+        storedBipInts = new(scratch, ElemBipInts, static (w, v) => w.Write(v), static (w, v) => w.Write(v),
+            static r => r.ReadInt32(), static r => r.ReadInt32());
+        ElemBipInts = new();
+        storedParamStrings = new(scratch, ElemParamStrings, static (w, v) => w.Write(v), NativeParameterStore.WriteString,
+            static r => r.ReadUInt32(), NativeParameterStore.ReadString);
+        ElemParamStrings = new();
+    }
+
+    internal bool TryReadBipDoubles(uint owner, [NotNullWhen(true)] out Dictionary<int, double>? values) =>
+        storedBipDoubles != null ? storedBipDoubles.TryGetValue(owner, out values) : ElemBipDoubles.TryGetValue(owner, out values);
+
+    internal bool TryReadBipInts(uint owner, [NotNullWhen(true)] out Dictionary<int, int>? values) =>
+        storedBipInts != null ? storedBipInts.TryGetValue(owner, out values) : ElemBipInts.TryGetValue(owner, out values);
+
+    internal bool TryReadParamStrings(uint owner, [NotNullWhen(true)] out Dictionary<uint, string>? values) =>
+        storedParamStrings != null ? storedParamStrings.TryGetValue(owner, out values) : ElemParamStrings.TryGetValue(owner, out values);
+
+    internal void ReleaseElementBuildInputs()
+    {
+        SceneFallbackNames = null;
+        HeaderCategories = new();
+        HeaderDesignOptions = new();
+        ElemBaseFields = new();
+        storedBipDoubles = null;
+        storedBipInts = null;
+        storedParamStrings = null;
+        ElemBipDoubles = new();
+        ElemBipInts = new();
+        ElemParamStrings = new();
+    }
+
     public Dictionary<uint, BaseElementFields> ElemBaseFields { get; set; } = new();
-    public Dictionary<uint, GRepData> GrepBlocks { get; set; } = new();
+    public GRepBlockStore GrepBlocks { get; set; } = new();
     internal Dictionary<uint, (int BlockCount, TfBlockDeserializer.OwnRailingQuantityInput? Input)> RailingQuantityInputs { get; } = new();
 
     /// <summary>While set, the symbols placed from <see cref="GrepBlocks"/> are taken at the Coarse detail level.</summary>
@@ -168,7 +219,7 @@ internal class ParsingState
 
     /// <summary>FamilySymbol.m_complexCutGeoms decoded as an exact family-local BRep.
     /// Kept separate from the symbol's visible GRep because it is a void operand.</summary>
-    public Dictionary<uint, GRepData> FamilyCutGreps { get; } = new();
+    public GRepBlockStore FamilyCutGreps { get; } = new();
     /// <summary>FamilySymbol InsertableObj cut profiles decoded from m_pCutLoops,
     /// m_cutDirs and m_cutIndices. These are distinct from m_complexCutGeoms.</summary>
     public Dictionary<uint, List<Model.FamilyCutLoopData>> FamilyCutLoops { get; } = new();
@@ -200,9 +251,10 @@ internal class ParsingState
     public HashSet<uint> HostCutOutStepsFromLayoutSearch { get; } = new();
     public HashSet<uint> BlockOnlyIds { get; set; } = new();
     public Dictionary<uint, (string ForgeId, string? DisplayName)> ForgeParamDefs { get; set; } = new();
-    public List<byte[]> Chunks { get; set; } = new();
-    public List<byte[]> RecordChunks { get; set; } = new();
-    public List<byte[]> NonRecordChunks { get; set; } = new();
+    public IReadOnlyList<byte[]> Chunks { get; set; } = [];
+    public IReadOnlyList<byte[]> RecordChunks { get; set; } = [];
+    public IReadOnlyList<byte[]> NonRecordChunks { get; set; } = [];
+    internal PartitionChunks.Backing? PartitionScratch => (Chunks as PartitionChunks)?.Store;
     public Dictionary<uint, double> WallTypeWidths { get; set; } = new();
 
     /// <summary>Wall function enum extracted from classIdx=0x00012100 blocks at offset 0x18.
@@ -414,7 +466,7 @@ internal class ParsingState
 
     /// <summary>Native parameter stores per element, deserialized from the Element base
     /// class m_pParamValueSet* containers (schema-driven).</summary>
-    public Dictionary<uint, TfBlockDeserializer.NativeParams> NativeParams { get; set; } = new();
+    public NativeParameterStore NativeParams { get; init; } = new(null);
     /// <summary>Elements whose NativeParams came from a block of their own ElemTable class (the element root).</summary>
     public HashSet<uint> NativeParamsFromRootClass { get; } = new();
 

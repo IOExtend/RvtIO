@@ -52,7 +52,7 @@ public class BlockDiagnosticTests
         _output.WriteLine($"Output written to {TestFiles.Scratch("blocks_100907.txt")}");
     }
 
-    private static int ScanChunksForBlocks(List<byte[]> chunks, uint targetElemId, StringBuilder sb, string label)
+    private static int ScanChunksForBlocks(IReadOnlyList<byte[]> chunks, uint targetElemId, StringBuilder sb, string label)
     {
         int blockCount = 0;
 
@@ -753,7 +753,7 @@ public class BlockDiagnosticTests
             sb.AppendLine();
             sb.AppendLine($"  --- Byte scan for {eid} (bytes: {BitConverter.ToString(eidBytes)}) ---");
 
-            void ScanChunkList(List<byte[]> chunks, string label)
+            void ScanChunkList(IReadOnlyList<byte[]> chunks, string label)
             {
                 int totalHits = 0;
                 for (int ci = 0; ci < chunks.Count; ci++)

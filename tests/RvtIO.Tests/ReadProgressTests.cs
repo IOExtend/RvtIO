@@ -85,6 +85,21 @@ public class ReadProgressTests
         Assert.Equal(new RvtReadProgress("parameter-stream"), stream[0]);
         Assert.True(stream.Length >= 3 && stream[^1].Total > 0 && stream[^1].Completed == stream[^1].Total);
         Assert.Equal(new RvtReadProgress("parameter-stream", 0, stream[^1].Total), stream[1]);
+        foreach (string phase in new[] { "element-records", "element-properties" })
+        {
+            var scan = progress.Updates.Where(update => update.Phase == phase).ToArray();
+            Assert.True(scan[^1].Total > 0);
+            Assert.Contains(new RvtReadProgress(phase, 0, scan[^1].Total), scan);
+            Assert.Equal(new RvtReadProgress(phase, scan[^1].Total, scan[^1].Total), scan[^1]);
+        }
+        var build = progress.Updates.Where(update => update.Phase == "build-model").ToArray();
+        Assert.Equal(new RvtReadProgress("build-model"), build[0]);
+        Assert.Equal(new RvtReadProgress("build-model", 0, 1), build[1]);
+        Assert.Equal(new RvtReadProgress("build-model", 1, 1), build[^1]);
+        Assert.Equal(Enumerable.Range(0, 5).Select(pass => new RvtReadProgress("recover-geometry", pass, 4)),
+            progress.Updates.Where(update => update.Phase == "recover-geometry" && update.GeometryBlocks == null));
+        Assert.Equal(Enumerable.Range(0, 8).Select(pass => new RvtReadProgress("finalize-model", pass, 7)),
+            progress.Updates.Where(update => update.Phase == "finalize-model"));
     }
 
     [Fact]

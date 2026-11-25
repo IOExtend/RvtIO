@@ -13,13 +13,15 @@ internal static partial class ElementBuilder
     {
         foreach (var element in info.Elements)
         {
-            element.LevelShells = new SolidQuantities.Shell?[3];
-            element.LevelSolidCounts = new int[3];
+            var shells = new SolidQuantities.Shell?[3];
+            var counts = new int[3];
             LevelGeometries(element, state, (slot, geometry) =>
             {
-                element.LevelShells[slot] = SolidQuantities.OfAllSolids(geometry);
-                element.LevelSolidCounts[slot] = geometry?.BrepSolids?.Count ?? 0;
+                shells[slot] = SolidQuantities.OfAllSolids(geometry);
+                counts[slot] = geometry?.BrepSolids?.Count ?? 0;
             });
+            element.LevelShells = shells;
+            element.LevelSolidCounts = counts;
         }
     }
 
@@ -38,16 +40,18 @@ internal static partial class ElementBuilder
             return;
         }
         uint id = (uint)element.Id;
-        state.GrepBlocks.TryGetValue(id, out var grep);
+        GRepData? grep = null;
         state.FamilyInstanceTransforms.TryGetValue(id, out var transformOnly);
         for (int level = 1; level <= 2; level++)
         {
             var visited = new HashSet<uint>();
-            bool has = HasAlternative(grep, state, visited, level)
-                || (transformOnly != null && state.GrepBlocks.TryGetValue((uint)Math.Max(transformOnly.SymbolId, 0), out var symbol)
-                    && HasAlternative(symbol, state, visited, level));
+            var alternative = level == 1 ? GRepBlockStore.DetailAlternatives.Coarse : GRepBlockStore.DetailAlternatives.Medium;
+            bool has = state.GrepBlocks.HasDetailAlternative(id, alternative, visited)
+                || (transformOnly != null
+                    && state.GrepBlocks.HasDetailAlternative((uint)Math.Max(transformOnly.SymbolId, 0), alternative, visited));
             int slot = level == 1 ? 0 : 1;
             if (!has) { visit(slot, element.Geometry); continue; }
+            if (grep == null) state.GrepBlocks.TryGetValue(id, out grep);
             state.CoarseView = level == 1; state.DetailView = level;
             try
             {
@@ -63,17 +67,5 @@ internal static partial class ElementBuilder
             }
             finally { state.CoarseView = false; state.DetailView = 0; }
         }
-    }
-
-    private static bool HasAlternative(GRepData? block, ParsingState state, HashSet<uint> visited, int level)
-    {
-        if (block == null) return false;
-        if ((level == 1 ? block.Coarse : block.Medium) != null) return true;
-        foreach (var instance in block.Instances)
-            if (instance.SymbolElemId > 0 && visited.Add((uint)instance.SymbolElemId)
-                && state.GrepBlocks.TryGetValue((uint)instance.SymbolElemId, out var symbol)
-                && HasAlternative(symbol, state, visited, level))
-                return true;
-        return false;
     }
 }
