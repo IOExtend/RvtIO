@@ -6,7 +6,8 @@ namespace RvtIO;
 
 public partial class RvtFileReader
 {
-    private static void ReadOwnWallPlanarBodies(ParsingState state)
+    private static void ReadOwnWallPlanarBodies(ParsingState state,
+        List<(byte[] Data, int Start, uint Size, ushort Cls, uint Owner)> candidates)
     {
         var owners = state.OwnedElementClassRoots.Where(entry => entry.Value.BlockCount == 1
             && entry.Value.ClassId is 3524 or 361).Select(entry => entry.Key).ToHashSet();
@@ -15,14 +16,8 @@ public partial class RvtFileReader
         state.OwnWallTrimmedRanges.Clear();
         state.OwnCurrentWallFaceGroups.Clear();
         if (owners.Count == 0) return;
-        // Class roots are complete now; a second anchored walk avoids stream-order admission. The walk only collects the
-        // owner blocks; the per-block geometry decode is independent, so it runs in parallel and the results are applied in
-        // walk order.
-        var jobs = new List<(byte[] Data, int Start, uint Size, ushort Cls, uint Owner)>();
-        TfStreamWalker.Walk(state.Chunks, state.AllKnownIds, (data, start, size, cls, owner) =>
-        {
-            if (cls is 2007 or 2006 && owners.Contains(owner)) jobs.Add((data, start, size, cls, owner));
-        });
+        // Class roots are complete now, including nodes stored after their geometry.
+        var jobs = candidates.Where(job => owners.Contains(job.Owner)).ToList();
         var decoded = new (GRepData? Body, string? Failure)[jobs.Count];
         var grepCounts = jobs.GroupBy(job => job.Owner).ToDictionary(group => group.Key, group => group.Count());
         var nativeBodies = new GRepData?[jobs.Count];
@@ -32,8 +27,10 @@ public partial class RvtFileReader
         Parallel.For(0, jobs.Count, index =>
         {
             var (data, start, size, cls, owner) = jobs[index];
+            // The merge records the count and rejects the body for every repeated owner.
+            if (grepCounts[owner] != 1) return;
             decoded[index] = DecodeOwnWallPlanarBody(data, start, size, cls, owner, out var graph);
-            if (graph != null && grepCounts[owner] == 1 && decoded[index].Body != null
+            if (graph != null && decoded[index].Body != null
                 && state.OwnCurrentWallRoots.Contains(owner)
                 && state.OwnPartitionWallParts?.TryGetValue(owner, out var current) == true
                 && OwnPartitionParts.MatchesFrame(data, start, size, current.GeometrySha256))
@@ -43,13 +40,13 @@ public partial class RvtFileReader
                 groups[index] = TfBlockDeserializer.SelectOwnPostCutFaceGroups(graph,
                     decoded[index].Body!.Faces.Select(face => face.SourceFace).ToArray());
             }
-            if (graph != null && grepCounts[owner] == 1 && decoded[index].Body is { } trimmedBody
+            if (graph != null && decoded[index].Body is { } trimmedBody
                 && state.OwnWallBaseFaces.TryGetValue(owner, out var baseFaces)
                 && state.OwnWallCutoutSteps.TryGetValue(owner, out var location) && location.BlockCount == 1
                 && location.Axis is { } locationAxis)
                 trimmed[index] = TfBlockDeserializer.SelectOwnWallTrimmedRange(graph, baseFaces, trimmedBody, locationAxis);
             if (decoded[index].Body == null)
-                nativeBodies[index] = DecodeOwnNativeWallBody(state, data, start, size, cls, owner, grepCounts[owner]);
+                nativeBodies[index] = DecodeOwnNativeWallBody(state, data, start, size, cls, owner, grepCount: 1);
         });
         for (int index = 0; index < jobs.Count; index++)
         {

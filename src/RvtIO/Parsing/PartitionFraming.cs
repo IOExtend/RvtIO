@@ -25,6 +25,8 @@ namespace RvtIO.Parsing;
 /// </summary>
 internal static class PartitionFraming
 {
+    private static ReadOnlySpan<byte> GzipHeader => [0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0x0b];
+
     internal readonly record struct Tags(ushort ContentMarker, ushort ContentKey, ushort SegmentMarker, ushort SegmentCheckback, ushort SignatureMarker);
 
     /// <summary>One record of channel 101..103. <see cref="Block"/> is the index of the content block, 0 = the null-key map.</summary>
@@ -94,6 +96,8 @@ internal static class PartitionFraming
             var input = new Cursor(raw, paged: true);
             Require(input.U32() == 9 && input.U32() == 0, "format");
             var keys = new HashSet<string>();
+            var scratch = new InflateScratch();
+            using var prefetch = segmentBytes == null || OperatingSystem.IsBrowser() ? null : new SegmentPrefetch(tags);
             long inflated = 0; // output of all finished chains
             while (true)
             {
@@ -116,6 +120,7 @@ internal static class PartitionFraming
                 long countSum = 0, sizeSum = 0;
                 while (true)
                 {
+                    bool prefetched = prefetch?.Prepare(input) == true;
                     Require(input.U16() == tags.SegmentMarker, "segment-marker");
                     uint flags = input.U32(), count = input.U32(), size = input.U32(), unc = input.U32();
                     if (size == 0)
@@ -127,21 +132,37 @@ internal static class PartitionFraming
                     uint index = input.U32();
                     input.U32(); // the opaque value of the deposit is neither an owner nor a length
                     Require(index is >= 101 and <= 103, "segment-index");
-                    var payload = input.Take((int)size - 8);
+                    int payloadLength = (int)size - 8;
+                    ReadOnlyMemory<byte> payload = default;
+                    if (prefetched) input.SkipPayload(payloadLength);
+                    else payload = input.Take(payloadLength);
                     Require(input.U16() == tags.SegmentCheckback && input.U32() == size, "segment-checkback");
                     uint mode = flags & 3;
                     if (mode is 0 or 2) Require(chainIndex == null, "chain-start");
                     else Require(chainIndex == index, "chain-continuation");
                     chainIndex = index;
-                    int before = (int)chain.Length;
-                    Inflate(payload, chain);
-                    segmentLengths?.Add((int)chain.Length - before);
-                    segmentBytes?.Add(chain.GetBuffer().AsSpan(before, (int)chain.Length - before).ToArray());
+                    byte[]? decoded = prefetched ? prefetch!.Take() : null;
+                    if (decoded == null)
+                    {
+                        int before = (int)chain.Length;
+                        Inflate(payload, chain, scratch);
+                        int length = (int)chain.Length - before;
+                        segmentLengths?.Add(length);
+                        segmentBytes?.Add(chain.GetBuffer().AsSpan(before, length).ToArray());
+                    }
+                    else
+                    {
+                        Require(chain.Length + decoded.Length <= int.MaxValue, "gzip-length");
+                        segmentLengths?.Add(decoded.Length);
+                        segmentBytes!.Add(decoded);
+                        if (mode != 0) chain.Write(decoded);
+                    }
                     countSum += count;
                     sizeSum += unc;
                     if (mode is not (0 or 1)) continue;
 
-                    var memory = chain.GetBuffer().AsMemory(0, checked((int)chain.Length));
+                    var memory = decoded != null && mode == 0
+                        ? decoded.AsMemory() : chain.GetBuffer().AsMemory(0, checked((int)chain.Length));
                     var records = new Cursor(memory);
                     long actualCount = 0, actualSize = 0;
                     while (records.Remaining > 0)
@@ -162,7 +183,7 @@ internal static class PartitionFraming
                         onRecord(new Record(blocks, key, (int)index, owner, extra, memory.Slice(bodyAt, (int)bodySize), memory.Slice(begin, records.Position - begin), inflated + begin));
                     }
                     Require(actualCount == countSum && actualSize == sizeSum, "chain-counts");
-                    inflated += chain.Length;
+                    inflated += memory.Length;
                     chain.SetLength(0);
                     chain.Position = 0;
                     chainIndex = null;
@@ -194,21 +215,108 @@ internal static class PartitionFraming
         return PagedGzipStream.RemoveSegments(raw);
     }
 
-    private static void Inflate(ReadOnlyMemory<byte> member, MemoryStream chain)
+    // A verified member is independent of its neighbours. Look ahead only for work
+    // scheduling, then let the main cursor commit records and report failures in order.
+    private sealed class SegmentPrefetch(Tags tags) : IDisposable
+    {
+        private const int BatchSize = 128;
+        private const int BatchBytes = 32 * 1024 * 1024;
+        private readonly List<(int Start, ReadOnlyMemory<byte> Payload)> _batch = new(BatchSize);
+        private readonly byte[]?[] _decoded = new byte[BatchSize][];
+        private readonly string?[] _errors = new string?[BatchSize];
+        private readonly ThreadLocal<InflateScratch> _scratch = new(() => new InflateScratch());
+        private int _next;
+
+        internal bool Prepare(Cursor input)
+        {
+            if (_next < _batch.Count && _batch[_next].Start == input.Position) return true;
+            Fill(input.Fork());
+            return _batch.Count != 0;
+        }
+
+        internal byte[] Take()
+        {
+            int index = _next++;
+            if (_errors[index] is { } error) throw new InvalidDataException(error);
+            var output = _decoded[index]!;
+            _decoded[index] = null;
+            return output;
+        }
+
+        private void Fill(Cursor cursor)
+        {
+            _batch.Clear();
+            _next = 0;
+            long expectedBytes = 0;
+            while (_batch.Count < BatchSize && cursor.Remaining >= 18)
+            {
+                int position = cursor.Position;
+                if (cursor.U16() != tags.SegmentMarker) break;
+                cursor.Skip(8); // The main walk validates flags and counts.
+                uint size = cursor.U32();
+                cursor.Skip(4);
+                if (size < 26 || size > int.MaxValue || cursor.Remaining < size + 6L) break;
+                if (cursor.U32() is not (101 or 102 or 103)) break;
+                cursor.Skip(4);
+                var member = cursor.Take((int)size - 8);
+                if (cursor.U16() != tags.SegmentCheckback || cursor.U32() != size
+                    || !member.Span[..10].SequenceEqual(GzipHeader)) break;
+                expectedBytes += BinaryPrimitives.ReadUInt32LittleEndian(member.Span[^4..]);
+                if (expectedBytes > BatchBytes) break;
+                _batch.Add((position, member));
+            }
+            if (_batch.Count <= 1)
+            {
+                _batch.Clear();
+                return;
+            }
+
+            Parallel.For(0, _batch.Count, index =>
+            {
+                var scratch = _scratch.Value!;
+                scratch.Output.SetLength(0);
+                _errors[index] = null;
+                try
+                {
+                    Inflate(_batch[index].Payload, scratch.Output, scratch);
+                    _decoded[index] = scratch.Output.ToArray();
+                }
+                catch (Exception exception) when (exception is InvalidDataException or SharpZipBaseException or OverflowException)
+                {
+                    _decoded[index] = null;
+                    _errors[index] = exception.Message;
+                }
+            });
+        }
+
+        public void Dispose() => _scratch.Dispose();
+    }
+
+    private sealed class InflateScratch
+    {
+        internal readonly Inflater Inflater = new(noHeader: true);
+        internal readonly Crc32 Crc = new();
+        internal readonly byte[] Buffer = new byte[32768];
+        internal readonly MemoryStream Output = new();
+    }
+
+    private static void Inflate(ReadOnlyMemory<byte> member, MemoryStream chain, InflateScratch scratch)
     {
         var payload = member.Span;
-        Require(payload.Length >= 18 && payload[..10].SequenceEqual(new byte[] { 0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0x0b }), "gzip-header");
+        Require(payload.Length >= 18 && payload[..10].SequenceEqual(GzipHeader), "gzip-header");
         uint expectedCrc = BinaryPrimitives.ReadUInt32LittleEndian(payload[^8..]);
         uint expectedLength = BinaryPrimitives.ReadUInt32LittleEndian(payload[^4..]);
         // shortcut: independently compressed members only; dictionary-dependent members reject
         // admission until their shared-window contract is implemented and tested.
-        var inflater = new Inflater(noHeader: true);
+        var inflater = scratch.Inflater;
+        inflater.Reset();
         // The deflate data is read where it lies; the inflater stays inside the range it is given.
         var deflate = member[10..^8];
         if (MemoryMarshal.TryGetArray(deflate, out var data)) inflater.SetInput(data.Array!, data.Offset, data.Count);
         else inflater.SetInput(deflate.ToArray());
-        var crc = new Crc32();
-        byte[] buffer = new byte[32768];
+        var crc = scratch.Crc;
+        crc.Reset();
+        byte[] buffer = scratch.Buffer;
         long length = 0;
         while (!inflater.IsFinished)
         {
@@ -237,13 +345,19 @@ internal static class PartitionFraming
         internal int Position { get; private set; }
         internal int Remaining => length - Position;
         internal ReadOnlySpan<byte> Bytes(int count) => Take(count).Span;
+        internal Cursor Fork() => (Cursor)MemberwiseClone();
+
+        internal void SkipPayload(int count)
+        {
+            Require(count >= 0 && count <= Remaining, "bounds");
+            Position += count;
+        }
 
         /// <summary>The next <paramref name="count"/> bytes: a view of the stream where they lie, a copy only when a page tail runs through them.</summary>
         internal ReadOnlyMemory<byte> Take(int count)
         {
-            Require(count >= 0 && count <= Remaining, "bounds");
             int start = Position;
-            Position += count;
+            SkipPayload(count);
             if (count == 0) return default;
             if (!paged) return bytes.Slice(start, count);
 

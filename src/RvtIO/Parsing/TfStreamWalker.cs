@@ -1,3 +1,7 @@
+using System.Numerics;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
+
 namespace RvtIO.Parsing;
 
 /// <summary>
@@ -15,20 +19,62 @@ internal static partial class TfStreamWalker
     public delegate void RecordVisitor(byte[] segment, int recordStart, uint eid);
 
     private const int MaxBlock = 1_100_000; // > any real block/record size we accept
+    private const int SegmentTarget = 1_400_000_000;
+    // Freeform family symbols can exceed the anchored walk's MaxBlock.
+    private const int MaxTargetBlock = 8_000_000;
 
-    /// <summary>Walks the concatenated chunks in segments of at most <paramref name="segTarget"/> bytes (tests pass a small one to
-    /// reach the second segment). <paramref name="progress"/> gets the offset in the concatenated stream and its length.</summary>
-    public static void Walk(IReadOnlyList<byte[]> chunks, HashSet<uint> knownIds, BlockVisitor visit,
-        RecordVisitor? visitRecord = null, Action<long, long>? progress = null, long segTarget = 1_400_000_000)
+    internal sealed class SegmentSources
     {
-        // As in WalkStreaming: the carried overlap and two maximum-sized items must fit in a segment.
+        private readonly List<(int Start, int End, byte[] Chunk)> _ranges = [];
+
+        internal void SetSegment(IReadOnlyList<byte[]> chunks, int start, int end, int carryLength)
+        {
+            _ranges.Clear();
+            int position = carryLength;
+            for (int index = start; index < end; index++)
+            {
+                byte[] chunk = chunks[index];
+                if (chunk.Length == 0) continue;
+                _ranges.Add((position, position + chunk.Length, chunk));
+                position += chunk.Length;
+            }
+        }
+
+        // Deferred consumers only need the block. Holding the walk's contiguous buffer
+        // would retain up to 1.4 GB for a single candidate.
+        internal (byte[] Data, int Start) Retain(byte[] segment, int start, int length)
+        {
+            int low = 0, high = _ranges.Count;
+            while (low < high)
+            {
+                int middle = (low + high) / 2;
+                if (_ranges[middle].End <= start) low = middle + 1;
+                else high = middle;
+            }
+            if (low < _ranges.Count)
+            {
+                var range = _ranges[low];
+                if (start >= range.Start && length <= range.End - start)
+                    return (range.Chunk, start - range.Start);
+            }
+            return (segment.AsSpan(start, length).ToArray(), 0);
+        }
+    }
+
+    /// <summary>Walks the concatenated chunks, reporting positions on the caller thread.</summary>
+    public static void Walk(IReadOnlyList<byte[]> chunks, HashSet<uint> knownIds, BlockVisitor visit,
+        RecordVisitor? visitRecord = null, Action<long, long>? progress = null, long segTarget = SegmentTarget,
+        SegmentSources? sources = null)
+    {
         if (segTarget <= 3 * MaxBlock) throw new ArgumentOutOfRangeException(nameof(segTarget));
         long total = 0;
-        foreach (var c in chunks) total += c.Length;
-        progress?.Invoke(0, total);
+        if (progress != null)
+        {
+            foreach (var chunk in chunks) total += chunk.Length;
+            progress(0, total);
+        }
         long segmentOffset = 0;
         Action<int>? reportPosition = progress is null ? null : pos => progress(segmentOffset + pos, total);
-
         int i = 0;
         var carry = Array.Empty<byte>(); // overlap tail from the previous segment
         while (i < chunks.Count)
@@ -41,7 +87,7 @@ internal static partial class TfStreamWalker
                 i++;
             }
             if (start == i && i < chunks.Count) { size += chunks[i].Length; i++; } // oversized single chunk
-            var seg = new byte[size];
+            var seg = GC.AllocateUninitializedArray<byte>(checked((int)size));
             int off = carry.Length;
             Buffer.BlockCopy(carry, 0, seg, 0, carry.Length);
             for (int k = start; k < i; k++)
@@ -53,6 +99,7 @@ internal static partial class TfStreamWalker
             // Blocks starting in the final MaxBlock bytes may be cut: the next segment
             // re-walks them via the carried overlap (skip them here unless last segment).
             int visitLimit = last ? seg.Length : Math.Max(0, seg.Length - MaxBlock);
+            sources?.SetSegment(chunks, start, i, carry.Length);
             WalkSegment(seg, knownIds, visit, visitLimit, visitRecord, reportPosition);
             segmentOffset += visitLimit;
             if (!last)
@@ -89,7 +136,7 @@ internal static partial class TfStreamWalker
             if (!it.HasValue)
             {
                 aligned = false;
-                pos++;
+                pos = reportPosition == null ? NextPossibleItem(buf, pos + 1) : pos + 1;
                 continue;
             }
             var (isBlock, size, eid, cls, dataSize) = it.Value;
@@ -102,64 +149,132 @@ internal static partial class TfStreamWalker
         }
     }
 
+    // Skip only positions where the serialized size and both record markers rule out a header.
+    // The anchor and size-echo checks still run on every candidate, including unaligned ones.
+    private static int NextPossibleItem(byte[] data, int position)
+    {
+        if (position <= data.Length - 16 && BitConverter.ToUInt64(data, position) == 0
+            && BitConverter.ToUInt64(data, position + 8) == 0)
+        {
+            // No all-zero header can anchor. Keep starts whose header reaches the first nonzero byte.
+            int nonzero = data.AsSpan(position + 16).IndexOfAnyExcept((byte)0);
+            if (nonzero < 0) return data.Length;
+            position += nonzero + 1;
+        }
+        if (!BitConverter.IsLittleEndian || !Vector256.IsHardwareAccelerated) return position;
+        int width = Vector256<byte>.Count;
+        ref byte first = ref MemoryMarshal.GetArrayDataReference(data);
+        for (; position <= data.Length - 11 - width; position += width)
+        {
+            var low = Vector256.LoadUnsafe(ref first, (nuint)(position + 8));
+            var high = Vector256.LoadUnsafe(ref first, (nuint)(position + 9));
+            var middleSize = Vector256.LoadUnsafe(ref first, (nuint)(position + 10));
+            var highSize = Vector256.LoadUnsafe(ref first, (nuint)(position + 11));
+            var block = Vector256.LessThan(middleSize, Vector256.Create((byte)16)) & Vector256.Equals(highSize, Vector256<byte>.Zero);
+            var r22 = Vector256.Equals(low, Vector256.Create((byte)0x3C)) & Vector256.Equals(high, Vector256.Create((byte)0x05));
+            var r20 = Vector256.Equals(low, Vector256.Create((byte)0xF8)) & Vector256.Equals(high, Vector256.Create((byte)0x04));
+            uint candidates = (block | r22 | r20).ExtractMostSignificantBits();
+            if (candidates != 0) return position + BitOperations.TrailingZeroCount(candidates);
+        }
+        return position;
+    }
+
     /// <summary>Targeted scan for GRep blocks (classIdx 0x07D7/0x07D6) of SPECIFIC element
     /// ids the anchored walk missed: family-SYMBOL regions can be unreachable when their
     /// ids never anchor. Vectorized: hunt the classIdx byte, then validate [eid in targets]
     /// [dataSize plausible] at the implied block start. The visitor's parser is the final
     /// validator (returns null on a false positive).</summary>
-    public static void ScanBlocks(IReadOnlyList<byte[]> chunks, HashSet<uint> targetIds, BlockVisitor visit)
+    public static void ScanBlocks(IReadOnlyList<byte[]> chunks, HashSet<uint> targetIds, BlockVisitor visit,
+        SegmentSources? sources = null, int segmentTarget = SegmentTarget)
     {
         if (targetIds.Count == 0) return;
-        const long segTarget = 1_400_000_000;
-        // Freeform family symbols (imported meshes) reach multi-MB blocks, far above the
-        // anchored walk's MaxBlock. The id+classIdx match already gates false positives.
-        const int maxTargetBlock = 8_000_000;
         int i = 0;
         var carry = Array.Empty<byte>();
+        var currentGeometry = new List<int>();
+        var earlierGeometry = new List<int>();
+        var curves = new List<int>();
         while (i < chunks.Count)
         {
             long size = carry.Length;
             int start = i;
-            while (i < chunks.Count && size + chunks[i].Length <= segTarget) { size += chunks[i].Length; i++; }
+            while (i < chunks.Count && size + chunks[i].Length <= segmentTarget) { size += chunks[i].Length; i++; }
             if (start == i && i < chunks.Count) { size += chunks[i].Length; i++; }
-            var seg = new byte[size];
+            var seg = GC.AllocateUninitializedArray<byte>(checked((int)size));
             int off = carry.Length;
             Buffer.BlockCopy(carry, 0, seg, 0, carry.Length);
             for (int k = start; k < i; k++) { Buffer.BlockCopy(chunks[k], 0, seg, off, chunks[k].Length); off += chunks[k].Length; }
             bool last = i >= chunks.Count;
-            int scanLimit = last ? seg.Length : Math.Max(0, seg.Length - maxTargetBlock);
+            int scanLimit = last ? seg.Length : Math.Max(0, seg.Length - MaxTargetBlock);
+            sources?.SetSegment(chunks, start, i, carry.Length);
+            ScanMarkers(seg, 12, Math.Min(scanLimit + 12, seg.Length - 1), Record);
 
-            foreach (byte marker in (ReadOnlySpan<byte>)[0xD7, 0xD6, 0x46])
-            {
-                byte hi = marker == 0x46 ? (byte)0x03 : (byte)0x07;   // 0x0346 sketch curves / 0x07D7-6 GRep
-                var span = new ReadOnlySpan<byte>(seg);
-                int p = 12;                             // classIdx low byte sits at blockStart+12
-                while (p < scanLimit + 12 && p < seg.Length - 1)
-                {
-                    int rel = span[p..].IndexOf(marker);
-                    if (rel < 0) break;
-                    p += rel;
-                    int bs = p - 12;
-                    if (seg[p + 1] == hi && bs >= 0 && bs < scanLimit)
-                    {
-                        uint eid = BitConverter.ToUInt32(seg, bs);
-                        if (targetIds.Contains(eid))
-                        {
-                            uint ds = BitConverter.ToUInt32(seg, bs + 8);
-                            if (ds >= 20 && ds < maxTargetBlock && bs + 16 + ds <= seg.Length)
-                                visit(seg, bs, ds, BitConverter.ToUInt16(seg, bs + 12), eid);
-                        }
-                    }
-                    p++;
-                }
-            }
+            // Keep class priority and stream order within each class.
+            Emit(currentGeometry);
+            Emit(earlierGeometry);
+            Emit(curves);
             if (!last)
             {
-                int tail = Math.Min(maxTargetBlock, seg.Length);
+                int tail = Math.Min(MaxTargetBlock, seg.Length);
                 carry = new byte[tail];
                 Buffer.BlockCopy(seg, seg.Length - tail, carry, 0, tail);
             }
+
+            void Record(int marker)
+            {
+                int blockStart = marker - 12;
+                uint dataSize = BitConverter.ToUInt32(seg, blockStart + 8);
+                if (dataSize < 20 || dataSize >= MaxTargetBlock || blockStart + 16L + dataSize > seg.Length) return;
+                var matches = seg[marker] switch
+                {
+                    0xD7 => currentGeometry,
+                    0xD6 => earlierGeometry,
+                    _ => curves,
+                };
+                matches.Add(blockStart);
+            }
+
+            void Emit(List<int> matches)
+            {
+                foreach (int blockStart in matches)
+                {
+                    uint eid = BitConverter.ToUInt32(seg, blockStart);
+                    if (targetIds.Contains(eid))
+                        visit(seg, blockStart, BitConverter.ToUInt32(seg, blockStart + 8),
+                            BitConverter.ToUInt16(seg, blockStart + 12), eid);
+                }
+                matches.Clear();
+            }
         }
+    }
+
+    private static bool IsBlockMarker(byte low, byte high) =>
+        high == 0x07 && low is 0xD7 or 0xD6 || high == 0x03 && low == 0x46;
+
+    private static void ScanMarkers(byte[] data, int start, int end, Action<int> record)
+    {
+        int position = start;
+        if (BitConverter.IsLittleEndian && Vector256.IsHardwareAccelerated)
+        {
+            int width = Vector256<byte>.Count;
+            ref byte first = ref MemoryMarshal.GetArrayDataReference(data);
+            for (; position <= end - width; position += width)
+            {
+                var low = Vector256.LoadUnsafe(ref first, (nuint)position);
+                var high = Vector256.LoadUnsafe(ref first, (nuint)(position + 1));
+                var geometry = Vector256.Equals(low & Vector256.Create((byte)0xFE), Vector256.Create((byte)0xD6))
+                    & Vector256.Equals(high, Vector256.Create((byte)0x07));
+                var curve = Vector256.Equals(low, Vector256.Create((byte)0x46))
+                    & Vector256.Equals(high, Vector256.Create((byte)0x03));
+                uint candidates = (geometry | curve).ExtractMostSignificantBits();
+                while (candidates != 0)
+                {
+                    record(position + BitOperations.TrailingZeroCount(candidates));
+                    candidates &= candidates - 1;
+                }
+            }
+        }
+        for (; position < end; position++)
+            if (IsBlockMarker(data[position], data[position + 1])) record(position);
     }
 
     private static (bool IsBlock, int Size, uint Eid, ushort Cls, uint DataSize)? ParseItem(
@@ -168,30 +283,22 @@ internal static partial class TfStreamWalker
         if (pos + 12 > n) return null;
         uint eid = BitConverter.ToUInt32(buf, pos);
         if (!ElementIdEncoding.IsSupported(eid) && eid != 0) return null;
-        // Ids outside the known set (family-SYMBOL elements live in the family doc's own
-        // numbering and are absent from ElemTable) or above the plain-id ceiling may still
-        // anchor, but only on a BLOCK whose 4-byte footer echoes dataSize (strong
-        // signature; well-formed blocks always carry it). Without this, whole family-
-        // symbol regions (door leafs, fixture bodies) were skipped byte-by-byte.
-        bool needFooter = eid == 0 || !knownIds.Contains(eid);
-        if (!needFooter)
+        ushort magic = BitConverter.ToUInt16(buf, pos + 8);
+        if (magic is 0x053C or 0x04F8)
         {
-            ushort magic = BitConverter.ToUInt16(buf, pos + 8);
             uint bodySize = BitConverter.ToUInt32(buf, pos + 4);
-            if ((magic == 0x053C || magic == 0x04F8) && bodySize < 500_000 && pos + 12 + bodySize <= n)
+            if (bodySize < 500_000 && pos + 12 + bodySize <= n && eid != 0 && knownIds.Contains(eid))
                 return (false, 12 + (int)bodySize, eid, 0, 0);
         }
         if (pos + 16 > n) return null;
         uint ds = BitConverter.ToUInt32(buf, pos + 8);
+        // Every block needs a size echo. An owner outside ElemTable (including loaded
+        // family symbols) can anchor with that echo and a payload of at least eight bytes.
+        if (ds >= 1_000_000 || pos + 16 + ds > n
+            || BitConverter.ToUInt32(buf, pos + 12 + (int)ds) != ds
+            || (ds < 8 && (eid == 0 || !knownIds.Contains(eid))))
+            return null;
         ushort ci = BitConverter.ToUInt16(buf, pos + 12);
-        if (ds < 1_000_000 && pos + 16 + ds <= n && TfBlockDeserializer.Schemas.ContainsKey(ci))
-        {
-            // The footer echo is required for every block: an id of the known set alone let item-shaped bytes
-            // inside another block pass as a block and hide the items behind them.
-            if (BitConverter.ToUInt32(buf, pos + 12 + (int)ds) != ds || (needFooter && ds < 8))
-                return null;
-            return (true, 16 + (int)ds, eid, ci, ds);
-        }
-        return null;
+        return TfBlockDeserializer.Schemas.ContainsKey(ci) ? (true, 16 + (int)ds, eid, ci, ds) : null;
     }
 }

@@ -236,4 +236,23 @@ public class ScaledInstanceComponentTests
         Assert.NotNull(placed);
         Assert.Equal(30, placed.Faces.Count);
     }
+
+    [Fact]
+    public void PendingGeometryPreservesCollectionOrderAcrossBatches()
+    {
+        var block = SymbolBlock();
+        uint size = BitConverter.ToUInt32(block, 8);
+        var rejected = new BlockParser.PendingGRep(new byte[16], 30, 0, 0, false);
+        var jobs = new List<BlockParser.PendingGRep> { new(block, 20, 0, size, false) };
+        while (jobs.Count <= BlockParser.PendingGRepBatchSize) jobs.Add(rejected);
+        jobs.Add(new(block, 10, 0, size, false));
+        var state = new ParsingState();
+        var unreadable = new HashSet<BlockParser.GRepRange>();
+
+        BlockParser.ApplyPendingGReps(state, jobs, unreadable);
+
+        Assert.Equal(new uint[] { 20, 10 }, state.GrepBlocks.Keys.ToArray());
+        Assert.All(state.GrepBlocks.Values, geometry => Assert.Single(geometry.Instances));
+        Assert.Equal(new BlockParser.GRepRange(rejected.Chunk, 0, 0), Assert.Single(unreadable));
+    }
 }

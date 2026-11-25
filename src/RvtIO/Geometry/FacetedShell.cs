@@ -77,17 +77,18 @@ internal static class FacetedShell
         long edgeUseCount = 0;
         foreach (int faceIndex in indices)
         {
-            var normalized = CloneFace(faces[faceIndex]);
-            if (normalized.OuterVertices is not { Count: >= 3 } outer
+            var source = faces[faceIndex];
+            if (source.OuterVertices is not { Count: >= 3 } outer
                 || outer.Any(point => point.Length < 3
                     || !double.IsFinite(point[0]) || !double.IsFinite(point[1])
                     || !double.IsFinite(point[2])))
                 return false;
+            var normalized = CloneFaceMetadata(source);
             normalized.OuterVertices = CleanPrecisionLoop(outer);
             if (normalized.OuterVertices.Count < 3
                 || FaceCollapsesAtIfcPrecision(normalized))
                 return false;
-            normalized.InnerVertices = normalized.InnerVertices?
+            normalized.InnerVertices = source.InnerVertices?
                 .Where(ring => ring.Count >= 3 && ring.All(point => point.Length >= 3
                     && double.IsFinite(point[0]) && double.IsFinite(point[1])
                     && double.IsFinite(point[2])))
@@ -320,19 +321,17 @@ internal static class FacetedShell
         {
             var first = IfcPrecisionKeyFeet(ring[0]);
             var last = first;
-            int count = 1;
+            var clean = new List<double[]>(ring.Count) { (double[])ring[0].Clone() };
             for (int index = 1; index < ring.Count; index++)
             {
                 var point = ring[index];
                 var key = IfcPrecisionKeyFeet(point);
                 if (last == key) continue;
-                if (count != index) ring[count] = point;
-                count++;
+                clean.Add((double[])point.Clone());
                 last = key;
             }
-            if (count > 1 && first == last) count--;
-            ring.RemoveRange(count, ring.Count - count);
-            return ring;
+            if (clean.Count > 1 && first == last) clean.RemoveAt(clean.Count - 1);
+            return clean;
         }
 
         static void ReverseFace(GeoFace face, bool detachVertices)
@@ -355,27 +354,18 @@ internal static class FacetedShell
             }
         }
 
-        static GeoFace CloneFace(GeoFace source)
-        {
-            static List<double[]> CopyRing(List<double[]> ring) =>
-                ring.Select(point => (double[])point.Clone()).ToList();
-
-            return new GeoFace
+        static GeoFace CloneFaceMetadata(GeoFace source) =>
+            new((double[])source.Origin.Clone(), (double[])source.Normal.Clone(), includePlaneAxes: false)
             {
-                Origin = (double[])source.Origin.Clone(),
                 XVector = (double[])source.XVector.Clone(),
                 YVector = (double[])source.YVector.Clone(),
-                Normal = (double[])source.Normal.Clone(),
                 Envelope = source.Envelope is null ? null : (double[])source.Envelope.Clone(),
                 Area = source.Area,
                 InnerLoops = source.InnerLoops?.Select(loop => (double[])loop.Clone()).ToList(),
-                OuterVertices = source.OuterVertices is null ? null : CopyRing(source.OuterVertices),
-                InnerVertices = source.InnerVertices?.Select(CopyRing).ToList(),
                 AlternativeOuterVertices = source.AlternativeOuterVertices is null ? null
                     : source.AlternativeOuterVertices.Select(point => (double[])point.Clone()).ToList(),
                 EdgeIndices = source.EdgeIndices?.ToList(),
             };
-        }
     }
 
     /// <summary>

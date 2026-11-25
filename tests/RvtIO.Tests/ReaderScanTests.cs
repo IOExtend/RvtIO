@@ -263,4 +263,21 @@ public class ReaderScanTests
         Assert.Equal(cos, transform[0]);
         Assert.Equal(sin, transform[1]);
     }
+
+    [Fact]
+    public void SecondBlockPassSkipsOnlyASoleIdenticalFirstGeometryCandidate()
+    {
+        byte[] chunk = new byte[80];
+        var same = new BlockParser.PendingGRep(chunk, 1, 0, 16, false);
+        var later = same with { Start = 16 };
+        var different = same with { Eid = 2 };
+        var competing = same with { Eid = 3 };
+        var another = competing with { Start = 32 };
+        var familyCut = same with { Eid = 4, IsFamilyCut = true };
+        List<BlockParser.PendingGRep> second = [same, later, different with { Start = 32 }, different, competing, familyCut];
+
+        BlockParser.SkipRepeatedFirstGReps([same, different, competing, another, familyCut], second);
+
+        Assert.Equal([later, different with { Start = 32 }, different, competing, familyCut], second);
+    }
 }

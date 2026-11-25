@@ -132,4 +132,38 @@ public class PartitionCutTests
         w.Write(Id("SegmentCheckback"));
         w.Write(size);
     }
+
+    [Theory]
+    [InlineData(0, "gzip-crc-length-or-extent")]
+    [InlineData(-1, "gzip-length")]
+    [InlineData(1, "gzip-crc-length-or-extent")]
+    public void PrefetchReportsCorruptMembersAtTheSamePointAsTheSerialWalk(int sizeDelta, string expectedFailure)
+    {
+        byte[] raw = TwoBlocks();
+        ReadOnlySpan<byte> marker = [0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0x0b];
+        int first = raw.AsSpan().IndexOf(marker);
+        int second = first + marker.Length + raw.AsSpan(first + marker.Length).IndexOf(marker);
+        int payloadBytes = (int)BitConverter.ToUInt32(raw, second - 16) - 8;
+        int trailer = second + payloadBytes - 8;
+        if (sizeDelta == 0) raw[trailer] ^= 1;
+        else
+        {
+            var size = raw.AsSpan(trailer + 4, 4);
+            uint length = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(size);
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(size, (uint)(length + sizeDelta));
+        }
+        var (tags, idWidth) = Framing;
+        var serial = new List<(int Channel, ulong Owner, long Offset)>();
+        var parallel = new List<(int Channel, ulong Owner, long Offset)>();
+
+        Assert.False(PartitionFraming.Walk(raw, tags, idWidth,
+            record => serial.Add((record.Channel, record.Owner, record.Offset)), out var serialFailure, out _));
+        Assert.False(PartitionFraming.Walk(raw, tags, idWidth,
+            record => parallel.Add((record.Channel, record.Owner, record.Offset)), out var parallelFailure, out _, segmentBytes: []));
+
+        Assert.Equal(expectedFailure, serialFailure);
+        Assert.Equal(serialFailure, parallelFailure);
+        Assert.NotEmpty(serial);
+        Assert.Equal(serial, parallel);
+    }
 }
