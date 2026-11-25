@@ -1348,6 +1348,10 @@ internal static partial class GRepParserV2
                 {
                     // Layout: [Envelope 4xf64 uv][orient u8] then Plane: [O,X,Y] (105 total) /
                     // CylSurf|ConeSurf: [O,X,Y,Z][R] (137).
+                    // Check the length first: a block replayed from scratch is an exact-size buffer, so the
+                    // envelope reads below must not run past it before the guard can raise Stop.
+                    int need = cls == 522 ? 105 : 137;
+                    if (!c.CanRead(need)) throw Stop;
                     var env = new double[4];
                     for (int k = 0; k < 4; k++) env[k] = BitConverter.ToDouble(c.D, c.Pos + 8 * k);
                     int fp = c.Pos + 33;
@@ -1356,8 +1360,6 @@ internal static partial class GRepParserV2
                         Kind = cls == 522 ? SurfKind.Plane : cls == 983 ? SurfKind.Cylinder : SurfKind.Cone,
                         Env = env, Orient = c.D[c.Pos + 32],
                     };
-                    int need = cls == 522 ? 105 : 137;
-                    if (!c.CanRead(need)) throw Stop;
                     for (int k = 0; k < 3; k++)
                     {
                         sr.O[k] = BitConverter.ToDouble(c.D, fp + 8 * k);
