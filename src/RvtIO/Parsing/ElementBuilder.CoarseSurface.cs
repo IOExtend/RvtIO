@@ -12,14 +12,28 @@ internal static partial class ElementBuilder
     /// This separate view is placed like the visible body and never replaces the element's geometry.</summary>
     internal static void ApplyCoarseDoorWindowSurfaces(RevitFileInfo info, ParsingState state)
     {
+        var candidates = new List<Element>();
         foreach (var element in info.Elements)
+            if (element.CategoryId is DoorsCategoryId or WindowsCategoryId or StructuralColumnsCategoryId)
+                candidates.Add(element);
+
+        // The temporary decoded bodies are large. Bound the number built at the same time.
+        if (SymbolDiagPath != null || Environment.GetEnvironmentVariable("RVTIO_GREPV2_DBG") == "1"
+            || Environment.GetEnvironmentVariable("RVTIO_GREPV2_DBG_ID") is { Length: > 0 }
+            || Environment.GetEnvironmentVariable("RVTIO_TOPO") is { Length: > 0 }
+            || Environment.GetEnvironmentVariable("RVTIO_MESH_DIAG") is { Length: > 0 })
+        {
+            foreach (var element in candidates) Apply(element);
+        }
+        else Parallel.ForEach(candidates, new ParallelOptions { MaxDegreeOfParallelism = 2 }, Apply);
+
+        void Apply(Element element)
         {
             if (element.CategoryId == StructuralColumnsCategoryId)
             {
                 ApplyMediumLevelVolume(element, state);
-                continue;
+                return;
             }
-            if (element.CategoryId is not (DoorsCategoryId or WindowsCategoryId)) continue;
             uint id = (uint)element.Id;
             state.GrepBlocks.TryGetValue(id, out var grep);
             state.FamilyInstanceTransforms.TryGetValue(id, out var transformOnly);
@@ -27,27 +41,10 @@ internal static partial class ElementBuilder
             if (!HasQuantityAlternative(grep, state, visited)
                 && !(transformOnly != null && state.GrepBlocks.TryGetValue((uint)Math.Max(transformOnly.SymbolId, 0), out var symbol)
                     && HasQuantityAlternative(symbol, state, visited)))
-                continue;
+                return;
 
-            state.CoarseView = true;
-            state.IncludeNonVisibleQuantities = true;
-            try
-            {
-                var coarse = new Element { Id = element.Id, TypeId = element.TypeId, BoundingBox = element.Geometry?.BoundingBox };
-                var own = grep?.CoarseQuantities ?? grep?.Coarse ?? grep;
-                if (own != null)
-                {
-                    coarse.Geometry = BuildGeometryData(own, state.SeparateFacesWithDistinctOpenings);
-                    ExpandInstanceGeometry(coarse, own, element.TypeId, state);
-                }
-                ExpandTransformOnlyInstanceGeometry(coarse, id, element.TypeId, state);
-                element.CoarseSurfaceArea = BrepMeasures.SurfaceAreaCurrent(coarse.Geometry);
-            }
-            finally
-            {
-                state.CoarseView = false;
-                state.IncludeNonVisibleQuantities = false;
-            }
+            var coarse = BuildQuantityGeometry(element.Id, grep, state, GeometryDetail.CoarseQuantities);
+            element.CoarseSurfaceArea = BrepMeasures.SurfaceAreaCurrent(coarse);
         }
     }
 
@@ -64,20 +61,8 @@ internal static partial class ElementBuilder
                 && HasAlternative(symbol, state, visited, 2)))
             return;
         element.HasMediumAlternatives = true;
-        state.DetailView = 2;
-        try
-        {
-            var alternative = new Element { Id = element.Id, TypeId = element.TypeId, BoundingBox = element.Geometry?.BoundingBox };
-            var block = grep?.Medium ?? grep;
-            if (block != null)
-            {
-                alternative.Geometry = BuildGeometryData(block, state.SeparateFacesWithDistinctOpenings);
-                ExpandInstanceGeometry(alternative, block, element.TypeId, state);
-            }
-            ExpandTransformOnlyInstanceGeometry(alternative, id, element.TypeId, state);
-            element.MediumSolidTotals = BrepMeasures.NodeSolidTotalsCurrent(alternative.Geometry);
-        }
-        finally { state.DetailView = 0; }
+        var medium = BuildQuantityGeometry(element.Id, grep, state, GeometryDetail.Medium);
+        element.MediumSolidTotals = BrepMeasures.NodeSolidTotalsCurrent(medium);
     }
 
     /// <summary>True when the block or a nested symbol has a separate Coarse or non-visible quantity view.</summary>

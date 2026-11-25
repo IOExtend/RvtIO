@@ -28,6 +28,10 @@ API between minor releases.
 
 ### Changed
 
+- Reading reuses local family symbol geometry, builds independent elements in parallel, and reduces parameter and geometry
+  allocations during decoding and post-processing. Compact JSON prepares properties in bounded batches and writes them
+  in element ID order.
+
 - `SaveAs` and `Rewrite` to another directory also check the saved paths of the linked images of a project, as they already did for linked models and point clouds. They refuse with `relative-reference-relocation` when a relative image path would resolve to a different file or the layout of a link cannot be verified. See the [writing guide](docs/writing.md).
 
 ### Fixed

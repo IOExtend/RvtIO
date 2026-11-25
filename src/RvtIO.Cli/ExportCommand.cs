@@ -204,8 +204,9 @@ internal static partial class Program
         if (compactJsonPath != null)
         {
             // The compact export reads Element.Name only where it is validated (the IFC branch above keeps the fallback names).
-            RvtIO.Export.ValidatedElementNames.Apply(jsonModel, jsonState);
-            var compactIdentity = new CompactIdentity(CompactUniverse.Select(jsonModel));
+            var names = new CompactElementNames(jsonModel, jsonState);
+            names.ApplyValidatedNames(jsonModel, jsonState);
+            var compactIdentity = new CompactIdentity(CompactUniverse.Enumerate(jsonModel));
             // --dev-candidates <tsv>: measurement run without the value gate; writes (id, parameter, stored text, derived text, class) of every
             // listed parameter for the value gate. --dev-trace <tsv>: writes (id, class, parameter, reason) of every listed parameter
             // (reason empty: written) and of every element whose list is unknown (parameter 0). --dev-facts <tsv>: writes the facts that decide
@@ -226,7 +227,8 @@ internal static partial class Program
             // or from the in-memory R22 model when available.
             var compactGate = RvtIO.Compact.CompactValueGate.ForLayout(jsonModel.GeometryUndecoded);
             CompactSolidQuantities? compactQuantities = null;
-            if (ifcState.R22View || !ifcModel.GeometryUndecoded)
+            // Only wide-layout property rules and the explicit solids dump consume this index.
+            if ((jsonModel.GeometryUndecoded || solidsPath != null) && (ifcState.R22View || !ifcModel.GeometryUndecoded))
             {
                 compactQuantities = CompactSolidQuantities.From(ifcModel, ifcState, compactGate.HasSolidRules);
             }
@@ -247,7 +249,8 @@ internal static partial class Program
             }
             // A project (.rvt) is a document without an owner family; an .rfa is not decided.
             var compactSource = CompactPropertySources.Create(jsonModel, jsonState,
-                rvtPath.EndsWith(".rvt", StringComparison.OrdinalIgnoreCase) ? true : null, gated: candidatesPath == null, identity: compactIdentity, quantities: compactQuantities);
+                rvtPath.EndsWith(".rvt", StringComparison.OrdinalIgnoreCase) ? true : null,
+                gated: candidatesPath == null, identity: compactIdentity, quantities: compactQuantities, names: names);
             using var candidatesWriter = candidatesPath == null ? null : new StreamWriter(candidatesPath, false, new System.Text.UTF8Encoding(false));
             using var traceWriter = tracePath == null ? null : new StreamWriter(tracePath, false, new System.Text.UTF8Encoding(false));
             using var factsWriter = factsPath == null ? null : new StreamWriter(factsPath, false, new System.Text.UTF8Encoding(false));

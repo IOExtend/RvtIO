@@ -14,6 +14,8 @@ internal static partial class TfBlockDeserializer
     internal sealed record GElementFaceLoopTopology(int FaceQueueIndex, int? FirstLoopQueueIndex,
         IReadOnlyList<GElementLoopTopology> Loops);
     internal sealed record OwnGElementFreshLoopTopology(int OwnerId, IReadOnlyList<GElementFaceLoopTopology> Faces);
+    private readonly record struct LoopEdgeData(int? Side0, int? Side1, byte Flags,
+        IReadOnlyList<GElementEdgeUvPoint> Endpoints, IReadOnlyList<GElementEdgeUvPoint> Interior);
 
     /// <summary>Face first/next loop order and a fresh ConstGEdgeIter(loop) forward traversal. Uses same-archive key
     /// bindings, the concrete virtual isLoop dispatch, the first matching face side and the flag-based point count.
@@ -22,13 +24,23 @@ internal static partial class TfBlockDeserializer
     internal static OwnGElementFreshLoopTopology? SelectOwnGElementLoopTopology(
         OwnGElementGeometryGraph graph, out string? failure)
     {
+        var analysis = AnalyzeGElement(graph).Topology.Value;
+        failure = analysis.Failure;
+        return analysis.Value;
+    }
+
+    private static OwnGElementFreshLoopTopology? ReadOwnGElementLoopTopology(
+        OwnGElementGeometryGraph graph, out string? failure)
+    {
         var references = SelectOwnGElementFreshArchiveReferences(graph, out failure);
         if (references == null) return null;
         failure = "loop-topology-incomplete-references";
         if (!references.Complete) return null;
         var nodes = graph.Nodes.ToDictionary(n => n.QueueIndex);
         var links = new Dictionary<(int, int, string, int, int), GElementArchiveReference>();
-        string context = "loop-topology";
+        var edgeData = new Dictionary<int, LoopEdgeData>();
+        string? stage = null;
+        int contextOwner = 0, contextTarget = 0;
         try
         {
             foreach (var link in references.References)
@@ -41,7 +53,9 @@ internal static partial class TfBlockDeserializer
                 int? q = first;
                 while (q is int index)
                 {
-                    context = $"loop-topology-chain:{face.QueueIndex}:{index}";
+                    stage = "chain";
+                    contextOwner = face.QueueIndex;
+                    contextTarget = index;
                     if (!seen.Add(index)) throw Fail; // native chain is unbounded; never invent empty geometry
                     var loop = Loop(index);
                     int? next = Owned(loop, 1255, "m_nextLoop", true);
@@ -52,13 +66,16 @@ internal static partial class TfBlockDeserializer
                     // getOuterLoops rejects only the self sentinel and the open flag here.
                     // A null first edge is not silently reclassified as an empty self sentinel.
                     bool candidate = firstEdge != index && open == 0;
-                    var skipped = new List<int>(); var constructorSeen = new HashSet<int>();
+                    List<int>? skipped = null;
+                    HashSet<int>? constructorSeen = null;
                     int? initial = firstEdge; var cursor = loop;
                     while (initial == cursor.QueueIndex)
                     {
-                        context = $"loop-topology-constructor:{index}:{cursor.QueueIndex}";
-                        if (!constructorSeen.Add(cursor.QueueIndex)) throw Fail;
-                        skipped.Add(cursor.QueueIndex);
+                        stage = "constructor";
+                        contextOwner = index;
+                        contextTarget = cursor.QueueIndex;
+                        if (!(constructorSeen ??= new()).Add(cursor.QueueIndex)) throw Fail;
+                        (skipped ??= new()).Add(cursor.QueueIndex);
                         int? following = Owned(cursor, 1255, "m_nextLoop", true);
                         if (following == null) { initial = null; break; }
                         cursor = Loop(following.Value);
@@ -69,14 +86,20 @@ internal static partial class TfBlockDeserializer
                     string end = "no-initial-edge"; int increments = 0;
                     while (current is int edgeIndex)
                     {
-                        context = $"loop-topology-edge:{index}:{edgeIndex}";
+                        stage = "edge";
+                        contextOwner = index;
+                        contextTarget = edgeIndex;
                         if (!nodes.TryGetValue(edgeIndex, out var edge) || edge.ClassId != 1243) throw Fail;
-                        int? side0 = Weak(edge, 1244, "m_pFace", 0, 2, true);
-                        int? side1 = Weak(edge, 1244, "m_pFace", 1, 2, true);
-                        int? side = ownFace == side0 ? 0 : ownFace == side1 ? 1 : null;
-                        byte flags = Byte(edge, 1244, "m_flags");
-                        var endpoints = Points(edge, "m_firstAndLastEdgePnts", true);
-                        var interior = Points(edge, "m_interiorEdgePnts", false);
+                        if (!edgeData.TryGetValue(edgeIndex, out var data))
+                        {
+                            var faceField = RequireUniqueGraphField(edge, 1244, "m_pFace", 2);
+                            data = new(WeakField(edge, faceField, 0, true), WeakField(edge, faceField, 1, true),
+                                Byte(edge, 1244, "m_flags"), Points(edge, "m_firstAndLastEdgePnts", true),
+                                Points(edge, "m_interiorEdgePnts", false));
+                            edgeData.Add(edgeIndex, data);
+                        }
+                        int? side = ownFace == data.Side0 ? 0 : ownFace == data.Side1 ? 1 : null;
+                        var (flags, endpoints, interior) = (data.Flags, data.Endpoints, data.Interior);
                         int count = (flags & 2) == 0 ? 0 : (flags & 4) == 0 ? 1 : interior.Count + 2;
                         int? target = side is int s ? Weak(edge, 1244, "m_next", s, 2, false) : null;
                         if (side == null) end = "face-mismatch"; // native warning and NULL current, without increment
@@ -91,14 +114,18 @@ internal static partial class TfBlockDeserializer
                         current = end == "advanced" ? target : null;
                     }
                     loops.Add(new(index, loop.ClassId, ownFace, next, firstEdge, lastEdge, open,
-                        candidate, skipped, initial, visits, end));
+                        candidate, (IReadOnlyList<int>?)skipped ?? Array.Empty<int>(), initial, visits, end));
                     q = next;
                 }
                 faces.Add(new(face.QueueIndex, first, loops));
             }
             failure = null; return new(graph.OwnerId, faces);
         }
-        catch (DecodeFail) { failure = context; return null; }
+        catch (DecodeFail)
+        {
+            failure = stage == null ? "loop-topology" : $"loop-topology-{stage}:{contextOwner}:{contextTarget}";
+            return null;
+        }
 
         static bool LoopKind(ushort cls) => cls is 1254 or 1257;
         GElementGraphNode Loop(int q)
@@ -106,15 +133,9 @@ internal static partial class TfBlockDeserializer
             if (!nodes.TryGetValue(q, out var node) || !LoopKind(node.ClassId)) throw Fail;
             return node;
         }
-        GElementGraphField Field(GElementGraphNode node, int declaring, string name, int? count)
-        {
-            var fields = node.Fields.Where(f => f.Declaring == declaring && f.Name == name).ToArray();
-            if (fields.Length != 1 || count is int length && fields[0].Items.Count != length) throw Fail;
-            return fields[0];
-        }
         int? Owned(GElementGraphNode node, int declaring, string name, bool loopTarget)
         {
-            var item = Field(node, declaring, name, 1).Items[0]; var p = item.Pointer;
+            var item = RequireUniqueGraphField(node, declaring, name, 1).Items[0]; var p = item.Pointer;
             if (p == null || item.Values.Count != 0 || item.Fields.Count != 0) throw Fail;
             if (p.Handle == 0)
             {
@@ -126,10 +147,11 @@ internal static partial class TfBlockDeserializer
                 || loopTarget && !LoopKind(n.ClassId)) throw Fail;
             return target;
         }
-        int? Weak(GElementGraphNode node, int declaring, string name, int item, int count, bool faceTarget)
+        int? Weak(GElementGraphNode node, int declaring, string name, int item, int count, bool faceTarget) =>
+            WeakField(node, RequireUniqueGraphField(node, declaring, name, count), item, faceTarget);
+        int? WeakField(GElementGraphNode node, GElementGraphField field, int item, bool faceTarget)
         {
-            var field = Field(node, declaring, name, count);
-            if (!links.TryGetValue((node.QueueIndex, declaring, name, item, field.Items[item].Start), out var link)) throw Fail;
+            if (!links.TryGetValue((node.QueueIndex, field.Declaring, field.Name, item, field.Items[item].Start), out var link)) throw Fail;
             if (link.Outcome == "null") return null;
             if (link.Outcome != "own-node" || link.TargetQueueIndex is not int target
                 || !nodes.TryGetValue(target, out var n) || n.ClassId != link.TargetClassId
@@ -138,24 +160,26 @@ internal static partial class TfBlockDeserializer
         }
         byte Byte(GElementGraphNode node, int declaring, string name)
         {
-            var item = Field(node, declaring, name, 1).Items[0];
+            var item = RequireUniqueGraphField(node, declaring, name, 1).Items[0];
             if (item.Values.Count != 1 || item.Values[0] is < 0 or > 255 || item.End - item.Start != 1
                 || item.Pointer != null || item.Fields.Count != 0) throw Fail;
             return (byte)item.Values[0];
         }
         IReadOnlyList<GElementEdgeUvPoint> Points(GElementGraphNode node, string name, bool endpoints)
         {
-            var field = Field(node, 1244, name, endpoints ? 2 : null);
+            var field = RequireUniqueGraphField(node, 1244, name, endpoints ? 2 : null);
             if (field.Count == null || (field.Count == uint.MaxValue ? field.Items.Count != 0 : field.Count != field.Items.Count)) throw Fail;
-            var points = new List<GElementEdgeUvPoint>();
-            foreach (var item in field.Items)
+            if (field.Items.Count == 0) return [];
+            var points = new GElementEdgeUvPoint[field.Items.Count];
+            for (int i = 0; i < points.Length; i++)
             {
+                var item = field.Items[i];
                 if (item.Pointer != null || item.Values.Count != 0 || item.Fields.Count != 1 || item.End - item.Start != 32) throw Fail;
                 var uv = item.Fields[0];
                 if (uv.Declaring != 1248 || uv.Name != "uv" || uv.Count != 2 || uv.Items.Count != 2) throw Fail;
                 foreach (var side in uv.Items)
                     if (side.Values.Count != 2 || side.Pointer != null || side.Fields.Count != 0 || side.End - side.Start != 16) throw Fail;
-                points.Add(new(item.Start, item.End, uv.Items[0].Values, uv.Items[1].Values));
+                points[i] = new(item.Start, item.End, uv.Items[0].Values, uv.Items[1].Values);
             }
             return points;
         }

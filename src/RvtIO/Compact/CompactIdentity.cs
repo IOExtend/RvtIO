@@ -61,6 +61,7 @@ internal sealed class CompactIdentity
     private readonly Dictionary<int, Element> _rows = [];
     private readonly Func<Element, int?> _headerCategory;
     private readonly Func<Element, string?> _elementName;
+    internal bool UsesDefaultResolvers { get; }
 
     /// <param name="rows">The elements of the element table (<see cref="CompactUniverse"/>); a type is looked up among them.</param>
     /// <param name="headerCategory">The header category of an element, null when unknown (default <see cref="CompactHeaderCategory.Of"/>).</param>
@@ -70,6 +71,7 @@ internal sealed class CompactIdentity
     {
         ArgumentNullException.ThrowIfNull(rows);
         foreach (var element in rows) _rows.TryAdd(element.Id, element);
+        UsesDefaultResolvers = headerCategory == null && elementName == null;
         _headerCategory = headerCategory ?? CompactHeaderCategory.Of;
         _elementName = elementName ?? (element => element.Name);
     }

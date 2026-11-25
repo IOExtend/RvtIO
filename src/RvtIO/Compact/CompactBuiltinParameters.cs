@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using RvtIO.Internal;
 using RvtIO.Model;
 using RvtIO.Parsing;
@@ -20,6 +21,8 @@ internal sealed class CompactBuiltinParameters
     /// <summary>The built-in entries of an element (ascending id) and the (group, label) pairs left without a validated value.</summary>
     internal readonly record struct CompactBuiltinResult(
         IReadOnlyList<(int Id, CompactProperty Property)> Entries, IReadOnlySet<(string Group, string Label)> Unvalidated);
+    private static readonly IReadOnlySet<(string Group, string Label)> EmptyUnvalidated =
+        FrozenSet<(string Group, string Label)>.Empty;
 
     /// <summary>ELEM_DESIGN_OPTION_ID ("Design Option"). Without design option sets no element is in an option, so the
     /// parameter is the null id and prints "None".</summary>
@@ -34,9 +37,11 @@ internal sealed class CompactBuiltinParameters
     }
 
     private readonly CompactElementNames _names;
+    private readonly Func<int, Element?> _findElement;
     private readonly CompactFormatSettings? _format;
     private readonly CompactListFileFacts _file;
     private readonly Func<Element, int?> _headerCategory;
+    private readonly bool _usesDefaultHeaderCategory;
     private readonly CompactValueGate? _gate;
     private readonly ParsingState? _state;
     private readonly CompactSolidQuantities? _quantities;
@@ -44,6 +49,7 @@ internal sealed class CompactBuiltinParameters
     private readonly string? _lookupNoneText;
     private readonly Dictionary<int, Parameter> _held = [];
     private readonly HashSet<int> _conflicting = [];
+    private readonly HashSet<(string Group, string Label)> _seen = [];
     private readonly Dictionary<string, int> _skipped = new(StringComparer.Ordinal);
 
     /// <param name="gate">Which value sources are trusted per parameter; null writes the derived value for every parameter and
@@ -61,8 +67,10 @@ internal sealed class CompactBuiltinParameters
         _state = state;
         _surveyOffsetFeet = surveyOffsetFeet;
         _names = names;
+        _findElement = names.Find;
         _format = format;
         _file = file;
+        _usesDefaultHeaderCategory = headerCategory == null;
         _headerCategory = headerCategory ?? CompactHeaderCategory.Of;
         _gate = gate;
     }
@@ -93,6 +101,26 @@ internal sealed class CompactBuiltinParameters
 
     public int Elements { get; private set; }
 
+    internal bool CanFork => _usesDefaultHeaderCategory
+        && Trace == null && FactsTrace == null && Candidates == null && IdListOverride == null;
+
+    internal CompactBuiltinParameters Fork() =>
+        new(_names, _format, _file, gate: _gate, state: _state, surveyOffsetFeet: _surveyOffsetFeet,
+            lookupNoneText: _lookupNoneText, quantities: _quantities);
+
+    internal void CollectReport(CompactBuiltinParameters worker)
+    {
+        if (worker.Elements == 0) return;
+        Elements += worker.Elements;
+        Written += worker.Written;
+        ElementsWithList += worker.ElementsWithList;
+        LastIds = worker.LastIds;
+        foreach (var (reason, count) in worker._skipped)
+            _skipped[reason] = _skipped.GetValueOrDefault(reason) + count;
+        worker.Elements = worker.Written = worker.ElementsWithList = 0;
+        worker._skipped.Clear();
+    }
+
     /// <summary>The entries in ascending id order, and the (group, label) pairs that are listed but whose value is not written: a later
     /// parameter with the same pair must not be written either, because the writer keeps the first value of a repeated pair.
     /// Ids owned by another source (<paramref name="isOwned"/>) are not looked at.</summary>
@@ -101,7 +129,7 @@ internal sealed class CompactBuiltinParameters
         Elements++;
         int? header = _headerCategory(element);
         string recordClass = ElementListFacts.RecordClassName(element) ?? "";
-        var facts = new ElementListFacts(element, header, _file, id => _names.Find(id));
+        var facts = new ElementListFacts(element, header, _file, _findElement);
         FactsTrace?.Invoke(element, facts);
         var list = IdListOverride?.Invoke(element) is { } forced
             ? new CompactListResult(forced, null)
@@ -109,15 +137,16 @@ internal sealed class CompactBuiltinParameters
         LastIds = list.Ids;
         if (list.Ids is not { } ids)
         {
-            Skip("list: " + list.Unknown);
-            Trace?.Invoke(element, 0, "list: " + list.Unknown);
-            return new([], new HashSet<(string, string)>());
+            string reason = "list: " + list.Unknown;
+            Skip(reason);
+            Trace?.Invoke(element, 0, reason);
+            return new([], EmptyUnvalidated);
         }
         ElementsWithList++;
         Prepare(element);
         var result = new List<(int, CompactProperty)>(ids.Length);
-        var unvalidated = new HashSet<(string, string)>();
-        var seen = new HashSet<(string, string)>();
+        HashSet<(string Group, string Label)>? unvalidated = null;
+        _seen.Clear();
         foreach (int id in ids)
         {
             if (isOwned?.Invoke(id) == true) continue;
@@ -135,8 +164,8 @@ internal sealed class CompactBuiltinParameters
             }
             string? text = ValueText(element, id, header, out string? reason);
             // a repeated (group, label): the first id is the one kept, whatever the writer is given later
-            bool first = seen.Add((group, label));
-            if (!first && text != null && unvalidated.Contains((group, label)))
+            bool first = _seen.Add((group, label));
+            if (!first && text != null && unvalidated?.Contains((group, label)) == true)
             {
                 text = null;
                 reason = "label shared with an earlier parameter whose value is not written";
@@ -145,14 +174,14 @@ internal sealed class CompactBuiltinParameters
             {
                 Skip(reason!);
                 Trace?.Invoke(element, id, reason);
-                if (first) unvalidated.Add((group, label));
+                if (first) (unvalidated ??= new()).Add((group, label));
                 continue;
             }
             Trace?.Invoke(element, id, null);
             result.Add((id, new CompactProperty(group, label, text)));
             Written++;
         }
-        return new(result, unvalidated);
+        return new(result, unvalidated ?? EmptyUnvalidated);
     }
 
     private void Prepare(Element element)

@@ -345,7 +345,7 @@ internal sealed partial class WideNativeParams
         {
             if (_walker.Class(walk.Queue[qi])?.Name != "CellList") continue;
             np.CellClasses = Enumerable.Range(walk.QueueCountAtStart[qi], walk.QueueEnd[qi] - walk.QueueCountAtStart[qi])
-                .Select(i => R22Id(walk.Queue[i])).ToList();
+                .Select(i => R22Id(walk.Queue[i])).ToArray();
             break;
         }
         np.TailWalkComplete = walk.Exact;

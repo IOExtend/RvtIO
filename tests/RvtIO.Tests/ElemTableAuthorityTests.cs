@@ -64,6 +64,28 @@ public class ElemTableAuthorityTests
         Assert.Empty(ElemTableReader.LastWorksets);
     }
 
+    [Fact]
+    public void PostProcessAddsEachMissingElementOnceInTableThenWorksetOrder()
+    {
+        var existing = new Element
+        {
+            Id = 10,
+            Parameters = [BipHelpers.MakeBipParam(-1012100, "PHASE_CREATED", StorageType.ElementId, 75)],
+        };
+        var info = new RevitFileInfo { Elements = [existing] };
+        var state = new ParsingState
+        {
+            ElemTable = new() { [10] = 0, [30] = 0, [20] = 0, [0] = 0 },
+            ElemWorksets = new() { [20] = 1, [40] = 1, [30] = 1, [0x0F000000] = 1 },
+        };
+
+        ElementBuilder.PostProcess(info, state);
+
+        Assert.Equal([10, 30, 20, 40], info.Elements.Select(element => element.Id));
+        Assert.All(info.Elements.Skip(1), element =>
+            Assert.Equal(75, Assert.Single(element.Parameters, parameter => parameter.Id == -1012100).Value));
+    }
+
     [SkippableFact]
     public void ProductionReadUsesTheExactR22CensusAndNotHistoryAsType()
     {
@@ -96,6 +118,36 @@ public class ElemTableAuthorityTests
         var state = new ParsingState(); state.ElemTable[100] = history;
         var info = new RevitFileInfo(); ElementBuilder.BuildElemTableElement(100, history, state, info);
         Assert.Equal(-1, Assert.Single(info.Elements).TypeId);
+    }
+
+    [Fact]
+    public void BuilderKeepsParameterPrecedenceWhenReusingTheIdSet()
+    {
+        var state = new ParsingState();
+        state.Records[100] = new ElementRecord
+        {
+            ElemId = 100,
+            References = [200],
+            BipParams = [new(501, null, 4, 10), new(501, null, 4, 20)],
+        };
+        state.ElemParamStrings[100] = new() { [501] = "stored", [502] = "first" };
+        state.ElemBipDoubles[100] = new() { [502] = 7, [-1001000] = 1 };
+        state.ElemBipDoubles[200] = new() { [502] = 8, [-1001000] = 2, [-1004005] = 3 };
+        state.ElemBaseFields[100] = new() { AssocLevelId = 40 };
+        state.ElemBipInts[101] = new() { [502] = 9 };
+        var info = new RevitFileInfo();
+        var scratch = new HashSet<int>();
+
+        ElementBuilder.BuildElemTableElement(100, 0, state, info, scratch);
+        ElementBuilder.BuildElemTableElement(101, 0, state, info, scratch);
+
+        var first = info.Elements[0].Parameters;
+        Assert.Equal([501, 502, -1001000, -1004005, -1001952], first.Take(5).Select(p => p.Id));
+        Assert.Equal("stored", Assert.Single(first, p => p.Id == 501).Value);
+        Assert.Equal("first", Assert.Single(first, p => p.Id == 502).Value);
+        Assert.Equal(1.0, Assert.Single(first, p => p.Id == -1001000).Value);
+        Assert.Equal(3.0, Assert.Single(first, p => p.Id == -1004005).Value);
+        Assert.Equal(9, Assert.Single(info.Elements[1].Parameters, p => p.Id == 502).Value);
     }
 
     [Theory]

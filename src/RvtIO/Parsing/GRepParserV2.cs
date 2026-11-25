@@ -1,4 +1,5 @@
 using RvtIO.Internal;
+using Pt3 = RvtIO.Geometry.Meshing.Pt3;
 
 namespace RvtIO.Parsing;
 
@@ -30,7 +31,7 @@ internal static partial class GRepParserV2
 
     /// <summary>
     /// Serialized class ids of the Face and Edge objects whose per-block counts feed <see
-    /// cref="GRepData.QueueClassCounts"/>.
+    /// cref="GRepData.QueueSummary"/>.
     /// </summary>
     internal const ushort GFaceClass = 1589;
     internal const ushort EdgeClass = 1243;
@@ -50,6 +51,8 @@ internal static partial class GRepParserV2
         public bool NativeWallBody;
         public bool IncludeNonVisible;
         public bool SawDetailCondition; // a node was judged below a detail-level condition
+        public Dictionary<int, ModelFilter>? ModelFilters;
+        public bool? HasRootMappedSource;
         public int BlockStart, BlockEnd; // this block's payload bounds (plane scan)
         public int LastEdgeEnd; // pos after the last decoded Edge
         public List<(ushort Cls, int V)> Queue = new();
@@ -101,6 +104,7 @@ internal static partial class GRepParserV2
         public Dictionary<ushort, int> ClassWalked = new();
         public Dictionary<ushort, int> TagBase = new();
         public List<int> DebugItemStarts = new();
+        public ResyncUndo? ProbeUndo;
 
         // Grammar-first tail harvest: face-handle -> surface pairs recovered from unwalked regions
         // (post-gap objects belong to queue entries that never got enqueued).
@@ -337,6 +341,9 @@ internal static partial class GRepParserV2
         /// free form faces (see <see cref="FreeformPoints"/>).
         /// </summary>
         public bool FreeformShared;
+        public bool HasAuthoredInterior => (MeshRawEdgePoints && RawInterior != null && !FreeformShared
+            ? RawInterior : FreeformInterior).Count > 0;
+        private List<EdgeUV> FreeformInterior => MeshStoredEdgePoints ? AuthoredInterior ?? Interior : Interior;
         /// <summary>
         /// The points of the edge for the Revit decoder in order: start, interior points, end.
         /// </summary>
@@ -358,7 +365,7 @@ internal static partial class GRepParserV2
         public List<EdgeUV> FreeformPoints()
         {
             var points = new List<EdgeUV>(Interior.Count + 2) { MeshStoredEdgePoints ? AuthoredStart ?? Start : Start };
-            points.AddRange(MeshStoredEdgePoints ? AuthoredInterior ?? Interior : Interior);
+            points.AddRange(FreeformInterior);
             points.Add(MeshStoredEdgePoints ? AuthoredEndP ?? EndP : EndP);
             return points;
         }
@@ -463,10 +470,16 @@ internal static partial class GRepParserV2
             // (a cache of planes only is the planar reader's)
             if (curved && !faces.Any(entry => c.DirectSurfaceByFace[(uint)entry.item.V].Kind == SurfKind.Cylinder))
                 return null;
-            if (c.Edges.Any(edge => !edge.HasEndpoints || edge.FaceA == edge.FaceB
+            var edgeCounts = new Dictionary<uint, int>(faceHandles.Count);
+            foreach (var edge in c.Edges)
+            {
+                if (!edge.HasEndpoints || edge.FaceA == edge.FaceB
                     || !faceHandles.Contains(edge.FaceA) || !faceHandles.Contains(edge.FaceB))
-                || faceHandles.Any(handle => c.Edges.Count(edge =>
-                    edge.FaceA == handle || edge.FaceB == handle) < 3))
+                    return null;
+                edgeCounts[edge.FaceA] = edgeCounts.GetValueOrDefault(edge.FaceA) + 1;
+                edgeCounts[edge.FaceB] = edgeCounts.GetValueOrDefault(edge.FaceB) + 1;
+            }
+            if (edgeCounts.Count != faceHandles.Count || edgeCounts.Values.Any(count => count < 3))
                 return null;
             if (literal) return BuildLiteralSpaceBoundary(c);
             if (weldFeet > 0) RegisterSpaceWeldPoints(c);
@@ -795,6 +808,8 @@ internal static partial class GRepParserV2
     public static GRepData? Parse(byte[] d, int blockStart, uint dataSize, bool nativeWallBody = false, bool requireCompleteWalk = false,
         bool measureSourceNodes = false, bool measureLighting = false, bool measureFills = false, BodyMeasure bodyMeasure = BodyMeasure.None)
     {
+        if (!requireCompleteWalk && !measureSourceNodes && !measureLighting && !measureFills && bodyMeasure == BodyMeasure.None)
+            return ParseCore(d, blockStart, dataSize, nativeWallBody, includeDetailLevels: true);
         var fine = ParseCore(d, blockStart, dataSize, nativeWallBody, requireCompleteWalk: requireCompleteWalk, measureSourceNodes: measureSourceNodes,
             measureLighting: measureLighting, measureFills: measureFills, bodyMeasure: bodyMeasure);
         if (fine is not { HasDetailLevelAlternatives: true }) return fine;
@@ -842,9 +857,12 @@ internal static partial class GRepParserV2
         && fine.Instances.Zip(coarse.Instances).All(pair => pair.First.SymbolElemId == pair.Second.SymbolElemId
             && pair.First.Transform.SequenceEqual(pair.Second.Transform));
 
+    internal static GRepData? ParseNativeWallBodyCandidate(byte[] data, int start, uint size)
+        => ParseCore(data, start, size, nativeWallBody: true, includeDetailLevels: true, requireCylinderEdgeBounds: true);
+
     private static GRepData? ParseCore(byte[] d, int blockStart, uint dataSize, bool nativeWallBody, bool includeNonVisible = false,
         bool requireCompleteWalk = false, bool measureSourceNodes = false, bool measureLighting = false, bool measureFills = false,
-        BodyMeasure bodyMeasure = BodyMeasure.None)
+        BodyMeasure bodyMeasure = BodyMeasure.None, bool includeDetailLevels = false, bool requireCylinderEdgeBounds = false)
     {
         int payloadStart = blockStart + 14;
         int payloadEnd = (int)Math.Min((long)blockStart + 16 + dataSize, d.Length);
@@ -1020,15 +1038,12 @@ internal static partial class GRepParserV2
                 }
             }
         }
-        var built = BuildGeometry(c, requireCompleteWalk, measureSourceNodes, measureLighting, measureFills, bodyMeasure);
-        if (built != null)
-        {
-            built.QueueClassCounts = c.Queue.GroupBy(item => item.Cls).ToDictionary(group => group.Key, group => group.Count());
-            if (measureLighting && !built.QueueClassCounts.ContainsKey(GFaceClass)) built.LightingBodyMeasures = (0, 0, 0);
-            if (bodyMeasure != BodyMeasure.None && !built.QueueClassCounts.ContainsKey(GFaceClass)) built.SourceBodyMeasures = (0, 0, 0);
-            built.HasDetailLevelAlternatives = c.SawDetailCondition;
-            built.RootBoundingBox = ValidBox(c.RootBoundingBox) ? c.RootBoundingBox : null;
-        }
+        // BuildGeometry computes MeshEdgeBounds only when a directly decoded cylinder is present.
+        // The wall candidate must have these bounds on every face.
+        if (requireCylinderEdgeBounds && !c.DirectSurfaceByFace.Values.Any(surface => surface.Kind == SurfKind.Cylinder)
+            && !IsDecodeTracingEnabled())
+            return null;
+        var built = BuildRepresentation(c, requireCompleteWalk, measureSourceNodes, measureLighting, measureFills, bodyMeasure);
         if (built != null && !includeNonVisible && t_detailLevel == 0
             && c.Queue.Any(node => (node.Cls == SolidClass || ShouldAttachSymbolGeometry(node.Cls))
                 && c.ObjectGInfo.TryGetValue(node.V, out var info) && IsHiddenInstanceVariant(info.Flags)))
@@ -1047,11 +1062,90 @@ internal static partial class GRepParserV2
             });
         }
         if (MeshDiagPath != null) WriteMeshDiag(c, built, payloadEnd - blockStart);
+        if (includeDetailLevels && built is { HasDetailLevelAlternatives: true })
+        {
+            // Detail conditions filter the decoded graph during geometry building.
+            // Full diagnostics also report the field walk for each representation.
+            bool replayDiagnostics = c.Debug || MeshDiagPath != null
+                || Environment.GetEnvironmentVariable("RVTIO_TOPO") is { Length: > 0 };
+            try
+            {
+                var coarse = BuildAtLevel(CoarseDetailLevel);
+                if (!ReferenceEquals(built, coarse) && !IsSameDetailLevelGeometry(built, coarse)) built.Coarse = coarse;
+                var medium = BuildAtLevel(2);
+                if (!ReferenceEquals(built, medium) && !IsSameDetailLevelGeometry(built, medium)) built.Medium = medium;
+            }
+            finally { t_detailLevel = 0; }
+
+            GRepData BuildAtLevel(int level)
+            {
+                // A walk can first diverge only at a filter it already reached at Fine.
+                if (!replayDiagnostics && c.ModelFilters != null
+                    && c.ModelFilters.Values.All(filter => filter.Allows(FineDetailLevel) == filter.Allows(level)))
+                    return built!;
+                t_detailLevel = level;
+                c.SawDetailCondition = false;
+                if (!replayDiagnostics)
+                    foreach (var edge in c.Edges)
+                        if (edge.RawInterior is { } raw)
+                        {
+                            // Tessellation rewrites the working points and their cached samples.
+                            edge.Start = edge.RawStart;
+                            edge.EndP = edge.RawEndP;
+                            edge.Interior = raw;
+                            edge.AuthoredStart = edge.AuthoredEndP = null;
+                            edge.AuthoredInterior = null;
+                            edge.SharedBoundaryPoints = null;
+                            edge.FreeformShared = false;
+                        }
+                return (replayDiagnostics ? ParseCore(d, blockStart, dataSize, nativeWallBody) : BuildRepresentation(c))
+                    ?? new GRepData();
+            }
+        }
         return built;
     }
 
+    private static GRepData? BuildRepresentation(Cur c, bool requireCompleteWalk = false,
+        bool measureSourceNodes = false, bool measureLighting = false, bool measureFills = false,
+        BodyMeasure bodyMeasure = BodyMeasure.None)
+    {
+        var built = BuildGeometry(c, requireCompleteWalk, measureSourceNodes, measureLighting, measureFills, bodyMeasure);
+        if (built == null) return null;
+        int faces = 0, edges = 0, solids = 0;
+        var counts = KeepStoredClassCounts ? new Dictionary<ushort, int>() : null;
+        foreach (var (cls, _) in c.Queue)
+        {
+            switch (cls)
+            {
+                case GFaceClass: faces++; break;
+                case EdgeClass: edges++; break;
+                case SolidClass: solids++; break;
+            }
+            if (counts != null) counts[cls] = counts.GetValueOrDefault(cls) + 1;
+        }
+        built.QueueSummary = (faces, edges, solids);
+        built.QueueClassCounts = counts;
+        if (faces == 0)
+        {
+            if (measureLighting) built.LightingBodyMeasures = (0, 0, 0);
+            if (bodyMeasure != BodyMeasure.None) built.SourceBodyMeasures = (0, 0, 0);
+        }
+        built.HasDetailLevelAlternatives = c.SawDetailCondition;
+        built.RootBoundingBox = ValidBox(c.RootBoundingBox) ? c.RootBoundingBox : null;
+        return built;
+    }
+
+    /// <summary>Keep per-class object counts for the IFC type key diagnostics.</summary>
+    private static readonly bool KeepStoredClassCounts = Environment.GetEnvironmentVariable("RVTIO_TYPEKEY_DIAG") is { Length: > 0 };
+
     private static readonly string? MeshDiagPath =
         Environment.GetEnvironmentVariable("RVTIO_MESH_DIAG") is { Length: > 0 } meshDiag ? meshDiag : null;
+
+    internal static bool IsDecodeTracingEnabled() => MeshDiagPath != null
+        || Environment.GetEnvironmentVariable("RVTIO_GREPV2_DBG") == "1"
+        || Environment.GetEnvironmentVariable("RVTIO_GREPV2_DBG_ID") is { Length: > 0 }
+        || Environment.GetEnvironmentVariable("RVTIO_TOPO") is { Length: > 0 }
+        || Environment.GetEnvironmentVariable("RVTIO_GREP_SLOW") is { Length: > 0 };
     private static readonly object MeshDiagLock = new();
     private static readonly HashSet<string> MeshDiagSeen = new();
     private static readonly HashSet<ushort> FacetedTopologyClasses = MeshDiagPath == null ? []
@@ -1270,14 +1364,17 @@ internal static partial class GRepParserV2
                 c.CurrentObjectClass = cls;
                 var qf = TfBlockDeserializer.SerializationFields(cls);
                 if (qf == null) throw Stop;
-                // Blob-headed items: refresh the class's tag base (tag = base + ordinal).
-                if (qf.Count > 0 && qf[0].Name == "m_GInfo" && c.CanRead(16))
+                if (c.ProbeUndo is null or { TrackTagBase: true })
                 {
-                    int tag0 = BitConverter.ToInt32(c.D, c.Pos);
-                    if (tag0 >= 0 && tag0 < 0x100000)
-                        c.TagBase[cls] = tag0 - c.ClassWalked.GetValueOrDefault(cls);
+                    // Blob-headed items: refresh the class's tag base (tag = base + ordinal).
+                    if (qf.Count > 0 && qf[0].Name == "m_GInfo" && c.CanRead(16))
+                    {
+                        int tag0 = BitConverter.ToInt32(c.D, c.Pos);
+                        if (tag0 >= 0 && tag0 < 0x100000)
+                            c.TagBase[cls] = tag0 - c.ClassWalked.GetValueOrDefault(cls);
+                    }
+                    SetProbeValue(c.ClassWalked, cls, c.ClassWalked.GetValueOrDefault(cls) + 1, c.ProbeUndo?.ClassWalked);
                 }
-                c.ClassWalked[cls] = c.ClassWalked.GetValueOrDefault(cls) + 1;
                 if (MeshDiagPath != null && FacetedTopologyClasses.Contains(cls))
                     c.FtWalked[cls] = c.FtWalked.GetValueOrDefault(cls) + 1;
                 if (cls == 1589) // Face -> walk schema, record handle + surface class
@@ -1299,8 +1396,8 @@ internal static partial class GRepParserV2
                         if (c.Queue[k].Cls is 522 or 983 or 763 or 3489 or 3881 or 2158 or 3576 or 2602 or 3954)
                         {
                             surf = c.Queue[k].Cls;
-                            c.SurfaceOwnerByQueueIndex[k] = (uint)v;
-                            c.SurfaceOwnerByHandle[(uint)c.Queue[k].V] = (uint)v;
+                            SetProbeValue(c.SurfaceOwnerByQueueIndex, k, (uint)v, c.ProbeUndo?.SurfaceOwnerByQueueIndex);
+                            SetProbeValue(c.SurfaceOwnerByHandle, (uint)c.Queue[k].V, (uint)v, c.ProbeUndo?.SurfaceOwnerByHandle);
                             break;
                         }
                     c.SurfClasses.Add(surf);
@@ -1863,7 +1960,53 @@ internal static partial class GRepParserV2
         if (surface.Kind == SurfKind.Unknown) return;
         if (c.SurfaceOwnerByQueueIndex.TryGetValue(queueIndex, out uint faceHandle)
             || c.SurfaceOwnerByHandle.TryGetValue(surfaceHandle, out faceHandle))
-            c.DirectSurfaceByFace[faceHandle] = surface;
+            SetProbeValue(c.DirectSurfaceByFace, faceHandle, surface, c.ProbeUndo?.DirectSurfaceByFace);
+    }
+
+    private sealed class ResyncUndo
+    {
+        public bool TrackTagBase;
+        public readonly List<(ushort Key, int Previous, bool Existed)> ClassWalked = [];
+        public readonly List<(uint Key, uint Previous, bool Existed)> SurfaceOwnerByHandle = [];
+        public readonly List<(int Key, uint Previous, bool Existed)> SurfaceOwnerByQueueIndex = [];
+        public readonly List<(uint Key, SurfaceRec Previous, bool Existed)> DirectSurfaceByFace = [];
+        public readonly List<(uint Key, bool Previous, bool Existed)> FaceHasFirstLoop = [];
+        public readonly List<int> LastLoops = [];
+
+        public void Restore(Cur c)
+        {
+            RestoreProbeValues(c.ClassWalked, ClassWalked);
+            RestoreProbeValues(c.SurfaceOwnerByHandle, SurfaceOwnerByHandle);
+            RestoreProbeValues(c.SurfaceOwnerByQueueIndex, SurfaceOwnerByQueueIndex);
+            RestoreProbeValues(c.DirectSurfaceByFace, DirectSurfaceByFace);
+            RestoreProbeValues(c.FaceHasFirstLoop, FaceHasFirstLoop);
+            for (int i = LastLoops.Count - 1; i >= 0; i--)
+                c.LastLoops.Remove(LastLoops[i]);
+            LastLoops.Clear();
+        }
+    }
+
+    private static void SetProbeValue<TKey, TValue>(Dictionary<TKey, TValue> map, TKey key, TValue value,
+        List<(TKey Key, TValue Previous, bool Existed)>? writes) where TKey : notnull
+    {
+        if (writes != null)
+        {
+            bool existed = map.TryGetValue(key, out var previous);
+            writes.Add((key, previous!, existed));
+        }
+        map[key] = value;
+    }
+
+    private static void RestoreProbeValues<TKey, TValue>(Dictionary<TKey, TValue> map,
+        List<(TKey Key, TValue Previous, bool Existed)> writes) where TKey : notnull
+    {
+        for (int i = writes.Count - 1; i >= 0; i--)
+        {
+            var (key, previous, existed) = writes[i];
+            if (existed) map[key] = previous;
+            else map.Remove(key);
+        }
+        writes.Clear();
     }
 
     /// <summary>
@@ -1879,48 +2022,48 @@ internal static partial class GRepParserV2
             if (!byClass.TryGetValue(c.Queue[i].Cls, out var l)) byClass[c.Queue[i].Cls] = l = new();
             l.Add(i);
         }
+        ResyncUndo? undo = null;
 
-        bool DryRun(int off, int qj)
+        bool DryRun(int off, int qj, bool preserveTagJumpMap = false)
         {
             var snap = (Pos: c.Pos, Q: c.Queue.Count, FO: c.FaceOrder.Count, SC: c.SurfClasses.Count,
                 E: c.Edges.Count, PM: c.PolyMeshes.Count, WS: c.WalkedSurfaces.Count, FC: c.FaceCount,
-                Sym: c.SymbolId, Trf: c.InstTrf, LE: c.LastEdgeEnd,
-                Ins: new List<InstanceRec>(c.Instances),
-                CW: new Dictionary<ushort, int>(c.ClassWalked), TB: new Dictionary<ushort, int>(c.TagBase),
-                SO: new Dictionary<uint, uint>(c.SurfaceOwnerByHandle),
-                SQ: new Dictionary<int, uint>(c.SurfaceOwnerByQueueIndex),
-                DS: new Dictionary<uint, SurfaceRec>(c.DirectSurfaceByFace),
-                FL: new Dictionary<uint, bool>(c.FaceHasFirstLoop), LL: new HashSet<int>(c.LastLoops));
+                Sym: c.SymbolId, Trf: c.InstTrf, LE: c.LastEdgeEnd, Ins: c.Instances.Count);
+            // Preserve the active tag-jump enumerator. The remaining probes only validate the payload.
+            var savedTagBase = preserveTagJumpMap ? new Dictionary<ushort, int>(c.TagBase) : null;
+            c.ProbeUndo = undo ??= new ResyncUndo();
+            undo.TrackTagBase = preserveTagJumpMap;
             c.Pos = off;
             bool ok = true;
             int want = Math.Min(10, c.Queue.Count - qj);
             try { for (int k = 0; k < want; k++) WalkQueueItem(c, qj + k); }
             catch (DecodeStop) { ok = false; }
+            finally { c.ProbeUndo = null; }
             // Roll the dry run back - the caller's loop re-walks for real.
             c.Pos = snap.Pos;
+            // Only existing queue entries were visited. Their new children are the appended suffix.
+            for (int i = c.QueueLinks.Count - 1; i >= snap.Q; i--)
+            {
+                var (parent, field) = c.QueueLinks[i];
+                if (parent >= 0 && (c.Debug || field == "m_oConditions"))
+                {
+                    var children = c.QueueChildren[parent];
+                    children.RemoveAt(children.Count - 1);
+                }
+            }
             c.Queue.RemoveRange(snap.Q, c.Queue.Count - snap.Q);
             if (c.QueueLinks.Count > snap.Q)
                 c.QueueLinks.RemoveRange(snap.Q, c.QueueLinks.Count - snap.Q);
-            foreach (int key in c.QueueChildren.Keys.Where(key => key >= snap.Q).ToArray())
-                c.QueueChildren.Remove(key);
-            foreach (var children in c.QueueChildren.Values)
-                children.RemoveAll(child => child >= snap.Q);
-            foreach (int key in c.QueueInts.Keys.Where(key => key >= snap.Q).ToArray()) c.QueueInts.Remove(key);
-            foreach (int key in c.QueueDoubles.Keys.Where(key => key >= snap.Q).ToArray()) c.QueueDoubles.Remove(key);
-            foreach (int key in c.QueueBytes.Keys.Where(key => key >= snap.Q).ToArray()) c.QueueBytes.Remove(key);
             c.FaceOrder.RemoveRange(snap.FO, c.FaceOrder.Count - snap.FO);
             c.SurfClasses.RemoveRange(snap.SC, c.SurfClasses.Count - snap.SC);
             c.Edges.RemoveRange(snap.E, c.Edges.Count - snap.E);
             c.PolyMeshes.RemoveRange(snap.PM, c.PolyMeshes.Count - snap.PM);
             c.WalkedSurfaces.RemoveRange(snap.WS, c.WalkedSurfaces.Count - snap.WS);
             c.FaceCount = snap.FC; c.SymbolId = snap.Sym; c.InstTrf = snap.Trf;
-            c.Instances = snap.Ins;
+            c.Instances.RemoveRange(snap.Ins, c.Instances.Count - snap.Ins);
             c.LastEdgeEnd = snap.LE; c.CapEdge = null;
-            c.ClassWalked = snap.CW; c.TagBase = snap.TB;
-            c.SurfaceOwnerByHandle = snap.SO; c.DirectSurfaceByFace = snap.DS;
-            c.SurfaceOwnerByQueueIndex = snap.SQ;
-            c.FaceHasFirstLoop = snap.FL; c.LastLoops = snap.LL;
-            foreach (int key in c.SpaceEdgeLoops.Keys.Where(key => key >= snap.Q).ToArray()) c.SpaceEdgeLoops.Remove(key);
+            if (savedTagBase != null) c.TagBase = savedTagBase;
+            undo.Restore(c);
             return ok && want >= 6;
         }
 
@@ -1928,6 +2071,13 @@ internal static partial class GRepParserV2
         int anchorCap = Math.Max(160, (c.BlockEnd - c.BlockStart) / 1024);
         for (int off = c.Pos + 1; off + 16 <= c.BlockEnd && anchorsTried < anchorCap; off++)
         {
+            // Every accepted anchor flag ends in 04, at the first flag byte on disk.
+            if (BitConverter.IsLittleEndian)
+            {
+                int skip = c.D.AsSpan(off + 12, c.BlockEnd - off - 15).IndexOf((byte)0x04);
+                if (skip < 0) break;
+                off += skip;
+            }
             // GInfoBlob anchor: [tag][ctrl=0][gstyle][known flags].
             if (BitConverter.ToInt32(c.D, off + 4) != 0) continue;
             uint fl = BitConverter.ToUInt32(c.D, off + 12);
@@ -1940,7 +2090,9 @@ internal static partial class GRepParserV2
 
             // Tag-jump first: the anchor's tag maps to a queue ordinal per class.
             if (tag >= 0)
-                foreach (var (cls, baseT) in c.TagBase)
+            {
+                var tagJumpMap = c.TagBase;
+                foreach (var (cls, baseT) in tagJumpMap)
                 {
                     if (!byClass.TryGetValue(cls, out var lst)) continue;
                     int ord = tag - baseT;
@@ -1949,10 +2101,12 @@ internal static partial class GRepParserV2
                     if (ord >= 0 && ord < lst.Count)
                     {
                         int qj = lst[ord];
-                        if (qj > qi && qj < c.Queue.Count && DryRun(off, qj))
+                        if (qj > qi && qj < c.Queue.Count
+                            && DryRun(off, qj, ReferenceEquals(tagJumpMap, c.TagBase)))
                         { c.Pos = off; qi = qj - 1; return true; }
                     }
                 }
+            }
 
             // Fallback: window scan over the next pending items - near anchors only (distant
             // windows produced wrong relocks; distant recovery is tag-jump's job).
@@ -2308,9 +2462,12 @@ internal static partial class GRepParserV2
     {
         int v = c.U32();
         if (field == "m_pFirstLoop" && c.CurrentObjectClass == 1589)
-            c.FaceHasFirstLoop[(uint)c.CurrentObjectHandle] = v != 0;
+            SetProbeValue(c.FaceHasFirstLoop, (uint)c.CurrentObjectHandle, v != 0, c.ProbeUndo?.FaceHasFirstLoop);
         else if (field == "m_nextLoop" && v == 0 && c.CurrentObjectClass is 1254 or 1257 && c.CurrentQueueIndex >= 0)
-            c.LastLoops.Add(c.CurrentQueueIndex);
+        {
+            if (c.LastLoops.Add(c.CurrentQueueIndex))
+                c.ProbeUndo?.LastLoops.Add(c.CurrentQueueIndex);
+        }
         if (v == 0) return;
         if (!c.CanRead(2)) throw Stop;
         ushort cls = BitConverter.ToUInt16(c.D, c.Pos); c.Pos += 2;
@@ -2465,18 +2622,20 @@ internal static partial class GRepParserV2
             }
         }
 
-        foreach (var rawEdge in c.Edges) { rawEdge.RawStart = rawEdge.Start; rawEdge.RawEndP = rawEdge.EndP; rawEdge.RawInterior = rawEdge.Interior.ToList(); }
+        foreach (var rawEdge in c.Edges) { rawEdge.RawStart = rawEdge.Start; rawEdge.RawEndP = rawEdge.EndP; rawEdge.RawInterior = rawEdge.Interior; }
         // Per face handle: collect its edge UV segments (in that face's own surface frame).
         var byFace = new Dictionary<uint, List<(double U1, double V1, double U2, double V2)>>();
         var cylinderLoopEdges = new Dictionary<uint, HashSet<uint>>();
         var sourceEdgesByHandle = EdgesByHandle(c);
-        foreach (var (face, indices) in CompleteFaceLoops(c))
-            if (c.NativeWallBody && c.DirectSurfaceByFace.TryGetValue(face, out var sourceSurface) && sourceSurface.Kind == SurfKind.Cylinder
-                && TryGetFaceLoopEdges(c, face, indices, sourceEdgesByHandle) is { } sourceLoopEdges)
-                cylinderLoopEdges[face] = sourceLoopEdges.Select(edge => edge.Handle).ToHashSet();
+        var completeLoops = CompleteFaceLoops(c);
+        if (c.NativeWallBody)
+            foreach (var (face, indices) in completeLoops)
+                if (c.DirectSurfaceByFace.TryGetValue(face, out var sourceSurface) && sourceSurface.Kind == SurfKind.Cylinder
+                    && TryGetFaceLoopEdges(c, face, indices, sourceEdgesByHandle) is { } sourceLoopEdges)
+                    cylinderLoopEdges[face] = sourceLoopEdges.Select(edge => edge.Handle).ToHashSet();
         var sharedCylinderEdges = cylinderLoopEdges.Values.SelectMany(handles => handles).ToHashSet();
         var meshEdgeBounds = c.DirectSurfaceByFace.Values.Any(surface => surface.Kind == SurfKind.Cylinder)
-            ? ReadFaceEdgeBounds(c) : new Dictionary<uint, double[]>();
+            ? ReadFaceEdgeBounds(c, completeLoops, sourceEdgesByHandle) : new Dictionary<uint, double[]>();
         var meshArcsByFace = new Dictionary<uint, List<Arc>>();
         var arcEdges = new HashSet<uint>();
         void SampleCircularEdge(EdgeRec edge, SurfaceRec firstSurface, SurfaceRec secondSurface, bool resample)
@@ -2523,23 +2682,22 @@ internal static partial class GRepParserV2
         {
             foreach (var e in c.Edges)
             {
-                var points = new List<EdgeUV>(e.Interior.Count + 2) { e.Start };
-                points.AddRange(e.Interior);
-                points.Add(e.EndP);
-                for (int i = 0; i + 1 < points.Count; i++)
+                bool firstFace = !cylinderLoopEdges.TryGetValue(e.FaceA, out var firstLoopEdges) || firstLoopEdges.Contains(e.Handle);
+                bool secondFace = !cylinderLoopEdges.TryGetValue(e.FaceB, out var secondLoopEdges) || secondLoopEdges.Contains(e.Handle);
+                var a = e.Start;
+                for (int i = 0; i <= e.Interior.Count; i++)
                 {
-                    var a = points[i];
-                    var b = points[i + 1];
-                    if (!cylinderLoopEdges.TryGetValue(e.FaceA, out var firstLoopEdges) || firstLoopEdges.Contains(e.Handle))
+                    var b = i < e.Interior.Count ? e.Interior[i] : e.EndP;
+                    if (firstFace)
                         Add(e.FaceA, a.UA, a.VA, b.UA, b.VA, e, i, captureWorld);
-                    if (!cylinderLoopEdges.TryGetValue(e.FaceB, out var secondLoopEdges) || secondLoopEdges.Contains(e.Handle))
+                    if (secondFace)
                         Add(e.FaceB, a.UB, a.VB, b.UB, b.VB, e, i, captureWorld);
+                    a = b;
                 }
             }
         }
         CollectFaceSegments(captureWorld: true);
-        var authoredSamplingEdges = byFace.ToDictionary(pair => pair.Key,
-            pair => pair.Value.ToList());
+        var authoredSamplingEdges = byFace;
 
         // Analytic face tessellation uses the U/V coordinates of every serialized trim vertex as
         // its interior grid. A grid line can intersect another topological edge between two
@@ -2600,15 +2758,22 @@ internal static partial class GRepParserV2
                 true);
         }
 
+        List<double>? splitFractions = null;
         foreach (var edge in c.Edges)
         {
-            var points = new List<EdgeUV>(edge.Interior.Count + 2) { edge.Start };
-            points.AddRange(edge.Interior);
-            points.Add(edge.EndP);
             bool periodicA = handleToSurf.TryGetValue(edge.FaceA, out var surfaceA)
                 && surfaceA.Kind is SurfKind.Cylinder or SurfKind.Cone or SurfKind.Rev;
             bool periodicB = handleToSurf.TryGetValue(edge.FaceB, out var surfaceB)
                 && surfaceB.Kind is SurfKind.Cylinder or SurfKind.Cone or SurfKind.Rev;
+            bool splitA = trimGrids.TryGetValue(edge.FaceA, out var gridA);
+            bool splitB = trimGrids.TryGetValue(edge.FaceB, out var gridB);
+            if (!periodicA && !periodicB && !splitA && !splitB
+                && (edge.SharedBoundaryPoints == null || edge.SharedBoundaryPoints.Count == edge.Interior.Count + 2))
+                continue;
+
+            var points = new List<EdgeUV>(edge.Interior.Count + 2) { edge.Start };
+            points.AddRange(edge.Interior);
+            points.Add(edge.EndP);
             if (periodicA || periodicB)
             {
                 for (int index = 1; index < points.Count; index++)
@@ -2628,11 +2793,12 @@ internal static partial class GRepParserV2
             var refined = new List<EdgeUV> { points[0] };
             var sharedRefined = edge.SharedBoundaryPoints is { } sourceShared && sourceShared.Count == points.Count
                 ? new List<double[]> { sourceShared[0] } : null;
+            var fractions = splitFractions ??= new();
             for (int index = 0; index + 1 < points.Count; index++)
             {
                 var first = points[index];
                 var second = points[index + 1];
-                var fractions = new SortedSet<double>();
+                fractions.Clear();
                 void AddFractions(double start, double end,
                     IReadOnlyList<double> samples, bool periodic)
                 {
@@ -2653,20 +2819,24 @@ internal static partial class GRepParserV2
                         }
                     }
                 }
-                if (trimGrids.TryGetValue(edge.FaceA, out var gridA))
+                if (splitA)
                 {
                     AddFractions(first.UA, second.UA, gridA.U, gridA.PeriodicU);
                     if (gridA.SplitV)
                         AddFractions(first.VA, second.VA, gridA.V, periodic: false);
                 }
-                if (trimGrids.TryGetValue(edge.FaceB, out var gridB))
+                if (splitB)
                 {
                     AddFractions(first.UB, second.UB, gridB.U, gridB.PeriodicU);
                     if (gridB.SplitV)
                         AddFractions(first.VB, second.VB, gridB.V, periodic: false);
                 }
+                fractions.Sort();
+                double previousFraction = 0;
                 foreach (double fraction in fractions)
                 {
+                    if (fraction == previousFraction) continue;
+                    previousFraction = fraction;
                     refined.Add(new EdgeUV
                     {
                         UA = first.UA + (second.UA - first.UA) * fraction,
@@ -2687,12 +2857,15 @@ internal static partial class GRepParserV2
             }
             edge.Start = refined[0];
             edge.EndP = refined[^1];
-            edge.Interior = refined.Skip(1).SkipLast(1).ToList();
+            edge.Interior = refined.GetRange(1, refined.Count - 2);
             edge.SharedBoundaryPoints = sharedRefined;
         }
 
-        byFace.Clear();
-        CollectFaceSegments();
+        if (splitFractions != null)
+        {
+            byFace = new();
+            CollectFaceSegments();
+        }
 
         var gd = new GRepData
         {
@@ -2757,7 +2930,7 @@ internal static partial class GRepParserV2
         var inactiveBodyFaceHandles = bodyFaceHandles.Where(deadFaces.Contains).ToArray();
         bodyFaceHandles.ExceptWith(deadFaces);
         displayFaceHandles.ExceptWith(deadFaces);
-        var loopsByFace = c.ExactPlanarSpaceBoundary && !c.CurvedSpaceBoundary ? new Dictionary<uint, List<int>>() : CompleteFaceLoops(c);
+        var loopsByFace = c.ExactPlanarSpaceBoundary && !c.CurvedSpaceBoundary ? new Dictionary<uint, List<int>>() : completeLoops;
         if (bodyMeasure != BodyMeasure.None)
         {
             var selected = lightingFaceHandles ?? bodyFaceHandles;
@@ -2777,12 +2950,11 @@ internal static partial class GRepParserV2
         // The rings of an exact space boundary come from its segment graph; its serialized loops
         // only name the bounds of the IfcFace Revit writes for each Face (one bound per
         // loop, however many disjoint regions the Face owns).
-        var spaceLoopsByFace = c.ExactPlanarSpaceBoundary && !c.CurvedSpaceBoundary ? CompleteFaceLoops(c) : null;
+        var spaceLoopsByFace = c.ExactPlanarSpaceBoundary && !c.CurvedSpaceBoundary ? completeLoops : null;
         if (Environment.GetEnvironmentVariable("RVTIO_TOPO") is { Length: > 0 } topologyPath
             && (Environment.GetEnvironmentVariable("RVTIO_TOPO_EID") is not { Length: > 0 } topologyEids
                 || topologyEids.Split(',').Contains(c.ElementId.ToString())))
             DumpTopology(c, handleToSurf, bodyFaceHandles, spaceLoopsByFace ?? loopsByFace, topologyPath);
-        Dictionary<uint, EdgeRec?>? edgeByHandle = null;
         var chainFaces = new HashSet<uint>();
         var chainEdges = new HashSet<uint>();
         if (c.Debug)
@@ -2837,8 +3009,8 @@ internal static partial class GRepParserV2
                 : displayFaceHandles.Where(handle => geometryNodeByFace.TryGetValue(handle, out var owner) && displayNodeSet.Contains(owner.Node)).ToHashSet();
             var nodeMeasures = new List<MeshNodeMeasure>();
             gd.MeshNodes = BuildNodes(c, handleToSurf, displayFaces.Count > 0 ? bodyFaceHandles.Concat(displayFaces).ToHashSet() : bodyFaceHandles,
-                inactiveBodyFaceHandles, loopsByFace, geometryNodeByFace, nodeOrders, displayFaces.Count > 0 ? displayOnlyNodes : null, nodeMeasures,
-                measureSourceNodes: measureSourceNodes);
+                inactiveBodyFaceHandles, loopsByFace, sourceEdgesByHandle, geometryNodeByFace, nodeOrders,
+                displayFaces.Count > 0 ? displayOnlyNodes : null, nodeMeasures, measureSourceNodes);
             if (nodeMeasures.Count > 0) gd.NodeMeasures = nodeMeasures;
         }
         if (displayOnlyNodes.Count > 0) gd.DisplayOnlyNodes = displayOnlyNodes;
@@ -3047,8 +3219,7 @@ internal static partial class GRepParserV2
             List<List<double[]>>? loopRings = null;
             if (loopsByFace.TryGetValue(kv.Key, out var faceLoops))
             {
-                edgeByHandle ??= EdgesByHandle(c);
-                loopRings = TryOrderLoopRings(c, kv.Key, faceLoops, edgeByHandle, ToPlane(surf), segs, chainEdges);
+                loopRings = TryOrderLoopRings(c, kv.Key, faceLoops, sourceEdgesByHandle, ToPlane(surf), segs, chainEdges);
                 if (loopRings == null) segs.Clear(); else chainFaces.Add(kv.Key);
             }
             if (loopRings == null)
@@ -3079,8 +3250,7 @@ internal static partial class GRepParserV2
             List<List<double[]>>? spaceSourceLoops = null;
             if (spaceLoopsByFace != null && spaceLoopsByFace.TryGetValue(kv.Key, out var spaceFaceLoops))
             {
-                edgeByHandle ??= EdgesByHandle(c);
-                spaceSourceLoops = TryOrderLoopRings(c, kv.Key, spaceFaceLoops, edgeByHandle, ToPlane(surf), [], []);
+                spaceSourceLoops = TryOrderLoopRings(c, kv.Key, spaceFaceLoops, sourceEdgesByHandle, ToPlane(surf), [], []);
             }
 
             // One serialized Face handle can own several disconnected coplanar regions. Only a
@@ -3389,15 +3559,21 @@ internal static partial class GRepParserV2
         if (faces.Count != faceHandles.Count)
             throw new ArgumentException("Every emitted face must have a serialized Face handle.");
 
-        var edges = serializedEdges.ToList();
         var indicesByHandle = Enumerable.Range(0, faceHandles.Count)
             .GroupBy(index => faceHandles[index])
             .ToDictionary(group => group.Key, group => group.ToList());
         var parent = Enumerable.Range(0, faces.Count).ToArray();
         int Find(int index)
         {
-            if (parent[index] != index) parent[index] = Find(parent[index]);
-            return parent[index];
+            int root = index;
+            while (parent[root] != root) root = parent[root];
+            while (index != root)
+            {
+                int next = parent[index];
+                parent[index] = root;
+                index = next;
+            }
+            return root;
         }
         void Union(int first, int second)
         {
@@ -3410,13 +3586,23 @@ internal static partial class GRepParserV2
                 Union(indices[0], index);
 
         static bool ValidHandle(uint handle) => handle != 0 && handle != 0xFFFFFFFF;
-        foreach (var edge in edges)
+        var connected = new HashSet<uint>();
+        var dangling = new HashSet<uint>();
+        foreach (var edge in serializedEdges)
         {
-            if (!ValidHandle(edge.FaceA) || !ValidHandle(edge.FaceB)
-                || !indicesByHandle.TryGetValue(edge.FaceA, out var first)
-                || !indicesByHandle.TryGetValue(edge.FaceB, out var second))
-                continue;
-            Union(first[0], second[0]);
+            indicesByHandle.TryGetValue(edge.FaceA, out var first);
+            indicesByHandle.TryGetValue(edge.FaceB, out var second);
+            if (first != null && second != null && ValidHandle(edge.FaceA) && ValidHandle(edge.FaceB))
+            {
+                Union(first[0], second[0]);
+                connected.Add(edge.FaceA);
+                connected.Add(edge.FaceB);
+            }
+            else
+            {
+                if (first != null) dangling.Add(edge.FaceA);
+                if (second != null) dangling.Add(edge.FaceB);
+            }
         }
 
         var solids = new List<GRepSolid>();
@@ -3425,13 +3611,9 @@ internal static partial class GRepParserV2
             var faceIndices = component.OrderBy(index => index).ToList();
             if (faceIndices.Count < 4) continue;
 
-            var handles = faceIndices.Select(index => faceHandles[index]).ToHashSet();
-            bool hasTopology = handles.All(handle => edges.Any(edge =>
-                edge.FaceA == handle || edge.FaceB == handle));
-            bool topologicallyClosed = hasTopology && edges
-                .Where(edge => handles.Contains(edge.FaceA) || handles.Contains(edge.FaceB))
-                .All(edge => ValidHandle(edge.FaceA) && ValidHandle(edge.FaceB)
-                    && handles.Contains(edge.FaceA) && handles.Contains(edge.FaceB));
+            // Every valid edge between emitted faces joined their components above.
+            bool topologicallyClosed = faceIndices.All(index =>
+                connected.Contains(faceHandles[index]) && !dangling.Contains(faceHandles[index]));
             bool closed = topologicallyClosed || IsExactClosedShell(faces, faceIndices);
             solids.Add(new GRepSolid { FaceIndices = faceIndices, IsClosed = closed });
         }
@@ -3578,6 +3760,49 @@ internal static partial class GRepParserV2
     internal static uint NodeSurfaceFlags(int nodeClass, bool exactPlanarSpaceBoundary, uint flags)
         => exactPlanarSpaceBoundary && nodeClass == 1589 || nodeClass == 2038 ? flags & ~0x40000000u : flags;
 
+    private readonly record struct ModelFilter(int DetailLevels, bool HasDetail, bool HasDirection, bool AllEvaluated)
+    {
+        public bool Allows(int detail) => (DetailLevels & (1 << detail)) != 0;
+    }
+
+    private static ModelFilter ReadModelFilter(Cur c, int parent)
+    {
+        int allowed = (1 << CoarseDetailLevel) | (1 << 2) | (1 << FineDetailLevel);
+        bool hasDetail = false, hasDirection = false, allEvaluated = true;
+        if (c.QueueChildren.TryGetValue(parent, out var children))
+            foreach (int child in children)
+            {
+                if (child < 0 || child >= c.Queue.Count || child >= c.QueueLinks.Count
+                    || c.QueueLinks[child].Field != "m_oConditions") continue;
+                bool? negated = c.QueueBytes.TryGetValue(child, out var values)
+                    && values.TryGetValue("m_negateDirCondition", out var bytes)
+                    && bytes.Count > 0 ? bytes[0] != 0 : null;
+                c.QueueInts.TryGetValue(child, out var intValues);
+                int? IntField(string name) => intValues != null && intValues.TryGetValue(name, out int value) ? value : null;
+                var condition = new SerializedModelCondition(c.Queue[child].Cls, negated,
+                    IntField("m_comp"), IntField("m_param"), IntField("m_value"));
+                hasDetail |= IsDetailCondition(condition);
+                hasDirection |= condition.Class == 1996;
+                allEvaluated &= IsEvaluatedModelCondition(condition);
+                for (int detail = CoarseDetailLevel; detail <= FineDetailLevel; detail++)
+                    if (!AllowsUncutModelCondition(condition, detail)) allowed &= ~(1 << detail);
+            }
+        return new ModelFilter(allowed, hasDetail, hasDirection, allEvaluated);
+    }
+
+    private static bool HasRootMappedSource(Cur c)
+    {
+        foreach (var instance in c.Instances)
+        {
+            int owner = instance.OwnerQueueIndex;
+            if (owner >= 0 && owner < c.QueueLinks.Count && owner < c.Queue.Count
+                && c.QueueLinks[owner].ParentQueueIndex < 0
+                && (!c.ObjectGInfo.TryGetValue(c.Queue[owner].V, out var info) || IsPhysicalBodySurface(info.Flags)))
+                return true;
+        }
+        return false;
+    }
+
     /// <summary>Evaluate the serialized ownership path of a drawable GNode.</summary>
     private static bool IsPhysicalModelBranch(Cur c, int nodeQueueIndex, bool allowDisplaySurface = false, bool forLightingQuantity = false)
     {
@@ -3613,38 +3838,14 @@ internal static partial class GRepParserV2
             }
             if (ancestorItem.Cls != 2015) continue;
 
-            var conditions = (c.QueueChildren.GetValueOrDefault(ancestor) ?? [])
-                .Where(child => child >= 0 && child < c.Queue.Count
-                    && child < c.QueueLinks.Count
-                    && c.QueueLinks[child].Field == "m_oConditions")
-                .Select(child =>
-                {
-                    bool? negated = c.QueueBytes.TryGetValue(child, out var values)
-                        && values.TryGetValue("m_negateDirCondition", out var bytes)
-                        && bytes.Count > 0 ? bytes[0] != 0 : null;
-                    int? IntField(string name) =>
-                        c.QueueInts.TryGetValue(child, out var intValues)
-                        && intValues.TryGetValue(name, out int value)
-                            ? value : null;
-                    return new SerializedModelCondition(
-                        c.Queue[child].Cls, negated,
-                        IntField("m_comp"), IntField("m_param"),
-                        IntField("m_value"));
-                }).ToList();
-            if (conditions.Any(condition => condition.Class is 1999 or 2002 && condition.Parameter == 3))
-                c.SawDetailCondition = true;
-            bool hasRootMappedSource = c.Instances.Any(instance =>
-                instance.OwnerQueueIndex >= 0
-                && instance.OwnerQueueIndex < c.QueueLinks.Count
-                && instance.OwnerQueueIndex < c.Queue.Count
-                && c.QueueLinks[instance.OwnerQueueIndex].ParentQueueIndex < 0
-                && (!c.ObjectGInfo.TryGetValue(
-                        c.Queue[instance.OwnerQueueIndex].V, out var instanceInfo)
-                    || IsPhysicalBodySurface(instanceInfo.Flags)));
-            // Lighting quantities include solids from every direction at the selected detail level.
-            body = (forLightingQuantity || IsPhysicalBodyGeometryState(graphicalGeometryState, hasRootMappedSource, conditions))
-                && AllowsFineUncutModelBranch(conditions)
-                && (!allowDisplaySurface || conditions.All(IsEvaluatedModelCondition));
+            var filters = c.ModelFilters ??= new();
+            if (!filters.TryGetValue(ancestor, out var filter))
+                filters.Add(ancestor, filter = ReadModelFilter(c, ancestor));
+            c.SawDetailCondition |= filter.HasDetail;
+            bool hasRootMappedSource = c.HasRootMappedSource ??= HasRootMappedSource(c);
+            body = (forLightingQuantity || IsPhysicalBodyGeometryState(graphicalGeometryState, hasRootMappedSource, filter.HasDirection, filter.HasDetail))
+                && filter.Allows(t_detailLevel == 0 ? FineDetailLevel : t_detailLevel)
+                && (!allowDisplaySurface || filter.AllEvaluated);
         }
         return body;
     }
@@ -3673,14 +3874,20 @@ internal static partial class GRepParserV2
     internal static bool IsPhysicalBodyGeometryState(
         bool graphicalState, bool hasRootMappedSource,
         IReadOnlyCollection<SerializedModelCondition> conditions)
-        => !(conditions.Any(condition => condition.Class == 1996)
-                && (graphicalState || hasRootMappedSource))
-            && (!graphicalState || !conditions.Any(condition =>
-                (condition.Class is 1999 or 2002) && condition.Parameter == 3));
+        => IsPhysicalBodyGeometryState(graphicalState, hasRootMappedSource,
+            conditions.Any(condition => condition.Class == 1996), conditions.Any(IsDetailCondition));
+
+    private static bool IsPhysicalBodyGeometryState(bool graphicalState, bool hasRootMappedSource,
+        bool hasDirectionCondition, bool hasDetailCondition)
+        => !(hasDirectionCondition && (graphicalState || hasRootMappedSource))
+            && !(hasDetailCondition && graphicalState);
 
     /// <summary>A condition of a serialized model: class, negation, comparison, parameter and value.</summary>
     internal readonly record struct SerializedModelCondition(
         ushort Class, bool? Negated, int? Comparison, int? Parameter, int? Value);
+
+    private static bool IsDetailCondition(SerializedModelCondition condition)
+        => condition.Class is 1999 or 2002 && condition.Parameter == 3;
 
     /// <summary>
     /// IFC is exported as an uncut three-dimensional model at Revit's Fine detail level. Revit
@@ -3688,15 +3895,18 @@ internal static partial class GRepParserV2
     /// </summary>
     internal static bool AllowsFineUncutModelBranch(
         IEnumerable<SerializedModelCondition> conditions)
-        => conditions.All(condition => condition.Class switch
+        => conditions.All(condition => AllowsUncutModelCondition(condition, FineDetailLevel));
+
+    private static bool AllowsUncutModelCondition(SerializedModelCondition condition, int detail)
+        => condition.Class switch
         {
             1995 => condition.Negated == true,
             1999 or 2002 when condition.Parameter == 3
                 && condition.Comparison is int comparison
                 && condition.Value is int value
-                => CompareSerializedInteger(t_detailLevel == 0 ? FineDetailLevel : t_detailLevel, comparison, value),
+                => CompareSerializedInteger(detail, comparison, value),
             _ => true,
-        });
+        };
 
     /// <summary>
     /// The detail-level values a GConditionInt on parameter 3 compares against: Coarse 1, Medium 2,
@@ -3987,50 +4197,46 @@ internal static partial class GRepParserV2
     {
         var res = new List<SurfaceRec>();
         int lim = Math.Min(end, d.Length);
-        static double[] V(byte[] b, int p) => new[] { BitConverter.ToDouble(b, p), BitConverter.ToDouble(b, p + 8), BitConverter.ToDouble(b, p + 16) };
-        static double Len(double[] v) => Math.Sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-        static double Dot(double[] a, double[] b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-        static bool Unit(double[] v) => Math.Abs(Len(v) - 1) < 1e-9;
-        static bool Fin3(double[] v) => IsFinite(v[0]) && IsFinite(v[1]) && IsFinite(v[2]);
+        static Pt3 V(byte[] b, int p) => new(BitConverter.ToDouble(b, p), BitConverter.ToDouble(b, p + 8), BitConverter.ToDouble(b, p + 16));
+        static bool Unit(Pt3 v) => Math.Abs(v.Norm - 1) < 1e-9;
+        static bool Fin3(Pt3 v) => IsFinite(v.X) && IsFinite(v.Y) && IsFinite(v.Z);
 
         // Surface payload = base Surface(523) fields FIRST: [m_Envelope: 4xf64 uv bounds]
         // [m_orientFlag: u8 in {0,1}], then the surface's own frame.
-        bool HasSurfPrefix(int p, out double[] env)
+        bool HasSurfPrefix(int p)
         {
-            env = new double[4];
             if (p < 33) return false;
-            for (int k = 0; k < 4; k++)
-            {
-                env[k] = BitConverter.ToDouble(d, p - 33 + 8 * k);
-                if (!IsFinite(env[k])) return false;
-            }
-            byte orient = d[p - 1];
-            return orient <= 1 && env[0] < env[2] && env[1] < env[3];
+            double uMin = BitConverter.ToDouble(d, p - 33), vMin = BitConverter.ToDouble(d, p - 25);
+            double uMax = BitConverter.ToDouble(d, p - 17), vMax = BitConverter.ToDouble(d, p - 9);
+            return IsFinite(uMin) && IsFinite(vMin) && IsFinite(uMax) && IsFinite(vMax)
+                && d[p - 1] <= 1 && uMin < uMax && vMin < vMax;
         }
+
+        double[] ReadEnvelope(int p) => [BitConverter.ToDouble(d, p - 33), BitConverter.ToDouble(d, p - 25),
+            BitConverter.ToDouble(d, p - 17), BitConverter.ToDouble(d, p - 9)];
 
         bool TryPlane(int p, out SurfaceRec sr)
         {
             sr = default;
-            if (p + 72 > lim || !HasSurfPrefix(p, out var env)) return false;
+            if (p + 72 > lim || !HasSurfPrefix(p)) return false;
             var o = V(d, p); var x = V(d, p + 24); var y = V(d, p + 48);
-            if (!(Fin3(o) && Fin3(x) && Fin3(y) && Unit(x) && Unit(y) && Math.Abs(Dot(x, y)) < 1e-9)) return false;
-            sr = new SurfaceRec { Kind = SurfKind.Plane, O = o, X = x, Y = y, Env = env, Orient = d[p - 1] };
+            if (!(Fin3(o) && Fin3(x) && Fin3(y) && Unit(x) && Unit(y) && Math.Abs(x.Dot(y)) < 1e-9)) return false;
+            sr = new SurfaceRec { Kind = SurfKind.Plane, O = o.ToArray(), X = x.ToArray(), Y = y.ToArray(), Env = ReadEnvelope(p), Orient = d[p - 1] };
             return true;
         }
         bool TryFrame(int p, SurfKind kind, out SurfaceRec sr)
         {
             sr = default;
-            if (p + 104 > lim || !HasSurfPrefix(p, out var env)) return false;
+            if (p + 104 > lim || !HasSurfPrefix(p)) return false;
             var o = V(d, p); var x = V(d, p + 24); var y = V(d, p + 48); var z = V(d, p + 72);
             double r = BitConverter.ToDouble(d, p + 96);
             if (!(Fin3(o) && Fin3(x) && Fin3(y) && Fin3(z) && IsFinite(r))) return false;
             if (!(Unit(x) && Unit(y) && Unit(z))) return false;
-            if (Math.Abs(Dot(x, y)) > 1e-9 || Math.Abs(Dot(x, z)) > 1e-9 || Math.Abs(Dot(y, z)) > 1e-9) return false;
-            var cross = new[] { x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0] };
-            if (Math.Abs(Math.Abs(Dot(z, cross)) - 1) > 1e-6) return false;
+            if (Math.Abs(x.Dot(y)) > 1e-9 || Math.Abs(x.Dot(z)) > 1e-9 || Math.Abs(y.Dot(z)) > 1e-9) return false;
+            if (Math.Abs(Math.Abs(z.Dot(Pt3.Cross(x, y))) - 1) > 1e-6) return false;
             if (kind == SurfKind.Cylinder && !(Math.Abs(r) > 1e-4 && Math.Abs(r) < 1e5)) return false;
             if (kind == SurfKind.Cone && !(Math.Abs(r) > 1e-4 && Math.Abs(r) < 1.56)) return false;
-            sr = new SurfaceRec { Kind = kind, O = o, X = x, Y = y, Z = z, R = r, Env = env, Orient = d[p - 1] };
+            sr = new SurfaceRec { Kind = kind, O = o.ToArray(), X = x.ToArray(), Y = y.ToArray(), Z = z.ToArray(), R = r, Env = ReadEnvelope(p), Orient = d[p - 1] };
             return true;
         }
 
@@ -4040,33 +4246,32 @@ internal static partial class GRepParserV2
         bool TryRev(int p, out SurfaceRec sr)
         {
             sr = default;
-            if (p + 102 > lim || !HasSurfPrefix(p, out var env)) return false;
+            if (p + 102 > lim || !HasSurfPrefix(p)) return false;
             var o = V(d, p); var x = V(d, p + 24); var y = V(d, p + 48); var z = V(d, p + 72);
             if (!(Fin3(o) && Fin3(x) && Fin3(y) && Fin3(z))) return false;
             if (!(Unit(x) && Unit(y) && Unit(z))) return false;
-            if (Math.Abs(Dot(x, y)) > 1e-9 || Math.Abs(Dot(x, z)) > 1e-9 || Math.Abs(Dot(y, z)) > 1e-9) return false;
+            if (Math.Abs(x.Dot(y)) > 1e-9 || Math.Abs(x.Dot(z)) > 1e-9 || Math.Abs(y.Dot(z)) > 1e-9) return false;
             uint pv = BitConverter.ToUInt32(d, p + 96);
             ushort pcls = BitConverter.ToUInt16(d, p + 100);
             if (pcls != 1974 && pcls != 1736) return false;
-            sr = new SurfaceRec { Kind = SurfKind.Rev, O = o, X = x, Y = y, Z = z, Env = env, ProfileHandle = pv, Orient = d[p - 1] };
+            sr = new SurfaceRec { Kind = SurfKind.Rev, O = o.ToArray(), X = x.ToArray(), Y = y.ToArray(), Z = z.ToArray(), Env = ReadEnvelope(p), ProfileHandle = pv, Orient = d[p - 1] };
             return true;
         }
         bool FindArcAfter(int p, SurfaceRec rev, out ArcRec arc)
         {
             arc = default;
+            var axis = Pt3.From(rev.Z);
             int stop = Math.Min(lim - 112, p + 8192);
             for (int q = p; q < stop; q++)
             {
                 var x = V(d, q); var y = V(d, q + 24);
-                if (!(Fin3(x) && Fin3(y) && Unit(x) && Unit(y) && Math.Abs(Dot(x, y)) < 1e-9)) continue;
+                if (!(Fin3(x) && Fin3(y) && Unit(x) && Unit(y) && Math.Abs(x.Dot(y)) < 1e-9)) continue;
                 double r = BitConverter.ToDouble(d, q + 48);
                 var cc = V(d, q + 56);
                 if (!(IsFinite(r) && Math.Abs(r) > 1e-6 && Math.Abs(r) < 1e4 && Fin3(cc))) continue;
                 // Meridian plane: the arc plane's normal must be perpendicular the revolution axis.
-                var n = new[] { x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0] };
-                if (Math.Abs(Dot(n, rev.Z)) > 0.05) continue;
-                arc = new ArcRec { R = r };
-                Array.Copy(x, arc.X, 3); Array.Copy(y, arc.Y, 3); Array.Copy(cc, arc.C, 3);
+                if (Math.Abs(Pt3.Cross(x, y).Dot(axis)) > 0.05) continue;
+                arc = new ArcRec { R = r, X = x.ToArray(), Y = y.ToArray(), C = cc.ToArray() };
                 arc.T0 = BitConverter.ToDouble(d, q - 16); arc.T1 = BitConverter.ToDouble(d, q - 8);
                 return true;
             }
@@ -4112,9 +4317,9 @@ internal static partial class GRepParserV2
             for (int p = Math.Max(0, start); p + 72 <= lim && res.Count < expected.Count;)
             {
                 var o = V(d, p); var x = V(d, p + 24); var y = V(d, p + 48);
-                if (Fin3(o) && Fin3(x) && Fin3(y) && Unit(x) && Unit(y) && Math.Abs(Dot(x, y)) < 1e-9)
+                if (Fin3(o) && Fin3(x) && Fin3(y) && Unit(x) && Unit(y) && Math.Abs(x.Dot(y)) < 1e-9)
                 {
-                    res.Add(new SurfaceRec { Kind = SurfKind.Plane, O = o, X = x, Y = y });
+                    res.Add(new SurfaceRec { Kind = SurfKind.Plane, O = o.ToArray(), X = x.ToArray(), Y = y.ToArray() });
                     p += 72;
                     continue;
                 }
@@ -4167,8 +4372,9 @@ internal static partial class GRepParserV2
         int MaxHermiteGridLines = t_coarseTessellation ? 24 : 200;
         uSamples = ThinSamples(uSamples, uKnots, MaxHermiteGridLines);
         vSamples = ThinSamples(vSamples, vKnots, MaxHermiteGridLines);
+        if (uSamples.Count < 2 || vSamples.Count < 2) yield break;
 
-        static double[] Hermite(double[] p0, double[] p1, double[] d0, double[] d1,
+        static Pt3 Hermite(Pt3 p0, Pt3 p1, Pt3 d0, Pt3 d1,
             double t, double parameterSpan)
         {
             double t2 = t * t, t3 = t2 * t;
@@ -4176,14 +4382,12 @@ internal static partial class GRepParserV2
             double h10 = t3 - 2 * t2 + t;
             double h01 = -2 * t3 + 3 * t2;
             double h11 = t3 - t2;
-            return new[]
-            {
-                h00 * p0[0] + h10 * parameterSpan * d0[0] + h01 * p1[0] + h11 * parameterSpan * d1[0],
-                h00 * p0[1] + h10 * parameterSpan * d0[1] + h01 * p1[1] + h11 * parameterSpan * d1[1],
-                h00 * p0[2] + h10 * parameterSpan * d0[2] + h01 * p1[2] + h11 * parameterSpan * d1[2],
-            };
+            return new Pt3(
+                h00 * p0.X + h10 * parameterSpan * d0.X + h01 * p1.X + h11 * parameterSpan * d1.X,
+                h00 * p0.Y + h10 * parameterSpan * d0.Y + h01 * p1.Y + h11 * parameterSpan * d1.Y,
+                h00 * p0.Z + h10 * parameterSpan * d0.Z + h01 * p1.Z + h11 * parameterSpan * d1.Z);
         }
-        double[] Eval(double u, double v)
+        Pt3 Eval(double u, double v)
         {
             int ui = Array.BinarySearch(uKnots, u);
             if (ui < 0) ui = ~ui - 1;
@@ -4199,23 +4403,33 @@ internal static partial class GRepParserV2
             var n10 = nodes[vi * uKnots.Length + ui + 1];
             var n01 = nodes[(vi + 1) * uKnots.Length + ui];
             var n11 = nodes[(vi + 1) * uKnots.Length + ui + 1];
-            var p0 = Hermite(n00.Point, n10.Point, n00.Du, n10.Du, tu, du);
-            var p1 = Hermite(n01.Point, n11.Point, n01.Du, n11.Du, tu, du);
-            var dv0 = Hermite(n00.Dv, n10.Dv, n00.Duv, n10.Duv, tu, du);
-            var dv1 = Hermite(n01.Dv, n11.Dv, n01.Duv, n11.Duv, tu, du);
+            var p0 = Hermite(Pt3.From(n00.Point), Pt3.From(n10.Point), Pt3.From(n00.Du), Pt3.From(n10.Du), tu, du);
+            var p1 = Hermite(Pt3.From(n01.Point), Pt3.From(n11.Point), Pt3.From(n01.Du), Pt3.From(n11.Du), tu, du);
+            var dv0 = Hermite(Pt3.From(n00.Dv), Pt3.From(n10.Dv), Pt3.From(n00.Duv), Pt3.From(n10.Duv), tu, du);
+            var dv1 = Hermite(Pt3.From(n01.Dv), Pt3.From(n11.Dv), Pt3.From(n01.Duv), Pt3.From(n11.Duv), tu, du);
             return Hermite(p0, p1, dv0, dv1, tv, dv);
         }
 
+        static bool ValidPoint(Pt3 point) => IsFinite(point.X) && IsFinite(point.Y) && IsFinite(point.Z);
+
+        // Reuse sampled coordinates across neighboring cells. Each face still owns its vertices.
+        var currentRow = new Pt3[vSamples.Count];
+        var nextRow = new Pt3[vSamples.Count];
+        for (int j = 0; j < vSamples.Count; j++) currentRow[j] = Eval(uSamples[0], vSamples[j]);
         for (int i = 0; i + 1 < uSamples.Count; i++)
+        {
+            for (int j = 0; j < vSamples.Count; j++) nextRow[j] = Eval(uSamples[i + 1], vSamples[j]);
             for (int j = 0; j + 1 < vSamples.Count; j++)
             {
-                var quad = new List<double[]>
-                {
-                    Eval(uSamples[i], vSamples[j]), Eval(uSamples[i + 1], vSamples[j]),
-                    Eval(uSamples[i + 1], vSamples[j + 1]), Eval(uSamples[i], vSamples[j + 1]),
-                };
-                if (quad.All(p => p.All(IsFinite))) yield return quad;
+                var a = currentRow[j];
+                var b = nextRow[j];
+                var c = nextRow[j + 1];
+                var d = currentRow[j + 1];
+                if (ValidPoint(a) && ValidPoint(b) && ValidPoint(c) && ValidPoint(d))
+                    yield return [a.ToArray(), b.ToArray(), c.ToArray(), d.ToArray()];
             }
+            (currentRow, nextRow) = (nextRow, currentRow);
+        }
     }
 
     /// <summary>

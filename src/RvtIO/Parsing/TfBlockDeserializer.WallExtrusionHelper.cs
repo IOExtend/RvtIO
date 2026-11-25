@@ -9,9 +9,13 @@ internal static partial class TfBlockDeserializer
 
     /// <summary>Reads the profile helper from the complete owned FIFO of an own wall root (class 3524/361).
     /// Null when the frame is not completely readable or the helper is ambiguous (several cells, unknown loop class).</summary>
-    internal static OwnWallHelperInput? ExtractOwnWallHelperInput(byte[] data, int start, uint size, ushort classId)
+    internal static OwnWallHelperInput? ExtractOwnWallHelperInput(byte[] data, int start, uint size, ushort classId,
+        WallCompleteInputRead? shared = null)
     {
-        if (ExtractOwnWallCompleteInputs(data, start, size, classId, out _) is not { } input) return null;
+        var input = shared == null
+            ? ExtractOwnWallCompleteInputs(data, start, size, classId, out _)
+            : shared.Read(out _);
+        if (input == null) return null;
         var helpers = input.LaterObjects.Where(o => o.ClassId == 4041).ToArray();
         if (helpers.Length == 0) return new(classId, false, false, []);
         if (helpers.Length != 1) return null;

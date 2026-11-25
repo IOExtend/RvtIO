@@ -47,6 +47,57 @@ public class TfSchemaConcurrencyTests
         finally { context.Unload(); }
     }
 
+    [Fact]
+    public void SerializationChainsMatchAllShippedClassBasesAndFields()
+    {
+        var schemas = TfBlockDeserializer.Schemas;
+        foreach (int classId in schemas.Keys)
+        {
+            var ancestors = new Stack<int>();
+            for (int? current = classId; current is int id && schemas.TryGetValue(id, out var schema);
+                current = schema.Base)
+            {
+                Assert.DoesNotContain(id, ancestors);
+                ancestors.Push(id);
+            }
+
+            var expected = ancestors.SelectMany(id => schemas[id].Fields.Select(field => field with { Declaring = id }));
+            Assert.Equal(expected, TfBlockDeserializer.SerializationFields(classId));
+            Assert.All(ancestors, baseId => Assert.True(TfBlockDeserializer.IsSubclassOf(classId, baseId)));
+            Assert.False(TfBlockDeserializer.IsSubclassOf(classId, int.MaxValue));
+        }
+        Assert.Null(TfBlockDeserializer.SerializationFields(int.MaxValue));
+    }
+
+    [Fact]
+    public void NativeStoreRowsMatchTheShippedLayouts()
+    {
+        (string Name, byte Type, byte Mods, int? Ref) id = ("m_paramId", 14, 0, 20);
+        Assert.Equal([id, ("m_value", (byte)8, (byte)96, null)], Layout(2882));
+        Assert.Equal([("m_value", (byte)7, (byte)0, null), id], Layout(2883));
+        Assert.Equal([id, ("m_value", (byte)14, (byte)0, 20)], Layout(2884));
+        Assert.Equal([id, ("m_value", (byte)4, (byte)0, null)], Layout(2885));
+
+        static IEnumerable<(string, byte, byte, int?)> Layout(int classId) =>
+            TfBlockDeserializer.SerializationFields(classId)!.Select(field =>
+                (field.Name, field.Type, field.Mods, field.Ref));
+    }
+
+    [Fact]
+    public void FieldCopiesRecomputeCaptureKeysWhenIdentityChanges()
+    {
+        var field = new TfBlockDeserializer.TfField("m_hostId", 14, 0, 20, null, 1795);
+        var equalBeforeCapture = field with { };
+
+        Assert.Equal("1795:m_hostId", field.ProductionCaptureKey);
+        Assert.Equal(equalBeforeCapture, field);
+        Assert.Equal(equalBeforeCapture.GetHashCode(), field.GetHashCode());
+        Assert.Null((field with { Name = "m_uncaptured" }).ProductionCaptureKey);
+        var moved = field with { Declaring = 0 };
+        Assert.Equal("0:m_hostId", moved.QualifiedKey);
+        Assert.Null(moved.ProductionCaptureKey);
+    }
+
     private static Type Parser(AssemblyLoadContext context) => context
         .LoadFromAssemblyPath(typeof(TfBlockDeserializer).Assembly.Location)
         .GetType("RvtIO.Parsing.TfBlockDeserializer", throwOnError: true)!;

@@ -66,7 +66,8 @@ internal static class StairComponentSource
         TfBlockDeserializer.IsSubclassOf(classId, 37)
         && (classId == 3681 || (state.ElemRecOwningElementIds?.ContainsKey(owner) ?? false));
 
-    internal static void Apply(IReadOnlyList<Element> elements, ParsingState state)
+    internal static void Apply(IReadOnlyList<Element> elements, ParsingState state,
+        IReadOnlyDictionary<int, Element>? unique = null)
     {
         foreach (var element in elements)
         {
@@ -79,7 +80,7 @@ internal static class StairComponentSource
             element.SerializedStairRunInput = null;
         }
         if (state.ElemRecOwningElementIds == null) return;
-        var unique = elements.GroupBy(element => element.Id)
+        unique ??= elements.GroupBy(element => element.Id)
             .Where(group => group.Count() == 1).ToDictionary(group => group.Key, group => group.Single());
         foreach (var element in unique.Values)
         {

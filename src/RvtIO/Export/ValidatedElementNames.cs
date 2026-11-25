@@ -39,17 +39,23 @@ internal static class ValidatedElementNames
     /// </summary>
     internal static int Apply(RevitFileInfo info, ParsingState state)
     {
-        var byId = new Dictionary<int, Element>();
-        var counts = new Dictionary<int, int>();
+        var byId = new Dictionary<int, Element>(info.Elements.Count);
+        var counts = new Dictionary<int, int>(info.Elements.Count);
         foreach (Element element in info.Elements)
         {
             byId.TryAdd(element.Id, element);
             counts[element.Id] = counts.GetValueOrDefault(element.Id) + 1;
         }
+        return Apply(info, state, byId, counts);
+    }
+
+    internal static int Apply(RevitFileInfo info, ParsingState state,
+        IReadOnlyDictionary<int, Element> byId, IReadOnlyDictionary<int, int> counts)
+    {
         // Resolve everything before assigning: no resolution may read another element's replaced Name.
         var names = new string?[info.Elements.Count];
-        for (int index = 0; index < names.Length; index++)
-            names[index] = Resolve(info.Elements[index], byId, counts, state)?.Name;
+        Parallel.For(0, names.Length,
+            index => names[index] = Resolve(info.Elements[index], byId, counts, state)?.Name);
         int named = 0;
         for (int index = 0; index < names.Length; index++)
         {

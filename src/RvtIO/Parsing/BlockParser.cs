@@ -247,8 +247,6 @@ internal static class BlockParser
         {
             ExtractBlockStrings(chunk, dataStart, dataEnd, eid, state.ElemStrings);
 
-            ExtractBlockDoubles(chunk, dataStart, dataEnd, eid, state.ElemDoubles);
-
             // Blocks with high classIdx word = 0xFFFF contain BIP key->double pairs at stride 12
             if ((classIdx >> 16) == 0xFFFF)
             {
@@ -1465,18 +1463,18 @@ internal static class BlockParser
         Dictionary<uint, ElementRecord> records)
     {
         if (!records.TryGetValue(eid, out var rec)) return;
-        var body = rec.Body;
+        var body = rec.Body.Span;
         int mp = -1;
         for (int ii = 0; ii < body.Length - 1; ii++)
-            if (BitConverter.ToUInt16(body, ii) == 0x0548) { mp = ii; break; }
+            if (BitConverter.ToUInt16(body[ii..]) == 0x0548) { mp = ii; break; }
         if (mp < 0) return;
 
         // Collect ElementId BIP keys from body entries (ft=4, negative key, ElementId storage type)
         var elementIdBips = new List<int>();
         for (int p = 2; p + 14 <= mp; p += 14)
         {
-            int k = BitConverter.ToInt32(body, p + 4);
-            ushort ft = BitConverter.ToUInt16(body, p + 8);
+            int k = BitConverter.ToInt32(body[(p + 4)..]);
+            ushort ft = BitConverter.ToUInt16(body[(p + 8)..]);
             if (ft != 4 || k >= -1 || k < -2_000_000) continue;
             if (!BipNames.Lookup.TryGetValue(k, out string? nm)) continue;
             if (BipHelpers.BipStorageType(nm) == StorageType.ElementId)

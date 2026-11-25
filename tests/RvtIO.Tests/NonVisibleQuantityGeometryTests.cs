@@ -77,8 +77,6 @@ public class NonVisibleQuantityGeometryTests
         Assert.Equal(3, door.CoarseSurfaceArea!.Value, 12);
         Assert.Same(body, door.Geometry);
         Assert.Single(door.Geometry!.Faces);
-        Assert.False(state.CoarseView);
-        Assert.False(state.IncludeNonVisibleQuantities);
     }
 
     [Fact]

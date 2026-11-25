@@ -79,7 +79,7 @@ static class ListCategoryDump
     private static string? NamedStringParam(Element e, string name)
     {
         foreach (var p in e.Parameters)
-            if (p.Definition?.Name is string n
+            if (p.DefinitionName is string n
                 && string.Equals(n.Replace(" ", null), name.Replace(" ", null),
                     StringComparison.InvariantCultureIgnoreCase)
                 && p.Value is string v)

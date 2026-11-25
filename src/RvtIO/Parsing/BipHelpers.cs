@@ -5,15 +5,40 @@ namespace RvtIO.Parsing;
 
 internal static class BipHelpers
 {
-    public static Parameter MakeBipParam(int bipId, string bipName, StorageType storageType, object value, bool hasNoRevitValue = false) => new()
+    private static readonly Dictionary<int, (Parameter.DefinitionData Definition, bool IsReadOnly, StorageType Storage)> Definitions =
+        BipNames.Lookup.ToDictionary(pair => pair.Key,
+            pair => (new Parameter.DefinitionData(pair.Key, pair.Value, pair.Value),
+                IsBipReadOnly(pair.Value), BipStorageType(pair.Value)));
+
+    internal static Parameter MakeBipParam<T>(int bipId, string? bipName, StorageType? storageType, T value, bool hasNoRevitValue = false) =>
+        MakeBipParam(bipId, bipName, storageType, Parameter.BoxParsedValue(value), hasNoRevitValue);
+
+    public static Parameter MakeBipParam(int bipId, string? bipName, StorageType? storageType, object? value, bool hasNoRevitValue = false)
     {
-        Id = bipId,
-        StorageType = storageType,
-        Value = value,
-        HasNoRevitValue = hasNoRevitValue,
-        IsReadOnly = IsBipReadOnly(bipName),
-        Definition = new Definition { Id = bipId, BuiltInParameter = bipName, Name = bipName },
-    };
+        Parameter parameter;
+        if (Definitions.TryGetValue(bipId, out var cached) && cached.Definition.Name == bipName)
+            parameter = new Parameter(cached.Definition)
+            { IsReadOnly = cached.IsReadOnly, StorageType = storageType ?? cached.Storage };
+        else
+            parameter = new Parameter(new Definition { Id = bipId, BuiltInParameter = bipName, Name = bipName })
+            { IsReadOnly = IsBipReadOnly(bipName), StorageType = storageType ?? BipStorageType(bipName) };
+        parameter.Id = bipId;
+        parameter.Value = value;
+        parameter.HasNoRevitValue = hasNoRevitValue;
+        return parameter;
+    }
+
+    internal static Parameter MakeStoredBipParam(int id, StorageType storage, object? value, bool hasNoRevitValue)
+    {
+        if (!Definitions.TryGetValue(id, out var cached))
+            return MakeBipParam(id, id.ToString(), storage, value, hasNoRevitValue);
+
+        return new Parameter(cached.Definition)
+        {
+            Id = id, IsReadOnly = cached.IsReadOnly, StorageType = storage,
+            Value = value, HasNoRevitValue = hasNoRevitValue,
+        };
+    }
 
     public static StorageType BipStorageType(string? bipName)
     {
@@ -60,11 +85,6 @@ internal static class BipHelpers
             || n.Contains("_URL") || n.Contains("_KEYNOTE") || n.Contains("_MODEL")
             || n.Contains("_MANUFACTURER") || n.Contains("_COST"))
             return false;
-        if (n.Contains("_COMPUTED") || n.Contains("_VOLUME") || n.Contains("_AREA")
-            || n.Contains("ELEM_TYPE_PARAM") || n.Contains("ELEM_FAMILY_PARAM")
-            || n.Contains("SYMBOL_ID_PARAM") || n.Contains("ELEM_FAMILY_AND_TYPE")
-            || n.Contains("ELEM_TYPE_LABEL") || n.Contains("_CUT_LENGTH"))
-            return true;
         return true;
     }
 
@@ -75,8 +95,8 @@ internal static class BipHelpers
         if (colonIdx < 0) return null;
         int start = colonIdx + 4;
         if (start >= forgeId.Length) return null;
-        if (start + 36 <= forgeId.Length && Guid.TryParse(forgeId.Substring(start, 36), out var g36)) return g36;
-        if (start + 32 <= forgeId.Length && Guid.TryParse(forgeId.Substring(start, 32), out var g32)) return g32;
+        if (start + 36 <= forgeId.Length && Guid.TryParse(forgeId.AsSpan(start, 36), out var g36)) return g36;
+        if (start + 32 <= forgeId.Length && Guid.TryParse(forgeId.AsSpan(start, 32), out var g32)) return g32;
         return null;
     }
 }

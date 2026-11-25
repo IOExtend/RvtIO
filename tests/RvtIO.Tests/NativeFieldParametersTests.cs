@@ -22,6 +22,29 @@ public class NativeFieldParametersTests
         Assert.NotEmpty(NativeFieldParameters.All);
     }
 
+    [Fact]
+    public void PresentRowsUseCapturedStorageAndKeepTableOrder()
+    {
+        var native = new TfBlockDeserializer.NativeParams();
+        native.Fields["2628:m_categoryId"] = 21;
+        native.Fields["1064:m_categoryId"] = 42;
+        native.DoubleFields["1064:m_categoryId"] = 0.5;
+        native.Fields["1492:m_unknown"] = 9;
+        var rows = new List<int>();
+        var values = new object?[NativeFieldParameters.All.Length];
+
+        NativeFieldParameters.CollectPresentRows(native, rows, values);
+
+        Assert.Equal(
+            [(-1140363, "1064:m_categoryId"), (-1140363, "2628:m_categoryId"),
+             (-1140362, "1064:m_categoryId"), (-1140362, "2628:m_categoryId")],
+            rows.Select(index => (NativeFieldParameters.All[index].ParamId, NativeFieldParameters.All[index].Key)));
+        Assert.Equal([42, 21, 42, 21], rows.Select(row => Assert.IsType<int>(values[row])));
+        Assert.Same(values[rows[0]], values[rows[2]]);
+        NativeFieldParameters.CollectPresentRows(new(), rows, values);
+        Assert.Empty(rows);
+    }
+
     [Theory]
     [InlineData(-1001381, "1794:m_structUsage")] // Structural Usage
     [InlineData(-1001552, "308:m_enableAnalyticalModel")] // Enable Analytical Model

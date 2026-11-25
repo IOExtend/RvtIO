@@ -1,10 +1,107 @@
 using RvtIO.Model;
+using RvtIO.Parsing;
 using Xunit;
 
 namespace RvtIO.Tests;
 
 public class ParameterValueFormattingTests
 {
+    [Fact]
+    public void ParsedNumericValuesShareExactBoxesAndPreserveTheirTypes()
+    {
+        var first = BipHelpers.MakeBipParam(-1002108, "HOST_ID_PARAM", StorageType.ElementId, -1, hasNoRevitValue: true);
+        var second = BipHelpers.MakeBipParam(-1002108, "HOST_ID_PARAM", StorageType.ElementId, -1, hasNoRevitValue: true);
+        Assert.Same(first.Value, second.Value);
+        Assert.IsType<int>(first.Value);
+        Assert.True(first.HasNoRevitValue);
+        Assert.Same(Parameter.BoxParsedValue(0.0), Parameter.BoxParsedValue(0.0));
+        Assert.IsType<short>(Parameter.BoxParsedValue((short)1));
+        Assert.Equal(long.MinValue, BitConverter.DoubleToInt64Bits(
+            Assert.IsType<double>(Parameter.BoxParsedValue(BitConverter.Int64BitsToDouble(long.MinValue)))));
+
+        object callerValue = -1;
+        first.Value = callerValue;
+        Assert.Same(callerValue, first.Value);
+        Assert.False(first.HasNoRevitValue);
+        Assert.True(second.HasNoRevitValue);
+        Assert.Equal(-1, Assert.IsType<int>(second.Value));
+    }
+
+    [Fact]
+    public void OptionalGuidCanBeUpdatedOrClearedIndependentlyOnAShallowCopy()
+    {
+        var first = new Parameter();
+        Assert.Null(first.Guid);
+        first.Guid = Guid.Parse("01234567-89ab-cdef-0123-456789abcdef");
+        var copy = first.ShallowCopy(7.0);
+        Assert.Equal(first.Guid, copy.Guid);
+
+        copy.Guid = Guid.Empty;
+        Assert.Equal(Guid.Empty, copy.Guid);
+        Assert.NotEqual(first.Guid, copy.Guid);
+        copy.Guid = null;
+        Assert.Null(copy.Guid);
+        Assert.NotNull(first.Guid);
+    }
+
+    [Fact]
+    public void SharedDisplayUnitsCanBeEditedOnEachParameterIndependently()
+    {
+        var units = new Parameter.DisplayUnits("length", "mm", 304.8);
+        var original = new Parameter();
+        original.SetDisplayUnits(units);
+        var clone = original.ShallowCopy(7.0);
+
+        clone.UnitSymbol = "cm";
+        clone.ConversionFactor = 30.48;
+        original.SpecType = null;
+
+        Assert.Equal("length", clone.SpecType);
+        Assert.Equal("cm", clone.UnitSymbol);
+        Assert.Equal(30.48, clone.ConversionFactor);
+        Assert.Null(original.SpecType);
+        Assert.Equal("mm", original.UnitSymbol);
+        Assert.Equal(304.8, original.ConversionFactor);
+    }
+
+    [Fact]
+    public void BuiltInDefinitionsStayIndependentAndShallowCopiesShareTheDefinition()
+    {
+        const int id = -1004005;
+        const string name = "CURVE_ELEM_LENGTH";
+        var first = BipHelpers.MakeBipParam(id, name, StorageType.Double, 3.0);
+        var second = BipHelpers.MakeBipParam(id, name, StorageType.Double, 5.0);
+        first.Id = -1;
+        Assert.Equal(id, first.DefinitionId);
+        var clone = first.ShallowCopy(7.0);
+        Assert.Same(first.Definition, clone.Definition);
+        Assert.NotSame(first.Definition, second.Definition);
+        first.Definition.Name = "Edited";
+        Assert.Equal("Edited", clone.DefinitionName);
+        Assert.Equal(name, second.DefinitionName);
+        Assert.Equal(name, first.DefinitionBuiltIn);
+    }
+
+    [Fact]
+    public void UserDefinitionDataPreservesIndependentParameterEdits()
+    {
+        var guid = Guid.Parse("01234567-89ab-cdef-0123-456789abcdef");
+        var definition = new Parameter.DefinitionData(123, "Width", guid: guid);
+        object value = 3.0;
+        var first = new Parameter(definition) { Value = value };
+        var second = new Parameter(definition) { Value = value };
+
+        first.Definition.Name = "Edited";
+        first.Guid = null;
+        first.Value = 5.0;
+
+        Assert.Equal("Width", second.Definition.Name);
+        Assert.Equal(123, second.Definition.Id);
+        Assert.Null(second.Definition.BuiltInParameter);
+        Assert.Equal(guid, second.Guid);
+        Assert.Equal(3.0, second.AsDouble());
+    }
+
     [Fact]
     public void Parameter_AsValueString_CaseInsensitiveAndBipFallback()
     {

@@ -6,7 +6,8 @@ internal static partial class TfBlockDeserializer
 {
     // Serialized driver input only: this does not confirm the geometry state.
     internal static CurveDriverData? ExtractOwnWallLocationLine(
-        byte[] data, int start, uint size, ushort classId, out string? failure)
+        byte[] data, int start, uint size, ushort classId, out string? failure,
+        WallCompleteInputRead? complete = null)
     {
         var references = ExtractOwnWallReferenceGeometryInputs(data, start, size, classId, out failure);
         if (references == null) return null;
@@ -15,7 +16,9 @@ internal static partial class TfBlockDeserializer
         var drivers = references.CurveDrivers.Where(d => d.QueueIndex == driverIndex).ToArray();
         if (drivers.Length != 1 || drivers[0].ControlData.Handle != 0
             || drivers[0].Curve is not { ClassId: 1736, QueueIndex: int curveIndex }) return null;
-        var input = ExtractOwnWallCompleteInputs(data, start, size, classId, out failure);
+        var input = complete == null
+            ? ExtractOwnWallCompleteInputs(data, start, size, classId, out failure)
+            : complete.Read(out failure);
         if (input == null) return null;
         failure = "location-curve";
         var history = input.Histories.Histories;

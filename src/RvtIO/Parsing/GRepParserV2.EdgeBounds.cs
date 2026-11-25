@@ -68,11 +68,11 @@ internal static partial class GRepParserV2
 
     // The bounding box of a geometry is computed per face: only authored Edge samples,
     // evaluated on the Edge's first active Face; neither a surface envelope nor analytic extrema.
-    private static Dictionary<uint, double[]> ReadFaceEdgeBounds(Cur c)
+    private static Dictionary<uint, double[]> ReadFaceEdgeBounds(Cur c, Dictionary<uint, List<int>> loops,
+        Dictionary<uint, EdgeRec?> edges)
     {
         var result = new Dictionary<uint, double[]>();
-        var edges = EdgesByHandle(c);
-        foreach (var (face, indices) in CompleteFaceLoops(c))
+        foreach (var (face, indices) in loops)
         {
             var faceEdges = TryGetFaceLoopEdges(c, face, indices, edges);
             if (faceEdges == null) continue;

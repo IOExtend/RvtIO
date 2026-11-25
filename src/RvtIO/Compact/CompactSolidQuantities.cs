@@ -52,13 +52,19 @@ internal sealed class CompactSolidQuantities
     internal static CompactSolidQuantities From(RevitFileInfo info, ParsingState state, Func<int, bool>? wantsSolids)
     {
         var result = new CompactSolidQuantities();
-        foreach (var element in info.Elements)
+        var previousCache = state.SymbolPlacementGeometry;
+        state.SymbolPlacementGeometry ??= new(ReferenceEqualityComparer.Instance);
+        try
         {
-            if (element.Parameters.FirstOrDefault(p => p.Id == CurveElemLengthParameter) is { Value: double length })
-                result._curveLength.TryAdd(element.Id, length);
-            if (element.CategoryId is int category && (wantsSolids?.Invoke(category) ?? true))
-                result._solids.TryAdd(element.Id, Measure(element, state) with { Category = category });
+            foreach (var element in info.Elements)
+            {
+                if (element.Parameters.FirstOrDefault(p => p.Id == CurveElemLengthParameter) is { Value: double length })
+                    result._curveLength.TryAdd(element.Id, length);
+                if (element.CategoryId is int category && (wantsSolids?.Invoke(category) ?? true))
+                    result._solids.TryAdd(element.Id, Measure(element, state) with { Category = category });
+            }
         }
+        finally { state.SymbolPlacementGeometry = previousCache; }
         return result;
     }
 
@@ -73,11 +79,12 @@ internal sealed class CompactSolidQuantities
 
     internal static Solids Measure(Element element, ParsingState state)
     {
-        var levels = new GeometryData?[3];
-        ElementBuilder.LevelGeometries(element, state, (slot, geometry) => levels[slot] = geometry);
-        int chosen = Array.FindIndex(levels, geometry => geometry?.BrepSolids is { Count: > 0 });
-        if (chosen < 0) return new Solids("none", 2, 0, 0, 0, 0, null);
-        return Measure(levels[chosen]!, chosen);
+        for (int level = 1; level <= 2; level++)
+            if (ElementBuilder.GeometryAtDetailLevel(element, state, level) is { BrepSolids.Count: > 0 } geometry)
+                return Measure(geometry, level - 1);
+        return element.Geometry is { BrepSolids.Count: > 0 } fine
+            ? Measure(fine, 2)
+            : new Solids("none", 2, 0, 0, 0, 0, null);
     }
 
     internal static Solids Measure(GeometryData geometry, int level)

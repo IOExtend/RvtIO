@@ -193,7 +193,7 @@ public partial class IfcExporter
             || cutter.Geometry is not { Faces.Count: > 0 } geometry
             || !geometry.Faces.Any(face => face.OuterVertices is { Count: >= 3 })
             || FacetedGeometryCannotCreateProductShapeAtIfcPrecision(geometry)) return false;
-        var levels = cutter.Parameters.Where(parameter => parameter.Definition?.Name is
+        var levels = cutter.Parameters.Where(parameter => parameter.DefinitionName is
                 "LEVEL_PARAM" or "FAMILY_LEVEL_PARAM" or "SCHEDULE_LEVEL_PARAM" or "INSTANCE_REFERENCE_LEVEL_PARAM")
             .Select(parameter => parameter.Value).OfType<int>()
             .Where(id => id > 0 && elements.TryGetValue(id, out var level) && level.CategoryId == -2000240).ToArray();

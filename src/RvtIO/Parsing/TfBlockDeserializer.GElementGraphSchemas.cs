@@ -97,11 +97,18 @@ internal static partial class TfBlockDeserializer
         Schemas.TryGetValue(pair.Key, out var actual) && actual.Name == pair.Value.Name
         && actual.Base == pair.Value.Base && actual.Fields.SequenceEqual(pair.Value.Fields));
 
-    private static IEnumerable<TfField> GElementGraphFields(ushort classId)
+    private static readonly Dictionary<ushort, TfField[]> GElementGraphFieldChains =
+        GElementGraphSchemas.Keys.ToDictionary(classId => classId, classId => EnumerateGElementGraphFields(classId).ToArray());
+
+    private static readonly Dictionary<(ushort Class, string Name), TfField> GElementGraphFieldDescriptors =
+        GElementGraphSchemas.SelectMany(schema => schema.Value.Fields.Select(field => (schema.Key, Field: field)))
+            .ToDictionary(entry => (entry.Key, entry.Field.Name), entry => entry.Field);
+
+    private static IEnumerable<TfField> EnumerateGElementGraphFields(ushort classId)
     {
         var schema = GElementGraphSchemas[classId];
         if (schema.Base is int parent)
-            foreach (var field in GElementGraphFields((ushort)parent)) yield return field;
+            foreach (var field in EnumerateGElementGraphFields((ushort)parent)) yield return field;
         foreach (var field in schema.Fields) yield return field with { Declaring = classId };
     }
 }

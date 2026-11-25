@@ -4,16 +4,27 @@ namespace RvtIO.Parsing;
 
 internal static class WallWidthExtractor
 {
+    public static void Extract(ParsingState state)
+    {
+        var wallIds = new HashSet<uint>();
+        foreach (var (id, record) in state.Records)
+            if (record.CategoryId == -2000011) wallIds.Add(id);
+
+        var wallBlocks = ExtractFromBlocks(state, wallIds);
+        ExtractFromGrid(state);
+        ExtractFromBlockGrid(state, wallIds, wallBlocks);
+    }
+
     /// <summary>Extract wall widths from 0xFFFF block Tf data (half-width anchor pattern).</summary>
-    public static void ExtractFromBlocks(ParsingState state)
+    private static List<(byte[] Chunk, uint Id, int Start, int End)> ExtractFromBlocks(ParsingState state, HashSet<uint> wallIds)
     {
         var nonRecordChunks = state.NonRecordChunks;
         var recordChunks = state.RecordChunks;
-        var records = state.Records;
         var wallTypeWidths = state.WallTypeWidths;
         var elemBipDoubles = state.ElemBipDoubles;
 
         var wallInstWidths = new Dictionary<uint, (double width, uint typeId)>(); // instanceId to (width, typeId)
+        var wallBlocks = new List<(byte[] Chunk, uint Id, int Start, int End)>();
         foreach (var chunk in nonRecordChunks.Concat(recordChunks))
         {
             int pos = 0;
@@ -33,35 +44,33 @@ internal static class WallWidthExtractor
                 if (eid == 0) { pos += 4; continue; }
                 if (dsz == 0) { pos++; continue; }
                 if (pos + 16 + (int)dsz > chunk.Length) break;
-                uint ci = BitConverter.ToUInt32(chunk, pos + 12);
-                if ((ci >> 16) == 0xFFFF && records.TryGetValue(eid, out var rec) && rec.CategoryId == -2000011)
+                int dataStart = pos + 16;
+                pos = dataStart + (int)dsz;
+                if (!wallIds.Contains(eid)) continue;
+                if (dsz >= 48) wallBlocks.Add((chunk, eid, dataStart, pos));
+                if ((BitConverter.ToUInt32(chunk, dataStart - 4) >> 16) != 0xFFFF || wallInstWidths.ContainsKey(eid)) continue;
+                for (int i = dataStart; i + 24 <= pos; i += 2)
                 {
-                    int dataStart = pos + 16;
-                    int dataEnd = dataStart + (int)dsz;
-                    for (int i = dataStart; i + 24 <= dataEnd; i += 2)
+                    int wai = BitConverter.ToInt32(chunk, i);
+                    int uli = BitConverter.ToInt32(chunk, i + 4);
+                    int as2 = BitConverter.ToInt32(chunk, i + 8);
+                    int at2 = BitConverter.ToInt32(chunk, i + 12);
+                    int ab2 = BitConverter.ToInt32(chunk, i + 16);
+                    int cf2 = BitConverter.ToInt32(chunk, i + 20);
+                    if (wai <= 0) continue;
+                    if (uli == 0) continue;
+                    bool ap1 = as2 == -9 && at2 >= -100 && at2 <= 0 && ab2 >= -100 && ab2 <= 0;
+                    bool ap2 = as2 == -1 && at2 == -1 && ab2 == -1;
+                    if (!ap1 && !ap2) continue;
+                    if (cf2 != -1) continue;
+                    if (i - 16 >= dataStart)
                     {
-                        int wai = BitConverter.ToInt32(chunk, i);
-                        int uli = BitConverter.ToInt32(chunk, i + 4);
-                        int as2 = BitConverter.ToInt32(chunk, i + 8);
-                        int at2 = BitConverter.ToInt32(chunk, i + 12);
-                        int ab2 = BitConverter.ToInt32(chunk, i + 16);
-                        int cf2 = BitConverter.ToInt32(chunk, i + 20);
-                        if (wai <= 0) continue;
-                        if (uli == 0) continue;
-                        bool ap1 = as2 == -9 && at2 >= -100 && at2 <= 0 && ab2 >= -100 && ab2 <= 0;
-                        bool ap2 = as2 == -1 && at2 == -1 && ab2 == -1;
-                        if (!ap1 && !ap2) continue;
-                        if (cf2 != -1) continue;
-                        if (!wallInstWidths.ContainsKey(eid) && i - 16 >= dataStart)
-                        {
-                            double hw = BitConverter.ToDouble(chunk, i - 16);
-                            if (hw > 0.001 && hw < 50 && !double.IsNaN(hw) && !double.IsInfinity(hw))
-                                wallInstWidths[eid] = (hw * 2, (uint)wai);
-                        }
-                        break;
+                        double hw = BitConverter.ToDouble(chunk, i - 16);
+                        if (hw > 0.001 && hw < 50 && !double.IsNaN(hw) && !double.IsInfinity(hw))
+                            wallInstWidths[eid] = (hw * 2, (uint)wai);
                     }
+                    break;
                 }
-                pos += 16 + (int)dsz;
             }
         }
         foreach (var (eid, (w, tid)) in wallInstWidths)
@@ -78,10 +87,11 @@ internal static class WallWidthExtractor
             bd.TryAdd(-1001000, w);
         }
         DiagnosticSink.WriteLine($"Wall widths extracted: {wallInstWidths.Count} instances, {wallTypeWidths.Count} types");
+        return wallBlocks;
     }
 
     /// <summary>Extract wall widths from CompoundStructure Grid patterns near PreviewElemId.</summary>
-    public static void ExtractFromGrid(ParsingState state)
+    private static void ExtractFromGrid(ParsingState state)
     {
         var elemTable = state.ElemTable;
         var records = state.Records;
@@ -102,7 +112,14 @@ internal static class WallWidthExtractor
                 { previewToWallType[refId] = eid; wallTypeDefIds.Add(eid); break; }
         }
         DiagnosticSink.WriteLine($"Wall type defs: {wallTypeDefIds.Count}, PreviewElemId mappings: {previewToWallType.Count}");
+        if (previewToWallType.Count == 0)
+        {
+            DiagnosticSink.WriteLine($"Grid widths: 0 types added (total wallTypeWidths: {wallTypeWidths.Count})");
+            DiagnosticSink.WriteLine($"Unmatched wall type defs: {-wallTypeWidths.Count}");
+            return;
+        }
 
+        uint firstPreview = previewToWallType.Keys.Min(), lastPreview = previewToWallType.Keys.Max();
         var previewPositions = new Dictionary<int, List<(int off, uint wtId)>>();
         for (int ci = 0; ci < chunks.Count; ci++)
         {
@@ -110,7 +127,7 @@ internal static class WallWidthExtractor
             for (int pOff = 0; pOff + 4 <= chunk.Length; pOff++)
             {
                 uint pv = BitConverter.ToUInt32(chunk, pOff);
-                if (!previewToWallType.TryGetValue(pv, out var wtId)) continue;
+                if (pv < firstPreview || pv > lastPreview || !previewToWallType.TryGetValue(pv, out var wtId)) continue;
                 if (!previewPositions.TryGetValue(ci, out var list))
                     previewPositions[ci] = list = new List<(int, uint)>();
                 list.Add((pOff, wtId));
@@ -199,80 +216,45 @@ internal static class WallWidthExtractor
     /// we scan each block's data for CompoundStructure Grid patterns and use the block's
     /// own elemId for association. Works for both ElemTable types and discovered types.
     /// </remarks>
-    public static void ExtractFromBlockGrid(ParsingState state)
+    private static void ExtractFromBlockGrid(ParsingState state, HashSet<uint> wallIds,
+        List<(byte[] Chunk, uint Id, int Start, int End)> wallBlocks)
     {
         var records = state.Records;
-        var elemTable = state.ElemTable;
         var wallTypeWidths = state.WallTypeWidths;
         var elemBipDoubles = state.ElemBipDoubles;
 
         // Wall type element IDs: CategoryId=OST_Walls AND no instance-level params
         // (wall types do not have WALL_USER_HEIGHT_PARAM in their BIP doubles)
         var wallTypeIds = new HashSet<uint>();
-        foreach (var (eid, rec) in records)
+        foreach (uint eid in wallIds)
         {
-            if (rec.CategoryId != -2000011) continue; // OST_Walls only
             if (wallTypeWidths.ContainsKey(eid)) continue; // already have width
             if (state.ElemBipDoubles.TryGetValue(eid, out var bd) && bd.ContainsKey(-1001105)) continue; // WALL_USER_HEIGHT_PARAM means instance
             wallTypeIds.Add(eid);
         }
-        foreach (var (eid, _) in elemTable)
-        {
-            if (wallTypeWidths.ContainsKey(eid)) continue;
-            if (!records.TryGetValue(eid, out var rec)) continue;
-            if (rec.CategoryId != -2000011) continue;
-            if (state.ElemBipDoubles.TryGetValue(eid, out var bd2) && bd2.ContainsKey(-1001105)) continue;
-            wallTypeIds.Add(eid);
-        }
-
         if (wallTypeIds.Count == 0) return;
 
         var blockGridWidths = new Dictionary<uint, (double width, int nCoords)>();
-        foreach (var chunk in state.NonRecordChunks.Concat(state.RecordChunks))
+        foreach (var (chunk, eid, start, end) in wallBlocks)
         {
-            int pos = 0;
-            while (pos + 16 <= chunk.Length)
+            if (!wallTypeIds.Contains(eid)) continue;
+            for (int g = start; g + 48 <= end; g++)
             {
-                uint eid = BitConverter.ToUInt32(chunk, pos);
-                if (pos + 12 <= chunk.Length)
+                var (tw, nc) = DetectGrid(chunk, g);
+                if (nc >= 2)
                 {
-                    uint rbs = BitConverter.ToUInt32(chunk, pos + 4);
-                    ushort rm = BitConverter.ToUInt16(chunk, pos + 8);
-                    if (rm == 0x053C && ElementIdEncoding.IsSupported(eid)
-                        && rbs > 0 && rbs < 500_000 && pos + 12 + (int)rbs <= chunk.Length)
-                    { pos += 12 + (int)rbs; continue; }
+                    if (!blockGridWidths.TryGetValue(eid, out var existing) || nc > existing.nCoords)
+                        blockGridWidths[eid] = (tw, nc);
+                    g += nc * 24 - 1; // skip past
                 }
-                uint dsz = BitConverter.ToUInt32(chunk, pos + 8);
-                if (dsz > 1_000_000) { pos++; continue; }
-                if (eid == 0) { pos += 4; continue; }
-                if (dsz == 0) { pos++; continue; }
-                if (pos + 16 + (int)dsz > chunk.Length) break;
-
-                if (wallTypeIds.Contains(eid) && dsz >= 48)
-                {
-                    int dataStart = pos + 16;
-                    int dataEnd = dataStart + (int)dsz;
-                    for (int g = dataStart; g + 48 <= dataEnd; g++)
-                    {
-                        var (tw, nc) = DetectGrid(chunk, g);
-                        if (nc >= 2)
-                        {
-                            if (!blockGridWidths.TryGetValue(eid, out var existing) || nc > existing.nCoords)
-                                blockGridWidths[eid] = (tw, nc);
-                            g += nc * 24 - 1; // skip past
-                        }
-                    }
-                }
-                pos += 16 + (int)dsz;
             }
         }
 
         // CompoundStructure may also be in a record body, after the refs
-        foreach (var (eid, rec) in records)
+        foreach (uint eid in wallTypeIds)
         {
-            if (!wallTypeIds.Contains(eid)) continue;
             if (blockGridWidths.ContainsKey(eid)) continue; // already found in block
-            var body = rec.Body;
+            var body = records[eid].Body.Span;
             if (body.Length < 48) continue;
             for (int g = 0; g + 48 <= body.Length; g++)
             {
@@ -300,24 +282,25 @@ internal static class WallWidthExtractor
         DiagnosticSink.WriteLine($"Block-grid widths: {added} types added (total wallTypeWidths: {wallTypeWidths.Count})");
     }
 
-    private static (double totalW, int nCoords) DetectGrid(byte[] chunk, int off)
+    private static (double totalW, int nCoords) DetectGrid(ReadOnlySpan<byte> chunk, int off)
     {
         if (off + 48 > chunk.Length) return (0, 0);
-        if (BitConverter.ToInt64(chunk, off) != 0) return (0, 0);       // Coord[0]=0.0
-        if (BitConverter.ToUInt32(chunk, off + 8) != 0) return (0, 0);  // Id[0]=0
-        if (BitConverter.ToUInt32(chunk, off + 12) != 0) return (0, 0); // Orient[0]=0
-        double v1 = BitConverter.ToDouble(chunk, off + 24);
+        if (BitConverter.ToInt64(chunk.Slice(off)) != 0) return (0, 0);       // Coord[0]=0.0
+        if (BitConverter.ToUInt32(chunk.Slice(off + 8)) != 0) return (0, 0);  // Id[0]=0
+        if (BitConverter.ToUInt32(chunk.Slice(off + 12)) != 0) return (0, 0); // Orient[0]=0
+        double v1 = BitConverter.ToDouble(chunk.Slice(off + 24));
         if (v1 <= 0.003 || v1 >= 5.0 || double.IsNaN(v1) || double.IsInfinity(v1)) return (0, 0);
-        var coords = new List<double> { 0.0, v1 };
+        double last = v1;
+        int count = 2;
         int nOff = off + 48;
-        while (nOff + 8 <= chunk.Length && coords.Count < 30)
+        while (nOff + 8 <= chunk.Length && count < 30)
         {
-            double vn = BitConverter.ToDouble(chunk, nOff);
-            if (vn <= coords[^1] + 0.0005 || vn >= 10.0 || double.IsNaN(vn) || double.IsInfinity(vn)) break;
-            coords.Add(vn);
+            double vn = BitConverter.ToDouble(chunk.Slice(nOff));
+            if (vn <= last + 0.0005 || vn >= 10.0 || double.IsNaN(vn) || double.IsInfinity(vn)) break;
+            last = vn;
+            count++;
             nOff += 24;
         }
-        if (coords.Count < 2 || coords[^1] < 0.01 || coords[^1] > 10) return (0, 0);
-        return (coords[^1], coords.Count);
+        return last < 0.01 ? (0, 0) : (last, count);
     }
 }

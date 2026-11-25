@@ -25,17 +25,17 @@ internal static partial class GRepParserV2
     private static readonly bool MeshDisplayNodes = Environment.GetEnvironmentVariable("RVTIO_X_DISPLAYNODE") != "0";
 
     private static List<GeometryNode>? BuildNodes(Cur c, Dictionary<uint, SurfaceRec> surfaces, HashSet<uint> bodyFaces,
-        IEnumerable<uint> inactiveBodyFaces, Dictionary<uint, List<int>> loopsByFace,
+        IEnumerable<uint> inactiveBodyFaces, Dictionary<uint, List<int>> loopsByFace, Dictionary<uint, EdgeRec?> edges,
         Dictionary<uint, (int Node, int Style)> nodeByFace, Dictionary<int, long> nodeOrders,
         List<(int Node, int Style, int RenderStyleId)>? displayOnlyNodes = null, List<MeshNodeMeasure>? nodeMeasures = null,
         bool measureSourceNodes = false)
     {
-        var edges = EdgesByHandle(c);
         MeshMarkFreeformEdges(edges, surfaces);
         var inactiveByNode = inactiveBodyFaces.Where(nodeByFace.ContainsKey).GroupBy(h => nodeByFace[h].Node)
             .ToDictionary(g => g.Key, g => g.ToList());
         var result = new List<GeometryNode>();
-        var vertexTable = MeshVertexModel ? MeshVertexTable.Build(c, edges, surfaces, bodyFaces, loopsByFace) : null;
+        MeshVertexTable? vertexTable = null;
+        bool meshCurvedPlanarEdges = Environment.GetEnvironmentVariable("RVTIO_X_CURVEDEDGE") == "1";
         // a geometry that carries no node ids at all (the own GRep of a railing or a wall) is the
         // one node 0
         bool withoutNodes = !bodyFaces.Any(nodeByFace.ContainsKey);
@@ -58,6 +58,13 @@ internal static partial class GRepParserV2
             if (MeshNodeLog)
                 DiagnosticSink.WriteLine($"[meshnode] eid={c.ElementId} node={group.Key} active {string.Join(",", group.GroupBy(h => surfaces.TryGetValue(h, out var sx) ? sx.Kind.ToString() : "none").Select(g => $"{g.Key}:{g.Count()}"))}"
                     + $" inactive {(inactiveByNode.TryGetValue(group.Key, out var inx) ? string.Join(",", inx.GroupBy(h => c.DirectSurfaceByFace.TryGetValue(h, out var sy) ? sy.Kind.ToString() : "none").Select(g => $"{g.Key}:{g.Count()}")) : "-")}");
+            // Planar nodes still contribute the analytic measures above, but emit no mesh.
+            if (!MeshNodeLog && !meshCurvedPlanarEdges
+                && group.All(h => surfaces.TryGetValue(h, out var surface) && surface.Kind == SurfKind.Plane)
+                && (!inactiveByNode.TryGetValue(group.Key, out var inactivePlanar)
+                    || inactivePlanar.All(h => c.DirectSurfaceByFace.TryGetValue(h, out var surface) && surface.Kind == SurfKind.Plane)))
+                continue;
+            if (MeshVertexModel) vertexTable ??= MeshVertexTable.Build(c, edges, surfaces, bodyFaces, loopsByFace);
             var faces = new List<BrFace>();
             foreach (uint handle in group)
             {
@@ -73,7 +80,7 @@ internal static partial class GRepParserV2
                 curved |= surface.Kind != SurfKind.Plane;
                 faces.Add(face);
             }
-            if (usable && !curved && Environment.GetEnvironmentVariable("RVTIO_X_CURVEDEDGE") == "1"
+            if (usable && !curved && meshCurvedPlanarEdges
                 && faces.Any(f => f.Loops.Any(l => l.Coedges.Any(ce => ce.Curve is { Kind: not CurveKind.Line }))))
                 curved = true;
             // Revit's isPlanar looks at every face of the node, the inactive ones included:

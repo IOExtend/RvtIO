@@ -1,3 +1,5 @@
+using RvtIO.Geometry.Meshing;
+
 namespace RvtIO.Parsing;
 
 internal static partial class TfBlockDeserializer
@@ -15,33 +17,51 @@ internal static partial class TfBlockDeserializer
     internal sealed record OwnGElementFreshTwoPointProjections(int OwnerId, int CurrentTessEpsVersion,
         IReadOnlyList<GElementFaceTwoPointProjections> Faces, bool Complete);
 
+    internal readonly record struct SourcePlaneBasis(Pt3 Origin, Pt3 X, Pt3 Y)
+    {
+        internal bool TryEvaluate(double u, double v, out Pt3 point)
+        {
+            point = (u * X + v * Y) + Origin;
+            return double.IsFinite(u) && double.IsFinite(v) && point.IsFinite;
+        }
+    }
+
+    internal static bool TryReadSourcePlaneBasis(GElementGraphNode plane, out SourcePlaneBasis basis)
+    {
+        basis = default;
+        if (plane.ClassId != 522) return false;
+        try
+        {
+            basis = new(Vector("m_origin"), Vector("m_xVec"), Vector("m_yVec"));
+            return true;
+        }
+        catch (DecodeFail) { return false; }
+
+        Pt3 Vector(string name)
+        {
+            var field = RequireUniqueGraphField(plane, 522, name, 3);
+            if (field.Count != 3) throw Fail;
+            foreach (var item in field.Items)
+                if (item.Values.Count != 1 || item.End - item.Start != 8 || item.Pointer != null || item.Fields.Count != 0) throw Fail;
+            var vector = new Pt3(BitConverter.Int64BitsToDouble(field.Items[0].Values[0]),
+                BitConverter.Int64BitsToDouble(field.Items[1].Values[0]),
+                BitConverter.Int64BitsToDouble(field.Items[2].Values[0]));
+            return vector.IsFinite ? vector : throw Fail;
+        }
+    }
+
     /// <summary>Plane virtual 8 position output: (u*x + v*y) + origin, with no unit basis, normal,
     /// first/second derivative outputs or orientation flip.</summary>
     internal static IReadOnlyList<long>? EvaluateSourceOwnPlanePoint(GElementGraphNode plane,
         IReadOnlyList<long> uvBits, out string? failure)
     {
         failure = "plane-point";
-        if (plane.ClassId != 522 || uvBits.Count != 2) return null;
-        try
-        {
-            double[] origin = Vector("m_origin"), x = Vector("m_xVec"), y = Vector("m_yVec");
-            double u = BitConverter.Int64BitsToDouble(uvBits[0]), v = BitConverter.Int64BitsToDouble(uvBits[1]);
-            if (!double.IsFinite(u) || !double.IsFinite(v)) throw Fail;
-            double[] point = [(u * x[0] + v * y[0]) + origin[0], (u * x[1] + v * y[1]) + origin[1], (u * x[2] + v * y[2]) + origin[2]];
-            if (point.Any(a => !double.IsFinite(a))) throw Fail;
-            failure = null; return point.Select(BitConverter.DoubleToInt64Bits).ToArray();
-        }
-        catch (DecodeFail) { return null; }
-
-        double[] Vector(string name)
-        {
-            var fs = plane.Fields.Where(f => f.Declaring == 522 && f.Name == name).ToArray();
-            if (fs.Length != 1 || fs[0].Count != 3 || fs[0].Items.Count != 3) throw Fail;
-            foreach (var item in fs[0].Items)
-                if (item.Values.Count != 1 || item.End - item.Start != 8 || item.Pointer != null || item.Fields.Count != 0) throw Fail;
-            var values = fs[0].Items.Select(i => BitConverter.Int64BitsToDouble(i.Values[0])).ToArray();
-            if (values.Any(a => !double.IsFinite(a))) throw Fail; return values;
-        }
+        if (uvBits.Count != 2 || !TryReadSourcePlaneBasis(plane, out var basis)
+            || !basis.TryEvaluate(BitConverter.Int64BitsToDouble(uvBits[0]),
+                BitConverter.Int64BitsToDouble(uvBits[1]), out var point)) return null;
+        failure = null;
+        return new[] { BitConverter.DoubleToInt64Bits(point.X), BitConverter.DoubleToInt64Bits(point.Y),
+            BitConverter.DoubleToInt64Bits(point.Z) };
     }
 
     /// <summary>Two-endpoint branch with a null EdgePnt output. Uses the denominator max(1e-18, d.d), the Y+X+Z dot

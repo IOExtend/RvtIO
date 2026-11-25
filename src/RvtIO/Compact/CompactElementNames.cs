@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using RvtIO.Export;
 using RvtIO.Internal;
 using RvtIO.Model;
@@ -14,15 +15,17 @@ namespace RvtIO.Compact;
 /// </summary>
 internal sealed class CompactElementNames
 {
-    private readonly Dictionary<int, Element> _byId = [];
-    private readonly Dictionary<int, int> _counts = [];
+    private readonly Dictionary<int, Element> _byId;
+    private readonly Dictionary<int, int> _counts;
     private readonly ParsingState? _state;
-    private readonly Dictionary<int, string?> _cache = [];
+    private readonly ConcurrentDictionary<int, string?> _cache = new();
 
     public CompactElementNames(RevitFileInfo info, ParsingState? state)
     {
         ArgumentNullException.ThrowIfNull(info);
         _state = state;
+        _byId = new(info.Elements.Count);
+        _counts = new(info.Elements.Count);
         foreach (Element element in info.Elements)
         {
             _byId.TryAdd(element.Id, element);
@@ -30,20 +33,22 @@ internal sealed class CompactElementNames
         }
     }
 
+    internal void ApplyValidatedNames(RevitFileInfo info, ParsingState state) =>
+        ValidatedElementNames.Apply(info, state, _byId, _counts);
+
     /// <summary>The element with the id, null when the file has none.</summary>
     public Element? Find(int id) => _byId.GetValueOrDefault(id);
 
     /// <summary>The validated name of the element with the id; null when there is none.</summary>
-    public string? NameOf(int id)
+    public string? NameOf(int id) => _cache.GetOrAdd(id, static (key, names) => names.ResolveName(key), this);
+
+    private string? ResolveName(int id)
     {
-        if (_cache.TryGetValue(id, out string? known)) return known;
         string? name = null;
         if (_byId.TryGetValue(id, out Element? element))
             name = _state != null
                 ? ValidatedElementNames.Resolve(element, _byId, _counts, _state)?.Name
                 : element.RuleClassName == "MaterialElem" ? element.SerializedMaterialName : null;
-        if (string.IsNullOrWhiteSpace(name)) name = null;
-        _cache[id] = name;
-        return name;
+        return string.IsNullOrWhiteSpace(name) ? null : name;
     }
 }

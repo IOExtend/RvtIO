@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace RvtIO.Parsing;
 
 internal static partial class TfBlockDeserializer
@@ -13,6 +15,42 @@ internal static partial class TfBlockDeserializer
     internal sealed record GElementFaceSurfaceLink(int FaceQueueIndex, int SurfaceQueueIndex);
     internal sealed record OwnGElementGeometryGraph(int OwnerId, uint OpaqueHeader,
         IReadOnlyList<GElementGraphNode> Nodes, IReadOnlyList<GElementFaceSurfaceLink> FaceSurfaces, int End);
+
+    private static GElementGraphField RequireUniqueGraphField(GElementGraphNode node, int declaring, string name,
+        int? itemCount = null)
+    {
+        GElementGraphField? found = null;
+        for (int i = 0; i < node.Fields.Count; i++)
+        {
+            var field = node.Fields[i];
+            if (field.Declaring != declaring || field.Name != name) continue;
+            if (found != null || itemCount is int count && field.Items.Count != count) throw Fail;
+            found = field;
+        }
+        return found ?? throw Fail;
+    }
+
+    // Winding and nesting revisit these immutable inputs several times for the same graph.
+    // The cache follows the graph instance, including for failures and copies made with "with".
+    private static readonly ConditionalWeakTable<OwnGElementGeometryGraph, GElementGraphAnalysis> GElementAnalyses = new();
+
+    private sealed class GElementGraphAnalysis(OwnGElementGeometryGraph graph)
+    {
+        internal Lazy<(OwnGElementFreshArchiveReferences? Value, string? Failure)> Archive { get; } = new(() =>
+            (ReadOwnGElementFreshArchiveReferences(graph, out var failure), failure));
+
+        internal Lazy<(OwnGElementFreshLoopTopology? Value, string? Failure)> Topology { get; } = new(() =>
+            (ReadOwnGElementLoopTopology(graph, out var failure), failure));
+
+        internal Lazy<(OwnGElementFreshLoopNestingInputs? Value, string? Failure)> LegacyNesting { get; } = new(() =>
+            (ReadOwnGElementLoopNestingInputs(graph, 0, out var failure), failure));
+
+        internal Lazy<(OwnGElementFreshLoopNestingInputs? Value, string? Failure)> PositiveNesting { get; } = new(() =>
+            (ReadOwnGElementLoopNestingInputs(graph, 1, out var failure), failure));
+    }
+
+    private static GElementGraphAnalysis AnalyzeGElement(OwnGElementGeometryGraph graph) =>
+        GElementAnalyses.GetValue(graph, static key => new(key));
 
     /// <summary>Complete, footer-exact FIFO for the physical node kinds of the r22 layout. Owned Face -> Surface links
     /// use queue indices, never handles, order or shape matching. Non-owning references and flags remain raw: this does
@@ -35,13 +73,18 @@ internal static partial class TfBlockDeserializer
         var queue = new List<(ushort ClassId, uint Handle)>();
         var nodes = new List<GElementGraphNode>();
         string context = "root";
+        int contextIndex = 0, contextOffset = 0;
+        ushort contextClass = 0;
+        TfField? contextField = null;
         try
         {
             nodes.Add(Node(-1, 2007, (uint)owner));
             for (int index = 0; index < queue.Count; index++)
             {
                 var entry = queue[index];
-                context = $"fifo:{index}:{entry.ClassId}";
+                context = "fifo";
+                contextIndex = index;
+                contextClass = entry.ClassId;
                 if (entry.ClassId is not (2007 or 2015 or 2009 or 2092 or 1996 or 1589 or 1243 or 1254
                     or 2014 or 522 or 1850 or 1848 or 1736 or 1999 or 1257 or 1974 or 983 or 1991 or 2238))
                     throw Fail;
@@ -57,14 +100,26 @@ internal static partial class TfBlockDeserializer
                 var pointer = node.Fields.Single(f => f.Declaring == 1589 && f.Name == "m_pSurf")
                     .Items.Single().Pointer!;
                 if (pointer.QueueIndex is not int surface) continue;
-                context = $"face-surface:{node.QueueIndex}:{surface}";
+                context = "face-surface";
+                contextIndex = node.QueueIndex;
+                contextOffset = surface;
                 if (nodes[surface + 1].ClassId is not (522 or 983)) throw Fail;
                 surfaces.Add(new(node.QueueIndex, surface));
             }
             failure = null;
             return new(owner, BitConverter.ToUInt32(data, start + 4), nodes, surfaces, position - start);
         }
-        catch (DecodeFail) { failure = context; return null; }
+        catch (DecodeFail)
+        {
+            failure = context switch
+            {
+                "fifo" => $"fifo:{contextIndex}:{contextClass}",
+                "field" => $"field:{contextField!.Declaring}:{contextField.Name}:{contextOffset}",
+                "face-surface" => $"face-surface:{contextIndex}:{contextOffset}",
+                _ => context,
+            };
+            return null;
+        }
 
         GElementGraphNode Node(int index, ushort cls, uint handle)
         {
@@ -75,24 +130,33 @@ internal static partial class TfBlockDeserializer
 
         IReadOnlyList<GElementGraphField> ReadFields(ushort cls, int depth)
         {
-            if (depth >= 32 || !GElementGraphSchemas.ContainsKey(cls)) throw Fail;
-            var result = new List<GElementGraphField>();
-            foreach (var field in GElementGraphFields(cls)) result.Add(Field(field, depth));
+            if (depth >= 32 || !GElementGraphFieldChains.TryGetValue(cls, out var fields)) throw Fail;
+            var result = new GElementGraphField[fields.Length];
+            for (int i = 0; i < fields.Length; i++) result[i] = Field(fields[i], depth);
             return result;
         }
 
         GElementGraphField Field(TfField field, int depth)
         {
-            context = $"field:{field.Declaring}:{field.Name}:{position - start}";
             int first = position - start;
+            context = "field";
+            contextField = field;
+            contextOffset = first;
             int high = field.Mods >> 4;
             uint? count = high == 5 ? (uint)Raw(4, false) : high == 1 ? (uint)field.Cnt!.Value : null;
             uint length = count ?? 1;
-            var items = new List<GElementGraphItem>();
+            IReadOnlyList<GElementGraphItem> items = [];
             if (length != uint.MaxValue)
             {
                 if (length > 100_000 || length > (uint)((end - position) / Minimum(field))) throw Fail;
-                for (uint i = 0; i < length; i++) items.Add(Item(field, depth));
+                if (length == 1)
+                    items = new[] { Item(field, depth) };
+                else if (length > 1)
+                {
+                    var repeatedItems = new List<GElementGraphItem>();
+                    for (uint i = 0; i < length; i++) repeatedItems.Add(Item(field, depth));
+                    items = repeatedItems;
+                }
             }
             return new(field.Declaring, field.Name, count, first, position - start, items);
         }
@@ -101,13 +165,13 @@ internal static partial class TfBlockDeserializer
         {
             if (++itemCount > 1_000_000) throw Fail;
             int first = position - start;
-            var values = new List<long>();
+            long[] values = [];
             GElementGraphPointer? pointer = null;
             IReadOnlyList<GElementGraphField> children = [];
-            if (field.Type is 1 or 2) values.Add(Raw(1, false));
-            else if (field.Type == 4) values.Add(Raw(4, true));
-            else if (field.Type == 5) values.Add(Raw(4, false));
-            else if (field.Type == 7) values.Add(Raw(8, true));
+            if (field.Type is 1 or 2) values = [Raw(1, false)];
+            else if (field.Type == 4) values = [Raw(4, true)];
+            else if (field.Type == 5) values = [Raw(4, false)];
+            else if (field.Type == 7) values = [Raw(8, true)];
             else if (field.Type == 13)
             {
                 int dimensions = (field.Declaring, field.Name) switch
@@ -116,17 +180,17 @@ internal static partial class TfBlockDeserializer
                     (2008, "m_bBox") or (2008, "m_tightbBox") or (78, "m_3x3") => 3,
                     _ => throw Fail
                 };
-                for (int i = 0; i < dimensions; i++) values.Add(Raw(8, true));
+                values = new long[dimensions];
+                for (int i = 0; i < dimensions; i++) values[i] = Raw(8, true);
             }
             else if (field.Type == 14)
             {
                 int low = field.Mods & 15;
                 if (field.Declaring == 1246 && field.Name == "m_GInfo")
                 {
-                    for (int i = 0; i < 3; i++) values.Add(Raw(4, true));
-                    values.Add(Raw(4, false));
+                    values = [Raw(4, true), Raw(4, true), Raw(4, true), Raw(4, false)];
                 }
-                else if (low == 3) values.Add(Raw(4, false));
+                else if (low == 3) values = [Raw(4, false)];
                 else if (low is 1 or 2) pointer = Pointer();
                 else
                 {
@@ -137,7 +201,7 @@ internal static partial class TfBlockDeserializer
                         (523, "m_Envelope") => 524,
                         _ => (ushort)(field.Ref ?? throw Fail)
                     };
-                    if (cls == 0) values.Add(Raw(4, true)); // ElementId's own scalar, not a polymorphic pointer
+                    if (cls == 0) values = [Raw(4, true)]; // ElementId's own scalar, not a polymorphic pointer
                     else children = ReadFields(cls, depth + 1);
                 }
             }
@@ -173,15 +237,16 @@ internal static partial class TfBlockDeserializer
             ushort? cls = handle == 0 ? null : (ushort)Raw(2, false);
             int? index = null;
             ushort? token = null;
-            var bits = new List<long>();
+            long[] bits = [];
             if (cls == 4)
             {
                 token = (ushort)Raw(2, false);
                 if ((token & 255) != 8 || token >> 8 is not (0 or 1)) throw Fail;
                 if (token >> 8 == 1)
                 {
-                    for (int i = 0; i < 6; i++) bits.Add(Raw(8, true));
-                    for (int i = 0; i < 2; i++) bits.Add(Raw(4, false));
+                    bits = new long[8];
+                    for (int i = 0; i < 6; i++) bits[i] = Raw(8, true);
+                    for (int i = 6; i < bits.Length; i++) bits[i] = Raw(4, false);
                 }
             }
             else if (cls is > 0)

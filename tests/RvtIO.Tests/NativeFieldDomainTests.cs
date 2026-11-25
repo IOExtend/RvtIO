@@ -14,6 +14,31 @@ public class NativeFieldDomainTests
     private static Dictionary<uint, ushort> Classes(params (uint Id, ushort Class)[] items) => items.ToDictionary(i => i.Id, i => i.Class);
 
     [Fact]
+    public void NativeParameterIndexKeepsFirstMatchAndEachElementsStoreIds()
+    {
+        const int height = -1001300, namedOnly = -1001206;
+        var first = new Parameter { Id = height };
+        var duplicate = P(height, StorageType.Double, 9.0);
+        var one = new Element { Id = 10, Parameters = [first, duplicate] };
+        var two = new Element { Id = 11 };
+        var state = new ParsingState();
+        var nativeOne = state.NativeParams[10] = new TfBlockDeserializer.NativeParams();
+        nativeOne.Doubles.Add((height, 4.5));
+        nativeOne.NamedParams.Add(new(namedOnly, "2 h", 0, 0, 0, false, false));
+        var nativeTwo = state.NativeParams[11] = new TfBlockDeserializer.NativeParams();
+        nativeTwo.Doubles.Add((height, 8.0));
+
+        ElementBuilder.ApplyNativeParams(new RevitFileInfo { Elements = [one, two] }, state);
+
+        Assert.Equal(4.5, first.Value);
+        Assert.Equal(9.0, duplicate.Value);
+        Assert.Equal(8.0, Value(two, height));
+        Assert.Equal([height], one.NativeParameterStoreIds);
+        Assert.Equal([height, namedOnly], one.NativeStoredParameterIds);
+        Assert.Equal([height], two.NativeStoredParameterIds);
+    }
+
+    [Fact]
     public void ParameterCreatedByTheTable_IsRemovedOutsideItsDomains_AndKeptInsideThem()
     {
         var inside = new Element { Id = 1, CategoryId = -2000011 };

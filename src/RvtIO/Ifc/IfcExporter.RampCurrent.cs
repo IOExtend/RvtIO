@@ -61,7 +61,7 @@ public partial class IfcExporter
             if (relink)
             {
                 var parameters = ramp.Parameters.ToList();
-                int index = parameters.FindIndex(p => p.Definition?.Name is "ELEM_TYPE_PARAM" && p.Value is int);
+                int index = parameters.FindIndex(p => p.DefinitionName is "ELEM_TYPE_PARAM" && p.Value is int);
                 if (index >= 0) parameters[index] = parameters[index].ShallowCopy(typeId);
                 else parameters.Add(new Parameter
                 {

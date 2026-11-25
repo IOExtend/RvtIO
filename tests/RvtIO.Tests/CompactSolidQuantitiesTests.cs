@@ -1,4 +1,5 @@
 using RvtIO.Compact;
+using RvtIO.Internal;
 using RvtIO.Model;
 using Xunit;
 
@@ -73,6 +74,31 @@ public class CompactSolidQuantitiesTests
     {
         Assert.Equal("none", CompactSolidQuantities.Measure(new GeometryData(), 2).Shape);
         Assert.Throws<ArgumentException>(() => CompactSolidQuantities.Value(CompactSolidQuantities.Measure(new GeometryData(), 2), "perimeter"));
+    }
+
+    [Theory]
+    [InlineData(true, true, 0, 1)]
+    [InlineData(false, true, 1, 8)]
+    [InlineData(false, false, 2, 27)]
+    public void ElementMeasurementChoosesTheFirstDetailLevelWithSolids(bool coarse, bool medium, int level, double volume)
+    {
+        static GRepData Block(List<GeoFace> box) => new()
+        {
+            Faces = box.Select(face => new GRepFace { Vertices = face.OuterVertices, PlaneSurface = true }).ToList(),
+            Solids = [new GRepSolid { FaceIndices = [0, 1, 2, 3, 4, 5], IsClosed = true }],
+        };
+        var state = new ParsingState();
+        state.GrepBlocks[10] = new GRepData
+        {
+            Coarse = coarse ? Block(Box(0, 0, 0, 1, 1, 1)) : new GRepData(),
+            Medium = medium ? Block(Box(0, 0, 0, 2, 2, 2)) : new GRepData(),
+        };
+        var element = new Element { Id = 10, Geometry = Solids(true, Box(0, 0, 0, 3, 3, 3)) };
+
+        var result = CompactSolidQuantities.Measure(element, state);
+
+        Assert.Equal(level, result.Level);
+        Assert.Equal(volume, result.Volume, 9);
     }
 
     private const string Lines = "V\tFamilyInstance\t-1012806\t-2001330\tsolid\tvolume\t120\n"

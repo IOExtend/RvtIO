@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.ExceptionServices;
 using RvtIO.Model;
 
 namespace RvtIO.Compact;
@@ -14,6 +15,7 @@ internal readonly record struct CompactExportStats(int Nodes, long Bytes, int Un
 /// <see cref="ICompactPropertySource"/> (none by default), written by <see cref="CompactJsonWriter"/> one node at a time.</summary>
 public static class CompactJsonExporter
 {
+    private const int PropertyBatchSize = 2048;
     private static readonly IReadOnlyList<CompactProperty> NoProperties = [];
 
     /// <summary>Reads a Revit file and writes its compact JSON properties collection to <paramref name="outputPath"/>.</summary>
@@ -33,14 +35,16 @@ public static class CompactJsonExporter
         var info = reader.Read(rvtPath);
         var state = reader.LastParsingState ?? throw new InvalidOperationException("The reader kept no parsing state.");
         // The compact export reads Element.Name only where it is validated.
-        RvtIO.Export.ValidatedElementNames.Apply(info, state);
-        var identity = new CompactIdentity(CompactUniverse.Select(info));
+        var names = new CompactElementNames(info, state);
+        names.ApplyValidatedNames(info, state);
+        var identity = new CompactIdentity(CompactUniverse.Enumerate(info));
         // A wide layout does not decode geometry or curves: their quantities come from a second read in the Revit 2022 layout.
         var gate = CompactValueGate.ForLayout(info.GeometryUndecoded);
         var quantities = info.GeometryUndecoded ? CompactSolidQuantities.Read(rvtPath, readerOptions, gate.HasSolidRules) : null;
         // A project (.rvt) is a document without an owner family; an .rfa is not decided.
         var source = CompactPropertySources.Create(info, state,
-            rvtPath.EndsWith(".rvt", StringComparison.OrdinalIgnoreCase) ? true : null, gated: true, identity: identity, quantities: quantities);
+            rvtPath.EndsWith(".rvt", StringComparison.OrdinalIgnoreCase) ? true : null,
+            gated: true, identity: identity, quantities: quantities, names: names);
         Export(info, outputPath, source, diagnostics, identity, options);
         if (diagnostics != null) source.Builtin.WriteReport(diagnostics);
     }
@@ -64,23 +68,64 @@ public static class CompactJsonExporter
         using var diagnosticScope = DiagnosticSink.Use(diagnostics);
         var rows = CompactUniverse.Select(info);
         var builder = new CompactNodeBuilder(identity ?? new CompactIdentity(rows));
-        int nodes = 0;
         long bytes;
         using (var writer = new CompactJsonWriter(output, options?.JsonClassNamePrefix ?? ""))
         {
-            foreach (var element in rows)
-            {
-                var properties = source == null ? NoProperties
-                    : source.GetProperties(element) ?? throw new InvalidDataException($"The property source returned no list for element {element.Id}.");
-                writer.WriteNode(builder.Build(element, properties));
-                nodes++;
-            }
+            int workers = Math.Min(8, Environment.ProcessorCount);
+            if (rows.Count >= PropertyBatchSize && workers > 1 && source is CompactPropertySources { CanFork: true } compact)
+                WriteBatches(rows, compact, builder, writer, workers);
+            else
+                foreach (var element in rows)
+                {
+                    var properties = source == null ? NoProperties
+                        : source.GetProperties(element) ?? throw new InvalidDataException($"The property source returned no list for element {element.Id}.");
+                    writer.WriteNode(builder.Build(element, properties));
+                }
             writer.Complete();
             bytes = writer.BytesWritten;
         }
-        var stats = new CompactExportStats(nodes, bytes, builder.UnresolvedClassNameCount);
+        var stats = new CompactExportStats(rows.Count, bytes, builder.UnresolvedClassNameCount);
         if (diagnostics != null) WriteDiagnostics(diagnostics, stats, builder);
         return stats;
+    }
+
+    private static void WriteBatches(List<Element> rows, CompactPropertySources source, CompactNodeBuilder builder,
+        CompactJsonWriter writer, int workerCount)
+    {
+        // Each worker has its own per-element scratch state. Keep a bounded set of properties in flight
+        // and write both rows and reports in the same order as the serial export.
+        var workers = new CompactPropertySources[workerCount];
+        for (int i = 0; i < workers.Length; i++) workers[i] = source.Fork();
+        var properties = new IReadOnlyList<CompactProperty>?[PropertyBatchSize];
+        var failures = new ExceptionDispatchInfo?[workerCount];
+        var parallel = new ParallelOptions { MaxDegreeOfParallelism = workerCount };
+        for (int offset = 0; offset < rows.Count; offset += PropertyBatchSize)
+        {
+            int count = Math.Min(PropertyBatchSize, rows.Count - offset);
+            Parallel.For(0, workerCount, parallel, worker =>
+            {
+                try
+                {
+                    for (int i = count * worker / workerCount; i < count * (worker + 1) / workerCount; i++)
+                        properties[i] = workers[worker].GetProperties(rows[offset + i]);
+                }
+                catch (Exception error)
+                {
+                    failures[worker] = ExceptionDispatchInfo.Capture(error);
+                }
+            });
+            for (int worker = 0; worker < workerCount; worker++)
+            {
+                for (int i = count * worker / workerCount; i < count * (worker + 1) / workerCount; i++)
+                {
+                    var entries = properties[i];
+                    if (entries == null) failures[worker]!.Throw();
+                    writer.WriteNode(builder.Build(rows[offset + i], entries));
+                    properties[i] = null;
+                }
+                source.Builtin.CollectReport(workers[worker].Builtin);
+            }
+        }
     }
 
     private static void WriteDiagnostics(TextWriter diagnostics, CompactExportStats stats, CompactNodeBuilder builder)

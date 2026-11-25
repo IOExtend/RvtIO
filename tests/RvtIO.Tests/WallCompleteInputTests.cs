@@ -123,6 +123,36 @@ public class WallCompleteInputTests
     }
 
     [Theory]
+    [InlineData(2075, 8, false)]
+    [InlineData(1736, 80, true)]
+    public void ReaderInputIsReusedAndOnlyRetainsConsumedLateObjects(int cls, int width, bool retained)
+    {
+        byte[] block = Block((ushort)cls, new byte[width]);
+        var full = Read(block, out _)!;
+        var reader = new TfBlockDeserializer.WallCompleteInputRead(block, 0, BitConverter.ToUInt32(block, 8), 3524);
+        var selected = reader.Read(out var failure)!;
+
+        Assert.Null(failure);
+        Assert.Same(selected, reader.Read(out _));
+        Assert.Equal(full.End, selected.End);
+        Assert.Empty(selected.FrameBytes);
+        if (retained)
+            Assert.Equal(Assert.Single(full.LaterObjects).Fields.SelectMany(f => f.Bytes),
+                Assert.Single(selected.LaterObjects).Fields.SelectMany(f => f.Bytes));
+        else
+            Assert.Empty(selected.LaterObjects);
+
+        byte[] truncated = Block((ushort)cls, new byte[width - 1]);
+        var invalid = new TfBlockDeserializer.WallCompleteInputRead(
+            truncated, 0, BitConverter.ToUInt32(truncated, 8), 3524);
+        Assert.Null(Read(truncated, out var expectedFailure));
+        Assert.Null(invalid.Read(out failure));
+        Assert.Equal(expectedFailure, failure);
+        Assert.Null(invalid.Read(out failure));
+        Assert.Equal(expectedFailure, failure);
+    }
+
+    [Theory]
     [InlineData(90)] [InlineData(901)] [InlineData(3634)]
     public void ExcessiveCountsFailRatherThanSkippingOrSeekingTheFooter(int cls)
     {

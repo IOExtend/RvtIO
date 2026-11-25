@@ -1546,7 +1546,7 @@ public partial class IfcExporter
             }
 
             var explicitLevelIds = opening.Parameters
-                .Where(parameter => parameter.Definition?.Name is
+                .Where(parameter => parameter.DefinitionName is
                     "LEVEL_PARAM" or "FAMILY_LEVEL_PARAM" or "SCHEDULE_LEVEL_PARAM"
                     or "INSTANCE_REFERENCE_LEVEL_PARAM")
                 .Select(parameter => parameter.Value)
@@ -1750,7 +1750,7 @@ public partial class IfcExporter
             // A placed family instance must reference a project level when its serialized level
             // parameters point to Level elements.
             var explicitLevelIds = elem.Parameters
-                .Where(parameter => parameter.Definition?.Name is
+                .Where(parameter => parameter.DefinitionName is
                     "LEVEL_PARAM" or "FAMILY_LEVEL_PARAM" or "SCHEDULE_LEVEL_PARAM"
                     or "INSTANCE_REFERENCE_LEVEL_PARAM")
                 .Select(parameter => parameter.Value)
@@ -1914,7 +1914,7 @@ public partial class IfcExporter
                     (elem.DecodedBox ?? elem.Geometry?.BoundingBox) is { Length: >= 6 } diagBox ? diagBox[2].ToString("R", CultureInfo.InvariantCulture) : "-",
                     storeyIds.FirstOrDefault(pair => pair.Value == elemStoreyId).Key,
                     string.Join(',', elem.Parameters.Where(p => p.StorageType == StorageType.ElementId && p.Value is int)
-                        .Select(p => $"{p.Id}:{p.Definition?.Name}={p.Value}"))) + "\n");
+                        .Select(p => $"{p.Id}:{p.DefinitionName}={p.Value}"))) + "\n");
 
             if (ifcType == "IFCCURTAINWALL" && exactCurtainChildren.ContainsKey(elem.Id))
             {
@@ -5820,14 +5820,14 @@ public partial class IfcExporter
             }
             else if (elemById.TryGetValue(materialElementId, out var materialElement)
                 && materialElement.Parameters.FirstOrDefault(parameter =>
-                    parameter.Definition?.Name == "MATERIAL_PARAM_COLOR")?.Value is int packedColor)
+                    parameter.DefinitionName == "MATERIAL_PARAM_COLOR")?.Value is int packedColor)
             {
                 var (red, green, blue) = DecodePackedMaterialColor(packedColor);
                 int transparencyPercent = materialElement.Parameters.FirstOrDefault(parameter =>
-                    parameter.Definition?.Name == "MATERIAL_PARAM_TRANSPARENCY")?.Value is int transparency
+                    parameter.DefinitionName == "MATERIAL_PARAM_TRANSPARENCY")?.Value is int transparency
                     ? Math.Clamp(transparency, 0, 100) : 0;
                 int shininess = materialElement.Parameters.FirstOrDefault(parameter =>
-                    parameter.Definition?.Name == "MATERIAL_PARAM_SHININESS")?.Value is int shine
+                    parameter.DefinitionName == "MATERIAL_PARAM_SHININESS")?.Value is int shine
                     ? Math.Max(0, shine) : 0;
 
                 // The current profile writes the transparency the file stores (a float: 0.975 where
@@ -6137,7 +6137,7 @@ public partial class IfcExporter
                 if (source.Geometry?.GStyleElemId is > 0)
                     candidateIds.Add(source.Geometry.GStyleElemId);
                 candidateIds.AddRange(source.Parameters
-                    .Where(parameter => parameter.Definition?.Name?.Contains(
+                    .Where(parameter => parameter.DefinitionName?.Contains(
                         "MATERIAL", StringComparison.OrdinalIgnoreCase) == true)
                     .Select(parameter => parameter.Value).OfType<int>());
                 candidateIds.AddRange(source.References ?? Enumerable.Empty<int>());
@@ -6431,10 +6431,10 @@ public partial class IfcExporter
             candidate.CategoryId == -2000700
             && (candidate.HasShadingAppearance
                 && candidate.Parameters.Any(parameter =>
-                    parameter.Definition?.Name == "MATERIAL_PARAM_COLOR"
+                    parameter.DefinitionName == "MATERIAL_PARAM_COLOR"
                     && parameter.Value is int)
                 && candidate.Parameters.Any(parameter =>
-                    parameter.Definition?.Name == "MATERIAL_PARAM_SHININESS"
+                    parameter.DefinitionName == "MATERIAL_PARAM_SHININESS"
                     && parameter.Value is int)
                 || CurrentProfile && candidate.SerializedMaterialName is { Length: > 0 });
 
@@ -6995,7 +6995,7 @@ public partial class IfcExporter
 
         // The tagged MATERIAL_NAME field is the authored material display name when it is present.
         string? serializedName = material.Parameters.FirstOrDefault(parameter =>
-            parameter.Definition?.Name == "MATERIAL_NAME")?.Value as string;
+            parameter.DefinitionName == "MATERIAL_NAME")?.Value as string;
         if (IsUsableName(serializedName)) return serializedName!;
 
         if (IsUsableName(material.Name))
@@ -31410,7 +31410,7 @@ public partial class IfcExporter
             out int nameMatches, out int exactMatches)
         {
             var named = element.Parameters.Where(parameter =>
-                    parameter.Definition?.Name == name)
+                    parameter.DefinitionName == name)
                 .ToList();
             var matches = named.Where(parameter =>
                 {
@@ -31434,7 +31434,7 @@ public partial class IfcExporter
                             StringComparison.OrdinalIgnoreCase) == true
                         || exactSharedDefinition
                             && parameter.SpecType == null;
-                    return parameter.Definition?.Name == name
+                    return parameter.DefinitionName == name
                     && parameter.Id > 0
                     && parameter.StorageType == StorageType.Double
                     && (exactFamilyDefinition || exactSharedDefinition)
@@ -31452,7 +31452,7 @@ public partial class IfcExporter
         }
         static string DescribeNamedParameters(Element element, string name) =>
             string.Join("|", element.Parameters
-                .Where(parameter => parameter.Definition?.Name == name)
+                .Where(parameter => parameter.DefinitionName == name)
                 .Select(parameter =>
                     $"id={parameter.Id},guid={parameter.Guid?.ToString() ?? "null"},"
                     + $"storage={parameter.StorageType},forge={parameter.ForgeId ?? "null"},"
@@ -57390,7 +57390,7 @@ public partial class IfcExporter
         foreach (Element cutter in genericCutters)
         {
             var familyTypeParameters = cutter.Parameters.Where(parameter =>
-                    parameter.Definition?.Name == "ELEM_TYPE_PARAM")
+                    parameter.DefinitionName == "ELEM_TYPE_PARAM")
                 .ToList();
             if (familyTypeParameters is not
                 [{ Id: -1002050, StorageType: StorageType.ElementId,
@@ -58038,7 +58038,7 @@ public partial class IfcExporter
             return Reject("instance-host-set");
 
         var familyTypeParameters = hostedElement.Parameters
-            .Where(parameter => parameter.Definition?.Name == "ELEM_TYPE_PARAM")
+            .Where(parameter => parameter.DefinitionName == "ELEM_TYPE_PARAM")
             .ToList();
         if (familyTypeParameters is not
             [{ Id: -1002050, StorageType: StorageType.ElementId,
@@ -58820,7 +58820,7 @@ public partial class IfcExporter
             string name, out double value)
         {
             var parameters = hostedElement.Parameters
-                .Where(parameter => parameter.Definition?.Name == name
+                .Where(parameter => parameter.DefinitionName == name
                     && parameter.Id > 0
                     && parameter.Guid == null
                     && parameter.ForgeId?.StartsWith(
@@ -59141,7 +59141,7 @@ public partial class IfcExporter
         bool TryGetUniqueFamilyLength(string name, out double value)
         {
             var matches = hostedElement.Parameters.Where(parameter =>
-                    parameter.Definition?.Name == name
+                    parameter.DefinitionName == name
                     && parameter.Id > 0
                     && parameter.Guid == null
                     && parameter.StorageType == StorageType.Double
@@ -59453,7 +59453,7 @@ public partial class IfcExporter
         bool TryGetUniqueFamilyLength(string name, out double value)
         {
             var matches = hostedElement.Parameters.Where(parameter =>
-                    parameter.Definition?.Name == name
+                    parameter.DefinitionName == name
                     && parameter.Id > 0
                     && parameter.Guid == null
                     && parameter.StorageType == StorageType.Double
@@ -59888,7 +59888,7 @@ public partial class IfcExporter
             string name, out double value)
         {
             var parameters = hostedElement.Parameters
-                .Where(parameter => parameter.Definition?.Name == name
+                .Where(parameter => parameter.DefinitionName == name
                     && parameter.Id > 0
                     && parameter.Guid == null
                     && parameter.ForgeId?.StartsWith(
@@ -60272,7 +60272,7 @@ public partial class IfcExporter
             string name, bool requireWritable, out double value)
         {
             var parameters = hostedElement.Parameters
-                .Where(parameter => parameter.Definition?.Name == name
+                .Where(parameter => parameter.DefinitionName == name
                     && parameter.Id > 0
                     && parameter.Guid == null
                     && (!requireWritable || !parameter.IsReadOnly)
@@ -61354,7 +61354,7 @@ public partial class IfcExporter
             string name, bool requireWritable, out double value)
         {
             var parameters = hostedElement.Parameters
-                .Where(parameter => parameter.Definition?.Name == name
+                .Where(parameter => parameter.DefinitionName == name
                     && parameter.Id > 0
                     && parameter.Guid == null
                     && (!requireWritable || !parameter.IsReadOnly)
@@ -62269,7 +62269,7 @@ public partial class IfcExporter
             "Четверть Сверху";
         var directedDepthParameters = hostedElement.Parameters
             .Where(parameter =>
-                parameter.Definition?.Name is
+                parameter.DefinitionName is
                     InnerAdditionalDepthName
                     or OuterAdditionalDepthName)
             .ToList();
@@ -62278,7 +62278,7 @@ public partial class IfcExporter
         {
             var matches = hostedElement.Parameters
                 .Where(parameter =>
-                    parameter.Definition?.Name == name
+                    parameter.DefinitionName == name
                     && parameter.Id > 0
                     && parameter.Guid == null
                     && parameter.ForgeId?.StartsWith(
@@ -63963,7 +63963,7 @@ public partial class IfcExporter
         Element element, int parameterId = WallStructuralUsageParamId)
     {
         List<Parameter> matches = element.Parameters
-            .Where(parameter => parameter.Definition?.Id == parameterId)
+            .Where(parameter => parameter.DefinitionId == parameterId)
             .ToList();
         if (matches.Count == 0)
             return new(ExactIsExternalParameterState.Absent);
@@ -64137,9 +64137,9 @@ public partial class IfcExporter
         info.Elements.Any(element => element.Parameters.Any(parameter =>
             parameter.Id is (int)BuiltIns.BuiltInParameter.IFC_PROJECT_GUID
                 or (int)BuiltIns.BuiltInParameter.IFC_BUILDING_GUID or (int)BuiltIns.BuiltInParameter.IFC_SITE_GUID
-            || parameter.Definition?.Id is (int)BuiltIns.BuiltInParameter.IFC_PROJECT_GUID
+            || parameter.DefinitionId is (int)BuiltIns.BuiltInParameter.IFC_PROJECT_GUID
                 or (int)BuiltIns.BuiltInParameter.IFC_BUILDING_GUID or (int)BuiltIns.BuiltInParameter.IFC_SITE_GUID
-            || parameter.Definition?.Name is "IfcProject GUID" or "IfcBuilding GUID" or "IfcSite GUID" or "IfcSiteGUID"));
+            || parameter.DefinitionName is "IfcProject GUID" or "IfcBuilding GUID" or "IfcSite GUID" or "IfcSiteGUID"));
 
     private static readonly Regex SingleObjectPropertyRelation = new(
         @"^'[0-9A-Za-z_$]{22}',#\d+,\$,\$,\(#(\d+)\),#(\d+)$", RegexOptions.Compiled);
@@ -64883,7 +64883,7 @@ public partial class IfcExporter
         id is (int)BuiltIns.BuiltInParameter.IFC_GUID or (int)BuiltIns.BuiltInParameter.IFC_TYPE_GUID;
     private static bool HasIfcGuidOverride(IEnumerable<Parameter> parameters, bool currentProfile) =>
         !currentProfile && parameters.Any(parameter =>
-            (IsIfcGuidParameterId(parameter.Id) || IsIfcGuidParameterId(parameter.Definition?.Id))
+            (IsIfcGuidParameterId(parameter.Id) || IsIfcGuidParameterId(parameter.DefinitionId))
             && parameter.StorageType == StorageType.String && parameter.Value is string { Length: > 0 });
 
     /// <summary>Pset_WallCommon.ExtendToStructure.</summary>
@@ -64926,7 +64926,7 @@ public partial class IfcExporter
             return new(ExactIsExternalParameterState.Absent);
 
         List<Parameter> matches = element.Parameters
-            .Where(parameter => parameter.Definition?.Id == FloorParamIsStructuralId)
+            .Where(parameter => parameter.DefinitionId == FloorParamIsStructuralId)
             .ToList();
         if (matches.Count == 0)
             return new(ExactIsExternalParameterState.Absent);
@@ -65864,7 +65864,7 @@ public partial class IfcExporter
     }
 
     private static bool ParameterNameEquals(Parameter parameter, string name) =>
-        parameter.Definition?.Name is string parameterName
+        parameter.DefinitionName is string parameterName
         && string.Equals(
             parameterName.Replace(" ", null), name.Replace(" ", null),
             StringComparison.InvariantCultureIgnoreCase);
@@ -66302,7 +66302,7 @@ public partial class IfcExporter
                     continue;
             }
 
-            string paramName = p.Definition?.Name ?? $"Param_{p.Id}";
+            string paramName = p.DefinitionName ?? $"Param_{p.Id}";
             string groupName = "Other";
             if (RevitParameterGroups && Parsing.ApiParameterDefinitions.TryGet(
                     p.Id, out string apiName, out int apiGroupId, out string apiDataType))
@@ -66422,7 +66422,7 @@ public partial class IfcExporter
         {
             foreach (var p in e.Parameters.Concat(type?.Parameters ?? Enumerable.Empty<Parameter>()))
                 if (p.Value is double d && d > 0.03 && d < 100
-                    && p.Definition?.Name?.Contains(token, StringComparison.OrdinalIgnoreCase) == true)
+                    && p.DefinitionName?.Contains(token, StringComparison.OrdinalIgnoreCase) == true)
                     return d;
             return 0;
         }
@@ -68628,7 +68628,7 @@ public partial class IfcExporter
             && ids.Split(',').Contains(wall.Id.ToString()))
         {
             var detail = new System.Text.StringBuilder().Append("# wall ").Append(wall.Id).Append(" name=").Append(wall.Name).Append(" cat=").Append(wall.CategoryId).Append('\n');
-            foreach (var p in wall.Parameters) detail.Append("  p ").Append(p.Id).Append(' ').Append(p.Definition?.Name).Append(" = ").Append(p.Value).Append('\n');
+            foreach (var p in wall.Parameters) detail.Append("  p ").Append(p.Id).Append(' ').Append(p.DefinitionName).Append(" = ").Append(p.Value).Append('\n');
             for (int fi = 0; fi < faces.Count; fi++)
             {
                 var f = faces[fi];

@@ -144,6 +144,8 @@ public class GElementGeometryGraphTests
             case "surface-kind": BitConverter.GetBytes((ushort)1736).CopyTo(bytes,offsets["surface-pointer"]+4); break;
         }
         Assert.Null(Read(bytes,out var failure)); Assert.NotNull(failure);
+        if (mutation == "unknown-kind") Assert.Equal($"field:1589:m_pSurf:{offsets["surface-pointer"]}", failure);
+        if (mutation == "unsupported-kind") Assert.Equal("fifo:5:523", failure);
     }
 
     [Theory]

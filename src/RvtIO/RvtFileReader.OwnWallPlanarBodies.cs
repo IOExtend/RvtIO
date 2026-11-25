@@ -69,7 +69,7 @@ public partial class RvtFileReader
             || BitConverter.ToUInt16(data, start + 12) != cls
             || !state.OwnedElementClassRoots.TryGetValue(owner, out var root)
             || root.BlockCount != 1 || root.ClassId is not (3524 or 361)) return null;
-        var body = GRepParserV2.Parse(data, start, size, nativeWallBody: true);
+        var body = GRepParserV2.ParseNativeWallBodyCandidate(data, start, size);
         if (!(body is { Faces.Count: > 0, Instances.Count: 0 }
             && body.Faces.All(face => face.MeshEdgeBounds is { Length: 6 })
             && body.Faces.Any(face => face.AnalyticCylinderRadius > 0))) return null;

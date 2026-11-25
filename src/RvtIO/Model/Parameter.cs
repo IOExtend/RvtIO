@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
 
 namespace RvtIO.Model
@@ -9,9 +10,40 @@ namespace RvtIO.Model
     /// </summary>
     public class Parameter
     {
+        internal sealed class DefinitionData(int id, string? name, string? builtInParameter = null, Guid? guid = null)
+        {
+            internal int Id { get; } = id;
+            internal string? Name { get; } = name;
+            internal string? BuiltInParameter { get; } = builtInParameter;
+            internal object? BoxedGuid { get; } = guid;
+
+            internal Definition ToDefinition() => new() { Id = Id, Name = Name, BuiltInParameter = BuiltInParameter };
+        }
+        // Readers share resolved units. The public setters replace the record on the edited parameter.
+        internal sealed record DisplayUnits(string? SpecType, string? Symbol, double? Factor);
+
+        private static readonly DisplayUnits NoDisplayUnits = new(null, null, null);
+        private object? _definition;
+        private DisplayUnits? _displayUnits;
+
+        /// <summary>Creates a parameter with its own empty definition.</summary>
+        public Parameter() => _definition = new Definition();
+
+        internal Parameter(Definition definition) => _definition = definition;
+        internal Parameter(DefinitionData definition)
+        {
+            _definition = definition;
+            _guid = definition.BoxedGuid;
+        }
+
+        internal void SetDefinitionData(DefinitionData definition) => Volatile.Write(ref _definition, definition);
+
+        internal void UseGuidIfMissing(DefinitionData definition) => _guid ??= definition.BoxedGuid;
+
         /// <summary>A copy of this parameter with another value.</summary>
         internal Parameter ShallowCopy(object? value)
         {
+            _ = Definition; // Shallow copies share the same mutable definition.
             var copy = (Parameter)MemberwiseClone();
             if (!Equals(copy._value, value))
                 copy.HasResolvedZeroElementId = false;
@@ -20,11 +52,43 @@ namespace RvtIO.Model
         }
 
         private object? _value;
+        private static readonly object[] SmallIntegers = [-1, 0, 1, 2, 3];
+        private static readonly object DoubleZero = 0.0;
+        private static readonly object DoubleOne = 1.0;
+
+        // The reader produces many identical scalar values. Pool only the exact numeric types and bits.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static object? BoxParsedValue<T>(T value)
+        {
+            if (typeof(T) == typeof(int))
+            {
+                int number = Unsafe.As<T, int>(ref value);
+                return number is >= -1 and <= 3 ? SmallIntegers[number + 1] : number;
+            }
+            if (typeof(T) == typeof(double))
+            {
+                double number = Unsafe.As<T, double>(ref value);
+                return BitConverter.DoubleToInt64Bits(number) switch
+                {
+                    0 => DoubleZero,
+                    0x3ff0_0000_0000_0000L => DoubleOne,
+                    _ => number,
+                };
+            }
+            return value;
+        }
+
+        // Built-in parameters have no GUID. Store a boxed Guid only when one is present.
+        private object? _guid;
 
         /// <summary>GUID of shared/external parameters (parsed from ForgeId). Null for built-in params.
         /// Invariant per definition id - serialized once in the document's ParameterDefinitions table.</summary>
         [JsonIgnore]
-        public Guid? Guid { get; set; }
+        public Guid? Guid
+        {
+            get => (Guid?)_guid;
+            set => _guid = value;
+        }
 
         /// <summary>
         /// For built-in params: the BIP enum int value (same as Definition.Id, negative).
@@ -36,7 +100,43 @@ namespace RvtIO.Model
         /// <summary>Definition (name/BIP). Invariant per <see cref="Id"/>; hoisted into the
         /// document-level ParameterDefinitions table for JSON, so it is not serialized inline.</summary>
         [JsonIgnore]
-        public Definition Definition { get; set; } = new();
+        public Definition Definition
+        {
+            get
+            {
+                var state = Volatile.Read(ref _definition);
+                while (state is DefinitionData stored)
+                {
+                    var definition = stored.ToDefinition();
+                    var previous = Interlocked.CompareExchange(ref _definition, definition, stored);
+                    if (ReferenceEquals(previous, stored)) return definition;
+                    state = previous;
+                }
+                return (Definition)state!;
+            }
+            set => Volatile.Write(ref _definition, value);
+        }
+
+        internal string? DefinitionName => Volatile.Read(ref _definition) switch
+        {
+            DefinitionData stored => stored.Name,
+            Definition definition => definition.Name,
+            _ => null,
+        };
+
+        internal string? DefinitionBuiltIn => Volatile.Read(ref _definition) switch
+        {
+            DefinitionData stored => stored.BuiltInParameter,
+            Definition definition => definition.BuiltInParameter,
+            _ => null,
+        };
+
+        internal int? DefinitionId => Volatile.Read(ref _definition) switch
+        {
+            DefinitionData stored => stored.Id,
+            Definition definition => definition.Id,
+            _ => null,
+        };
 
         /// <summary>Storage type. Invariant per definition id - lives in ParameterDefinitions.</summary>
         [JsonIgnore]
@@ -71,18 +171,32 @@ namespace RvtIO.Model
         /// <summary>Measurement spec type (e.g. "autodesk.spec.aec:length-2.0.0").
         /// Resolved from ForgeId via 0x0B3A blocks, or from BIP name heuristics.</summary>
         [JsonIgnore]
-        public string? SpecType { get; set; }
+        public string? SpecType
+        {
+            get => _displayUnits?.SpecType;
+            set => _displayUnits = (_displayUnits ?? NoDisplayUnits) with { SpecType = value };
+        }
 
         /// <summary>Display unit symbol (e.g. "mm", "m^2", "degC").
         /// Resolved from SpecType via 0x0FBD ForgeTypeId spec registry.
         /// Invariant per definition id - lives in ParameterDefinitions.</summary>
         [JsonIgnore]
-        public string? UnitSymbol { get; set; }
+        public string? UnitSymbol
+        {
+            get => _displayUnits?.Symbol;
+            set => _displayUnits = (_displayUnits ?? NoDisplayUnits) with { Symbol = value };
+        }
 
         /// <summary>Conversion factor from Revit internal units to display units.
         /// E.g. for length: feet -> mm = 304.8.</summary>
         [JsonIgnore]
-        public double? ConversionFactor { get; set; }
+        public double? ConversionFactor
+        {
+            get => _displayUnits?.Factor;
+            set => _displayUnits = (_displayUnits ?? NoDisplayUnits) with { Factor = value };
+        }
+
+        internal void SetDisplayUnits(DisplayUnits units) => _displayUnits = units;
 
         /// <summary>True when this parameter's value came from an approximate fallback
         /// (e.g. dominant bounding-box dimension) rather than an exact decoded source (e.g.
@@ -189,6 +303,15 @@ namespace RvtIO.Model
         /// value resolves to a real target element with id <c>0</c> in its domain.</summary>
         internal static void ResolveZeroElementIds(RevitFileInfo info, RvtIO.Internal.ParsingState? state = null)
         {
+            var (hasZeroPhase, hasZeroDimStyle) = ResolveZeroElementIdDomains(info, state);
+            foreach (var element in info.Elements)
+                foreach (var parameter in element.Parameters)
+                    parameter.ResolveZeroElementId(element, hasZeroPhase, hasZeroDimStyle);
+        }
+
+        internal static (bool Phase, bool DimensionStyle) ResolveZeroElementIdDomains(
+            RevitFileInfo info, RvtIO.Internal.ParsingState? state)
+        {
             bool hasZeroPhase = HasZeroProjectPhase(info, state);
             bool hasZeroDimStyle = HasZeroDimensionStyle(info, state);
             if (state != null)
@@ -196,21 +319,15 @@ namespace RvtIO.Model
                 info.SerializedHasZeroProjectPhase = hasZeroPhase;
                 info.SerializedHasZeroDimensionStyle = hasZeroDimStyle;
             }
-            foreach (var element in info.Elements)
-            {
-                foreach (var parameter in element.Parameters)
-                {
-                    if (parameter.StorageType == StorageType.ElementId && parameter.Value is int eid && eid == 0)
-                    {
-                        parameter.HasResolvedZeroElementId =
-                            IsValidZeroElementIdTarget(element, parameter.Id, hasZeroPhase, hasZeroDimStyle);
-                    }
-                    else if (parameter.HasResolvedZeroElementId)
-                    {
-                        parameter.HasResolvedZeroElementId = false;
-                    }
-                }
-            }
+            return (hasZeroPhase, hasZeroDimStyle);
+        }
+
+        internal void ResolveZeroElementId(Element owner, bool hasZeroPhase, bool hasZeroDimStyle)
+        {
+            if (StorageType == StorageType.ElementId && Value is int eid && eid == 0)
+                HasResolvedZeroElementId = IsValidZeroElementIdTarget(owner, Id, hasZeroPhase, hasZeroDimStyle);
+            else if (HasResolvedZeroElementId)
+                HasResolvedZeroElementId = false;
         }
 
         private static bool IsProjectPhaseElement(Element element) =>
@@ -363,8 +480,8 @@ namespace RvtIO.Model
                 }
 
                 // Fallback: heuristic based on parameter or BIP name tokens
-                string? name = Definition?.Name;
-                string? bip = Definition?.BuiltInParameter;
+                string? name = DefinitionName;
+                string? bip = DefinitionBuiltIn;
 
                 // Dimensionless coefficients, scales, ratios, and factors must not be inferred as dimensional lengths/areas/volumes
                 if (HasWordToken(name, bip, ScalarKeywords))

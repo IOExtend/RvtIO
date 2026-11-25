@@ -169,8 +169,8 @@ namespace RvtIO.Model
                     {
                         table[p.Id] = new ParameterDefinition
                         {
-                            Name = p.Definition?.Name,
-                            BuiltInParameter = p.Definition?.BuiltInParameter,
+                            Name = p.DefinitionName,
+                            BuiltInParameter = p.DefinitionBuiltIn,
                             StorageType = p.StorageType,
                             IsReadOnly = p.IsReadOnly,
                             ForgeId = p.ForgeId,
@@ -181,8 +181,8 @@ namespace RvtIO.Model
                     else
                     {
                         // Fill nullable fields that a later instance resolved but an earlier one missed.
-                        def.Name ??= p.Definition?.Name;
-                        def.BuiltInParameter ??= p.Definition?.BuiltInParameter;
+                        def.Name ??= p.DefinitionName;
+                        def.BuiltInParameter ??= p.DefinitionBuiltIn;
                         def.ForgeId ??= p.ForgeId;
                         def.UnitSymbol ??= p.UnitSymbol;
                         def.Guid ??= p.Guid;

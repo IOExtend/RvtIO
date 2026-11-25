@@ -88,6 +88,17 @@ internal static partial class TfBlockDeserializer
     internal static OwnGElementFreshLoopNestingInputs? SelectOwnGElementLoopNestingInputs(
         OwnGElementGeometryGraph graph, int currentTessEpsVersion, out string? failure)
     {
+        if (currentTessEpsVersion is not (0 or 1))
+            return ReadOwnGElementLoopNestingInputs(graph, currentTessEpsVersion, out failure);
+        var analysis = AnalyzeGElement(graph);
+        var result = currentTessEpsVersion == 0 ? analysis.LegacyNesting.Value : analysis.PositiveNesting.Value;
+        failure = result.Failure;
+        return result.Value;
+    }
+
+    private static OwnGElementFreshLoopNestingInputs? ReadOwnGElementLoopNestingInputs(
+        OwnGElementGeometryGraph graph, int currentTessEpsVersion, out string? failure)
+    {
         var epsilon = SelectSourceTessEpsControl(0, currentTessEpsVersion, null, out failure);
         if (epsilon == null) return null;
         var topology = SelectOwnGElementLoopTopology(graph, out failure);

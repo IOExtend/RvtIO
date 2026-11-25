@@ -29,10 +29,18 @@ internal static partial class GRepParserV2
         Dictionary<uint, List<int>> loopsByFace, Dictionary<uint, EdgeRec?> edges)
     {
         var result = new Dictionary<uint, double>();
+        var facesWithCurvedEdges = new HashSet<uint>();
+        foreach (var edge in c.Edges)
+            if (edge.HasAuthoredInterior)
+            {
+                facesWithCurvedEdges.Add(edge.FaceA);
+                facesWithCurvedEdges.Add(edge.FaceB);
+            }
         foreach (uint face in faces)
         {
             if (!surfaces.TryGetValue(face, out var surface) || surface.Kind is not (SurfKind.Plane or SurfKind.Cylinder)
                 || surface.Kind == SurfKind.Cylinder && !c.IncludeNonVisible
+                || surface.Kind == SurfKind.Plane && !facesWithCurvedEdges.Contains(face)
                 || !loopsByFace.TryGetValue(face, out var indices) || indices.Count == 0)
                 continue;
             var coedges = SurfaceCoedges(c, face, indices, edges);

@@ -241,9 +241,7 @@ public partial class RvtFileReader
         LogPhase("Strings scanned");
         diag?.WriteLine($"Elements with BIP doubles: {state.ElemBipDoubles.Count}");
 
-        WallWidthExtractor.ExtractFromBlocks(state);
-        WallWidthExtractor.ExtractFromGrid(state);
-        WallWidthExtractor.ExtractFromBlockGrid(state);
+        WallWidthExtractor.Extract(state);
 
         // Optional text dump of the model
         if (_options.ExternalDumpPath != null)
@@ -440,18 +438,18 @@ public partial class RvtFileReader
             if (!state.IsParameterElement(eid)) continue;
             if (state.ForgeParamDefs.TryGetValue(eid, out var existing) && existing.DisplayName != null) continue;
             if (!state.Records.TryGetValue(eid, out var rec)) continue;
-            var body = rec.Body;
+            var body = rec.Body.Span;
             int famId = -1;
             for (int p = 2; p + 2 <= body.Length - 10; p += 14)
             {
-                ushort classId = BitConverter.ToUInt16(body, p + 10);
+                ushort classId = BitConverter.ToUInt16(body[(p + 10)..]);
                 if (classId == 0xFFFF || classId == 0)
                 {
                     // Tf base fields start here: [assocLevelId:4][famId:4]
                     int tfStart = p + 14; // after sentinel entry
                     if (tfStart + 8 <= body.Length)
                     {
-                        famId = BitConverter.ToInt32(body, tfStart + 4);
+                        famId = BitConverter.ToInt32(body[(tfStart + 4)..]);
                     }
                     break;
                 }
@@ -547,7 +545,7 @@ public partial class RvtFileReader
             if (!state.IsParameterElement(eid)) continue;
             if (state.ForgeParamDefs.TryGetValue(eid, out var ex4) && ex4.DisplayName != null) continue;
             if (!state.Records.TryGetValue(eid, out var rec)) continue;
-            var body = rec.Body;
+            var body = rec.Body.Span;
             if (body.Length <= 87) continue; // minimal body has no strings
 
             for (int j = 10; j + 40 <= body.Length; j++)
@@ -569,7 +567,7 @@ public partial class RvtFileReader
                 for (int back = forgeOff - 2; back >= Math.Max(0, forgeOff - 500); back--)
                 {
                     if (back + 4 > body.Length) continue;
-                    uint capLen = BitConverter.ToUInt32(body, back);
+                    uint capLen = BitConverter.ToUInt32(body[back..]);
                     if (capLen < 1 || capLen > 200) continue;
                     int capEnd = back + 4 + (int)capLen * 2;
                     int gap = forgeOff - capEnd;
@@ -579,7 +577,7 @@ public partial class RvtFileReader
                     {
                         int tryBack = back + lenTry;
                         if (tryBack < 0 || tryBack + 4 > body.Length) continue;
-                        uint tryLen = BitConverter.ToUInt32(body, tryBack);
+                        uint tryLen = BitConverter.ToUInt32(body[tryBack..]);
                         if (tryLen < 1 || tryLen > 200) continue;
                         int tryEnd = tryBack + 4 + (int)tryLen * 2;
                         int tryGap = forgeOff - tryEnd;
@@ -758,12 +756,13 @@ public partial class RvtFileReader
             .Where(k => !state.ElemTable.ContainsKey(k))
             .OrderBy(k => k).ToList();
 
-        foreach (var (elemId, typeId) in state.ElemTable.OrderBy(x => x.Key))
-            ElementBuilder.BuildElemTableElement(elemId, typeId, state, rvtInfo);
+        state.SymbolPlacementGeometry = new(ReferenceEqualityComparer.Instance);
+        BuildOrderedElements(state.ElemTable.OrderBy(x => x.Key).ToArray(), rvtInfo.Elements,
+            (entry, parameterIds) => ElementBuilder.CreateElemTableElement(entry.Key, entry.Value, state, parameterIds));
 
         LogPhase("Elements built");
-        foreach (var eid in extraRecordIds)
-            ElementBuilder.BuildDiscoveredElement(eid, state, rvtInfo);
+        BuildOrderedElements(extraRecordIds, rvtInfo.Elements,
+            (id, parameterIds) => ElementBuilder.CreateDiscoveredElement(id, state, parameterIds));
         LogPhase("Discovered elements built");
 
         // GRep blocks discovered by the stream walk / targeted scan that no index knows:
@@ -793,8 +792,9 @@ public partial class RvtFileReader
                 && !state.Records.ContainsKey(familySymbolId))
                 state.BlockOnlyIds.Add(familySymbolId);
 
+        var parameterIds = new HashSet<int>();
         foreach (var bid in state.BlockOnlyIds)
-            ElementBuilder.BuildBlockOnlyElement(bid, state, rvtInfo);
+            ElementBuilder.BuildBlockOnlyElement(bid, state, rvtInfo, parameterIds);
 
         // Wall function extraction: scan all chunks for classIdx=0x00012100 blocks
         ExtractWallFunctions(state);
@@ -808,7 +808,7 @@ public partial class RvtFileReader
             "Local" or "Central" => true,
             _ => null,
         };
-        ElementBuilder.PostProcess(rvtInfo, state, diag);
+        var elementsById = ElementBuilder.PostProcess(rvtInfo, state, diag);
         if (state.GridAxes is { } axes)
         {
             rvtInfo.CurvedGridAxes = axes.Paths;
@@ -835,7 +835,7 @@ public partial class RvtFileReader
         int systemFamilyTypes = ElementBuilder.ApplyValidatedSystemFamilyNames(rvtInfo.Elements, state, familyNames);
         ReadCompactLookupText(rvtInfo);
         ElementBuilder.ApplyValidatedStairOccurrenceNames(rvtInfo.Elements, familyNames);
-        ElementBuilder.ApplyHostLabels(rvtInfo, systemFamilyNames, state.ElemClassIdx);
+        ElementBuilder.ApplyHostLabels(rvtInfo, systemFamilyNames, state.ElemClassIdx, elementsById);
         ElementBuilder.ApplyWorkPlaneLabels(rvtInfo, systemFamilyNames);
         ElementBuilder.ApplyColumnLocationMarks(rvtInfo, state.OwnDocumentUnitOptions?.Value, state.ElemClassIdx);
         ElementBuilder.ApplyMepSystemParams(rvtInfo, state, systemFamilyNames);
@@ -891,8 +891,7 @@ public partial class RvtFileReader
         diag?.WriteLine($"Wall height overrides: {ElementBuilder.WallHeightOverrides}, skipped-no-elev: {ElementBuilder.WallHeightSkippedNoElev}; level-elev candidates: {state.LevelElevCandidates.Count}");
 
         LogPhase("Export ids applied");
-        ResolveParameterUnits(rvtInfo, state);
-        Parameter.ResolveZeroElementIds(rvtInfo, state);
+        FinalizeParameterValues(rvtInfo, state);
 
         // Shared-coordinates / true-north placement: the project may be modelled
         // axis-aligned but exported (by Revit) rotated+offset into shared coords. The exact
@@ -923,6 +922,20 @@ public partial class RvtFileReader
 
         rvtInfo.UserParameters = UserParameterCatalog.Build(state);
         return (rvtInfo, state);
+    }
+
+    private static void BuildOrderedElements<T>(IReadOnlyList<T> input, List<Element> output,
+        Func<T, HashSet<int>, Element> build)
+    {
+        if (input.Count == 0) return;
+        var elements = new Element[input.Count];
+        Parallel.ForEach(System.Collections.Concurrent.Partitioner.Create(0, input.Count), range =>
+        {
+            var parameterIds = new HashSet<int>();
+            for (int index = range.Item1; index < range.Item2; index++)
+                elements[index] = build(input[index], parameterIds);
+        });
+        output.AddRange(elements);
     }
 
     internal static void MergeElemScanStringsInChunkOrder(
@@ -3335,7 +3348,7 @@ public partial class RvtFileReader
     /// <summary>Recover the active project-location transform. The dominant repeated
     /// Z-rotation is true north; the survey BasePoint stores matching internal and shared
     /// positions, from which the translation follows exactly.</summary>
-    private static double[]? FindSharedTransform(
+    internal static double[]? FindSharedTransform(
         IReadOnlyList<byte[]> chunks,
         IReadOnlyDictionary<uint, (double[] Internal, double[] Shared)> basePoints,
         IReadOnlyDictionary<uint, ElementRecord> records,
@@ -3349,15 +3362,17 @@ public partial class RvtFileReader
         static bool Unit(double v) => !double.IsNaN(v) && Math.Abs(v) <= 1.0000001;
         static bool AxisAligned(double s) =>
             Math.Abs(s) < 1e-4 || Math.Abs(Math.Abs(s) - 1) < 1e-4;
-        var votes = new Dictionary<long, int>(); // angle (micro-radians) -> occurrences
-        var representatives = new Dictionary<long, (double C, double S)>();
-        foreach (var chunk in chunks)
+        var votes = new Dictionary<long, (int Count, int Chunk, int Offset, double C, double S)>();
+        for (int chunkIndex = 0; chunkIndex < chunks.Count; chunkIndex++)
         {
-            // Block payloads are not guaranteed to be 8-byte aligned. Walk all eight
-            // alignments so transforms shifted by strings or pointers are still found.
-            for (int alignment = 0; alignment < 8; alignment++)
-            for (int off = alignment; off + 72 <= chunk.Length; off += 8)
+            var chunk = chunks[chunkIndex];
+            // For 1e-4 <= |c01| <= 1.0000001, its high byte is 0x3F or 0xBF.
+            int limit = chunk.Length - 71;
+            for (int off = 0; off < limit; off++)
             {
+                int next = chunk.AsSpan(off + 15, limit - off).IndexOfAny((byte)0x3F, (byte)0xBF);
+                if (next < 0) break;
+                off += next;
                 double c00 = BitConverter.ToDouble(chunk, off);
                 double c01 = BitConverter.ToDouble(chunk, off + 8);
                 if (!Unit(c00) || !Unit(c01) || AxisAligned(c01)) continue;
@@ -3373,38 +3388,43 @@ public partial class RvtFileReader
                 if (Math.Abs(c00 * c00 + c01 * c01 - 1) > 1e-9) continue;
                 if (Math.Abs(c10 + c01) > 1e-9 || Math.Abs(c11 - c00) > 1e-9) continue;
                 long key = (long)Math.Round(Math.Atan2(c01, c00) * 1e6);
-                votes.TryGetValue(key, out int count);
-                votes[key] = count + 1;
-                representatives.TryAdd(key, (c00, c01));
+                if (!votes.TryGetValue(key, out var vote))
+                    votes[key] = (1, chunkIndex, off, c00, c01);
+                // Keep the first matrix in the original alignment-first order.
+                else if (vote.Chunk == chunkIndex && (off & 7) < (vote.Offset & 7))
+                    votes[key] = (vote.Count + 1, chunkIndex, off, c00, c01);
+                else
+                    votes[key] = (vote.Count + 1, vote.Chunk, vote.Offset, vote.C, vote.S);
             }
         }
 
         double cc = 1, ss = 0;
         bool foundRotation = false;
-        var ranked = votes.OrderByDescending(v => v.Value).ToList();
-        int top = ranked.Count > 0 ? ranked[0].Value : 0;
-        int runner = ranked.Count > 1 ? ranked[1].Value : 0;
+        var ranked = votes.Values.OrderByDescending(v => v.Count)
+            .ThenBy(v => v.Chunk).ThenBy(v => v.Offset & 7).ThenBy(v => v.Offset).Take(2).ToList();
+        int top = ranked.Count > 0 ? ranked[0].Count : 0;
+        int runner = ranked.Count > 1 ? ranked[1].Count : 0;
         diag?.WriteLine($"Shared transform signals: basePoints={basePoints.Count}, rotations={votes.Count}, top={top}, runner={runner}");
         // Require a clear, well-supported winner: the shared north is carried by many
         // records; a stray furniture angle is not (and does not clear a 2.5x runner-up).
         if (top >= 8 && top * 2 >= runner * 5)
         {
-            (cc, ss) = representatives[ranked[0].Key];
+            (cc, ss) = (ranked[0].C, ranked[0].S);
             foundRotation = true;
         }
         diag?.WriteLine($"SharedTransform diag: foundRotation={foundRotation} cc={cc:R} ss={ss:R} "
             + $"angleRad={Math.Atan2(ss, cc):R} votes={votes.Count} top={top} runner={runner}");
         if (diag != null && ranked.Count > 0)
         {
-            var (topC, topS) = representatives[ranked[0].Key];
+            var (_, _, _, topC, topS) = ranked[0];
             diag.WriteLine($"SharedTransform diag: topWinner(rawVote) angleRad={Math.Atan2(topS, topC):R} "
-                + $"c={topC:R} s={topS:R} count={ranked[0].Value}");
+                + $"c={topC:R} s={topS:R} count={top}");
         }
         if (diag != null && ranked.Count > 1)
         {
-            var (runnerC, runnerS) = representatives[ranked[1].Key];
+            var (_, _, _, runnerC, runnerS) = ranked[1];
             diag.WriteLine($"SharedTransform diag: runnerUp angleRad={Math.Atan2(runnerS, runnerC):R} "
-                + $"c={runnerC:R} s={runnerS:R} count={ranked[1].Value}");
+                + $"c={runnerC:R} s={runnerS:R} count={runner}");
         }
 
         if (diag != null)
@@ -3509,35 +3529,32 @@ public partial class RvtFileReader
         return new ActiveProjectLocation([c, s, 0, -s, c, 0, 0, 0, 1.0, tx, ty, tz], latitude, longitude, elevation, placeName);
     }
 
-    private static void ResolveParameterUnits(RevitFileInfo rvtInfo, ParsingState state)
+    private static void FinalizeParameterValues(RevitFileInfo rvtInfo, ParsingState state)
     {
-        int resolved = 0;
-        foreach (var elem in rvtInfo.Elements)
+        var bySource = new System.Collections.Concurrent.ConcurrentDictionary<
+            (string? ForgeId, string? Name), Parameter.DisplayUnits?>();
+        var (hasZeroPhase, hasZeroDimStyle) = Parameter.ResolveZeroElementIdDomains(rvtInfo, state);
+        Parallel.For(0, rvtInfo.Elements.Count, index =>
         {
+            var elem = rvtInfo.Elements[index];
             foreach (var param in elem.Parameters)
             {
+                param.ResolveZeroElementId(elem, hasZeroPhase, hasZeroDimStyle);
                 if (param.StorageType != StorageType.Double) continue;
-
-                string? specType = null;
-
-                // Try the ForgeId spec mapping (from 0x0B3A blocks)
-                if (param.ForgeId != null && state.ForgeParamSpecs.TryGetValue(param.ForgeId, out var spec))
-                    specType = spec;
-
-                // 2. Resolve unit category from spec type or BIP name
-                string? unitCat = specType != null ? GetUnitCategory(specType) : null;
-                if (unitCat == null && param.Definition?.Name != null)
-                    unitCat = GetUnitCategoryFromBipName(param.Definition.Name);
-
-                if (unitCat == null) continue;
-
-                param.SpecType = specType;
-                var (symbol, factor) = GetUnitDisplay(unitCat);
-                param.UnitSymbol = symbol;
-                param.ConversionFactor = factor;
-                resolved++;
+                var key = (param.ForgeId, Name: param.DefinitionName);
+                var units = bySource.GetOrAdd(key, static (source, parsingState) =>
+                {
+                    string? specType = source.ForgeId == null ? null : parsingState.ForgeParamSpecs.GetValueOrDefault(source.ForgeId);
+                    string? unitCat = specType != null ? GetUnitCategory(specType) : null;
+                    if (unitCat == null && source.Name is { } bipName)
+                        unitCat = GetUnitCategoryFromBipName(bipName);
+                    if (unitCat == null) return null;
+                    var (symbol, factor) = GetUnitDisplay(unitCat);
+                    return new Parameter.DisplayUnits(specType, symbol, factor);
+                }, state);
+                if (units != null) param.SetDisplayUnits(units);
             }
-        }
+        });
     }
 
     /// <summary>Extract unit category from spec type URN.</summary>
@@ -3659,8 +3676,9 @@ public partial class RvtFileReader
         diag?.WriteLine($"Family param maps: {state.FamilyParamMaps.Count} symbols; remapped {remappedStrings} strings, {remappedDoubles} doubles ({droppedNoMap} unmapped)");
     }
 
-    private static void PrePropagateBipDoubles(ParsingState state, TextWriter? diag)
+    internal static void PrePropagateBipDoubles(ParsingState state, TextWriter? diag)
     {
+        var filtered = new Dictionary<Dictionary<int, double>, Dictionary<int, double>>(ReferenceEqualityComparer.Instance);
         int propagated = 0;
         for (int pass = 0; pass < 3; pass++)
         {
@@ -3670,16 +3688,29 @@ public partial class RvtFileReader
                 if (state.ElemBipDoubles.ContainsKey(eid)) continue;
                 if (rec.References.Count == 0) continue;
                 Dictionary<int, double>? inherited = null;
+                bool ownsMap = false;
                 foreach (var refId in rec.References)
                 {
                     if (refId == eid) continue;
                     if (!state.ElemBipDoubles.TryGetValue(refId, out var refDbls)) continue;
-                    inherited ??= new Dictionary<int, double>();
+                    if (inherited == null)
+                    {
+                        var builtIns = BuiltInsOf(refDbls);
+                        if (builtIns.Count > 0) inherited = builtIns;
+                        continue;
+                    }
+                    if (ReferenceEquals(inherited, refDbls)) continue;
                     foreach (var (k, v) in refDbls)
                     {
                         // Only propagate BuiltInParameter keys (negative), not user params (positive IDs)
-                        if (k < 0)
-                            inherited.TryAdd(k, v);
+                        if (k >= 0) continue;
+                        if (!ownsMap)
+                        {
+                            if (inherited.ContainsKey(k)) continue;
+                            inherited = new Dictionary<int, double>(inherited);
+                            ownsMap = true;
+                        }
+                        inherited.TryAdd(k, v);
                     }
                 }
                 if (inherited != null && inherited.Count > 0)
@@ -3704,8 +3735,10 @@ public partial class RvtFileReader
                 if (refId == eid) continue;
                 if (state.WallTypeWidths.TryGetValue(refId, out var tw))
                 {
-                    if (bd == null) state.ElemBipDoubles[eid] = bd = new Dictionary<int, double>();
+                    // The old map can also be the inherited snapshot of another record.
+                    bd = bd == null ? new Dictionary<int, double>() : new Dictionary<int, double>(bd);
                     bd[-1001000] = tw;
+                    state.ElemBipDoubles[eid] = bd;
                     wallWidthPropagated++;
                     break;
                 }
@@ -3713,6 +3746,21 @@ public partial class RvtFileReader
         }
         if (wallWidthPropagated > 0)
             diag?.WriteLine($"Wall width propagated to {wallWidthPropagated} additional instances");
+
+        Dictionary<int, double> BuiltInsOf(Dictionary<int, double> source)
+        {
+            if (filtered.TryGetValue(source, out var builtIns)) return builtIns;
+            foreach (int key in source.Keys)
+            {
+                if (key < 0) continue;
+                builtIns = new Dictionary<int, double>();
+                foreach (var (id, value) in source)
+                    if (id < 0) builtIns.Add(id, value);
+                filtered.Add(source, builtIns);
+                return builtIns;
+            }
+            return source;
+        }
     }
 
     /// <summary>

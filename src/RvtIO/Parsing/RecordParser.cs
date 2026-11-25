@@ -8,8 +8,12 @@ internal static class RecordParser
 {
     internal static bool ContainsAnchoredR22Record(byte[] chunk, IReadOnlySet<uint> knownIds)
     {
-        for (int position = 0; position + 12 <= chunk.Length; position++)
+        int limit = chunk.Length - 11;
+        for (int position = 0; position < limit; position++)
         {
+            int nextMagic = chunk.AsSpan(position + 8, limit - position).IndexOfAny((byte)0x3C, (byte)0xF8);
+            if (nextMagic < 0) break;
+            position += nextMagic;
             if (!TryReadR22Header(chunk, position, out uint elementId, out int recordSize))
                 continue;
             int next = position + recordSize;
@@ -26,6 +30,10 @@ internal static class RecordParser
     {
         for (int position = 0; position + 20 <= chunk.Length; position++)
         {
+            // The padding and the high bytes of the 19-bit body size precede the footer check.
+            if (BitConverter.ToUInt32(chunk, position + 4) != 0
+                || chunk[position + 15] != 0 || chunk[position + 14] > 7)
+                continue;
             if (!TryReadR25Header(chunk, position, out uint elementId, out int recordSize))
                 continue;
             int next = position + recordSize;
@@ -62,16 +70,15 @@ internal static class RecordParser
                 if (!state.Records.ContainsKey(elemId))
                 {
                     ushort subclass = BitConverter.ToUInt16(chunk, pos + 10);
-                    var body = new byte[bodySize];
-                    Array.Copy(chunk, pos + 12, body, 0, (int)bodySize);
+                    int bodyStart = pos + 12;
+                    var body = chunk.AsMemory(bodyStart, (int)bodySize);
                     var rec = new ElementRecord { ElemId = elemId, Body = body, Subclass = subclass };
                     ExtractReferences(rec);
                     ExtractBodyParams(rec);
-                    BlockParser.ExtractBlockStrings(body, 0, body.Length, elemId, state.ElemStrings);
-                    BlockParser.ExtractBlockDoubles(body, 0, body.Length, elemId, state.ElemDoubles);
+                    BlockParser.ExtractBlockStrings(chunk, bodyStart, next, elemId, state.ElemStrings);
                     state.Records[elemId] = rec;
                     // Extract after storing record (needs references for SymbolId validation)
-                    BlockParser.ExtractFamilyInstanceTransform(body, 0, body.Length, elemId, state.FamilyInstanceTransforms, state.Records);
+                    BlockParser.ExtractFamilyInstanceTransform(chunk, bodyStart, next, elemId, state.FamilyInstanceTransforms, state.Records);
                 }
                 pos = next;
                 aligned = true;
@@ -102,13 +109,13 @@ internal static class RecordParser
                 uint bodySize = BitConverter.ToUInt32(chunk, pos + 12);
                 if (!state.Records.ContainsKey(elemId))
                 {
-                    var body = new byte[bodySize];
-                    Array.Copy(chunk, pos + 16, body, 0, (int)bodySize);
+                    int bodyStart = pos + 16;
+                    int bodyEnd = next - sizeof(uint);
+                    var body = chunk.AsMemory(bodyStart, (int)bodySize);
                     var rec = new ElementRecord { ElemId = elemId, Body = body, Subclass = 0 };
                     ExtractR25Body(rec);
 
-                    BlockParser.ExtractBlockStrings(body, 0, body.Length, elemId, state.ElemStrings);
-                    BlockParser.ExtractBlockDoubles(body, 0, body.Length, elemId, state.ElemDoubles);
+                    BlockParser.ExtractBlockStrings(chunk, bodyStart, bodyEnd, elemId, state.ElemStrings);
                     state.Records[elemId] = rec;
                 }
                 pos = next;
@@ -176,10 +183,10 @@ internal static class RecordParser
     /// then [assocLevelId:4][0:4][famId:4][0:4] etc. (8-byte element refs)</summary>
     private static void ExtractR25Body(ElementRecord rec)
     {
-        var body = rec.Body;
+        var body = rec.Body.Span;
         if (body.Length < 4) return;
 
-        ushort topClassId = BitConverter.ToUInt16(body, 0);
+        ushort topClassId = BitConverter.ToUInt16(body.Slice(0));
         rec.Subclass = topClassId; // Store top-level Tf classId as subclass for classification
 
         if (R25ClassIdToCategory.TryGetValue(topClassId, out int catFromClass))
@@ -189,12 +196,12 @@ internal static class RecordParser
         int elemBasePos = -1;
         for (int i = 0; i + 10 <= body.Length; i += 2)
         {
-            if (BitConverter.ToUInt16(body, i) == 0x02EF)
+            if (BitConverter.ToUInt16(body.Slice(i)) == 0x02EF)
             {
-                uint ver = BitConverter.ToUInt32(body, i + 2);
+                uint ver = BitConverter.ToUInt32(body.Slice(i + 2));
                 if (ver == 1)
                 {
-                    uint selfId = BitConverter.ToUInt32(body, i + 6);
+                    uint selfId = BitConverter.ToUInt32(body.Slice(i + 6));
                     if (selfId == rec.ElemId || ElementIdEncoding.IsSupported(selfId))
                     { elemBasePos = i; break; }
                 }
@@ -216,8 +223,8 @@ internal static class RecordParser
                 // [assocLevelId:4][0:4] [famId:4][0:4] ...
                 for (int r = 0; r < 8 && off + 8 <= body.Length; r++)
                 {
-                    uint refId = BitConverter.ToUInt32(body, off);
-                    uint pad = BitConverter.ToUInt32(body, off + 4);
+                    uint refId = BitConverter.ToUInt32(body.Slice(off));
+                    uint pad = BitConverter.ToUInt32(body.Slice(off + 4));
                     if (ElementIdEncoding.IsSupported(refId) && refId != 0xFFFFFFFF && pad == 0 && refId != rec.ElemId)
                     {
                         if (!rec.References.Contains(refId))
@@ -231,8 +238,8 @@ internal static class RecordParser
         // R25 uses [elemId:u32][zero:u32], with FFFFFFFF FFFFFFFF for null
         for (int i = 0; i + 8 <= body.Length; i += 2)
         {
-            uint refId = BitConverter.ToUInt32(body, i);
-            uint pad = BitConverter.ToUInt32(body, i + 4);
+            uint refId = BitConverter.ToUInt32(body.Slice(i));
+            uint pad = BitConverter.ToUInt32(body.Slice(i + 4));
             if (ElementIdEncoding.IsSupported(refId) && pad == 0 && refId != rec.ElemId && refId != 0xFFFFFFFF)
             {
                 if (!rec.References.Contains(refId))
@@ -242,7 +249,7 @@ internal static class RecordParser
 
         if (topClassId == 0 && body.Length >= 6)
         {
-            int catId = BitConverter.ToInt32(body, 2);
+            int catId = BitConverter.ToInt32(body.Slice(2));
             if (catId < -1 && catId > -3_000_000)
                 rec.CategoryId = catId;
         }
@@ -254,7 +261,7 @@ internal static class RecordParser
             int searchEnd = Math.Min(body.Length - 4, searchStart + 200);
             for (int i = searchStart; i <= searchEnd; i += 2)
             {
-                int val = BitConverter.ToInt32(body, i);
+                int val = BitConverter.ToInt32(body.Slice(i));
                 if (val < -1 && val > -3_000_000)
                 {
                     if (val <= -2000000 && val >= -2010000)
@@ -273,11 +280,11 @@ internal static class RecordParser
 
     public static void ExtractReferences(ElementRecord rec)
     {
-        var body = rec.Body;
+        var body = rec.Body.Span;
         int markerPos = -1;
         for (int i = 0; i < body.Length - 2; i++)
         {
-            if (BitConverter.ToUInt16(body, i) == 0x0548)
+            if (BitConverter.ToUInt16(body.Slice(i)) == 0x0548)
             { markerPos = i; break; }
         }
 
@@ -294,29 +301,29 @@ internal static class RecordParser
         }
 
         if (refStart + 4 > body.Length) return;
-        int count = BitConverter.ToInt32(body, refStart);
+        int count = BitConverter.ToInt32(body.Slice(refStart));
 
         if (count < 0 || count > 10000 || refStart + 4 + count * 4 > body.Length)
         {
             refStart += 48; // skip geometry doubles
             if (refStart + 4 > body.Length) return;
-            count = BitConverter.ToInt32(body, refStart);
+            count = BitConverter.ToInt32(body.Slice(refStart));
             if (count < 0 || count > 10000 || refStart + 4 + count * 4 > body.Length) return;
         }
 
         while (refStart + 4 <= body.Length)
         {
-            count = BitConverter.ToInt32(body, refStart);
+            count = BitConverter.ToInt32(body.Slice(refStart));
             if (count < 0 || count > 10000 || refStart + 4 + count * 4 > body.Length) break;
             refStart += 4;
             for (int i = 0; i < count; i++)
             {
-                uint refId = BitConverter.ToUInt32(body, refStart + i * 4);
+                uint refId = BitConverter.ToUInt32(body.Slice(refStart + i * 4));
                 if (refId > 0 && refId < 0xFFFFFF00) rec.References.Add(refId);
             }
             refStart += count * 4;
             if (refStart + 4 > body.Length) break;
-            int nextCount = BitConverter.ToInt32(body, refStart);
+            int nextCount = BitConverter.ToInt32(body.Slice(refStart));
             if (nextCount < 0 || nextCount > 10000) break;
         }
     }
@@ -326,16 +333,16 @@ internal static class RecordParser
     /// by scanning past 14-byte entries until sentinel, then looking for valid doubles.
     /// Returns the offset of the first valid double, or -1.
     /// </summary>
-    private static int FindPostEntryGeomOffset(byte[] body)
+    private static int FindPostEntryGeomOffset(ReadOnlySpan<byte> body)
     {
         for (int pos = 2; pos + 14 <= body.Length; pos += 14)
         {
-            int classId = BitConverter.ToUInt16(body, pos + 10);
+            int classId = BitConverter.ToUInt16(body.Slice(pos + 10));
             if (classId == 0 || classId == 0xFFFF)
             {
                 for (int skip = pos + 14; skip + 48 <= body.Length; skip += 2)
                 {
-                    double d0 = BitConverter.ToDouble(body, skip);
+                    double d0 = BitConverter.ToDouble(body.Slice(skip));
                     if (!double.IsNaN(d0) && !double.IsInfinity(d0) && Math.Abs(d0) > 1e-6 && Math.Abs(d0) < 1e6)
                         return skip;
                 }
@@ -347,22 +354,22 @@ internal static class RecordParser
 
     public static void ExtractBodyParams(ElementRecord rec)
     {
-        var body = rec.Body;
+        var body = rec.Body.Span;
         if (body.Length < 4) return;
 
         int markerPos = -1;
         for (int i = 0; i < body.Length - 1; i++)
-            if (BitConverter.ToUInt16(body, i) == 0x0548) { markerPos = i; break; }
+            if (BitConverter.ToUInt16(body.Slice(i)) == 0x0548) { markerPos = i; break; }
 
         int entryLimit = markerPos >= 2 ? markerPos : body.Length;
 
         // Entry layout: [value:4][paramKey:4][fieldType:2][classId:2][flags:2]
         for (int pos = 2; pos + 14 <= entryLimit; pos += 14)
         {
-            int rawValue = BitConverter.ToInt32(body, pos);
-            int paramKey = BitConverter.ToInt32(body, pos + 4);
-            int fieldType = BitConverter.ToUInt16(body, pos + 8);
-            int classId = BitConverter.ToUInt16(body, pos + 10);
+            int rawValue = BitConverter.ToInt32(body.Slice(pos));
+            int paramKey = BitConverter.ToInt32(body.Slice(pos + 4));
+            int fieldType = BitConverter.ToUInt16(body.Slice(pos + 8));
+            int classId = BitConverter.ToUInt16(body.Slice(pos + 10));
             if (classId == 0 || classId == 0xFFFF)
             {
                 // CategoryId is stored as int32 right after the last valid 14-byte entry
@@ -371,8 +378,6 @@ internal static class RecordParser
                     rec.CategoryId = rawValue;
                 break;
             }
-
-            rec.EntryValues.Add(rawValue);
 
             if (paramKey == -1)
             {
@@ -395,7 +400,7 @@ internal static class RecordParser
             int? intVal = rawValue;
             // ft=205 entries mark user params as writable (non-readonly)
             if (fieldType == 205 && paramKey > 0)
-                rec.WritableParamIds.Add(paramKey);
+                (rec.WritableParamIds ??= new()).Add(paramKey);
             rec.BipParams.Add(new BipEntry(paramKey, bipName, fieldType, intVal));
         }
 
