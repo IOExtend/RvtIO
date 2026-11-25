@@ -2608,7 +2608,7 @@ public partial class RvtFileReader
                 if (uint.TryParse(part, out uint dge)) dumpGrepEids.Add(dge);
         var wallGeometryCandidates = new List<(byte[] Data, int Start, uint Size, ushort Cls, uint Owner)>();
         var segmentSources = new TfStreamWalker.SegmentSources();
-        var nativeBlocks = new TfNativeBlocks(state);
+        var nativeBlocks = new TfNativeBlocks(state, segmentSources);
         // the roots the class and stair sources count: the records of the project's block when every stream is read by its framing
         bool framedRoots = state.ReadsFramedRecords;
         List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner)>? unanchoredTypeRoots =

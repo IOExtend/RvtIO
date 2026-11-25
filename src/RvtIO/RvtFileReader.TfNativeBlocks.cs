@@ -6,7 +6,7 @@ namespace RvtIO;
 public partial class RvtFileReader
 {
     /// <summary>Native parameter decoding is independent across owners; replay results in stream order.</summary>
-    private sealed class TfNativeBlocks(ParsingState state)
+    private sealed class TfNativeBlocks(ParsingState state, TfStreamWalker.SegmentSources sources)
     {
         private const int Capacity = 32_768;
         private readonly List<Block> _blocks = [];
@@ -34,7 +34,9 @@ public partial class RvtFileReader
                 return;
             }
 
-            _blocks.Add(block);
+            // Queued blocks outlive the walk's segment buffer, which can reach 1.4 GB; keep only the block.
+            var (kept, keptStart) = sources.Retain(data, start, (int)size + 16);
+            _blocks.Add(block with { Data = kept, Start = keptStart });
             if (_blocks.Count == Capacity) Flush();
         }
 
