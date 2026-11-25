@@ -188,6 +188,7 @@ public partial class RvtFileReader
         var state = new ParsingState
         {
             SeparateFacesWithDistinctOpenings = _options.SeparateFacesWithDistinctOpenings,
+            CollectBlockClassInventory = false,
             ElemTable = elemTable,
             ElementIds = ids,
             ElemWorksets = elemWorksets,
@@ -214,13 +215,20 @@ public partial class RvtFileReader
         ClassifyAndParseRecords(chunks, state, diag);
         LogPhase("Records parsed");
 
-        ParseBlocks(state, diag, progress);
-        LogPhase("Blocks parsed");
-
-        // Continuous-stream anchored walk: blocks cross chunk boundaries, so this sees many more blocks than the
-        // per-chunk walk. Extracts native parameter stores and re-runs the key block-driven signals at full coverage.
-        progress?.Report(new("parameter-stream"));
-        RunTfStreamWalk(state, progress);
+        var unreadableGReps = GRepParserV2.IsDecodeTracingEnabled() ? null : new HashSet<BlockParser.GRepRange>();
+        var blockGeometry = ParseBlocks(state, diag, progress, unreadableGReps,
+            overlapGeometry: progress == null && unreadableGReps != null
+                && !OperatingSystem.IsBrowser() && (state.WideSchema == null || state.R22View));
+        // The anchored walk reaches blocks spanning chunks and decodes the native parameter stores.
+        try
+        {
+            LogPhase("Blocks parsed");
+            progress?.Report(new("parameter-stream"));
+            RunTfStreamWalk(state, progress, unreadableGReps, blockGeometry);
+        }
+        finally { blockGeometry?.GetAwaiter().GetResult(); }
+        unreadableGReps = null;
+        blockGeometry = null;
         if (state.WideSchema == null) ReadOwnDocumentUnits(root, state, diag);
         if (wideSchema == null && state.ElemClassIdx.Values.Any(id => id is 2108 or 2111))
             ReadNarrowGridAxes(root, state, diag);
@@ -228,22 +236,30 @@ public partial class RvtFileReader
         diag?.WriteLine($"Grid datums: {state.GridDatums.Count}");
 
         progress?.Report(new("element-properties"));
-        // Scan all chunks for element name strings in parallel. Store each result at its
-        // source chunk index so task completion order cannot change first-match name resolution.
-        var partialResults = new Dictionary<uint, List<string>>?[chunks.Count];
-        Parallel.For(0, chunks.Count, chunkIndex =>
+        // The catalog reads finalized native captures. The string scan writes only its name candidates.
+        UserParameterCatalog? userParameters = null;
+        if (OperatingSystem.IsBrowser() || progress != null)
         {
-            var localStrings = new Dictionary<uint, List<string>>();
-            StringScanner.ScanChunk(chunks[chunkIndex], state.AllKnownIds, localStrings);
-            if (localStrings.Count > 0) partialResults[chunkIndex] = localStrings;
-        });
-        MergeElemScanStringsInChunkOrder(partialResults, state.ElemScanStrings);
+            ScanElementStrings();
+            userParameters = UserParameterCatalog.Build(state);
+        }
+        else Parallel.Invoke(ScanElementStrings, () => userParameters = UserParameterCatalog.Build(state));
+
+        void ScanElementStrings()
+        {
+            var partialResults = new Dictionary<uint, List<string>>?[chunks.Count];
+            Parallel.For(0, chunks.Count, chunkIndex =>
+            {
+                var localStrings = new Dictionary<uint, List<string>>();
+                StringScanner.ScanChunk(chunks[chunkIndex], state.AllKnownIds, localStrings);
+                if (localStrings.Count > 0) partialResults[chunkIndex] = localStrings;
+            });
+            MergeElemScanStringsInChunkOrder(partialResults, state.ElemScanStrings);
+        }
         LogPhase("Strings scanned");
         diag?.WriteLine($"Elements with BIP doubles: {state.ElemBipDoubles.Count}");
 
-        WallWidthExtractor.ExtractFromBlocks(state);
-        WallWidthExtractor.ExtractFromGrid(state);
-        WallWidthExtractor.ExtractFromBlockGrid(state);
+        WallWidthExtractor.Extract(state);
 
         // Optional text dump of the model
         if (_options.ExternalDumpPath != null)
@@ -264,16 +280,15 @@ public partial class RvtFileReader
 
         byte[] forgeMarker = System.Text.Encoding.Unicode.GetBytes("autodesk.parameter.aec.revit.");
         var forgeIdHits = new List<(int chunkIdx, int offset, string forgeId, uint parsedElemId)>();
-        for (int ci = 0; ci < state.Chunks.Count; ci++)
+        var forgeHitsByChunk = new List<(int chunkIdx, int offset, string forgeId, uint parsedElemId)>?[state.Chunks.Count];
+        Parallel.For(0, state.Chunks.Count, ci =>
         {
             var chunk = state.Chunks[ci];
             for (int j = 5; j + forgeMarker.Length <= chunk.Length; j++)
             {
-                if (chunk[j] != 0x61 || chunk[j + 1] != 0x00) continue; // 'a'
-                bool m2 = true;
-                for (int x = 0; x < forgeMarker.Length && m2; x++)
-                    if (chunk[j + x] != forgeMarker[x]) m2 = false;
-                if (!m2) continue;
+                int next = chunk.AsSpan(j).IndexOf(forgeMarker);
+                if (next < 0) break;
+                j += next;
 
                 var sb = new System.Text.StringBuilder();
                 for (int k = 0; j + k * 2 + 1 < chunk.Length; k++)
@@ -302,10 +317,12 @@ public partial class RvtFileReader
                     var part = fid.Split("family:").LastOrDefault()?.Split('-').FirstOrDefault();
                     if (part != null) uint.TryParse(part, out parsedId);
                 }
-                forgeIdHits.Add((ci, sLenOff, fid, parsedId));
+                (forgeHitsByChunk[ci] ??= new()).Add((ci, sLenOff, fid, parsedId));
                 j += fid.Length * 2;
             }
-        }
+        });
+        foreach (var hits in forgeHitsByChunk)
+            if (hits != null) forgeIdHits.AddRange(hits);
         int familyHits = forgeIdHits.Count(h => h.forgeId.Contains("family:"));
         int externalHits = forgeIdHits.Count(h => h.forgeId.Contains("external."));
         diag?.WriteLine($"  ForgeId scan: {forgeIdHits.Count} ({familyHits} family, {externalHits} external)");
@@ -440,18 +457,18 @@ public partial class RvtFileReader
             if (!state.IsParameterElement(eid)) continue;
             if (state.ForgeParamDefs.TryGetValue(eid, out var existing) && existing.DisplayName != null) continue;
             if (!state.Records.TryGetValue(eid, out var rec)) continue;
-            var body = rec.Body;
+            var body = rec.Body.Span;
             int famId = -1;
             for (int p = 2; p + 2 <= body.Length - 10; p += 14)
             {
-                ushort classId = BitConverter.ToUInt16(body, p + 10);
+                ushort classId = BitConverter.ToUInt16(body[(p + 10)..]);
                 if (classId == 0xFFFF || classId == 0)
                 {
                     // Tf base fields start here: [assocLevelId:4][famId:4]
                     int tfStart = p + 14; // after sentinel entry
                     if (tfStart + 8 <= body.Length)
                     {
-                        famId = BitConverter.ToInt32(body, tfStart + 4);
+                        famId = BitConverter.ToInt32(body[(tfStart + 4)..]);
                     }
                     break;
                 }
@@ -547,7 +564,7 @@ public partial class RvtFileReader
             if (!state.IsParameterElement(eid)) continue;
             if (state.ForgeParamDefs.TryGetValue(eid, out var ex4) && ex4.DisplayName != null) continue;
             if (!state.Records.TryGetValue(eid, out var rec)) continue;
-            var body = rec.Body;
+            var body = rec.Body.Span;
             if (body.Length <= 87) continue; // minimal body has no strings
 
             for (int j = 10; j + 40 <= body.Length; j++)
@@ -569,7 +586,7 @@ public partial class RvtFileReader
                 for (int back = forgeOff - 2; back >= Math.Max(0, forgeOff - 500); back--)
                 {
                     if (back + 4 > body.Length) continue;
-                    uint capLen = BitConverter.ToUInt32(body, back);
+                    uint capLen = BitConverter.ToUInt32(body[back..]);
                     if (capLen < 1 || capLen > 200) continue;
                     int capEnd = back + 4 + (int)capLen * 2;
                     int gap = forgeOff - capEnd;
@@ -579,7 +596,7 @@ public partial class RvtFileReader
                     {
                         int tryBack = back + lenTry;
                         if (tryBack < 0 || tryBack + 4 > body.Length) continue;
-                        uint tryLen = BitConverter.ToUInt32(body, tryBack);
+                        uint tryLen = BitConverter.ToUInt32(body[tryBack..]);
                         if (tryLen < 1 || tryLen > 200) continue;
                         int tryEnd = tryBack + 4 + (int)tryLen * 2;
                         int tryGap = forgeOff - tryEnd;
@@ -758,12 +775,13 @@ public partial class RvtFileReader
             .Where(k => !state.ElemTable.ContainsKey(k))
             .OrderBy(k => k).ToList();
 
-        foreach (var (elemId, typeId) in state.ElemTable.OrderBy(x => x.Key))
-            ElementBuilder.BuildElemTableElement(elemId, typeId, state, rvtInfo);
+        state.SymbolPlacementGeometry = new(ReferenceEqualityComparer.Instance);
+        BuildOrderedElements(state.ElemTable.OrderBy(x => x.Key).ToArray(), rvtInfo.Elements,
+            (entry, parameterIds) => ElementBuilder.CreateElemTableElement(entry.Key, entry.Value, state, parameterIds));
 
         LogPhase("Elements built");
-        foreach (var eid in extraRecordIds)
-            ElementBuilder.BuildDiscoveredElement(eid, state, rvtInfo);
+        BuildOrderedElements(extraRecordIds, rvtInfo.Elements,
+            (id, parameterIds) => ElementBuilder.CreateDiscoveredElement(id, state, parameterIds));
         LogPhase("Discovered elements built");
 
         // GRep blocks discovered by the stream walk / targeted scan that no index knows:
@@ -793,8 +811,9 @@ public partial class RvtFileReader
                 && !state.Records.ContainsKey(familySymbolId))
                 state.BlockOnlyIds.Add(familySymbolId);
 
+        var parameterIds = new HashSet<int>();
         foreach (var bid in state.BlockOnlyIds)
-            ElementBuilder.BuildBlockOnlyElement(bid, state, rvtInfo);
+            ElementBuilder.BuildBlockOnlyElement(bid, state, rvtInfo, parameterIds);
 
         // Wall function extraction: scan all chunks for classIdx=0x00012100 blocks
         ExtractWallFunctions(state);
@@ -808,7 +827,8 @@ public partial class RvtFileReader
             "Local" or "Central" => true,
             _ => null,
         };
-        ElementBuilder.PostProcess(rvtInfo, state, diag);
+        var elementsById = ElementBuilder.PostProcess(rvtInfo, state, diag);
+        state.SymbolPlacementGeometry = null;
         if (state.GridAxes is { } axes)
         {
             rvtInfo.CurvedGridAxes = axes.Paths;
@@ -816,11 +836,11 @@ public partial class RvtFileReader
         }
         progress?.Report(new("finalize-model"));
         LogPhase("Post-processed");
-        ElementBuilder.ApplyValidatedStairComponentTypeNames(rvtInfo.Elements, state);
-        ElementBuilder.ApplyValidatedCorniceTypeNames(rvtInfo.Elements, state);
-        ElementBuilder.ApplyValidatedDuctTypeNames(rvtInfo.Elements, state);
-        ElementBuilder.ApplyValidatedMepTypeNames(rvtInfo.Elements, state);
-        ElementBuilder.ApplyMepCurveTypeLinks(rvtInfo.Elements, state);
+        ElementBuilder.ApplyValidatedStairComponentTypeNames(rvtInfo.Elements, state, elementsById);
+        ElementBuilder.ApplyValidatedCorniceTypeNames(rvtInfo.Elements, state, elementsById);
+        ElementBuilder.ApplyValidatedDuctTypeNames(rvtInfo.Elements, state, elementsById);
+        ElementBuilder.ApplyValidatedMepTypeNames(rvtInfo.Elements, state, elementsById);
+        ElementBuilder.ApplyMepCurveTypeLinks(rvtInfo.Elements, state, elementsById);
         diag?.WriteLine($"MEP curve types: occurrences with an exact type link={rvtInfo.Elements.Count(e => e.SerializedMepCurveTypeId != null)}, "
             + $"link differs from the general type={rvtInfo.Elements.Count(e => e.SerializedMepCurveTypeId != null && e.SerializedMepCurveTypeId != e.FamilyTypeId)}, "
             + $"types with an own name={rvtInfo.Elements.Count(e => e.ValidatedMepTypeName != null)}");
@@ -835,7 +855,7 @@ public partial class RvtFileReader
         int systemFamilyTypes = ElementBuilder.ApplyValidatedSystemFamilyNames(rvtInfo.Elements, state, familyNames);
         ReadCompactLookupText(rvtInfo);
         ElementBuilder.ApplyValidatedStairOccurrenceNames(rvtInfo.Elements, familyNames);
-        ElementBuilder.ApplyHostLabels(rvtInfo, systemFamilyNames, state.ElemClassIdx);
+        ElementBuilder.ApplyHostLabels(rvtInfo, systemFamilyNames, state.ElemClassIdx, elementsById);
         ElementBuilder.ApplyWorkPlaneLabels(rvtInfo, systemFamilyNames);
         ElementBuilder.ApplyColumnLocationMarks(rvtInfo, state.OwnDocumentUnitOptions?.Value, state.ElemClassIdx);
         ElementBuilder.ApplyMepSystemParams(rvtInfo, state, systemFamilyNames);
@@ -891,8 +911,7 @@ public partial class RvtFileReader
         diag?.WriteLine($"Wall height overrides: {ElementBuilder.WallHeightOverrides}, skipped-no-elev: {ElementBuilder.WallHeightSkippedNoElev}; level-elev candidates: {state.LevelElevCandidates.Count}");
 
         LogPhase("Export ids applied");
-        ResolveParameterUnits(rvtInfo, state);
-        Parameter.ResolveZeroElementIds(rvtInfo, state);
+        FinalizeParameterValues(rvtInfo, state);
 
         // Shared-coordinates / true-north placement: the project may be modelled
         // axis-aligned but exported (by Revit) rotated+offset into shared coords. The exact
@@ -921,8 +940,22 @@ public partial class RvtFileReader
             diag?.WriteLine($"Sketch topology: {sketchOwners} owners, " +
                 $"{rvtInfo.Elements.Where(e => e.SketchLoops != null).Sum(e => e.SketchLoops!.Count)} loops");
 
-        rvtInfo.UserParameters = UserParameterCatalog.Build(state);
+        rvtInfo.UserParameters = userParameters;
         return (rvtInfo, state);
+    }
+
+    private static void BuildOrderedElements<T>(IReadOnlyList<T> input, List<Element> output,
+        Func<T, HashSet<int>, Element> build)
+    {
+        if (input.Count == 0) return;
+        var elements = new Element[input.Count];
+        Parallel.ForEach(System.Collections.Concurrent.Partitioner.Create(0, input.Count), range =>
+        {
+            var parameterIds = new HashSet<int>();
+            for (int index = range.Item1; index < range.Item2; index++)
+                elements[index] = build(input[index], parameterIds);
+        });
+        output.AddRange(elements);
     }
 
     internal static void MergeElemScanStringsInChunkOrder(
@@ -1013,8 +1046,9 @@ public partial class RvtFileReader
         ReadWideElementIndex(root, state, partitionStreams, framedStreams, wideSchema, diag);
         ReadRebarBars(root, state, partitionStreams, framedStreams, wideSchema);
         ClassifyAndParseRecords(chunks, state, diag);
-        ParseBlocks(state, diag);
-        RunTfStreamWalk(state);
+        var unreadableGReps = GRepParserV2.IsDecodeTracingEnabled() ? null : new HashSet<BlockParser.GRepRange>();
+        ParseBlocks(state, diag, unreadable: unreadableGReps);
+        RunTfStreamWalk(state, unreadable: unreadableGReps);
         if (state.WideSchema == null) ReadOwnDocumentUnits(root, state, diag);
         diag?.WriteLine($"Grid datums: {state.GridDatums.Count}");
 
@@ -1383,19 +1417,29 @@ public partial class RvtFileReader
             var raw = new byte[partStream.Length];
             partStream.ReadExactly(raw);
 
-            // shortcut: saved format9 with one partition stream; multi-stream scope needs its own load validation.
-            if (partEntries.Count == 1 && partEntry.Name == "0")
+            // Saved format 9 with a single partition. Reuse the walk when both readers use the same framing.
+            bool readWallParts = partEntries.Count == 1 && partEntry.Name == "0";
+            string? wallFailure = null;
+            OwnPartitionParts.Collector? wallCollector = null;
+            if (readWallParts)
             {
-                var framingSchema = FormatsSchema.TryRead(root);
-                var wallClasses = framingSchema == null ? null : OwnPartitionParts.ClassesOf(framingSchema);
-                string? failure;
-                ownPartitionWallParts = wallClasses != null && ElemTableLayout.IdWidth(framingSchema!) is int framingWidth
-                    ? OwnPartitionParts.Read(raw, wallClasses, framingWidth, out failure)
-                    : Fail("the schema lacks the framing or wall classes", out failure);
-                diag?.WriteLine($"  Own partition wall parts: {ownPartitionWallParts?.Count.ToString() ?? "unavailable"} ({failure ?? "exact"})");
+                var wallClasses = formats == null ? null : OwnPartitionParts.ClassesOf(formats);
+                if (wallClasses == null || ElemTableLayout.IdWidth(formats!) is not int framingWidth)
+                    wallFailure = "the schema lacks the framing or wall classes";
+                else if (framing == (wallClasses.Tags, framingWidth))
+                    wallCollector = new OwnPartitionParts.Collector(wallClasses, framingWidth);
+                else
+                    ownPartitionWallParts = OwnPartitionParts.Read(raw, wallClasses, framingWidth, out wallFailure);
             }
 
-            var chunks = CutPartition(raw, framing, decompressor, out var stats, out string? framingFailure, out var framed, entityCellTag);
+            var chunks = CutPartition(raw, framing, decompressor, out var stats, out string? framingFailure, out var framed, entityCellTag, wallCollector);
+            if (wallCollector != null)
+            {
+                wallFailure = wallCollector.Failure ?? framingFailure;
+                if (framed != null) ownPartitionWallParts = wallCollector.Finish();
+            }
+            if (readWallParts)
+                diag?.WriteLine($"  Own partition wall parts: {ownPartitionWallParts?.Count.ToString() ?? "unavailable"} ({wallFailure ?? "exact"})");
             int? partitionNumber = int.TryParse(partEntry.Name, out int parsedPartition) ? parsedPartition : null;
             if (framed != null && partitionNumber is int partNum)
                 framed = framed with { Partition = partNum };
@@ -1426,14 +1470,12 @@ public partial class RvtFileReader
         return allChunks;
     }
 
-    private static Dictionary<uint, OwnPartitionParts.WallParts>? Fail(string reason, out string? failure) { failure = reason; return null; }
-
     /// <summary>The chunks of a partition stream: when its framing holds (<see cref="PartitionFraming"/>), the output of each segment, every one a
     /// gzip member checked by its CRC and length, and <paramref name="framingFailure"/> null; otherwise the members a search for gzip headers
     /// finds, with the recovery of damaged ones (<see cref="ChunkDecompressor"/>), and the reason the framing does not hold.</summary>
     internal static List<byte[]> CutPartition(byte[] raw, (PartitionFraming.Tags Tags, int IdWidth)? framing, ChunkDecompressor decompressor,
         out (int Members, int Decoded, int Failed, int Recovered, int Unverified) stats, out string? framingFailure, out PartitionFraming.Framed? framed,
-        ushort? familyEntityCellTag = null)
+        ushort? familyEntityCellTag = null, OwnPartitionParts.Collector? wallCollector = null)
     {
         var segments = new List<byte[]>();
         var items = new List<PartitionFraming.ProjectItem>();
@@ -1444,6 +1486,7 @@ public partial class RvtFileReader
         framingFailure = "the class table names no framing classes or the id width is not known";
         if (framing is var (tags, idWidth) && PartitionFraming.Walk(raw, tags, idWidth, r =>
             {
+                wallCollector?.Observe(r);
                 if (r.Block == 0 && r.Owner != (idWidth == 8 ? ulong.MaxValue : uint.MaxValue))
                     items.Add(new(r.Channel, r.Owner, r.Offset, r.Item.Length));
                 else if (familyKeys != null && r.Key.Length != 0 && r.Channel == 102)
@@ -1768,17 +1811,20 @@ public partial class RvtFileReader
 
     private static void ClassifyAndParseRecords(List<byte[]> chunks, ParsingState state, TextWriter? diag)
     {
-        foreach (var chunk in chunks)
+        var formats = new byte[chunks.Count];
+        Parallel.For(0, chunks.Count, index =>
         {
-            bool hasRecords = RecordParser.ContainsAnchoredR22Record(
-                chunk, state.AllKnownIds);
-            bool isR25 = !hasRecords && RecordParser.ContainsAnchoredR25Record(
-                chunk, state.AllKnownIds);
-            hasRecords |= isR25;
-            if (hasRecords)
+            var chunk = chunks[index];
+            if (RecordParser.ContainsAnchoredR22Record(chunk, state.AllKnownIds)) formats[index] = 22;
+            else if (RecordParser.ContainsAnchoredR25Record(chunk, state.AllKnownIds)) formats[index] = 25;
+        });
+        for (int index = 0; index < chunks.Count; index++)
+        {
+            var chunk = chunks[index];
+            if (formats[index] != 0)
             {
                 state.RecordChunks.Add(chunk);
-                if (isR25)
+                if (formats[index] == 25)
                     RecordParser.ParseChunkR25(chunk, state);
                 else
                     RecordParser.ParseChunk(chunk, state);
@@ -1914,9 +1960,10 @@ public partial class RvtFileReader
     }
 
     internal static void RecordFamilySymbolReferenceSource(
-        ParsingState state, byte[] data, int start, uint size, ushort classId, uint owner)
+        ParsingState state, byte[] data, int start, uint size, ushort classId, uint owner,
+        TfBlockDeserializer.WallCompleteInputRead? complete = null)
     {
-        RecordOwnFamilyCutoutInputs(state, data, start, size, classId, owner);
+        RecordOwnFamilyCutoutInputs(state, data, start, size, classId, owner, complete);
         bool ownerMatches = start >= 0 && start <= data.Length - 4 && BitConverter.ToUInt32(data, start) == owner;
         if (TfBlockDeserializer.IsSubclassOf(classId, 1794))
         {
@@ -2364,7 +2411,8 @@ public partial class RvtFileReader
     }
 
     internal static void RecordWallLocationLine(
-        ParsingState state, byte[] segment, int start, uint size, ushort classId, uint owner)
+        ParsingState state, byte[] segment, int start, uint size, ushort classId, uint owner,
+        TfBlockDeserializer.WallCompleteInputRead? complete = null)
     {
         if (!TfBlockDeserializer.IsSubclassOf(classId, 37)) return;
         if (!state.OwnedElementClassRoots.TryGetValue(owner, out var root)
@@ -2373,20 +2421,22 @@ public partial class RvtFileReader
         if (classId is not (3524 or 361)) return;
         var line = (!state.CurveDriverCandidates.TryGetValue(owner, out var candidates) || candidates.Count == 0)
             && start >= 0 && start <= segment.Length - 4 && BitConverter.ToUInt32(segment, start) == owner
-            ? TfBlockDeserializer.ExtractOwnWallLocationLine(segment, start, size, classId, out _) : null;
+            ? TfBlockDeserializer.ExtractOwnWallLocationLine(segment, start, size, classId, out _,
+                complete ?? new(segment, start, size, classId)) : null;
         if (line != null) state.OwnWallLocationLines[owner] = line;
     }
 
     /// <summary>Records the panel order of a wall's curtain grid (<see cref="TfBlockDeserializer.ExtractCurtainGridPanelIds"/>).
     /// Every wall root counts: a second root of the same id makes the order ambiguous.</summary>
     internal static void RecordCurtainPanelOrder(
-        ParsingState state, byte[] segment, int start, uint size, ushort classId, uint owner)
+        ParsingState state, byte[] segment, int start, uint size, ushort classId, uint owner,
+        TfBlockDeserializer.WallCompleteInputRead? complete = null)
     {
         if (!TfBlockDeserializer.IsSubclassOf(classId, 362)) return;
-        var ids = start >= 0 && start <= segment.Length - 4 && BitConverter.ToUInt32(segment, start) == owner
-            ? TfBlockDeserializer.ExtractCurtainGridPanelIds(segment, start, size, classId) : null;
         state.CurtainPanelOrders[owner] = state.CurtainPanelOrders.TryGetValue(owner, out var old)
-            ? (old.BlockCount + 1, null) : (1, ids);
+            ? (old.BlockCount + 1, null)
+            : (1, start >= 0 && start <= segment.Length - 4 && BitConverter.ToUInt32(segment, start) == owner
+                ? TfBlockDeserializer.ExtractCurtainGridPanelIds(segment, start, size, classId, complete) : null);
     }
 
     /// <summary>The drive curve of a family instance in a file with its own schema: the field walk of the root block names no pointer
@@ -2545,7 +2595,8 @@ public partial class RvtFileReader
     /// <summary>Continuous-stream anchored block walk (see TfStreamWalker): native param
     /// stores + full-coverage re-run of block-driven signals (curve owners, node owners,
     /// registry categories, sketch/detail curves).</summary>
-    internal static void RunTfStreamWalk(ParsingState state, IProgress<RvtReadProgress>? progress = null)
+    internal static void RunTfStreamWalk(ParsingState state, IProgress<RvtReadProgress>? progress = null,
+        HashSet<BlockParser.GRepRange>? unreadable = null, Task? blockGeometry = null)
     {
         // The walk reads 4-byte ids and Revit 2022 class numbers; a 64-bit-id file is decoded by WideElementRecords.
         if (state.WideSchema != null && !state.R22View) return;
@@ -2555,7 +2606,9 @@ public partial class RvtFileReader
         if (dumpGrepEnv != null)
             foreach (var part in dumpGrepEnv.Split(','))
                 if (uint.TryParse(part, out uint dge)) dumpGrepEids.Add(dge);
-        var walkGReps = new List<(byte[] Segment, int Start, uint Size, uint Eid)>();
+        var wallGeometryCandidates = new List<(byte[] Data, int Start, uint Size, ushort Cls, uint Owner)>();
+        var segmentSources = new TfStreamWalker.SegmentSources();
+        var nativeBlocks = new TfNativeBlocks(state, segmentSources);
         // the roots the class and stair sources count: the records of the project's block when every stream is read by its framing
         bool framedRoots = state.ReadsFramedRecords;
         List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner)>? unanchoredTypeRoots =
@@ -2595,8 +2648,10 @@ public partial class RvtFileReader
                 state.RailingQuantityInputs[eid] = (prior.BlockCount + 1,
                     TfBlockDeserializer.ExtractOwnRailingQuantityInput(seg, bs, (uint)ds, cls));
             }
-            if (!framedRoots) RecordWallLocationLine(state, seg, bs, (uint)ds, cls, eid);
-            RecordCurtainPanelOrder(state, seg, bs, (uint)ds, cls, eid);
+            var completeWall = TfBlockDeserializer.IsSubclassOf(cls, 362)
+                ? new TfBlockDeserializer.WallCompleteInputRead(seg, bs, ds, cls) : null;
+            if (!framedRoots) RecordWallLocationLine(state, seg, bs, ds, cls, eid, completeWall);
+            RecordCurtainPanelOrder(state, seg, bs, ds, cls, eid, completeWall);
             if (TfBlockDeserializer.IsSubclassOf(cls, 1794))
                 RecordCurtainFamilyHost(state, seg, bs, ds, cls, eid);
             if (cls is 3681 or 3742)
@@ -2615,7 +2670,7 @@ public partial class RvtFileReader
                 RecordBasicWallTypeName(state, seg, bs, ds, cls, eid);
             RecordGroupMembers(state, seg, bs, (uint)ds, cls, eid);
             RecordWallSweepReferenceSource(state, seg, bs, ds, cls, eid);
-            RecordFamilySymbolReferenceSource(state, seg, bs, ds, cls, eid);
+            RecordFamilySymbolReferenceSource(state, seg, bs, ds, cls, eid, completeWall);
             RecordRoofOrRailingReferenceSource(state, seg, bs, ds, cls, eid);
             RecordSystemTypeRoot(state, seg, bs, ds, cls, eid);
             RecordHostTypeCompoundStructure(state, seg, bs, ds, cls, eid);
@@ -2633,38 +2688,7 @@ public partial class RvtFileReader
             // The element's own root block (its ElemTable class) wins over an earlier block of another class
             // (e.g. a FamilySymbol's geometry GRep decoded first).
             bool rootClassBlock = state.ElemClassIdx.TryGetValue(eid, out var rootClass) && rootClass == cls;
-            if (!state.NativeParams.ContainsKey(eid) || cls is 2299 or 0x083C // Datum subclasses own their exact names/geometry
-                || (rootClassBlock && !state.NativeParamsFromRootClass.Contains(eid)))
-            {
-                var np = TfBlockDeserializer.ExtractParams(seg, bs, (uint)ds, cls);
-                if (rootClassBlock && np is { Count: > 0 }) state.NativeParamsFromRootClass.Add(eid);
-                if (cls == 2299)
-                {
-                    np ??= new TfBlockDeserializer.NativeParams();
-                    np.Fields["__isLevel"] = 1;
-                    var levelName = TfBlockDeserializer.ExtractLevelName(
-                        seg, bs, (uint)ds, cls);
-                    if (!string.IsNullOrWhiteSpace(levelName))
-                        np.StringFields["m_text"] = levelName;
-                    if (TfBlockDeserializer.ExtractLevelPlane(seg, bs, (uint)ds, cls) is { } plane)
-                    {
-                        state.LevelPlanes[eid] = plane;
-                        if (double.IsFinite(plane.Origin[2])) np.DoubleFields["__levelElevation"] = plane.Origin[2];
-                    }
-                }
-                if (np is { Count: > 0 }) state.NativeParams[eid] = np;
-                if (cls == 0x083C
-                    && TfBlockDeserializer.ExtractGridDatum(seg, bs, (uint)ds, cls)
-                        is { } gridDatum)
-                {
-                    state.GridDatums[eid] = new GridDatumData(
-                        gridDatum.Name, gridDatum.StartPoint,
-                        gridDatum.EndPoint, gridDatum.CutVector, gridDatum.LevelInterval, gridDatum.XVector, gridDatum.Envelope,
-                        gridDatum.Origin, gridDatum.YVector);
-                }
-            }
-            else if (state.R22View && rootClassBlock && TfBlockDeserializer.IsSubclassOf(cls, 1794) && state.NativeParams.TryGetValue(eid, out var fieldNp))
-                AddDriveCurveFromRewrittenBlock(fieldNp, TfBlockDeserializer.ExtractParams(seg, bs, (uint)ds, cls));
+            nativeBlocks.Add(seg, bs, ds, cls, eid, rootClassBlock);
             if (cls == 480) // BasePoint: internal + shared positions
             {
                 var coordinates = TfBlockDeserializer.ExtractBasePointCoordinates(
@@ -2705,9 +2729,8 @@ public partial class RvtFileReader
             // ref) over whatever the chunk scan stored.
             if ((cls & 0xFFFF) is 0x07D7 or 0x07D6)
             {
-                // Decoded in parallel after the walk; the first decodable block of an element wins, as before.
-                if (!state.GrepBlocks.ContainsKey(eid))
-                    walkGReps.Add((seg, bs, (uint)ds, eid));
+                var (data, start) = segmentSources.Retain(seg, bs, (int)ds + 16);
+                wallGeometryCandidates.Add((data, start, ds, cls, eid));
             }
             // Sketch/detail curves at full coverage (safe: extraction has strict filters).
             if (cls == 0x0346 && !state.SketchCurves.ContainsKey(eid))
@@ -2723,7 +2746,9 @@ public partial class RvtFileReader
             // Deliberately NOT expanded here: CurveBlockOwners (uncategorized owners were mislabeled OST_Lines),
             // AnalyticalNodeOwners, registry category assignment.
         }, (seg, recordStart, eid) => ElementHeaderCategory.Record(state, seg, recordStart, eid),
-            progress is null ? null : (completed, total) => progress.Report(new("parameter-stream", completed, total)));
+            progress is null ? null : (completed, total) => progress.Report(new("parameter-stream", completed, total)),
+            sources: segmentSources);
+        nativeBlocks.Flush();
 
         progress?.Report(new("recover-geometry"));
         if (unanchoredTypeRoots != null)
@@ -2757,7 +2782,18 @@ public partial class RvtFileReader
             }
         }
 
-        ApplyFirstDecodableGReps(state, walkGReps);
+        // The scalar walk only records candidates. Decide which owners are missing after
+        // the earlier block passes have committed their geometry in stream order.
+        if (blockGeometry != null)
+        {
+            blockGeometry.GetAwaiter().GetResult();
+            DiagnosticSink.WriteLine($"GRep blocks: {state.GrepBlocks.Count} elements");
+        }
+        var walkGReps = new List<(byte[] Segment, int Start, uint Size, uint Eid)>();
+        foreach (var candidate in wallGeometryCandidates)
+            if (!state.GrepBlocks.ContainsKey(candidate.Owner))
+                walkGReps.Add((candidate.Data, candidate.Start, candidate.Size, candidate.Owner));
+        ApplyFirstDecodableGReps(state, walkGReps, unreadable);
 
         // Second pass: geometry blocks the anchored walk missed. Family symbols live in
         // the family doc's own id space (absent from ElemTable), so whole symbol regions
@@ -2787,7 +2823,13 @@ public partial class RvtFileReader
         {
             int foundSketch = 0;
             var scanGReps = new List<(byte[] Segment, int Start, uint Size, uint Eid)>();
-            TfStreamWalker.ScanBlocks(state.Chunks, missingIds, (seg, bs, ds, cls, eid) =>
+            bool scanSlices = dumpGrepEids.Count == 0 && !GRepParserV2.IsDecodeTracingEnabled();
+            if (scanSlices) TfStreamWalker.ScanBlockSlices(state.Chunks, missingIds, VisitTarget);
+            else TfStreamWalker.ScanBlocks(state.Chunks, missingIds, VisitTarget, segmentSources);
+            int found = ApplyFirstDecodableGReps(state, scanGReps, unreadable);
+            DiagnosticSink.WriteLine($"  [gscan] targeted scan recovered {found} G-blocks + {foundSketch} sketch curves for {missingIds.Count} candidate ids");
+
+            void VisitTarget(byte[] seg, int bs, uint ds, ushort cls, uint eid)
             {
                 if (dumpGrepEids.Count > 0 && dumpGrepEids.Contains(eid))
                 {
@@ -2824,44 +2866,84 @@ public partial class RvtFileReader
                 if (state.RoomNameSource.ContainsKey(eid))
                     RecordSpaceBoundarySource(state, seg, bs, ds, cls, eid);
                 if (state.GrepBlocks.ContainsKey(eid)) return;
-                scanGReps.Add((seg, bs, ds, eid));
-            });
-            int found = ApplyFirstDecodableGReps(state, scanGReps);
-            DiagnosticSink.WriteLine($"  [gscan] targeted scan recovered {found} G-blocks + {foundSketch} sketch curves for {missingIds.Count} candidate ids");
+                var (data, start) = scanSlices ? (seg, bs) : segmentSources.Retain(seg, bs, (int)ds + 16);
+                scanGReps.Add((data, start, ds, eid));
+            }
         }
-        ReadOwnWallPlanarBodies(state);
+        ReadOwnWallPlanarBodies(state, wallGeometryCandidates);
     }
 
     /// <summary>Decodes collected GRep blocks in parallel and stores, in collection order, the first decodable block of
     /// each element that has none yet. Returns the number stored.</summary>
     private static int ApplyFirstDecodableGReps(
-        ParsingState state, List<(byte[] Segment, int Start, uint Size, uint Eid)> jobs)
+        ParsingState state, List<(byte[] Segment, int Start, uint Size, uint Eid)> jobs,
+        HashSet<BlockParser.GRepRange>? unreadable)
     {
+        // Previous passes already rejected these exact byte ranges. Group only candidates that can be tried.
+        if (unreadable is { Count: > 0 })
+            jobs.RemoveAll(job => unreadable.Contains(new(job.Segment, job.Start, job.Size)));
         if (jobs.Count == 0) return 0;
         bool slowDiag = Environment.GetEnvironmentVariable("RVTIO_GREP_SLOW") is { Length: > 0 };
-        int stored = 0;
-        BlockParser.DecodeGRepBlocksInOrder(jobs.Count,
-            index =>
+        if (OperatingSystem.IsBrowser() || unreadable == null || slowDiag)
+        {
+            int count = 0;
+            BlockParser.DecodeGRepBlocksInOrder(jobs.Count, index => Decode(jobs[index]),
+                (index, geometry) =>
+                {
+                    var job = jobs[index];
+                    if (geometry == null) unreadable?.Add(new(job.Segment, job.Start, job.Size));
+                    if (StoreFirstDecodableGRep(state, job.Eid, geometry)) count++;
+                });
+            return count;
+        }
+
+        var decoded = new GRepData?[jobs.Count];
+        var failed = new bool[jobs.Count];
+        var candidates = Enumerable.Range(0, jobs.Count).ToLookup(index => jobs[index].Eid);
+        Parallel.ForEach(candidates, elementJobs =>
+        {
+            foreach (int index in elementJobs)
             {
                 var job = jobs[index];
-                var clock = slowDiag ? System.Diagnostics.Stopwatch.StartNew() : null;
                 var geometry = GRepParserV2.Parse(job.Segment, job.Start, job.Size);
-                if (clock != null && (clock.ElapsedMilliseconds > 2000 || geometry?.Faces.Count > 100000))
-                    DiagnosticSink.WriteLine($"slow GRep eid={job.Eid} ms={clock.ElapsedMilliseconds} faces={geometry?.Faces.Count}");
-                return geometry;
-            },
-            (index, geometry) =>
+                if (geometry == null)
+                {
+                    failed[index] = true;
+                    continue;
+                }
+                decoded[index] = geometry;
+                break;
+            }
+        });
+        int stored = 0;
+        for (int index = 0; index < jobs.Count; index++)
+        {
+            if (failed[index])
             {
-                if (StoreFirstDecodableGRep(state, jobs[index].Eid, geometry)) stored++;
-            });
+                var job = jobs[index];
+                unreadable.Add(new(job.Segment, job.Start, job.Size));
+            }
+            if (StoreFirstDecodableGRep(state, jobs[index].Eid, decoded[index])) stored++;
+            decoded[index] = null;
+        }
         return stored;
+
+        GRepData? Decode((byte[] Segment, int Start, uint Size, uint Eid) job)
+        {
+            var clock = slowDiag ? System.Diagnostics.Stopwatch.StartNew() : null;
+            var geometry = GRepParserV2.Parse(job.Segment, job.Start, job.Size);
+            if (clock != null && (clock.ElapsedMilliseconds > 2000 || geometry?.Faces.Count > 100000))
+                DiagnosticSink.WriteLine($"slow GRep eid={job.Eid} ms={clock.ElapsedMilliseconds} faces={geometry?.Faces.Count}");
+            return geometry;
+        }
     }
 
-    /// <summary>Stores a decoded block for an element that has none yet; the first decodable block of an element wins.</summary>
+    /// <summary>Stores the first geometry the reader can decode for this element.</summary>
     internal static bool StoreFirstDecodableGRep(ParsingState state, uint eid, GRepData? geometry) =>
         geometry != null && state.GrepBlocks.TryAdd(eid, geometry);
 
-    internal static void ParseBlocks(ParsingState state, TextWriter? diag, IProgress<RvtReadProgress>? progress = null)
+    internal static Task? ParseBlocks(ParsingState state, TextWriter? diag, IProgress<RvtReadProgress>? progress = null,
+        HashSet<BlockParser.GRepRange>? unreadable = null, bool overlapGeometry = false)
     {
         const int passCount = 8;
         int completedPasses = 0;
@@ -2877,69 +2959,51 @@ public partial class RvtFileReader
         foreach (var eid in state.Records.Keys)
             state.AllKnownIds.Add(eid);
 
-        // Name-table scan: authoritative element names + symbol-to-family chain
-        foreach (var chunk in state.NonRecordChunks)
-            NameTableScanner.Scan(chunk, state);
-        foreach (var chunk in state.RecordChunks)
-            NameTableScanner.Scan(chunk, state);
+        // Each scan owns its result maps and keeps the original order of its input chunks.
+        var scans = new (string Name, Action Scan)[]
+        {
+            ("name table", () => ScanChunks(chunk => NameTableScanner.Scan(chunk, state))),
+            ("shading entries", () => ScanChunks(chunk => BlockParser.CollectShadingEntries(chunk, state.ShadingEntries))),
+            ("hvac tables", () => ScanChunks(chunk => BlockParser.CollectHvacTables(
+                chunk, state.AllKnownIds, state.HvacSpaceTypeParams, state.HvacScheduleRefs))),
+            ("level elevations", () => ScanChunks(chunk => BlockParser.CollectLevelElevations(chunk, state))),
+            ("bip strings", () => ScanChunks(chunk => BlockParser.CollectBipStrings(chunk, state))),
+            ("view planes", ScanTextNotesAndPlanes),
+        };
+        var scanTimes = new TimeSpan[scans.Length];
+        Parallel.For(0, scans.Length, index =>
+        {
+            long started = System.Diagnostics.Stopwatch.GetTimestamp();
+            scans[index].Scan();
+            scanTimes[index] = System.Diagnostics.Stopwatch.GetElapsedTime(started);
+        });
         diag?.WriteLine($"Name table: {state.ElementNameTable.Count} entries, {state.NameHolderTarget.Count} holders");
+        for (int index = 0; index < scans.Length; index++)
+        {
+            diag?.WriteLine($"Timing: {scans[index].Name} {scanTimes[index].TotalSeconds:F1}s");
+            progress?.Report(new("element-blocks", ++completedPasses, passCount));
+        }
+        lap.Restart();
 
-        Lap("name table");
-        // Global shading-entry scan (holder id to color/shininess votes): fallback source for
-        // material colors when the material's own 0x09B6 block is not decodable.
-        foreach (var chunk in state.NonRecordChunks)
-            BlockParser.CollectShadingEntries(chunk, state.ShadingEntries);
-        foreach (var chunk in state.RecordChunks)
-            BlockParser.CollectShadingEntries(chunk, state.ShadingEntries);
+        void ScanChunks(Action<byte[]> scan)
+        {
+            foreach (var chunk in state.NonRecordChunks) scan(chunk);
+            foreach (var chunk in state.RecordChunks) scan(chunk);
+        }
 
-        Lap("shading entries");
-        // Chunk-level HVAC load-type scan (classIdx- and block-walk-independent).
-        foreach (var chunk in state.NonRecordChunks)
-            BlockParser.CollectHvacTables(chunk, state.AllKnownIds, state.HvacSpaceTypeParams, state.HvacScheduleRefs);
-        foreach (var chunk in state.RecordChunks)
-            BlockParser.CollectHvacTables(chunk, state.AllKnownIds, state.HvacSpaceTypeParams, state.HvacScheduleRefs);
-
-        Lap("hvac tables");
-        // Level-elevation candidates (gated to OST_Levels at application time).
-        foreach (var chunk in state.NonRecordChunks)
-            BlockParser.CollectLevelElevations(chunk, state);
-        foreach (var chunk in state.RecordChunks)
-            BlockParser.CollectLevelElevations(chunk, state);
-
-        Lap("level elevations");
-        // BIP-keyed strings (per-element marks/descriptions/comments/keynotes).
-        foreach (var chunk in state.NonRecordChunks)
-            BlockParser.CollectBipStrings(chunk, state);
-        foreach (var chunk in state.RecordChunks)
-            BlockParser.CollectBipStrings(chunk, state);
-
-        Lap("bip strings");
-        // Text notes: their own block holds the text and its position; the block walk of the project's own block does
-        // not reach every note, so every chunk is scanned for the class bytes.
-        foreach (var chunk in state.NonRecordChunks)
-            BlockParser.CollectTextNotes(chunk, state);
-        foreach (var chunk in state.RecordChunks)
-            BlockParser.CollectTextNotes(chunk, state);
-
-        foreach (var chunk in state.NonRecordChunks)
-            BlockParser.CollectImageSizes(chunk, state);
-        foreach (var chunk in state.RecordChunks)
-            BlockParser.CollectImageSizes(chunk, state);
-
-        foreach (var chunk in state.NonRecordChunks)
-            BlockParser.CollectViewPlanes(chunk, state);
-        foreach (var chunk in state.RecordChunks)
-            BlockParser.CollectViewPlanes(chunk, state);
-        // The blocks of some views (a detail section, a wall section) sit in chunks that are neither a record nor a
-        // data chunk of the classified lists: every remaining chunk is scanned too, so their planes are found.
-        var planeChunks = new HashSet<byte[]>(ReferenceEqualityComparer.Instance);
-        foreach (var chunk in state.NonRecordChunks) planeChunks.Add(chunk);
-        foreach (var chunk in state.RecordChunks) planeChunks.Add(chunk);
-        foreach (var chunk in state.Chunks)
-            if (planeChunks.Add(chunk))
-                BlockParser.CollectViewPlanes(chunk, state);
-
-        Lap("view planes");
+        void ScanTextNotesAndPlanes()
+        {
+            ScanChunks(chunk => BlockParser.CollectTextNotes(chunk, state));
+            var planeChunks = new HashSet<byte[]>(ReferenceEqualityComparer.Instance);
+            ScanChunks(chunk =>
+            {
+                BlockParser.CollectViewPlanes(chunk, state, includeImages: true);
+                planeChunks.Add(chunk);
+            });
+            // Some view blocks only appear in the unclassified chunks.
+            foreach (var chunk in state.Chunks)
+                if (planeChunks.Add(chunk)) BlockParser.CollectViewPlanes(chunk, state);
+        }
         // a file read by its framing or an unrewritten 64-bit file: skip the legacy 32-bit partition chunk scan
         bool framedBlocks = state.ReadsFramedRecords;
         bool skipPartitionScan = framedBlocks
@@ -2954,25 +3018,27 @@ public partial class RvtFileReader
             BlockParser.ParseChunk(chunk, state, collectBlockOnlyIds: true, deferred: firstPassGReps);
         foreach (var chunk in state.RecordChunks.Where(Scanned))
             BlockParser.ParseChunk(chunk, state, collectBlockOnlyIds: true, deferred: firstPassGReps);
-        BlockParser.ApplyPendingGReps(state, firstPassGReps);
+        if (!overlapGeometry) BlockParser.ApplyPendingGReps(state, firstPassGReps, unreadable);
         diag?.WriteLine($"Block-only elements: {state.BlockOnlyIds.Count}");
 
         Lap("first parse pass");
         // Second pass: re-parse for block-only elements
+        var secondPassGReps = new List<BlockParser.PendingGRep>();
         if (state.BlockOnlyIds.Count > 0)
         {
             foreach (var bid in state.BlockOnlyIds)
                 state.AllKnownIds.Add(bid);
-            var secondPassGReps = new List<BlockParser.PendingGRep>();
             if (framedBlocks) ParseFramedBlocks(state, collectBlockOnlyIds: false, secondPassGReps);
             foreach (var chunk in state.NonRecordChunks.Where(Scanned))
                 BlockParser.ParseChunk(chunk, state, deferred: secondPassGReps);
             foreach (var chunk in state.RecordChunks.Where(Scanned))
                 BlockParser.ParseChunk(chunk, state, deferred: secondPassGReps);
-            BlockParser.ApplyPendingGReps(state, secondPassGReps);
+            BlockParser.SkipRepeatedFirstGReps(firstPassGReps, secondPassGReps);
+            if (!overlapGeometry) BlockParser.ApplyPendingGReps(state, secondPassGReps, unreadable);
         }
         Lap("second parse pass");
-        diag?.WriteLine($"GRep blocks: {state.GrepBlocks.Count} elements");
+        bool deferGeometry = overlapGeometry && (firstPassGReps.Count > 0 || secondPassGReps.Count > 0);
+        if (!deferGeometry) diag?.WriteLine($"GRep blocks: {state.GrepBlocks.Count} elements");
         diag?.WriteLine($"FamilyInstance transforms: {state.FamilyInstanceTransforms.Count} elements");
         diag?.WriteLine($"Dimensions/constraints (0x091F+0x009D): {state.Dimensions.Count} elements");
         diag?.WriteLine($"Sketch-line curves (0x0346): {state.SketchCurves.Count} elements");
@@ -2982,7 +3048,13 @@ public partial class RvtFileReader
             diag?.WriteLine($"ForgeTypeId spec registry: {state.ForgeSpecRegistry.Count} entries");
         if (state.ForgeParamSpecs.Count > 0)
             diag?.WriteLine($"ForgeId to spec mappings: {state.ForgeParamSpecs.Count} params");
-
+        return deferGeometry
+            ? Task.Run(() =>
+            {
+                BlockParser.ApplyPendingGReps(state, firstPassGReps, unreadable);
+                BlockParser.ApplyPendingGReps(state, secondPassGReps, unreadable);
+            })
+            : null;
     }
 
     /// <summary>
@@ -2992,16 +3064,17 @@ public partial class RvtFileReader
     private static void ExtractWallFunctions(ParsingState state)
     {
         // classIdx bytes: 00 21 01 00 (little-endian 0x00012100)
-        byte[] classIdxPattern = [0x00, 0x21, 0x01, 0x00];
+        ReadOnlySpan<byte> classIdxPattern = [0x00, 0x21, 0x01, 0x00];
 
         foreach (var chunk in state.NonRecordChunks.Concat(state.RecordChunks))
         {
             // Scan for the classIdx pattern at offset +12 from a potential block header
-            for (int i = 0; i + 16 + 0x1C <= chunk.Length; i++)
+            int lastStart = chunk.Length - 16 - 0x1C;
+            for (int i = 0; i <= lastStart; i++)
             {
-                if (chunk[i + 12] != classIdxPattern[0] || chunk[i + 13] != classIdxPattern[1]
-                    || chunk[i + 14] != classIdxPattern[2] || chunk[i + 15] != classIdxPattern[3])
-                    continue;
+                int next = chunk.AsSpan(i + 12, lastStart - i + classIdxPattern.Length).IndexOf(classIdxPattern);
+                if (next < 0) break;
+                i += next;
 
                 uint eid = BitConverter.ToUInt32(chunk, i);
                 if (eid == 0 || !state.AllKnownIds.Contains(eid)) continue;
@@ -3011,11 +3084,9 @@ public partial class RvtFileReader
 
                 // Read function enum at data offset 0x18 (block header is 16 bytes)
                 int dataStart = i + 16;
-                if (dataStart + 0x1C > chunk.Length) continue;
-
                 int funcVal = BitConverter.ToInt32(chunk, dataStart + 0x18);
-                if (funcVal >= 0 && funcVal <= 5 && !state.WallTypeFunctions.ContainsKey(eid))
-                    state.WallTypeFunctions[eid] = funcVal;
+                if (funcVal >= 0 && funcVal <= 5)
+                    state.WallTypeFunctions.TryAdd(eid, funcVal);
             }
         }
     }
@@ -3070,11 +3141,21 @@ public partial class RvtFileReader
     {
         // Scan all chunks for [FFFFFFFF][header][GUID:16][00 00][nameLen:4][caption]
         var guidToCaption = new Dictionary<Guid, string>();
-        foreach (var chunk in state.Chunks)
+        var byChunk = new Dictionary<Guid, string>?[state.Chunks.Count];
+        Parallel.For(0, byChunk.Length, index => byChunk[index] = ScanCaptionChunk(state.Chunks[index]));
+        foreach (var captions in byChunk)
+            if (captions != null)
+                foreach (var (guid, caption) in captions) guidToCaption.TryAdd(guid, caption);
+
+        static Dictionary<Guid, string>? ScanCaptionChunk(byte[] chunk)
         {
+            ReadOnlySpan<byte> sentinel = [0xFF, 0xFF, 0xFF, 0xFF];
+            Dictionary<Guid, string>? captions = null;
             for (int s = 0; s + 40 <= chunk.Length; s++)
             {
-                if (BitConverter.ToUInt32(chunk, s) != 0xFFFFFFFF) continue;
+                int next = chunk.AsSpan(s, chunk.Length - s - 36).IndexOf(sentinel);
+                if (next < 0) break;
+                s += next;
                 for (int hdrOff = 4; hdrOff <= 14; hdrOff += 2)
                 {
                     int guidOff = s + hdrOff;
@@ -3090,8 +3171,7 @@ public partial class RvtFileReader
                     bool isCyrillic = nhi == 0x04;
                     bool isAsciiLetter = nhi == 0x00 && ((nlo2 >= 'A' && nlo2 <= 'Z') || (nlo2 >= 'a' && nlo2 <= 'z'));
                     if (!isPrefix && !isCyrillic && !isAsciiLetter) continue;
-                    var guidBytes = new byte[16];
-                    Array.Copy(chunk, guidOff, guidBytes, 0, 16);
+                    var guidBytes = chunk.AsSpan(guidOff, 16);
                     var guid = new Guid(guidBytes);
                     if (guid == Guid.Empty) continue;
                     int ff = 0, zz = 0;
@@ -3105,11 +3185,11 @@ public partial class RvtFileReader
                     }
                     string rawName = sb.ToString().Trim();
                     if (rawName.Length > 0 && (rawName[0] == '\u2026' || rawName[0] == '&')) rawName = rawName[1..];
-                    if (!string.IsNullOrEmpty(rawName) && !guidToCaption.ContainsKey(guid))
-                        guidToCaption[guid] = rawName;
+                    if (!string.IsNullOrEmpty(rawName)) (captions ??= new()).TryAdd(guid, rawName);
                     break;
                 }
             }
+            return captions;
         }
         // Resolve GUID to elemId via record chunk table [GUID:16][elemId:4]
         var guidToElemId = new Dictionary<Guid, uint>();
@@ -3121,8 +3201,16 @@ public partial class RvtFileReader
             if (g.HasValue) guidToElemId.TryAdd(g.Value, eid);
         }
         var captionPrefixes = BuildGuidPrefixSet(guidToCaption.Keys);
-        foreach (var chunk in state.RecordChunks)
-            MapRecordChunkGuids(chunk, guidToCaption, captionPrefixes, state.AllKnownIds, guidToElemId);
+        var idsByChunk = new Dictionary<Guid, uint>?[state.RecordChunks.Count];
+        Parallel.For(0, idsByChunk.Length, index =>
+        {
+            var ids = new Dictionary<Guid, uint>();
+            MapRecordChunkGuids(state.RecordChunks[index], guidToCaption, captionPrefixes, state.AllKnownIds, ids);
+            if (ids.Count > 0) idsByChunk[index] = ids;
+        });
+        foreach (var ids in idsByChunk)
+            if (ids != null)
+                foreach (var (guid, eid) in ids) guidToElemId[guid] = eid;
         int guidApplied = 0;
         foreach (var (guid, caption) in guidToCaption)
         {
@@ -3335,7 +3423,7 @@ public partial class RvtFileReader
     /// <summary>Recover the active project-location transform. The dominant repeated
     /// Z-rotation is true north; the survey BasePoint stores matching internal and shared
     /// positions, from which the translation follows exactly.</summary>
-    private static double[]? FindSharedTransform(
+    internal static double[]? FindSharedTransform(
         IReadOnlyList<byte[]> chunks,
         IReadOnlyDictionary<uint, (double[] Internal, double[] Shared)> basePoints,
         IReadOnlyDictionary<uint, ElementRecord> records,
@@ -3349,15 +3437,17 @@ public partial class RvtFileReader
         static bool Unit(double v) => !double.IsNaN(v) && Math.Abs(v) <= 1.0000001;
         static bool AxisAligned(double s) =>
             Math.Abs(s) < 1e-4 || Math.Abs(Math.Abs(s) - 1) < 1e-4;
-        var votes = new Dictionary<long, int>(); // angle (micro-radians) -> occurrences
-        var representatives = new Dictionary<long, (double C, double S)>();
-        foreach (var chunk in chunks)
+        var votes = new Dictionary<long, (int Count, int Chunk, int Offset, double C, double S)>();
+        for (int chunkIndex = 0; chunkIndex < chunks.Count; chunkIndex++)
         {
-            // Block payloads are not guaranteed to be 8-byte aligned. Walk all eight
-            // alignments so transforms shifted by strings or pointers are still found.
-            for (int alignment = 0; alignment < 8; alignment++)
-            for (int off = alignment; off + 72 <= chunk.Length; off += 8)
+            var chunk = chunks[chunkIndex];
+            // For 1e-4 <= |c01| <= 1.0000001, its high byte is 0x3F or 0xBF.
+            int limit = chunk.Length - 71;
+            for (int off = 0; off < limit; off++)
             {
+                int next = chunk.AsSpan(off + 15, limit - off).IndexOfAny((byte)0x3F, (byte)0xBF);
+                if (next < 0) break;
+                off += next;
                 double c00 = BitConverter.ToDouble(chunk, off);
                 double c01 = BitConverter.ToDouble(chunk, off + 8);
                 if (!Unit(c00) || !Unit(c01) || AxisAligned(c01)) continue;
@@ -3373,38 +3463,43 @@ public partial class RvtFileReader
                 if (Math.Abs(c00 * c00 + c01 * c01 - 1) > 1e-9) continue;
                 if (Math.Abs(c10 + c01) > 1e-9 || Math.Abs(c11 - c00) > 1e-9) continue;
                 long key = (long)Math.Round(Math.Atan2(c01, c00) * 1e6);
-                votes.TryGetValue(key, out int count);
-                votes[key] = count + 1;
-                representatives.TryAdd(key, (c00, c01));
+                if (!votes.TryGetValue(key, out var vote))
+                    votes[key] = (1, chunkIndex, off, c00, c01);
+                // Keep the first matrix in the original alignment-first order.
+                else if (vote.Chunk == chunkIndex && (off & 7) < (vote.Offset & 7))
+                    votes[key] = (vote.Count + 1, chunkIndex, off, c00, c01);
+                else
+                    votes[key] = (vote.Count + 1, vote.Chunk, vote.Offset, vote.C, vote.S);
             }
         }
 
         double cc = 1, ss = 0;
         bool foundRotation = false;
-        var ranked = votes.OrderByDescending(v => v.Value).ToList();
-        int top = ranked.Count > 0 ? ranked[0].Value : 0;
-        int runner = ranked.Count > 1 ? ranked[1].Value : 0;
+        var ranked = votes.Values.OrderByDescending(v => v.Count)
+            .ThenBy(v => v.Chunk).ThenBy(v => v.Offset & 7).ThenBy(v => v.Offset).Take(2).ToList();
+        int top = ranked.Count > 0 ? ranked[0].Count : 0;
+        int runner = ranked.Count > 1 ? ranked[1].Count : 0;
         diag?.WriteLine($"Shared transform signals: basePoints={basePoints.Count}, rotations={votes.Count}, top={top}, runner={runner}");
         // Require a clear, well-supported winner: the shared north is carried by many
         // records; a stray furniture angle is not (and does not clear a 2.5x runner-up).
         if (top >= 8 && top * 2 >= runner * 5)
         {
-            (cc, ss) = representatives[ranked[0].Key];
+            (cc, ss) = (ranked[0].C, ranked[0].S);
             foundRotation = true;
         }
         diag?.WriteLine($"SharedTransform diag: foundRotation={foundRotation} cc={cc:R} ss={ss:R} "
             + $"angleRad={Math.Atan2(ss, cc):R} votes={votes.Count} top={top} runner={runner}");
         if (diag != null && ranked.Count > 0)
         {
-            var (topC, topS) = representatives[ranked[0].Key];
+            var (_, _, _, topC, topS) = ranked[0];
             diag.WriteLine($"SharedTransform diag: topWinner(rawVote) angleRad={Math.Atan2(topS, topC):R} "
-                + $"c={topC:R} s={topS:R} count={ranked[0].Value}");
+                + $"c={topC:R} s={topS:R} count={top}");
         }
         if (diag != null && ranked.Count > 1)
         {
-            var (runnerC, runnerS) = representatives[ranked[1].Key];
+            var (_, _, _, runnerC, runnerS) = ranked[1];
             diag.WriteLine($"SharedTransform diag: runnerUp angleRad={Math.Atan2(runnerS, runnerC):R} "
-                + $"c={runnerC:R} s={runnerS:R} count={ranked[1].Value}");
+                + $"c={runnerC:R} s={runnerS:R} count={runner}");
         }
 
         if (diag != null)
@@ -3509,35 +3604,32 @@ public partial class RvtFileReader
         return new ActiveProjectLocation([c, s, 0, -s, c, 0, 0, 0, 1.0, tx, ty, tz], latitude, longitude, elevation, placeName);
     }
 
-    private static void ResolveParameterUnits(RevitFileInfo rvtInfo, ParsingState state)
+    private static void FinalizeParameterValues(RevitFileInfo rvtInfo, ParsingState state)
     {
-        int resolved = 0;
-        foreach (var elem in rvtInfo.Elements)
+        var bySource = new System.Collections.Concurrent.ConcurrentDictionary<
+            (string? ForgeId, string? Name), Parameter.DisplayUnits?>();
+        var (hasZeroPhase, hasZeroDimStyle) = Parameter.ResolveZeroElementIdDomains(rvtInfo, state);
+        Parallel.For(0, rvtInfo.Elements.Count, index =>
         {
+            var elem = rvtInfo.Elements[index];
             foreach (var param in elem.Parameters)
             {
+                param.ResolveZeroElementId(elem, hasZeroPhase, hasZeroDimStyle);
                 if (param.StorageType != StorageType.Double) continue;
-
-                string? specType = null;
-
-                // Try the ForgeId spec mapping (from 0x0B3A blocks)
-                if (param.ForgeId != null && state.ForgeParamSpecs.TryGetValue(param.ForgeId, out var spec))
-                    specType = spec;
-
-                // 2. Resolve unit category from spec type or BIP name
-                string? unitCat = specType != null ? GetUnitCategory(specType) : null;
-                if (unitCat == null && param.Definition?.Name != null)
-                    unitCat = GetUnitCategoryFromBipName(param.Definition.Name);
-
-                if (unitCat == null) continue;
-
-                param.SpecType = specType;
-                var (symbol, factor) = GetUnitDisplay(unitCat);
-                param.UnitSymbol = symbol;
-                param.ConversionFactor = factor;
-                resolved++;
+                var key = (param.ForgeId, Name: param.DefinitionName);
+                var units = bySource.GetOrAdd(key, static (source, parsingState) =>
+                {
+                    string? specType = source.ForgeId == null ? null : parsingState.ForgeParamSpecs.GetValueOrDefault(source.ForgeId);
+                    string? unitCat = specType != null ? GetUnitCategory(specType) : null;
+                    if (unitCat == null && source.Name is { } bipName)
+                        unitCat = GetUnitCategoryFromBipName(bipName);
+                    if (unitCat == null) return null;
+                    var (symbol, factor) = GetUnitDisplay(unitCat);
+                    return new Parameter.DisplayUnits(specType, symbol, factor);
+                }, state);
+                if (units != null) param.SetDisplayUnits(units);
             }
-        }
+        });
     }
 
     /// <summary>Extract unit category from spec type URN.</summary>
@@ -3659,8 +3751,9 @@ public partial class RvtFileReader
         diag?.WriteLine($"Family param maps: {state.FamilyParamMaps.Count} symbols; remapped {remappedStrings} strings, {remappedDoubles} doubles ({droppedNoMap} unmapped)");
     }
 
-    private static void PrePropagateBipDoubles(ParsingState state, TextWriter? diag)
+    internal static void PrePropagateBipDoubles(ParsingState state, TextWriter? diag)
     {
+        var filtered = new Dictionary<Dictionary<int, double>, Dictionary<int, double>>(ReferenceEqualityComparer.Instance);
         int propagated = 0;
         for (int pass = 0; pass < 3; pass++)
         {
@@ -3670,16 +3763,29 @@ public partial class RvtFileReader
                 if (state.ElemBipDoubles.ContainsKey(eid)) continue;
                 if (rec.References.Count == 0) continue;
                 Dictionary<int, double>? inherited = null;
+                bool ownsMap = false;
                 foreach (var refId in rec.References)
                 {
                     if (refId == eid) continue;
                     if (!state.ElemBipDoubles.TryGetValue(refId, out var refDbls)) continue;
-                    inherited ??= new Dictionary<int, double>();
+                    if (inherited == null)
+                    {
+                        var builtIns = BuiltInsOf(refDbls);
+                        if (builtIns.Count > 0) inherited = builtIns;
+                        continue;
+                    }
+                    if (ReferenceEquals(inherited, refDbls)) continue;
                     foreach (var (k, v) in refDbls)
                     {
                         // Only propagate BuiltInParameter keys (negative), not user params (positive IDs)
-                        if (k < 0)
-                            inherited.TryAdd(k, v);
+                        if (k >= 0) continue;
+                        if (!ownsMap)
+                        {
+                            if (inherited.ContainsKey(k)) continue;
+                            inherited = new Dictionary<int, double>(inherited);
+                            ownsMap = true;
+                        }
+                        inherited.TryAdd(k, v);
                     }
                 }
                 if (inherited != null && inherited.Count > 0)
@@ -3704,8 +3810,10 @@ public partial class RvtFileReader
                 if (refId == eid) continue;
                 if (state.WallTypeWidths.TryGetValue(refId, out var tw))
                 {
-                    if (bd == null) state.ElemBipDoubles[eid] = bd = new Dictionary<int, double>();
+                    // The old map can also be the inherited snapshot of another record.
+                    bd = bd == null ? new Dictionary<int, double>() : new Dictionary<int, double>(bd);
                     bd[-1001000] = tw;
+                    state.ElemBipDoubles[eid] = bd;
                     wallWidthPropagated++;
                     break;
                 }
@@ -3713,6 +3821,21 @@ public partial class RvtFileReader
         }
         if (wallWidthPropagated > 0)
             diag?.WriteLine($"Wall width propagated to {wallWidthPropagated} additional instances");
+
+        Dictionary<int, double> BuiltInsOf(Dictionary<int, double> source)
+        {
+            if (filtered.TryGetValue(source, out var builtIns)) return builtIns;
+            foreach (int key in source.Keys)
+            {
+                if (key < 0) continue;
+                builtIns = new Dictionary<int, double>();
+                foreach (var (id, value) in source)
+                    if (id < 0) builtIns.Add(id, value);
+                filtered.Add(source, builtIns);
+                return builtIns;
+            }
+            return source;
+        }
     }
 
     /// <summary>

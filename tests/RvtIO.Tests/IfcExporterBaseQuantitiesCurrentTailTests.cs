@@ -292,7 +292,6 @@ public class IfcExporterBaseQuantitiesCurrentTailTests
         ElementBuilder.ApplyCoarseDoorWindowSurfaces(info, state);
 
         Assert.Equal(2.0, door.CoarseSurfaceArea!.Value, 9);
-        Assert.False(state.CoarseView);
     }
 
     [Fact]

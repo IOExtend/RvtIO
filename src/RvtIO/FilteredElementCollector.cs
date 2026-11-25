@@ -58,7 +58,7 @@ public class FilteredElementCollector : IEnumerable<Element>
             // Fallback: keep only elements that have ELEM_TYPE_PARAM (family instances)
             _source = _source.Where(e =>
                 e.Parameters.Any(p =>
-                    p.Definition?.Name is "ELEM_TYPE_PARAM" or "ELEM_FAMILY_AND_TYPE_PARAM"));
+                    p.DefinitionName is "ELEM_TYPE_PARAM" or "ELEM_FAMILY_AND_TYPE_PARAM"));
         }
         return this;
     }
@@ -77,7 +77,7 @@ public class FilteredElementCollector : IEnumerable<Element>
         {
             _source = _source.Where(e =>
                 !e.Parameters.Any(p =>
-                    p.Definition?.Name is "ELEM_TYPE_PARAM" or "ELEM_FAMILY_AND_TYPE_PARAM"));
+                    p.DefinitionName is "ELEM_TYPE_PARAM" or "ELEM_FAMILY_AND_TYPE_PARAM"));
         }
         return this;
     }
@@ -116,7 +116,7 @@ public class FilteredElementCollector : IEnumerable<Element>
     public FilteredElementCollector WhereHasParameter(string paramName)
     {
         _source = _source.Where(e =>
-            e.Parameters.Any(p => p.Definition?.Name == paramName));
+            e.Parameters.Any(p => p.DefinitionName == paramName));
         return this;
     }
 
@@ -125,7 +125,7 @@ public class FilteredElementCollector : IEnumerable<Element>
     {
         int bipId = (int)bip;
         _source = _source.Where(e =>
-            e.Parameters.Any(p => p.Definition?.Id == bipId));
+            e.Parameters.Any(p => p.DefinitionId == bipId));
         return this;
     }
 

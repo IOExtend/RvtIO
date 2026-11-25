@@ -40,7 +40,12 @@ A zero total means the reader has no work count for that update. Counts describe
 
 `CompactJsonExporter.Export` passes `Progress` to its first read only. A file of a wide layout is then read a second time
 for solid quantities; that read reports the single update `quantities` after the first read's `complete`, and the JSON
-writing that follows reports nothing.
+writing that follows reports nothing. Large Compact JSON exports can prepare row properties in bounded parallel batches.
+Rows are written in element ID order.
+
+The reader reuses a family's local symbol geometry across its placements. Each placement retains its own transformed
+coordinates. Parameters can share immutable definition metadata internally and materialize their own mutable
+`Definition` on access.
 
 ## Model
 

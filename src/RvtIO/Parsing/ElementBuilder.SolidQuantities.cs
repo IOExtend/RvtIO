@@ -15,54 +15,50 @@ internal static partial class ElementBuilder
         {
             element.LevelShells = new SolidQuantities.Shell?[3];
             element.LevelSolidCounts = new int[3];
-            LevelGeometries(element, state, (slot, geometry) =>
+            for (int slot = 0; slot < 3; slot++)
             {
+                var geometry = slot == 2 ? element.Geometry : GeometryAtDetailLevel(element, state, slot + 1);
                 element.LevelShells[slot] = SolidQuantities.OfAllSolids(geometry);
                 element.LevelSolidCounts[slot] = geometry?.BrepSolids?.Count ?? 0;
-            });
+            }
         }
     }
 
-    /// <summary>
-    /// Hands the geometry of an element at Coarse (slot 0), Medium (slot 1) and Fine (slot 2) to
-    /// <paramref name="visit"/>, Fine first. A level the element's blocks have no alternative for
-    /// is the Fine geometry.
-    /// </summary>
-    internal static void LevelGeometries(Element element, ParsingState state, Action<int, GeometryData?> visit)
+    /// <summary>Geometry for measuring solids at Coarse (1) or Medium (2), falling back to Fine when the level has no alternative.</summary>
+    internal static GeometryData? GeometryAtDetailLevel(Element element, ParsingState state, int level)
     {
-        visit(2, element.Geometry);
-        if (element.Id <= 0)
-        {
-            visit(0, element.Geometry);
-            visit(1, element.Geometry);
-            return;
-        }
+        if (element.Id <= 0) return element.Geometry;
         uint id = (uint)element.Id;
         state.GrepBlocks.TryGetValue(id, out var grep);
         state.FamilyInstanceTransforms.TryGetValue(id, out var transformOnly);
-        for (int level = 1; level <= 2; level++)
+        var visited = new HashSet<uint>();
+        bool has = HasAlternative(grep, state, visited, level)
+            || (transformOnly != null && state.GrepBlocks.TryGetValue((uint)Math.Max(transformOnly.SymbolId, 0), out var symbol)
+                && HasAlternative(symbol, state, visited, level));
+        if (!has) return element.Geometry;
+
+        return BuildQuantityGeometry(element.Id, grep, state, level == 1 ? GeometryDetail.Coarse : GeometryDetail.Medium);
+    }
+
+    private static GRepData? SelectDetailGeometry(GRepData? block, GeometryDetail detail) => detail switch
+    {
+        GeometryDetail.CoarseQuantities => block?.CoarseQuantities ?? block?.Coarse ?? block,
+        GeometryDetail.Coarse => block?.Coarse ?? block,
+        GeometryDetail.Medium => block?.Medium ?? block,
+        _ => block,
+    };
+
+    private static GeometryData? BuildQuantityGeometry(int elementId, GRepData? grep, ParsingState state,
+        GeometryDetail detail)
+    {
+        var alternative = new Element { Id = elementId };
+        if (SelectDetailGeometry(grep, detail) is { } block)
         {
-            var visited = new HashSet<uint>();
-            bool has = HasAlternative(grep, state, visited, level)
-                || (transformOnly != null && state.GrepBlocks.TryGetValue((uint)Math.Max(transformOnly.SymbolId, 0), out var symbol)
-                    && HasAlternative(symbol, state, visited, level));
-            int slot = level == 1 ? 0 : 1;
-            if (!has) { visit(slot, element.Geometry); continue; }
-            state.CoarseView = level == 1; state.DetailView = level;
-            try
-            {
-                var alt = new Element { Id = element.Id, TypeId = element.TypeId, BoundingBox = element.Geometry?.BoundingBox };
-                var own = level == 1 ? grep?.Coarse ?? grep : grep?.Medium ?? grep;
-                if (own != null)
-                {
-                    alt.Geometry = BuildGeometryData(own, state.SeparateFacesWithDistinctOpenings);
-                    ExpandInstanceGeometry(alt, own, element.TypeId, state);
-                }
-                ExpandTransformOnlyInstanceGeometry(alt, id, element.TypeId, state);
-                visit(slot, alt.Geometry);
-            }
-            finally { state.CoarseView = false; state.DetailView = 0; }
+            alternative.Geometry = BuildGeometryData(block, state.SeparateFacesWithDistinctOpenings, includeEdgesAndInstances: false);
+            ExpandInstanceGeometry(alternative, block, state, detail);
         }
+        ExpandTransformOnlyInstanceGeometry(alternative, (uint)elementId, state, detail);
+        return alternative.Geometry;
     }
 
     private static bool HasAlternative(GRepData? block, ParsingState state, HashSet<uint> visited, int level)

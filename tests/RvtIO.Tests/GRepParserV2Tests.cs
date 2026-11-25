@@ -1,3 +1,4 @@
+using System.Reflection;
 using RvtIO.Parsing;
 using RvtIO.Internal;
 using Xunit;
@@ -6,6 +7,59 @@ namespace RvtIO.Tests;
 
 public class GRepParserV2Tests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ResyncRestoresTrialStateBeforeReturningAnAnchor(bool completeTrial)
+    {
+        // One Face with a surface pointer, followed by five GNodes with only GInfo.
+        const int anchor = 1;
+        byte[] data = new byte[anchor + 50 + 5 * 16 - (completeTrial ? 0 : 8)];
+        BitConverter.GetBytes(5).CopyTo(data, anchor);
+        BitConverter.GetBytes(-1).CopyTo(data, anchor + 8);
+        BitConverter.GetBytes(0x80004).CopyTo(data, anchor + 12);
+        BitConverter.GetBytes(17).CopyTo(data, anchor + 44);
+        BitConverter.GetBytes((ushort)522).CopyTo(data, anchor + 48);
+
+        var parser = typeof(GRepParserV2);
+        var cursorType = parser.GetNestedType("Cur", BindingFlags.NonPublic)!;
+        var cursor = Activator.CreateInstance(cursorType, nonPublic: true)!;
+        void Set(string name, object value) => cursorType.GetField(name)!.SetValue(cursor, value);
+        T Get<T>(string name) => (T)cursorType.GetField(name)!.GetValue(cursor)!;
+
+        Set("D", data);
+        Set("End", data.Length);
+        Set("BlockEnd", data.Length);
+        Set("Debug", true);
+        List<(ushort Cls, int V)> queue = [(1589, 41), (1246, 42), (1246, 43), (1246, 44), (1246, 45), (1246, 46)];
+        List<(int ParentQueueIndex, string Field)> links =
+            [(-1, "root"), (0, "existing"), (-1, "root"), (-1, "root"), (-1, "root"), (-1, "root")];
+        Set("Queue", queue);
+        Set("QueueLinks", links);
+        Get<Dictionary<int, List<int>>>("QueueChildren").Add(0, [1]);
+        Get<Dictionary<ushort, int>>("ClassWalked").Add(1589, 3);
+        Get<Dictionary<ushort, int>>("TagBase").Add(1589, 99);
+        Get<Dictionary<uint, uint>>("SurfaceOwnerByHandle").Add(17, 99);
+        Get<Dictionary<uint, bool>>("FaceHasFirstLoop").Add(41, true);
+
+        object?[] arguments = [cursor, 0];
+        var resync = parser.GetMethod("TryResync", BindingFlags.Static | BindingFlags.NonPublic)!;
+        Assert.Equal(completeTrial, (bool)resync.Invoke(null, arguments)!);
+
+        Assert.Equal(completeTrial ? anchor : 0, Get<int>("Pos"));
+        Assert.Equal(completeTrial ? -1 : 0, (int)arguments[1]!);
+        Assert.Equal(6, queue.Count);
+        Assert.Equal(6, links.Count);
+        Assert.Equal([1], Get<Dictionary<int, List<int>>>("QueueChildren")[0]);
+        Assert.Equal(new KeyValuePair<ushort, int>(1589, 3), Assert.Single(Get<Dictionary<ushort, int>>("ClassWalked")));
+        Assert.Equal(new KeyValuePair<ushort, int>(1589, 99), Assert.Single(Get<Dictionary<ushort, int>>("TagBase")));
+        Assert.Equal(new KeyValuePair<uint, uint>(17, 99), Assert.Single(Get<Dictionary<uint, uint>>("SurfaceOwnerByHandle")));
+        Assert.Empty(Get<Dictionary<int, uint>>("SurfaceOwnerByQueueIndex"));
+        Assert.True(Get<Dictionary<uint, bool>>("FaceHasFirstLoop")[41]);
+        Assert.Empty(Get<List<uint>>("FaceOrder"));
+        Assert.Equal(5, Get<Dictionary<int, (int Tag, int Control, int Category, uint Flags)>>("ObjectGInfo")[41].Tag);
+    }
+
     [Fact]
     public void ThinSamples_KeepsShortListsAndThinsLongOnesKeepingTheEndsAndKnots()
     {
@@ -702,6 +756,37 @@ public class GRepParserV2Tests
 
         Assert.Equal(2, solids.Count);
         Assert.All(solids, solid => Assert.True(solid.IsClosed));
+    }
+
+    [Theory]
+    [InlineData(0u)]
+    [InlineData(99u)]
+    [InlineData(uint.MaxValue)]
+    public void SerializedFaceTopology_AnEdgeToAMissingOrInvalidFaceOpensOnlyItsOwnSolid(uint missing)
+    {
+        var faces = Enumerable.Range(0, 8).Select(_ => new GRepFace()).ToList();
+        var solids = GRepParserV2.BuildTopologicalSolids(faces,
+            [1, 2, 3, 4, 11, 12, 13, 14],
+            [(1u, 2u), (2u, 3u), (3u, 4u), (4u, 1u), (missing, 4u),
+             (11u, 12u), (12u, 13u), (13u, 14u), (14u, 11u)]);
+
+        Assert.Collection(solids,
+            open => { Assert.Equal([0, 1, 2, 3], open.FaceIndices); Assert.False(open.IsClosed); },
+            closed => { Assert.Equal([4, 5, 6, 7], closed.FaceIndices); Assert.True(closed.IsClosed); });
+    }
+
+    [Fact]
+    public void SerializedFaceTopology_HandlesALongChainOfFaceUnions()
+    {
+        const int count = 8192;
+        uint[] handles = Enumerable.Range(1, count).Select(i => (uint)i).ToArray();
+        GRepFace[] faces = Enumerable.Range(0, count).Select(_ => new GRepFace()).ToArray();
+        var edges = handles.Zip(handles.Skip(1), (first, second) => (second, first));
+
+        var solid = Assert.Single(GRepParserV2.BuildTopologicalSolids(faces, handles, edges));
+
+        Assert.True(solid.IsClosed);
+        Assert.Equal(Enumerable.Range(0, count), solid.FaceIndices);
     }
 
     [Theory]

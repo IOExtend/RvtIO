@@ -12,13 +12,20 @@ internal sealed class CompactUserParameters : ICompactPropertySource
     private readonly UserParameterCatalog? _catalog;
     private readonly Func<string, double, string?>? _formatNumber;
     private readonly Func<int, string?> _elementName;
-    private readonly Dictionary<int, Element> _byId;
+    private readonly Func<int, Element?> _findElement;
 
-    public CompactUserParameters(RevitFileInfo info, Func<string, double, string?>? formatNumber = null, Func<int, string?>? elementName = null)
+    public CompactUserParameters(RevitFileInfo info, Func<string, double, string?>? formatNumber = null,
+        Func<int, string?>? elementName = null, Func<int, Element?>? findElement = null)
     {
         _catalog = info.UserParameters;
-        _byId = info.Elements.GroupBy(e => e.Id).ToDictionary(g => g.Key, g => g.First());
         _formatNumber = formatNumber;
+        if (findElement == null)
+        {
+            var elements = new Dictionary<int, Element>(info.Elements.Count);
+            foreach (var element in info.Elements) elements.TryAdd(element.Id, element);
+            findElement = id => elements.GetValueOrDefault(id);
+        }
+        _findElement = findElement;
         if (elementName == null)
         {
             var names = new Dictionary<int, string?>();
@@ -33,10 +40,12 @@ internal sealed class CompactUserParameters : ICompactPropertySource
     public IReadOnlyList<CompactUserEntry> GetEntries(Element element)
     {
         if (_catalog == null) return [];
-        var result = new List<CompactUserEntry>();
         var source = CompactIfcParameters.CenterLineClasses.Contains(ElementListFacts.RecordClassName(element) ?? "")
-            && element.SerializedOwningElementId is int owner && _byId.TryGetValue(owner, out var ownerElement) ? ownerElement : element;
-        foreach (var entry in _catalog.EntriesOf(source))
+            && element.SerializedOwningElementId is int owner && _findElement(owner) is { } ownerElement ? ownerElement : element;
+        var entries = _catalog.EntriesOf(source);
+        if (entries.Count == 0) return [];
+        var result = new List<CompactUserEntry>();
+        foreach (var entry in entries)
         {
             var d = entry.Definition;
             if (UserParameterCatalog.GroupLabelOf(d) is not { } group) continue;
@@ -75,8 +84,10 @@ internal sealed class CompactUserParameters : ICompactPropertySource
     /// <summary>The printed properties with the kind of their parameter (true: defined by the family).</summary>
     internal IReadOnlyList<(CompactProperty Property, bool Family)> GetPropertiesWithKind(Element element)
     {
+        var entries = GetEntries(element);
+        if (entries.Count == 0) return [];
         var result = new List<(CompactProperty, bool)>();
-        foreach (var e in GetEntries(element))
+        foreach (var e in entries)
         {
             string? text = e.Text ?? (e.Raw is double raw && e.Spec != null ? _formatNumber?.Invoke(e.Spec, raw) : null);
             if (text != null) result.Add((new CompactProperty(e.Group, e.Label, text), e.Family));

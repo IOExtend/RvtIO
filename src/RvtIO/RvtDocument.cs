@@ -61,7 +61,7 @@ public class RvtDocument
         int id = (int)parameter;
         foreach (var p in element.Parameters)
         {
-            int parameterId = p.Definition?.Id is int definitionId && definitionId != 0 ? definitionId : p.Id;
+            int parameterId = p.DefinitionId is int definitionId && definitionId != 0 ? definitionId : p.Id;
             if (parameterId != id) continue;
             if (p.Value is string text && text.Length > 0) return text;
         }
@@ -99,7 +99,7 @@ public class RvtDocument
         {
             foreach (var p in e.Parameters)
             {
-                if (p.Definition?.Name is "ELEM_TYPE_PARAM" or "ELEM_FAMILY_AND_TYPE_PARAM"
+                if (p.DefinitionName is "ELEM_TYPE_PARAM" or "ELEM_FAMILY_AND_TYPE_PARAM"
                     && p.Value is int typeId && typeId > 0)
                 {
                     _typeElementIds.Add(typeId);

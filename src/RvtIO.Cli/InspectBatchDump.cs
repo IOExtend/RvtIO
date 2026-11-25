@@ -316,7 +316,7 @@ static class InspectBatchDump
     /// IfcExporter's private ParameterNameEquals convention - duplicated here deliberately so
     /// this diagnostic-only tool has no dependency on IfcExporter internals.</summary>
     private static bool NameMatches(RvtIO.Model.Parameter parameter, string name) =>
-        parameter.Definition?.Name is string parameterName
+        parameter.DefinitionName is string parameterName
         && string.Equals(
             parameterName.Replace(" ", null), name.Replace(" ", null),
             StringComparison.InvariantCultureIgnoreCase);

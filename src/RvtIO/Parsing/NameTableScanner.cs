@@ -23,8 +23,14 @@ internal static class NameTableScanner
         int n = d.Length;
         // Anchor on the SECOND marker: [marker][targetId:4][nameLen:4][UTF-16 name][catId:4][trailing:4]
         // then validate backwards: a mostly-FF run of 28+ bytes preceded by [marker][holderEid].
-        for (int p = 40; p + 16 <= n; p++)
+        const int maxNameLength = 500;
+        int last = n - 16;
+        Span<char> chars = stackalloc char[maxNameLength];
+        for (int p = 40; p <= last; p++)
         {
+            int next = d.AsSpan(p, last - p + 1).IndexOfAny((byte)1, (byte)4);
+            if (next < 0) break;
+            p += next;
             if (!IsMarker(d, p)) continue;
 
             uint targetId = BitConverter.ToUInt32(d, p + 4);
@@ -38,7 +44,7 @@ internal static class NameTableScanner
                 nameLen = d[p + 8];
             else
                 continue;
-            if (nameLen < 1 || nameLen > 500 || p + 12 + nameLen * 2 + 8 > n) continue;
+            if (nameLen < 1 || nameLen > maxNameLength || p + 12 + nameLen * 2 + 8 > n) continue;
 
             // backward validation: an FF run of >=28 bytes (after skipping up to 8 zero
             // bytes; the FF-masked variant has a slightly longer run with isolated
@@ -62,7 +68,6 @@ internal static class NameTableScanner
             if (holderPos - 4 >= 0 && !IsMarker(d, holderPos - 4)) continue;
 
             // decode name; FF-masked variant corrupts high bytes of BMP-Latin chars
-            var chars = new char[nameLen];
             bool ok = true;
             for (int k = 0; k < nameLen; k++)
             {
@@ -79,11 +84,10 @@ internal static class NameTableScanner
             if (catId < -2_200_000 || catId > -2_000_000) continue;
             uint trailing = BitConverter.ToUInt32(d, end + 4);
 
-            string name = new string(chars);
             // first entry wins (duplicates across incremental-save regions are identical)
             if (!state.ElementNameTable.ContainsKey(targetId))
             {
-                state.ElementNameTable[targetId] = name;
+                state.ElementNameTable[targetId] = new string(chars[..nameLen]);
                 state.NameEntryCategory[targetId] = catId;
                 if (trailing > 0 && trailing < 50_000_000)
                     state.NameEntryParentHolder[targetId] = trailing;

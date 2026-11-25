@@ -10,7 +10,11 @@ internal static class NativeFieldParameters
 {
     /// UnsetDomains: the same for a field that is "not set" (ElementId -1, double >= 1e29), which creates the parameter
     /// with that sentinel value only where the API shows it; null (rows accepted earlier): wherever the field exists.
-    internal readonly record struct Entry(int ParamId, StorageType Storage, string Key, string[] Domains, string[]? UnsetDomains);
+    internal readonly record struct Entry(int ParamId, StorageType Storage, string Key, string[] Domains, string[]? UnsetDomains)
+    {
+        internal bool RequiresIncompleteStores =>
+            Key == "2960:m_grade" && ParamId is -1140422 or -1010108 or -1010104;
+    }
 
     internal static readonly Entry[] All =
     [
@@ -500,9 +504,39 @@ internal static class NativeFieldParameters
         new(-1001007, StorageType.Integer, "363:m_roomBounding", ["1604", "1913/-2000032", "3054", "3451", "3524/-2000011", "565", "642"], null), // Room Bounding
         new(-1001006, StorageType.Integer, "513:m_function", ["2559", "512"], null),
     ];
-    internal static readonly HashSet<(int ParamId, string Key)> NotWithCompleteStores = [(-1140422, "2960:m_grade"), (-1010108, "2960:m_grade"), (-1010104, "2960:m_grade")];
-
     internal static readonly HashSet<string> Keys = All.Select(entry => entry.Key).ToHashSet(StringComparer.Ordinal);
+
+    private static readonly Dictionary<string, int[]> IntegerRows = IndexRows(StorageType.Integer);
+    private static readonly Dictionary<string, int[]> DoubleRows = IndexRows(StorageType.Double);
+    private static readonly Dictionary<string, int[]> StringRows = IndexRows(StorageType.String);
+
+    private static Dictionary<string, int[]> IndexRows(StorageType storage) =>
+        Enumerable.Range(0, All.Length).Where(index => All[index].Storage == storage
+                || storage == StorageType.Integer && All[index].Storage == StorageType.ElementId)
+            .GroupBy(index => All[index].Key, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
+
+    internal static void CollectPresentRows(TfBlockDeserializer.NativeParams native, List<int> rows, object?[] valuesByRow)
+    {
+        rows.Clear();
+        Collect(native.Fields, IntegerRows, rows, valuesByRow);
+        Collect(native.DoubleFields, DoubleRows, rows, valuesByRow);
+        Collect(native.StringFields, StringRows, rows, valuesByRow);
+        // Several rows can set the same parameter, so replay the table's original order.
+        rows.Sort();
+
+        static void Collect<T>(Dictionary<string, T> fields, Dictionary<string, int[]> index,
+            List<int> rows, object?[] valuesByRow)
+        {
+            foreach (var field in fields)
+            {
+                if (!index.TryGetValue(field.Key, out var matches)) continue;
+                var value = Parameter.BoxParsedValue(field.Value);
+                rows.AddRange(matches);
+                foreach (int row in matches) valuesByRow[row] = value;
+            }
+        }
+    }
 
     internal static readonly HashSet<int> DeclaringClasses =
         All.Select(entry => int.Parse(entry.Key[..entry.Key.IndexOfAny(['#', ':'])], System.Globalization.CultureInfo.InvariantCulture)).ToHashSet();

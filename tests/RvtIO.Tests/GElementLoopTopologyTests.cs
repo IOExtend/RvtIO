@@ -114,6 +114,8 @@ public class GElementLoopTopologyTests
         var loop = Read(Replace(Graph(), 2, Weak(1244, "m_next", 5, 0))).Faces[0].Loops[0];
         Assert.Equal(100001, loop.Edges.Count); Assert.All(loop.Edges, e => Assert.Equal(2, e.EdgeQueueIndex));
         Assert.Equal("increment-limit", loop.EndOutcome); Assert.Equal("advanced", loop.Edges[99999].Outcome);
+        Assert.Same(loop.Edges[0].FirstAndLastPoints, loop.Edges[^1].FirstAndLastPoints);
+        Assert.Same(loop.Edges[0].InteriorPoints, loop.Edges[^1].InteriorPoints);
     }
 
     [Fact]
@@ -170,6 +172,20 @@ public class GElementLoopTopologyTests
     {
         var value = SelectOwnGElementLoopTopology(graph, out var failure); Assert.Null(failure);
         return Assert.IsType<OwnGElementFreshLoopTopology>(value);
+    }
+
+    [Fact]
+    public void ReusesReadOnlyTopologyForEachGraphInstance()
+    {
+        var graph = Graph();
+        var topology = Read(graph);
+        Assert.Same(topology, Read(graph));
+        var invalid = graph with { OwnerId = 0 };
+        Assert.Null(SelectOwnGElementLoopTopology(invalid, out var firstFailure));
+        Assert.Equal("archive-reference-graph", firstFailure);
+        Assert.Null(SelectOwnGElementLoopTopology(invalid, out var repeatedFailure));
+        Assert.Equal(firstFailure, repeatedFailure);
+        Assert.Same(topology, Read(graph));
     }
     private static OwnGElementGeometryGraph Graph() => new(1000, 0,
         [Node(-1, 2007, 1000), Node(0, 1589, 3, Owned(1590, "m_pFirstLoop", (1, (ushort)1254, 4u))),

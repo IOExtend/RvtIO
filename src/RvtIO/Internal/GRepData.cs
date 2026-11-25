@@ -81,6 +81,7 @@ internal record GRepData
     /// m_complexCutGeoms field and selected faces below that exact branch.</summary>
     public bool IsFamilyComplexCut { get; set; }
 
+    public (int Faces, int Edges, int Solids)? QueueSummary { get; set; }
     public Dictionary<ushort, int>? QueueClassCounts { get; set; }
 
     /// <summary>True when the serialized graph of this block holds detail-level alternatives (a GConditionInt on the detail

@@ -27,8 +27,67 @@ namespace RvtIO.Parsing;
 /// </summary>
 internal static partial class TfBlockDeserializer
 {
-    internal sealed record TfField(string Name, byte Type, byte Mods, int? Ref, int? Cnt, int Declaring = 0);
+    internal sealed record TfField(string Name, byte Type, byte Mods, int? Ref, int? Cnt, int Declaring = 0)
+    {
+        private readonly string _name = Name;
+        private readonly int _declaring = Declaring;
+        private CaptureKeys? _captureKeys;
+
+        public string Name
+        {
+            get => _name;
+            init { _name = value; _captureKeys = null; }
+        }
+
+        public int Declaring
+        {
+            get => _declaring;
+            init { _declaring = value; _captureKeys = null; }
+        }
+
+        internal string QualifiedKey => Keys.Qualified;
+        internal string? ProductionCaptureKey => Keys.Production;
+
+        private CaptureKeys Keys => Volatile.Read(ref _captureKeys) ?? BuildCaptureKeys();
+
+        private CaptureKeys BuildCaptureKeys()
+        {
+            string key = Declaring.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" + Name;
+            var keys = new CaptureKeys(key, IsCapturedInProduction(key) ? key : null);
+            return Interlocked.CompareExchange(ref _captureKeys, keys, null) ?? keys;
+        }
+
+        private sealed record CaptureKeys(string Qualified, string? Production);
+
+        // Copying a field can change its declaring class or name. Capture keys are derived, not field identity.
+        public bool Equals(TfField? other) => other != null && Name == other.Name && Type == other.Type
+            && Mods == other.Mods && Ref == other.Ref && Cnt == other.Cnt && Declaring == other.Declaring;
+        public override int GetHashCode() => HashCode.Combine(Name, Type, Mods, Ref, Cnt, Declaring);
+    }
     internal sealed record TfClass(string Name, int? Base, List<TfField> Fields);
+
+    // A root often has no rows in several of its parameter stores.
+    internal struct NativeRows<T> : IReadOnlyList<T>
+    {
+        private static readonly List<T> Empty = [];
+        private List<T>? _items;
+
+        public readonly int Count => _items?.Count ?? 0;
+        public readonly T this[int index] => (_items ?? Empty)[index];
+        public void Add(T item) => (_items ??= new()).Add(item);
+        public void EnsureAdditionalCapacity(int count)
+        {
+            if (count > 0) (_items ??= new(count)).EnsureCapacity(Count + count);
+        }
+        public void AddRange(NativeRows<T> rows)
+        {
+            if (rows.Count > 0) (_items ??= new(rows.Count)).AddRange(rows._items!);
+        }
+
+        public readonly List<T>.Enumerator GetEnumerator() => (_items ?? Empty).GetEnumerator();
+        readonly IEnumerator<T> IEnumerable<T>.GetEnumerator() => ((IEnumerable<T>)(_items ?? Empty)).GetEnumerator();
+        readonly System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
 
     internal sealed class NativeParams
     {
@@ -36,15 +95,15 @@ internal static partial class TfBlockDeserializer
         /// non-parameter deferred tail. False also covers a partially decoded store.</summary>
         public bool RootParameterStoresComplete { get; set; }
         /// <summary>Class tags of the cells of the element's CellList, when the deferred walk reached that object.</summary>
-        public List<int>? CellClasses { get; set; }
+        public int[]? CellClasses { get; set; }
         public HashSet<int>? RoofExtrusionFaceTags { get; set; }
         /// <summary>The deferred walk consumed every queued object of the record (so the NamedParams and cells are complete).</summary>
         public bool TailWalkComplete { get; set; }
         public IReadOnlyList<ExtensibleStorageEntity>? ExtensibleStorage { get; set; }
-        public List<(int ParamId, double Value)> Doubles { get; } = new();
-        public List<(int ParamId, int Value)> Ints { get; } = new();
-        public List<(int ParamId, string Value)> Strings { get; } = new();
-        public List<(int ParamId, int Value)> ElementIds { get; } = new();
+        public NativeRows<(int ParamId, double Value)> Doubles;
+        public NativeRows<(int ParamId, int Value)> Ints;
+        public NativeRows<(int ParamId, string Value)> Strings;
+        public NativeRows<(int ParamId, int Value)> ElementIds;
 
         /// <summary>Named schema fields captured during the walk (interesting ElementId
         /// refs like m_masterSymbolId / m_scheduleOnlyLevelId and small enums).</summary>
@@ -53,7 +112,7 @@ internal static partial class TfBlockDeserializer
         public Dictionary<string, string> StringFields { get; } = new();
 
         /// <summary>FamilyParams.m_params items in stored order (family parameters of the element).</summary>
-        public List<NamedParamRecord> NamedParams { get; } = new();
+        public NativeRows<NamedParamRecord> NamedParams;
         public int Count => Doubles.Count + Ints.Count + Strings.Count + ElementIds.Count
             + Fields.Count + DoubleFields.Count + StringFields.Count;
     }
@@ -306,12 +365,10 @@ internal static partial class TfBlockDeserializer
     private static readonly HashSet<int> DerivedInputDeclaringClasses = DerivedInputFieldKeys
         .Select(key => int.Parse(key[..key.IndexOf(':')], System.Globalization.CultureInfo.InvariantCulture)).ToHashSet();
 
-    private static bool WantField(TfField f) =>
-        (capturingNamedParam && f.Declaring == 715)
-        || CaptureAllFields
-        || (DerivedInputDeclaringClasses.Contains(f.Declaring) && DerivedInputFieldKeys.Contains(FieldKey(f)))
-        || (NativeFieldParameters.DeclaringClasses.Contains(f.Declaring)
-            && NativeFieldParameters.Keys.Contains(FieldKey(f)));
+    private static string? CaptureFieldKey(TfField f) =>
+        CaptureAllFields || (capturingNamedParam && f.Declaring == 715)
+            ? FieldKey(f)
+            : f.ProductionCaptureKey;
 
     /// <summary>Every "Declaring:Name" key a production parse keeps, and the bare field names kept from the root.</summary>
     internal static IEnumerable<string> CapturedKeys => DerivedInputFieldKeys.Concat(NativeFieldParameters.Keys);
@@ -321,7 +378,7 @@ internal static partial class TfBlockDeserializer
     internal static bool IsCapturedInProduction(string key) =>
         NativeFieldParameters.Keys.Contains(key) || DerivedInputFieldKeys.Contains(key);
 
-    private static string FieldKey(TfField f) => f.Declaring.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" + f.Name;
+    private static string FieldKey(TfField f) => f.QualifiedKey;
 
     /// <summary>Keyed (Declaring:Name) entries of a scratch capture are the only ones merged into the real result.</summary>
     private static void MergeKeyed(NativeParams from, NativeParams into)
@@ -388,6 +445,7 @@ internal static partial class TfBlockDeserializer
 
     private static readonly Lazy<Dictionary<int, TfClass>> _schemas = new(LoadSchemas);
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, List<TfField>> _chainCache = new();
+    private static readonly Lazy<int[]?[]> _ancestors = new(BuildAncestors);
 
     public static Dictionary<int, TfClass> Schemas => _schemas.Value;
 
@@ -409,37 +467,46 @@ internal static partial class TfBlockDeserializer
         if (_chainCache.TryGetValue(classId, out var cached)) return cached;
         var schemas = Schemas;
         if (!schemas.ContainsKey(classId)) return null;
-        var chain = new List<TfClass>();
+        Span<int> chain = stackalloc int[32];
         int? cur = classId;
-        int guard = 0;
-        while (cur.HasValue && schemas.TryGetValue(cur.Value, out var c) && guard++ < 32)
+        int count = 0, fieldCount = 0;
+        while (cur is int id && count < chain.Length && schemas.TryGetValue(id, out var c))
         {
-            chain.Add(c);
+            chain[count++] = id;
+            fieldCount += c.Fields.Count;
             cur = c.Base;
         }
-        chain.Reverse();
-        var fields = new List<TfField>();
-        var idByClass = new Dictionary<TfClass, int>();
-        foreach (var kv in schemas) idByClass[kv.Value] = kv.Key;
-        foreach (var c in chain)
+        var fields = new List<TfField>(fieldCount);
+        for (int index = count - 1; index >= 0; index--)
         {
-            int decl = idByClass.TryGetValue(c, out int d0) ? d0 : 0;
-            foreach (var fl in c.Fields) fields.Add(fl with { Declaring = decl });
+            int declaring = chain[index];
+            foreach (var field in schemas[declaring].Fields) fields.Add(field with { Declaring = declaring });
         }
         return _chainCache.GetOrAdd(classId, fields);
     }
 
     public static bool IsSubclassOf(int classId, int baseClassId)
     {
-        int guard = 0;
-        int? current = classId;
-        while (current.HasValue && guard++ < 32)
+        if (classId == baseClassId) return true;
+        var ancestors = _ancestors.Value;
+        return (uint)classId < (uint)ancestors.Length
+            && ancestors[classId].AsSpan().Contains(baseClassId);
+    }
+
+    private static int[]?[] BuildAncestors()
+    {
+        var schemas = Schemas;
+        var result = new int[]?[schemas.Keys.DefaultIfEmpty(-1).Max() + 1];
+        Span<int> chain = stackalloc int[31];
+        foreach (var (classId, schema) in schemas)
         {
-            if (current.Value == baseClassId) return true;
-            current = Schemas.TryGetValue(current.Value, out var schema)
-                ? schema.Base : null;
+            int count = 0;
+            for (int? parent = schema.Base; parent is int id && count < chain.Length;
+                parent = schemas.GetValueOrDefault(id)?.Base)
+                chain[count++] = id;
+            if (count > 0) result[classId] = chain[..count].ToArray();
         }
-        return false;
+        return result;
     }
 
     private sealed class Cursor
@@ -547,7 +614,8 @@ internal static partial class TfBlockDeserializer
     }
 
     private sealed class DecodeFail : Exception { }
-    private static readonly DecodeFail Fail = new();
+    [ThreadStatic] private static DecodeFail? _fail;
+    private static DecodeFail Fail => _fail ??= new();
 
     // Param-store deferred tags -> record class ids (record schemas drive field order).
     private static readonly Dictionary<int, (char Kind, int RecordClass)> ParamSetTags = new()
@@ -562,6 +630,9 @@ internal static partial class TfBlockDeserializer
     /// reaching the deferred region or the class has no schema.
     /// </summary>
     public static NativeParams? ExtractParams(byte[] d, int blockStart, uint dataSize, ushort classId)
+        => ExtractParams(d, blockStart, dataSize, classId, rootOnly: false);
+
+    private static NativeParams? ExtractParams(byte[] d, int blockStart, uint dataSize, ushort classId, bool rootOnly)
     {
         var fields = SerializationFields(classId);
         if (fields == null) return null;
@@ -600,6 +671,7 @@ internal static partial class TfBlockDeserializer
                 DiagnosticSink.WriteLine($"rootfail eid={BitConverter.ToUInt32(d, blockStart)} cls={classId} at {lastReadField} trail={string.Join(">", readTrail ?? new())}");
             return null;
         }
+        if (rootOnly) return res;
 
         try
         {
@@ -618,34 +690,41 @@ internal static partial class TfBlockDeserializer
                 if (!ParamSetTags.TryGetValue(cls, out var tag)) break; // geometry tail begins
                 uint n = ReadU32(cur);
                 if (n > 100_000) return res;
-                var recFields = SerializationFields(tag.RecordClass);
-                if (recFields == null) return res;
-                for (uint i = 0; i < n; i++)
+                int possibleRows = Math.Min((int)n, (cur.End - cur.Pos) / (tag.Kind == 'D' ? 12 : 8));
+                // These four layouts are fixed in the shipped 2022 schema. Double stores
+                // put the value before the ID, while the other stores put the ID first.
+                switch (tag.Kind)
                 {
-                    int paramId = 0; double dv = 0; int iv = 0; string sv = "";
-                    foreach (var rf in recFields)
-                    {
-                        switch (rf.Name)
+                    case 'D':
+                        res.Doubles.EnsureAdditionalCapacity(possibleRows);
+                        for (int i = 0; i < n; i++)
                         {
-                            case "m_paramId": paramId = ReadI32(cur); break;
-                            case "m_value" when tag.Kind == 'D': dv = ReadF64(cur); break;
-                            case "m_value" when tag.Kind == 'A': sv = ReadString(cur); break;
-                            case "m_value": iv = ReadI32(cur); break;
-                            default: ReadField(cur, rf, new List<(ushort, uint)>(), 0, null); break;
+                            double value = ReadF64(cur);
+                            res.Doubles.Add((ReadI32(cur), value));
                         }
-                    }
-                    switch (tag.Kind)
-                    {
-                        case 'D': res.Doubles.Add((paramId, dv)); break;
-                        case 'I': res.Ints.Add((paramId, iv)); break;
-                        case 'A': res.Strings.Add((paramId, sv)); break;
-                        case 'E': res.ElementIds.Add((paramId, iv)); break;
-                    }
+                        break;
+                    case 'I':
+                        res.Ints.EnsureAdditionalCapacity(possibleRows);
+                        for (int i = 0; i < n; i++) res.Ints.Add((ReadI32(cur), ReadI32(cur)));
+                        break;
+                    case 'A':
+                        res.Strings.EnsureAdditionalCapacity(possibleRows);
+                        for (int i = 0; i < n; i++) res.Strings.Add((ReadI32(cur), ReadString(cur)));
+                        break;
+                    case 'E':
+                        res.ElementIds.EnsureAdditionalCapacity(possibleRows);
+                        for (int i = 0; i < n; i++) res.ElementIds.Add((ReadI32(cur), ReadI32(cur)));
+                        break;
                 }
             }
 
-            res.RootParameterStoresComplete = !queue.Skip(qi)
-                .Any(entry => ParamSetTags.ContainsKey(entry.Cls));
+            res.RootParameterStoresComplete = true;
+            for (int index = qi; index < queue.Count; index++)
+                if (ParamSetTags.ContainsKey(queue[index].Cls))
+                {
+                    res.RootParameterStoresComplete = false;
+                    break;
+                }
 
             // Walk the remaining deferred objects in queue order for NativeFieldParameters keys
             // (everything with RVTIO_ALL_FIELDS=2). Name-based captures are kept out via a scratch result.
@@ -654,7 +733,8 @@ internal static partial class TfBlockDeserializer
                 var tail = new NativeParams();
                 var walked = CaptureAllFields ? new System.Text.StringBuilder() : null;
                 string lastField = "";
-                var refOccurrences = new Dictionary<ushort, int>();
+                Dictionary<ushort, int>? refOccurrences = null;
+                NativeParams? namedScratch = null;
                 bool tailDone = false;
                 try
                 {
@@ -667,11 +747,12 @@ internal static partial class TfBlockDeserializer
                         if (qf == null) break;
                         if (queue[qi].Cls == 715)
                         {
-                            var item = new NativeParams();
+                            var item = namedScratch ??= new NativeParams();
                             capturingNamedParam = true;
                             try { foreach (var sf in qf) ReadField(cur, sf, queue, 1, item); }
                             finally { capturingNamedParam = false; }
                             tail.NamedParams.Add(NamedParamOf(item));
+                            ClearNamedParamFields(item);
                             continue;
                         }
                         cur.TailClassId = queue[qi].Cls;
@@ -697,9 +778,13 @@ internal static partial class TfBlockDeserializer
                         bool driveSpline = qi == cur.CurveDriverCurveQueueIndex && queue[qi].Cls == 2020;
                         if (driveSpline) cur.HermiteNodes = new List<double[]>();
                         int cellsBefore = queue[qi].Cls == 653 ? queue.Count : -1;
-                        foreach (var sf in qf) { lastField = FieldKey(sf) + "/" + sf.Type + "/" + sf.Mods + "/" + sf.Ref; ReadField(cur, sf, queue, 1, tail); }
+                        foreach (var sf in qf)
+                        {
+                            if (walked != null) lastField = FieldKey(sf) + "/" + sf.Type + "/" + sf.Mods + "/" + sf.Ref;
+                            ReadField(cur, sf, queue, 1, tail);
+                        }
                         if (cellsBefore >= 0 && ReferenceEquals(queue, cur.RootQueue))
-                            tail.CellClasses = queue.Skip(cellsBefore).Select(entry => (int)entry.Item1).ToList();
+                            tail.CellClasses = ReadQueuedClasses(queue, cellsBefore);
                         KeepAnyAttachTop(tail, queue[qi].Cls, attachedTopBefore);
                         if (driveSpline)
                         {
@@ -716,7 +801,7 @@ internal static partial class TfBlockDeserializer
                                 .Append(",f=").Append(tail.Fields.GetValueOrDefault("96:m_flags")).Append("},");
                         // Repeated reference objects in stored order: FamilyInstance.m_refs FamilyLevelRef (column
                         // base, then top) and FamilySymbol.m_refs StructSetbackSymFamRef (framing start, then end).
-                        if (ReferenceEquals(queue, cur.RootQueue)) CopyOccurrence(tail, qf, queue[qi].Cls, refOccurrences);
+                        if (ReferenceEquals(queue, cur.RootQueue)) CopyOccurrence(tail, qf, queue[qi].Cls, ref refOccurrences);
                         if (driveLine)
                         {
                             string curveKey = mullionLine ? "2520:m_pCurve" : "87:m_pCrv";
@@ -744,7 +829,8 @@ internal static partial class TfBlockDeserializer
                 if (walked != null) tail.StringFields["walk:"] = walked.ToString() + " queue=" + queue.Count + " rest=" + (cur.End - cur.Pos);
                 res.TailWalkComplete = tailDone;
                 MergeKeyed(tail, res);
-                res.NamedParams.AddRange(tail.NamedParams);
+                if (res.NamedParams.Count == 0) res.NamedParams = tail.NamedParams;
+                else res.NamedParams.AddRange(tail.NamedParams);
                 if (tail.CellClasses != null) res.CellClasses = tail.CellClasses;
             }
 
@@ -756,7 +842,7 @@ internal static partial class TfBlockDeserializer
             if (classId == 3524)
             {
                 bool sawDriver = false, gotLine = false;
-                var wallOccurrences = new Dictionary<ushort, int>();
+                Dictionary<ushort, int>? wallOccurrences = null;
                 var walkedWall = CaptureAllFields ? new System.Text.StringBuilder() : null;
                 // The wall's own fields were read from its root; the deferred objects below carry fields of the same
                 // names (GeomGenerator.m_id of every step, ...) that must not replace them.
@@ -798,9 +884,9 @@ internal static partial class TfBlockDeserializer
                     int wallCellsBefore = cls == 653 ? queue.Count : -1;
                     foreach (var sf in qf) ReadField(cur, sf, queue, 1, res);
                     if (wallCellsBefore >= 0 && ReferenceEquals(queue, cur.RootQueue))
-                        res.CellClasses = queue.Skip(wallCellsBefore).Select(entry => (int)entry.Item1).ToList();
+                        res.CellClasses = ReadQueuedClasses(queue, wallCellsBefore);
                     KeepAnyAttachTop(res, cls, attachedTopBefore);
-                    CopyOccurrence(res, qf, cls, wallOccurrences);
+                    CopyOccurrence(res, qf, cls, ref wallOccurrences);
                     if (captureLine)
                     {
                         if (cur.WallLineCapture!.Count >= 8)
@@ -852,9 +938,10 @@ internal static partial class TfBlockDeserializer
     /// FamilyLevelRef (column base, then top), FamilySymbol.m_refs StructSetbackSymFamRef (framing start, then end)
     /// and the curtain wall SpacingRuleInst pair (horizontal, then vertical grid). The connector calculations (2380,
     /// 2381, 2382, 3556) are also numbered across the classes, as "calc#n:class" and "calc#n:occurrence".</summary>
-    private static void CopyOccurrence(NativeParams target, List<TfField> fields, ushort cls, Dictionary<ushort, int> occurrences)
+    private static void CopyOccurrence(NativeParams target, List<TfField> fields, ushort cls, ref Dictionary<ushort, int>? occurrences)
     {
         if (cls is not (1801 or 3795 or 369 or 3556 or 3558 or 3950 or 2381 or 2382 or 2380 or 771)) return;
+        occurrences ??= new();
         int occurrence = occurrences.TryGetValue(cls, out int seen) ? seen : 0;
         occurrences[cls] = occurrence + 1;
         if (cls is 2380 or 2381 or 2382 or 3556)
@@ -883,6 +970,14 @@ internal static partial class TfBlockDeserializer
                     if (target.Fields.Remove($"771:m_arrRefs@{i}:{part}", out int refValue))
                         target.Fields[$"{prefix}m_arrRefs@{i}:{part}"] = refValue;
         }
+    }
+
+    private static int[] ReadQueuedClasses(List<(ushort Cls, uint Id)> queue, int start)
+    {
+        var classes = new int[queue.Count - start];
+        for (int i = 0; i < classes.Length; i++)
+            classes[i] = queue[start + i].Cls;
+        return classes;
     }
 
     /// <summary>Reads ROOM_NAME only from an owned RoomElem root and its complete four
@@ -1138,6 +1233,13 @@ internal static partial class TfBlockDeserializer
         return true;
     }
 
+    private static readonly Lazy<List<TfField>?> OwnElementFields = new(() =>
+    {
+        var fields = SerializationFields(37);
+        return fields != null && HasExactSchemaField(fields, 37, "m_id", 14, 0, 20)
+            && HasExactSchemaField(fields, 37, "m_docAccess", 14, 0, null) ? fields : null;
+    });
+
     /// <summary>Own semantic Element class/identity prefix only, not a complete subtype or
     /// geometry graph. Header, size/footer, project document handle and named Element.m_id
     /// must agree. GElement frames cannot supply an Element's semantic class.</summary>
@@ -1153,14 +1255,12 @@ internal static partial class TfBlockDeserializer
             || BitConverter.ToUInt32(data, (int)end - 4) != size)
             return false;
         uint headerOwner = BitConverter.ToUInt32(data, start);
-        var fields = SerializationFields(37);
-        if (headerOwner == 0 && classId != 3065 || headerOwner > int.MaxValue || fields == null
-            || !HasExactSchemaField(fields, 37, "m_id", 14, 0, 20)
-            || !HasExactSchemaField(fields, 37, "m_docAccess", 14, 0, null))
+        var fields = OwnElementFields.Value;
+        if (headerOwner == 0 && classId != 3065 || headerOwner > int.MaxValue || fields == null)
             return false;
         var cursor = new Cursor { D = data, Pos = start + 14, End = (int)end - 4, RootClassId = classId };
         var queue = new List<(ushort, uint)>();
-        var root = new NativeParams();
+        int namedOwner = -1;
         try
         {
             foreach (var field in fields)
@@ -1170,10 +1270,11 @@ internal static partial class TfBlockDeserializer
                     // Only the explicit project document handle, not an anonymous or foreign document.
                     if (ReadU32(cursor) != 1) return false;
                 }
-                else ReadField(cursor, field, queue, 0, root);
+                else if (field.Name == "m_id") namedOwner = ReadI32(cursor);
+                else ReadField(cursor, field, queue, 0, null);
                 if (queue.Count > 100_000) return false;
             }
-            if (!root.Fields.TryGetValue("m_id", out int namedOwner) || namedOwner != headerOwner)
+            if (namedOwner != headerOwner)
                 return false;
             ownerId = namedOwner;
             return true;
@@ -1812,6 +1913,11 @@ internal static partial class TfBlockDeserializer
         {
             uint count = ReadU32(cur);
             if (count > 100_000) throw Fail;
+            if (!CaptureAllFields)
+            {
+                SkipParameterStoreRows(cur, parameterStore.Kind, count);
+                return;
+            }
             var recordFields = SerializationFields(parameterStore.RecordClass)
                 ?? throw Fail;
             for (uint index = 0; index < count; index++)
@@ -1823,6 +1929,25 @@ internal static partial class TfBlockDeserializer
         var fields = SerializationFields(queuedClass) ?? throw Fail;
         foreach (var field in fields)
             ReadField(cur, field, queue, 1, null);
+    }
+
+    // Same four layouts as ExtractParams. These callers only need the deferred queue position.
+    private static void SkipParameterStoreRows(Cursor c, char kind, uint count)
+    {
+        if (kind == 'A')
+        {
+            for (uint index = 0; index < count; index++)
+            {
+                ReadI32(c);
+                uint length = ReadU32(c);
+                if (length > 10_000 || length * 2 > c.End - c.Pos) throw Fail;
+                c.Pos += (int)length * 2;
+            }
+            return;
+        }
+        int bytes = (int)count * (kind == 'D' ? 12 : 8);
+        if (bytes > c.End - c.Pos) throw Fail;
+        c.Pos += bytes;
     }
 
     /// <summary>Diagnostic-only: full deferred-queue trace of an owner block.
@@ -2118,15 +2243,20 @@ internal static partial class TfBlockDeserializer
     }
 
     private static bool HasExactOwnElementRoot(byte[] data, int start, uint size, ushort classId)
+        => ReadExactOwnElementRoot(data, start, size, classId) != null;
+
+    private static NativeParams? ReadExactOwnElementRoot(
+        byte[] data, int start, uint size, ushort classId, bool includeDeferredFields = false)
     {
         if (start < 0 || start > data.Length - 16 || size > int.MaxValue
             || (long)start + 16 + size > data.Length
             || BitConverter.ToUInt32(data, start + 8) != size
             || BitConverter.ToUInt16(data, start + 12) != classId)
-            return false;
-        var root = ExtractParams(data, start, size, classId);
+            return null;
+        // Deferred merges keep the bare named fields of the root.
+        var root = ExtractParams(data, start, size, classId, rootOnly: !includeDeferredFields && !CaptureAllFields);
         return root != null && root.Fields.TryGetValue("m_id", out int owner)
-            && owner > 0 && (uint)owner == BitConverter.ToUInt32(data, start);
+            && owner > 0 && (uint)owner == BitConverter.ToUInt32(data, start) ? root : null;
     }
 
     /// <summary>The field that names the type of a system occurrence (declaring class and field name), null for another class.</summary>
@@ -2148,22 +2278,22 @@ internal static partial class TfBlockDeserializer
     internal static int? ExtractSystemOccurrenceTypeId(byte[] data, int start, uint size, ushort classId)
     {
         var field = SystemOccurrenceTypeField(classId);
-        if (field is not var (declaring, name) || !HasExactOwnElementRoot(data, start, size, classId)) return null;
+        if (field is not var (declaring, name)) return null;
         var fields = SerializationFields(classId);
         if (fields == null || !HasExactSchemaField(fields, declaring, name, 14, 0, 20)) return null;
-        var root = ExtractParams(data, start, size, classId)!;
         // RbsCurve.m_idType is captured under its declaring-class key, as a name shared with other classes would be ambiguous.
-        return root.Fields.TryGetValue(declaring == 602 ? "602:m_idType" : name, out int typeId)
+        var root = ReadExactOwnElementRoot(data, start, size, classId, includeDeferredFields: declaring == 602);
+        return root != null && root.Fields.TryGetValue(declaring == 602 ? "602:m_idType" : name, out int typeId)
             && typeId > 0 && typeId != BitConverter.ToInt32(data, start) ? typeId : null;
     }
 
     internal static int? ExtractFamilyInstanceSymbolId(byte[] data, int start, uint size, ushort classId)
     {
-        if (classId != 1794 || !HasExactOwnElementRoot(data, start, size, classId)) return null;
+        if (classId != 1794) return null;
         var fields = SerializationFields(classId);
         if (fields == null || !HasExactSchemaField(fields, 1794, "m_masterSymbolId", 14, 0, 20)) return null;
-        var root = ExtractParams(data, start, size, classId)!;
-        return root.Fields.TryGetValue("m_masterSymbolId", out int symbolId)
+        var root = ReadExactOwnElementRoot(data, start, size, classId);
+        return root != null && root.Fields.TryGetValue("m_masterSymbolId", out int symbolId)
             && symbolId > 0 && symbolId != BitConverter.ToInt32(data, start) ? symbolId : null;
     }
 
@@ -2389,13 +2519,13 @@ internal static partial class TfBlockDeserializer
 
     internal static int? ExtractRoofOrRailingTypeId(byte[] data, int start, uint size, ushort classId)
     {
-        if (classId is not (3451 or 3054 or 485) || !HasExactOwnElementRoot(data, start, size, classId)) return null;
+        if (classId is not (3451 or 3054 or 485)) return null;
         int declaring = classId == 485 ? 485 : 1605;
         string name = classId == 485 ? "m_stairsRailingAttrId" : "m_roofAttributesId";
         var fields = SerializationFields(classId);
         if (fields == null || !HasExactSchemaField(fields, declaring, name, 14, 0, 20)) return null;
-        var root = ExtractParams(data, start, size, classId)!;
-        return root.Fields.TryGetValue(name, out int typeId)
+        var root = ReadExactOwnElementRoot(data, start, size, classId);
+        return root != null && root.Fields.TryGetValue(name, out int typeId)
             && typeId > 0 && typeId != BitConverter.ToInt32(data, start) ? typeId : null;
     }
 
@@ -3090,6 +3220,11 @@ internal static partial class TfBlockDeserializer
                     failure = "parameters";
                     uint count = ReadU32(cur);
                     if (count > 100_000) return null;
+                    if (!CaptureAllFields)
+                    {
+                        SkipParameterStoreRows(cur, parameterStore.Kind, count);
+                        continue;
+                    }
                     var recordFields = SerializationFields(parameterStore.RecordClass);
                     if (recordFields == null) return null;
                     for (uint index = 0; index < count; index++)
@@ -3226,6 +3361,11 @@ internal static partial class TfBlockDeserializer
                     failure = "parameters";
                     uint count = ReadU32(cur);
                     if (count > 100_000) return null;
+                    if (!CaptureAllFields)
+                    {
+                        SkipParameterStoreRows(cur, parameterStore.Kind, count);
+                        continue;
+                    }
                     var recordFields = SerializationFields(parameterStore.RecordClass);
                     if (recordFields == null) return null;
                     for (uint index = 0; index < count; index++)
@@ -4495,7 +4635,7 @@ internal static partial class TfBlockDeserializer
         {
             string sv = ReadString(c);
             if (capture != null && CapturedStringFields.Contains(f.Name)) capture.StringFields[f.Name] = sv;
-            if (capture != null && WantField(f)) capture.StringFields[FieldKey(f)] = sv;
+            if (capture != null && CaptureFieldKey(f) is { } stringKey) capture.StringFields[stringKey] = sv;
             return;
         }
         if (hi == 1)
@@ -4647,13 +4787,13 @@ internal static partial class TfBlockDeserializer
                     c.CutTopologyTrace?.Add($"q{c.CurrentDeferredQueueIndex}:"
                         + $"{c.CurrentDeferredClassId}:{f.Name}={bv}");
                 if (capture != null && CapturedFields.Contains(f.Name)) capture.Fields[f.Name] = bv;
-                if (capture != null && WantField(f)) capture.Fields[FieldKey(f)] = bv;
+                if (capture != null && CaptureFieldKey(f) is { } flagKey) capture.Fields[flagKey] = bv;
                 if (capture != null && f.Declaring == 699 && f.Name == "m_dormant" && c.AttachBaseOrTop is 0 or 1)
                     capture.Fields[$"699:dormant@{c.AttachBaseOrTop}"] = bv;
                 return;
             }
             case 0x02: case 0x03:
-                if (capture != null && c.Pos < c.End && WantField(f)) capture.Fields[FieldKey(f)] = c.D[c.Pos];
+                if (capture != null && c.Pos < c.End && CaptureFieldKey(f) is { } byteKey) capture.Fields[byteKey] = c.D[c.Pos];
                 if (!c.Take(1)) throw Fail;
                 return;
             case 0x04:
@@ -4694,14 +4834,14 @@ internal static partial class TfBlockDeserializer
                 // Wall-join type: one per joined end, keyed by the pair's end index.
                 if (capture != null && f.Name == "m_wallJoinType" && c.JoinEnd >= 0 && c.JoinEnd < 64)
                     capture.Fields[$"wallJoinType@{c.JoinEnd}"] = v;
-                if (capture != null && WantField(f)) capture.Fields[FieldKey(f)] = v;
+                if (capture != null && CaptureFieldKey(f) is { } intKey) capture.Fields[intKey] = v;
                 return;
             }
             case 0x05: case 0x06:
-                if (capture != null && c.Pos + 4 <= c.End && WantField(f))
+                if (capture != null && c.Pos + 4 <= c.End && CaptureFieldKey(f) is { } scalarKey)
                 {
-                    if (f.Type == 0x05) capture.Fields[FieldKey(f)] = BitConverter.ToInt32(c.D, c.Pos);
-                    else capture.DoubleFields[FieldKey(f)] = BitConverter.ToSingle(c.D, c.Pos);
+                    if (f.Type == 0x05) capture.Fields[scalarKey] = BitConverter.ToInt32(c.D, c.Pos);
+                    else capture.DoubleFields[scalarKey] = BitConverter.ToSingle(c.D, c.Pos);
                 }
                 if (!c.Take(4)) throw Fail;
                 return;
@@ -4716,7 +4856,7 @@ internal static partial class TfBlockDeserializer
                     && (CapturedDoubleFields.Contains(f.Name)
                         || captureStairLength))
                     capture.DoubleFields[f.Name] = dv;
-                if (capture != null && WantField(f)) capture.DoubleFields[FieldKey(f)] = dv;
+                if (capture != null && CaptureFieldKey(f) is { } doubleKey) capture.DoubleFields[doubleKey] = dv;
                 return;
             }
             case 0x0A:
@@ -4761,7 +4901,7 @@ internal static partial class TfBlockDeserializer
                 {
                     ReadPtr(c, queue);
                     // Keyed capture of an owned pointer: 0 null, -1 external/untagged, otherwise the class tag.
-                    if (capture != null && WantField(f)) capture.Fields[FieldKey(f)] = lastPolyClass;
+                    if (capture != null && CaptureFieldKey(f) is { } ownedKey) capture.Fields[ownedKey] = lastPolyClass;
                     return;
                 }
                 if (f.Ref == 20) // bare ElementId
@@ -4787,7 +4927,7 @@ internal static partial class TfBlockDeserializer
                         && (CapturedFields.Contains(f.Name)
                             || captureStairTypeId))
                         capture.Fields[f.Name] = v;
-                    if (capture != null && WantField(f)) capture.Fields[FieldKey(f)] = v;
+                    if (capture != null && CaptureFieldKey(f) is { } idKey) capture.Fields[idKey] = v;
                     return;
                 }
                 if (f.Ref.HasValue) // inline struct
@@ -4805,7 +4945,7 @@ internal static partial class TfBlockDeserializer
                 if (capture != null && CapturedFields.Contains(f.Name))
                     capture.Fields[f.Name] = unchecked((int)handle);
                 // Keyed capture of a pointer field: 0 null, -1 plain handle, otherwise the class tag of the owned object.
-                if (capture != null && WantField(f)) capture.Fields[FieldKey(f)] = lastPolyClass;
+                if (capture != null && CaptureFieldKey(f) is { } pointerKey) capture.Fields[pointerKey] = lastPolyClass;
                 return;
             }
             default: throw Fail;
@@ -4905,7 +5045,7 @@ internal static partial class TfBlockDeserializer
             {
                 if (SerializationFields(45) is not [{ Name: "m_typeId", Type: 8, Mods: 96 }]) throw Fail;
                 string forgeId = ReadString(c);
-                if (WantField(f)) capture.StringFields[FieldKey(f)] = forgeId;
+                if (CaptureFieldKey(f) is { } forgeKey) capture.StringFields[forgeKey] = forgeId;
                 return true;
             }
             // SpatialElementCalculationPointRegenData.m_position is an XYZ struct (three doubles); read here so that they are
@@ -5937,6 +6077,13 @@ internal static partial class TfBlockDeserializer
         item.Fields.GetValueOrDefault("715:m_instance") != 0,
         item.Fields.GetValueOrDefault("715:m_reporting") != 0);
 
+    private static void ClearNamedParamFields(NativeParams item)
+    {
+        item.Fields.Clear();
+        item.DoubleFields.Clear();
+        item.StringFields.Clear();
+    }
+
     private static void ReadInlineContainer(Cursor c, int cls, List<(ushort, uint)> queue, int depth,
         NativeParams? capture = null)
     {
@@ -5944,13 +6091,15 @@ internal static partial class TfBlockDeserializer
         if (n > 100_000) throw Fail;
         if (cls == 715 && capture != null)
         {
+            NativeParams? scratch = null;
             for (uint i = 0; i < n; i++)
             {
-                var item = new NativeParams();
+                var item = scratch ??= new NativeParams();
                 capturingNamedParam = true;
                 try { ReadInlineStruct(c, cls, queue, depth, item); }
                 finally { capturingNamedParam = false; }
                 capture.NamedParams.Add(NamedParamOf(item));
+                ClearNamedParamFields(item);
             }
             return;
         }

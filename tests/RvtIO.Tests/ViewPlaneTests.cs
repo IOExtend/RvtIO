@@ -49,6 +49,26 @@ public class ViewPlaneTests
         Assert.Equal([0, -1, 0], plane.Horiz);
     }
 
+    [Theory]
+    [InlineData(-0.999, 0)]
+    [InlineData(1.001, 1)]
+    public void CollectViewPlanes_FindsTheFallbackAtTheLastPayloadOffset(double verticalZ, int prefix)
+    {
+        var state = new ParsingState();
+        double[] values = [0, 1, 0, 10, -2, 6, 100, 0, 0, verticalZ, 1, 0, 0];
+        byte[] chunk = new byte[16 + prefix + values.Length * sizeof(double)];
+        BinaryPrimitives.WriteUInt32LittleEndian(chunk, 500);
+        BinaryPrimitives.WriteInt32LittleEndian(chunk.AsSpan(8), chunk.Length - 16);
+        for (int index = 0; index < values.Length; index++)
+            BinaryPrimitives.WriteDoubleLittleEndian(chunk.AsSpan(16 + prefix + index * sizeof(double)), values[index]);
+
+        BlockParser.CollectViewPlanes(chunk, state);
+
+        var plane = Assert.Contains(500u, state.ViewPlanes);
+        Assert.Equal([10, -2, 6], plane.Origin);
+        Assert.Equal([0, 0, verticalZ], plane.Vert);
+    }
+
     private static Element SectionView(int id, double[] origin)
     {
         return new Element

@@ -12,10 +12,14 @@ internal static class CompactUniverse
         => !element.IsBlockOnly && !(elemTableIsExact && element.IsDiscovered);
 
     /// <summary>The table rows of <paramref name="info"/> ordered by ElementId; elements with the same id keep their order.</summary>
-    internal static List<Element> Select(RevitFileInfo info)
+    internal static List<Element> Select(RevitFileInfo info) =>
+        Enumerate(info).OrderBy(element => element.Id).ToList();
+
+    /// <summary>The table rows in their original model order.</summary>
+    internal static IEnumerable<Element> Enumerate(RevitFileInfo info)
     {
         ArgumentNullException.ThrowIfNull(info);
         bool exact = info.ElemTableIsExact;
-        return info.Elements.Where(element => IsTableRow(element, exact)).OrderBy(element => element.Id).ToList();
+        return info.Elements.Where(element => IsTableRow(element, exact));
     }
 }

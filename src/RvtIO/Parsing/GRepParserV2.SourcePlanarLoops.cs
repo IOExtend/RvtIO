@@ -10,10 +10,18 @@ internal static partial class GRepParserV2
     {
         var topology = TfBlockDeserializer.SelectOwnGElementLoopTopology(graph, out failure);
         if (topology == null) return null;
-        var winding = TfBlockDeserializer.SelectOwnGElementEpsIndependentSamples(graph, out failure);
-        if (winding == null) return null;
+        // A face's sole closed loop takes the single-loop-outer branch before either EPS test.
+        bool onlySingleLoops = topology.Faces.All(face => face.Loops.Count == 0
+            || face.Loops.Count == 1 && face.Loops[0].FaceQueueIndex == face.FaceQueueIndex
+            && face.Loops[0].GetOuterLoopsCandidate);
+        Dictionary<(int Face, int Loop), TfBlockDeserializer.GElementEpsIndependentLoop>? decisions = null;
+        if (!onlySingleLoops)
+        {
+            var winding = TfBlockDeserializer.SelectOwnGElementEpsIndependentSamples(graph, out failure);
+            if (winding == null) return null;
+            decisions = winding.Loops.ToDictionary(l => (l.FaceQueueIndex, l.LoopQueueIndex));
+        }
         var nodes = graph.Nodes.ToDictionary(n => n.QueueIndex);
-        var decisions = winding.Loops.ToDictionary(l => (l.FaceQueueIndex, l.LoopQueueIndex));
         var result = new Dictionary<int, List<GRepFace>>();
         foreach (var face in topology.Faces)
         {
@@ -27,10 +35,15 @@ internal static partial class GRepParserV2
             foreach (var loop in face.Loops)
             {
                 failure = $"source-planar-loop:{face.FaceQueueIndex}:{loop.QueueIndex}";
+                bool outer = true;
                 if (loop.FaceQueueIndex != face.FaceQueueIndex
-                    || loop.ClassId is not (1254 or 1257) || !loop.GetOuterLoopsCandidate
-                    || !decisions.TryGetValue((face.FaceQueueIndex, loop.QueueIndex), out var decision)
-                    || decision.IndependentShouldBeCcw is not bool outer) return null;
+                    || loop.ClassId is not (1254 or 1257) || !loop.GetOuterLoopsCandidate) return null;
+                if (decisions != null)
+                {
+                    if (!decisions.TryGetValue((face.FaceQueueIndex, loop.QueueIndex), out var decision)
+                        || decision.IndependentShouldBeCcw is not bool isOuter) return null;
+                    outer = isOuter;
+                }
                 var vertices = TfBlockDeserializer.SelectSourceTwoPointPolygonVertices(loop, out string? why);
                 if (vertices == null) { failure += ":" + why; return null; }
                 var ring = new List<double[]>();
@@ -49,6 +62,7 @@ internal static partial class GRepParserV2
             var regions = ClassifyCoplanarRings(rings, exactPredicates: true);
             if (regions.Count + regions.Sum(r => r.Holes.Count) != rings.Count
                 || regions.Any(r => !outerByRing[r.Outer] || r.Holes.Any(h => outerByRing[h]))) return null;
+            if (!TfBlockDeserializer.TryReadSourcePlaneBasis(plane, out var basis)) return null;
             var faces = new List<GRepFace>();
             var sourceLoops = rings.Select(WorldRing).ToList();
             if (sourceLoops.Any(loop => loop == null)) return null;
@@ -67,13 +81,11 @@ internal static partial class GRepParserV2
 
             List<double[]>? WorldRing(List<double[]> ring)
             {
-                var world = new List<double[]>();
+                var world = new List<double[]>(ring.Count);
                 foreach (var uv in ring)
                 {
-                    var bits = TfBlockDeserializer.EvaluateSourceOwnPlanePoint(plane,
-                        [BitConverter.DoubleToInt64Bits(uv[0]), BitConverter.DoubleToInt64Bits(uv[1])], out _);
-                    if (bits == null) return null;
-                    world.Add(bits.Select(BitConverter.Int64BitsToDouble).ToArray());
+                    if (!basis.TryEvaluate(uv[0], uv[1], out var point)) return null;
+                    world.Add(point.ToArray());
                 }
                 return world;
             }

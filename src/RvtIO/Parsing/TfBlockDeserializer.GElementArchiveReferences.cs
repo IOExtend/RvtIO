@@ -17,6 +17,14 @@ internal static partial class TfBlockDeserializer
     internal static OwnGElementFreshArchiveReferences? SelectOwnGElementFreshArchiveReferences(
         OwnGElementGeometryGraph graph, out string? failure)
     {
+        var analysis = AnalyzeGElement(graph).Archive.Value;
+        failure = analysis.Failure;
+        return analysis.Value;
+    }
+
+    private static OwnGElementFreshArchiveReferences? ReadOwnGElementFreshArchiveReferences(
+        OwnGElementGeometryGraph graph, out string? failure)
+    {
         failure = "archive-reference-graph";
         if (graph.OwnerId <= 0 || !HasGElementGraphSchemas()) return null;
         var roots = graph.Nodes.Where(n => n.QueueIndex == -1).ToArray();
@@ -35,24 +43,29 @@ internal static partial class TfBlockDeserializer
             registrations.Add(registration);
         }
         var links = new List<GElementArchiveReference>();
-        string context = "archive-reference-field";
+        int contextSource = 0;
+        GElementGraphField? contextField = null;
         try
         {
             foreach (var node in graph.Nodes) Walk(node.QueueIndex, node.Fields);
             failure = null;
             return new(graph.OwnerId, 1, 2, registrations, links, links.All(l => l.Outcome != "missing-key"));
         }
-        catch (DecodeFail) { failure = context; return null; }
+        catch (DecodeFail)
+        {
+            failure = contextField == null ? "archive-reference-field"
+                : $"archive-reference-field:{contextSource}:{contextField.Declaring}:{contextField.Name}";
+            return null;
+        }
 
         void Walk(int source, IReadOnlyList<GElementGraphField> fields)
         {
             foreach (var field in fields)
             {
-                context = $"archive-reference-field:{source}:{field.Declaring}:{field.Name}";
-                if (!GElementGraphSchemas.TryGetValue((ushort)field.Declaring, out var schema)) throw Fail;
-                var descriptors = schema.Fields.Where(f => f.Name == field.Name).ToArray();
-                if (descriptors.Length != 1) throw Fail;
-                var descriptor = descriptors[0];
+                contextSource = source;
+                contextField = field;
+                if (!GElementGraphFieldDescriptors.TryGetValue(((ushort)field.Declaring, field.Name), out var descriptor))
+                    throw Fail;
                 for (int i = 0; i < field.Items.Count; i++)
                 {
                     var item = field.Items[i];

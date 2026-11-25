@@ -1,20 +1,17 @@
 namespace RvtIO.Internal;
 
-internal record BipEntry(int BipId, string? BipName, int FieldType, int? Value);
+internal readonly record struct BipEntry(int BipId, string? BipName, int FieldType, int? Value);
 
 internal record ElementRecord
 {
     public uint ElemId { get; set; }
-    public byte[] Body { get; set; } = Array.Empty<byte>();
+    public ReadOnlyMemory<byte> Body { get; set; }
     public List<uint> References { get; set; } = new();
     public List<BipEntry> BipParams { get; set; } = new();
     public double[]? Geometry { get; set; }
     public int? CategoryId { get; set; }
     public ushort Subclass { get; set; }
-    public HashSet<int> WritableParamIds { get; set; } = new();
-
-    /// <summary>All schema entry values (int32) in order. Index = field position in class hierarchy.</summary>
-    public List<int> EntryValues { get; set; } = new();
+    public HashSet<int>? WritableParamIds { get; set; }
 }
 
 internal record BaseElementFields

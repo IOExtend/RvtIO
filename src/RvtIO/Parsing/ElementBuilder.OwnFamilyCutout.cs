@@ -5,9 +5,13 @@ namespace RvtIO.Parsing;
 
 internal static partial class ElementBuilder
 {
-    internal static void ApplyOwnFamilyCutoutInputs(IReadOnlyList<Element> elements, ParsingState state)
+    internal static void ApplyOwnFamilyCutoutInputs(IReadOnlyList<Element> elements, ParsingState state,
+        IReadOnlyDictionary<int, Element>? unique = null)
     {
-        var counts = elements.GroupBy(element => element.Id).ToDictionary(group => group.Key, group => group.Count());
+        var counts = unique == null
+            ? elements.GroupBy(element => element.Id).ToDictionary(group => group.Key, group => group.Count())
+            : null;
+        bool IsUnique(int id) => unique?.ContainsKey(id) ?? counts!.GetValueOrDefault(id) == 1;
         foreach (var element in elements)
         {
             element.OwnSingleFamilyCutout = null;
@@ -17,7 +21,7 @@ internal static partial class ElementBuilder
             element.OwnWallTrimmedAxis = null;
             element.OwnWallCrossSection = null;
             element.OwnWallHelper = null;
-            if (element.Id <= 0 || counts[element.Id] != 1
+            if (element.Id <= 0 || !IsUnique(element.Id)
                 || !state.ComputedSymbolTargetClasses.TryGetValue((uint)element.Id, out var root)
                 || root.BlockCount != 1) continue;
             if (root.ClassId is 3524 or 361
@@ -43,7 +47,7 @@ internal static partial class ElementBuilder
                     HostId: > 0, InsertOrientation: 0 } source }
                 || source.HostId != element.SerializedHostId
                 || source.SymbolId != symbolId || !IsUniqueRoot(symbolId, 1829)
-                || !counts.TryGetValue(symbolId, out int symbolCount) || symbolCount != 1
+                || !IsUnique(symbolId)
                 || !state.OwnFamilyCutSymbols.TryGetValue((uint)symbolId, out var computed)
                 || computed is not { BlockCount: 1, Symbol: { Active: true }, Loops.Count: 1 }
                 || !state.FamilyInstanceSymbolIds.TryGetValue((uint)element.Id, out var type)

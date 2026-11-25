@@ -42,6 +42,24 @@ public class SourcePlanarFaceRegionTests
         Assert.Equal(new double[] { 0, 0, 0 }, face.Vertices[0]);
     }
 
+    [Fact]
+    public void SingleOwnLoopAgreesWithBothEpsBranches()
+    {
+        var graph = F.Replace(Graph(), 1, F.Owned(1255, "m_nextLoop", null));
+        var winding = SelectOwnGElementEpsIndependentSamples(graph, out var windingFailure);
+        Assert.Null(windingFailure);
+        Assert.True(Assert.Single(winding!.Loops).IndependentShouldBeCcw);
+
+        var regions = GRepParserV2.SelectOwnPlanarFaceRegions(graph, out var failure);
+
+        Assert.Null(failure);
+        var face = Assert.Single(regions![0]);
+        Assert.Null(face.InnerVertices);
+        Assert.Equal(4, face.Vertices!.Count);
+        Assert.Equal(face.Vertices, Assert.Single(face.SourceLoops!));
+        Assert.NotSame(face.Vertices[0], face.SourceLoops![0][0]);
+    }
+
     [Theory]
     [InlineData("missing-surface")] [InlineData("curved-surface")]
     [InlineData("open")] [InlineData("wrong-sentinel")] [InlineData("zero-world-area")]

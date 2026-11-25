@@ -1,3 +1,7 @@
+using System.Globalization;
+using System.Numerics;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 using System.Text;
 using RvtIO.Internal;
 using RvtIO.Lookup;
@@ -12,29 +16,67 @@ internal static class BlockParser
 
     /// <summary>A GRep block collected for decoding after the walk of one or several chunks.</summary>
     internal readonly record struct PendingGRep(byte[] Chunk, uint Eid, int Start, uint Size, bool IsFamilyCut);
+    internal readonly record struct GRepRange(byte[] Chunk, int Start, uint Size);
 
-    /// <summary>Decodes the collected GRep blocks and applies them in collection order (the merge rules depend on
-    /// arrival order).</summary>
-    internal static void ApplyPendingGReps(ParsingState state, List<PendingGRep> pending)
+    internal const int PendingGRepBatchSize = 8192;
+
+    internal static void SkipRepeatedFirstGReps(List<PendingGRep> firstPass, List<PendingGRep> secondPass)
     {
-        if (pending.Count == 0) return;
-        DecodeGRepBlocksInOrder(pending.Count,
-            index =>
-            {
-                var job = pending[index];
-                return GRepParserV2.Parse(job.Chunk, job.Start, job.Size);
-            },
-            (index, geometry) => ApplyPendingGRep(state, pending[index], geometry));
+        var soleBlockByOwner = new Dictionary<uint, PendingGRep>();
+        foreach (var job in firstPass)
+            if (!job.IsFamilyCut && !soleBlockByOwner.TryAdd(job.Eid, job))
+                soleBlockByOwner[job.Eid] = default;
+
+        // Reapplying an owner's sole block is idempotent before any other block for that
+        // owner. Keep all later candidates, since their merge can depend on arrival order.
+        secondPass.RemoveAll(job => !job.IsFamilyCut
+            && soleBlockByOwner.Remove(job.Eid, out var first) && job == first);
     }
 
-    /// <summary>Applies one decoded block of a pass: a family cutter is kept when it is the first authored one of its
-    /// element, any other block is merged into the element's geometry.</summary>
+    /// <summary>Decodes the collected GRep blocks in parallel and applies them in collection order (the merge
+    /// rules depend on arrival order).</summary>
+    internal static void ApplyPendingGReps(ParsingState state, List<PendingGRep> pending, HashSet<GRepRange>? unreadable = null)
+    {
+        if (pending.Count == 0) return;
+        if (OperatingSystem.IsBrowser())
+        {
+            foreach (var job in pending)
+            {
+                var geometry = GRepParserV2.Parse(job.Chunk, job.Start, job.Size);
+                if (geometry == null) unreadable?.Add(new(job.Chunk, job.Start, job.Size));
+                ApplyPendingGRep(state, job, geometry);
+            }
+            return;
+        }
+        var decoded = new GRepData?[Math.Min(pending.Count, PendingGRepBatchSize)];
+        int offset = 0;
+        while (offset < pending.Count)
+        {
+            int count = Math.Min(decoded.Length, pending.Count - offset);
+            Parallel.For(0, count, index =>
+            {
+                var job = pending[offset + index];
+                if (unreadable?.Contains(new GRepRange(job.Chunk, job.Start, job.Size)) != true)
+                    decoded[index] = GRepParserV2.Parse(job.Chunk, job.Start, job.Size);
+            });
+            for (int index = 0; index < count; index++)
+            {
+                var job = pending[offset + index];
+                var geometry = decoded[index];
+                decoded[index] = null;
+                if (geometry == null) unreadable?.Add(new GRepRange(job.Chunk, job.Start, job.Size));
+                ApplyPendingGRep(state, job, geometry);
+            }
+            offset += count;
+        }
+    }
+
     internal static void ApplyPendingGRep(ParsingState state, PendingGRep job, GRepData? geometry)
     {
         if (job.IsFamilyCut)
         {
-            if (!state.FamilyCutGreps.ContainsKey(job.Eid)
-                && geometry is { } familyCut && IsAuthoredFamilyComplexCutter(familyCut))
+            if (geometry is { } familyCut && !state.FamilyCutGreps.ContainsKey(job.Eid)
+                && IsAuthoredFamilyComplexCutter(familyCut))
                 state.FamilyCutGreps[job.Eid] = familyCut;
         }
         else ApplyGRepBlock(state, job.Eid, geometry);
@@ -162,7 +204,7 @@ internal static class BlockParser
         uint classKey = classIdx & 0xFFFF;
         // classKey=0 is never a valid class - these are false positives from scanner misalignment
         if (classKey == 0) return false;
-        if (ElementIdEncoding.IsSupported(eid))
+        if (state.CollectBlockClassInventory && ElementIdEncoding.IsSupported(eid))
         {
             if (!state.BlockClassInventory.TryGetValue(classKey, out var bcs))
                 state.BlockClassInventory[classKey] = bcs = new BlockClassStats();
@@ -246,8 +288,6 @@ internal static class BlockParser
         if (state.AllKnownIds.Contains(eid))
         {
             ExtractBlockStrings(chunk, dataStart, dataEnd, eid, state.ElemStrings);
-
-            ExtractBlockDoubles(chunk, dataStart, dataEnd, eid, state.ElemDoubles);
 
             // Blocks with high classIdx word = 0xFFFF contain BIP key->double pairs at stride 12
             if ((classIdx >> 16) == 0xFFFF)
@@ -546,41 +586,79 @@ internal static class BlockParser
         return false;
     }
 
+    private const int MaxBlockStrings = 20;
+    private const int MaxBlockStringLength = 500;
+
     public static void ExtractBlockStrings(byte[] d, int start, int end, uint eid, Dictionary<uint, List<string>> elemStrings)
     {
-        for (int j = start; j + 6 <= end; j++)
+        elemStrings.TryGetValue(eid, out var strings);
+        if (strings?.Count >= MaxBlockStrings || end - start < 8) return;
+        Span<char> chars = stackalloc char[MaxBlockStringLength];
+        int position = start, limit = end - 7;
+        if (start >= 0 && end <= d.Length && BitConverter.IsLittleEndian && Vector256.IsHardwareAccelerated)
         {
-            uint sLen = BitConverter.ToUInt32(d, j);
-            if (sLen < 2 || sLen > 500 || j + 4 + sLen * 2 > end) continue;
-
-            bool valid = true;
-            int printable = 0;
-            for (int k = 0; k < (int)sLen && valid; k++)
+            ref byte data = ref MemoryMarshal.GetArrayDataReference(d);
+            int width = Vector256<byte>.Count;
+            for (; position <= limit - width; position += width)
             {
-                byte lo = d[j + 4 + k * 2], hi = d[j + 4 + k * 2 + 1];
-                // Accept: ASCII (hi=0x00), Cyrillic (hi=0x04), known Deflate64 artifacts (hi=0xF7/0x1B),
-                // or any hi when lo is printable ASCII (handles Deflate64 hi-byte corruption in Cyrillic+ASCII strings)
-                if (hi != 0x00 && hi != 0x04 && hi != 0xF7 && hi != 0x1B && (lo < 0x20 || lo > 0x7E))
-                { valid = false; break; }
-                char c = DecodeUtf16Char(lo, hi);
-                if (c < 0x20 && c != '\t' && c != '\n' && c != '\r') { valid = false; break; }
-                if (char.IsLetterOrDigit(c) || char.IsPunctuation(c) || char.IsSymbol(c)) printable++;
+                // The 32-bit length is 2..500. Skip bytes that cannot start that length.
+                var low = Vector256.LoadUnsafe(ref data, (nuint)position);
+                var second = Vector256.LoadUnsafe(ref data, (nuint)(position + 1));
+                var high = Vector256.LoadUnsafe(ref data, (nuint)(position + 2))
+                    | Vector256.LoadUnsafe(ref data, (nuint)(position + 3));
+                var shortLengths = Vector256.Equals(second, Vector256<byte>.Zero)
+                    & Vector256.GreaterThan(low, Vector256.Create((byte)1));
+                var longLengths = Vector256.Equals(second, Vector256.Create((byte)1))
+                    & Vector256.LessThanOrEqual(low, Vector256.Create((byte)(MaxBlockStringLength - 256)));
+                uint candidates = ((shortLengths | longLengths) & Vector256.Equals(high, Vector256<byte>.Zero))
+                    .ExtractMostSignificantBits();
+                while (candidates != 0)
+                {
+                    int offset = position + BitOperations.TrailingZeroCount(candidates);
+                    int length = BlockStringLength(d, offset, end);
+                    if (length != 0 && AppendBlockString(d, offset + 4, length, eid, elemStrings, chars, ref strings)) return;
+                    candidates &= candidates - 1;
+                }
             }
-            if (!valid || printable < sLen * 0.6) continue;
-
-            var sb = new StringBuilder();
-            for (int k = 0; k < (int)sLen; k++)
-            {
-                char c = DecodeUtf16Char(d[j + 4 + k * 2], d[j + 4 + k * 2 + 1]);
-                if (c < 0x20 && c != '\t' && c != '\n' && c != '\r') { sb.Clear(); break; }
-                sb.Append(c);
-            }
-            string str = sb.ToString().Trim();
-            if (str.Length < 2) continue;
-            if (!elemStrings.ContainsKey(eid)) elemStrings[eid] = new List<string>();
-            if (!elemStrings[eid].Contains(str) && elemStrings[eid].Count < 20)
-                elemStrings[eid].Add(str);
         }
+        for (; position < limit; position++)
+        {
+            int length = BlockStringLength(d, position, end);
+            if (length != 0 && AppendBlockString(d, position + 4, length, eid, elemStrings, chars, ref strings)) return;
+        }
+    }
+
+    private static int BlockStringLength(byte[] data, int offset, int end)
+    {
+        uint length = BitConverter.ToUInt32(data, offset);
+        return length >= 2 && length <= MaxBlockStringLength && offset + 4 + length * 2 <= end ? (int)length : 0;
+    }
+
+    private static bool AppendBlockString(byte[] data, int payload, int length, uint eid,
+        Dictionary<uint, List<string>> elemStrings, Span<char> chars, ref List<string>? strings)
+    {
+        int printable = 0;
+        for (int index = 0; index < length; index++)
+        {
+            byte lo = data[payload + index * 2], hi = data[payload + index * 2 + 1];
+            // A damaged high byte can still carry printable ASCII.
+            if (hi != 0x00 && hi != 0x04 && hi != 0xF7 && hi != 0x1B && (lo < 0x20 || lo > 0x7E)) return false;
+            char c = DecodeUtf16Char(lo, hi);
+            if (c < 0x20 && c != '\t' && c != '\n' && c != '\r') return false;
+            chars[index] = c;
+            UnicodeCategory category = char.GetUnicodeCategory(c);
+            if (category is <= UnicodeCategory.OtherLetter or UnicodeCategory.DecimalDigitNumber
+                or >= UnicodeCategory.ConnectorPunctuation and <= UnicodeCategory.OtherSymbol) printable++;
+        }
+        if (printable < length * 0.6) return false;
+
+        ReadOnlySpan<char> value = chars[..length].Trim();
+        if (value.Length < 2) return false;
+        if (strings == null) elemStrings[eid] = strings = new List<string>();
+        foreach (string previous in strings)
+            if (value.SequenceEqual(previous.AsSpan())) return false;
+        strings.Add(value.ToString());
+        return strings.Count == MaxBlockStrings;
     }
 
     /// <summary>
@@ -591,9 +669,8 @@ internal static class BlockParser
     private static void ExtractInsertSillFrom0702Block(byte[] d, int start, int end, uint eid,
         Dictionary<uint, Dictionary<int, double>> elemBipDoubles)
     {
-        for (int i = start; i + 30 <= end; i++)
+        for (int i = start; (i = FindParamSentinel(d, i, end - 30)) >= 0; i++)
         {
-            if (d[i] != 0xFF || d[i + 1] != 0xFF || d[i + 2] != 0xFF || d[i + 3] != 0xFF) continue;
             if (d[i + 4] != 0xBE || d[i + 5] != 0x08) continue;
             if (d[i + 6] != 0 || d[i + 7] != 0 || d[i + 8] != 0 || d[i + 9] != 0) continue;
             double sill = BitConverter.ToDouble(d, i + 10);
@@ -755,13 +832,13 @@ internal static class BlockParser
         // Use 2-byte alignment (variable-length fields can cause misalignment).
         int lastStart = end - TRF_BYTES - 4;
         lastStart -= (lastStart - start) % 2;
+        Span<double> trf = stackalloc double[12];
         for (int i = lastStart; i >= start; i -= 2)
         {
             // Quick pre-check: first double of Col0 should be a reasonable rotation value [-1..1]
             double r00 = BitConverter.ToDouble(d, i);
             if (double.IsNaN(r00) || Math.Abs(r00) > 1.01) continue;
 
-            var trf = new double[12];
             trf[0] = r00;
             bool valid = true;
             for (int k = 1; k < 12; k++)
@@ -792,7 +869,7 @@ internal static class BlockParser
             // Layout A (column-major 3x4): SymbolId is int32 right after 12 doubles (96 bytes)
             // Layout B (row-major 4x4): 4th row [0,0,0,1] after 12 doubles, then SymbolId after 16 doubles (128 bytes)
             int symbolId = -1;
-            double[] finalTrf = trf;
+            bool rowMajor = false;
 
             // Check Layout B first: see if doubles 12-15 are [0, 0, 0, 1]
             if (i + 128 + 4 <= end)
@@ -803,18 +880,12 @@ internal static class BlockParser
                 double r33 = BitConverter.ToDouble(d, i + 120);
                 if (Math.Abs(r30) < 1e-10 && Math.Abs(r31) < 1e-10 && Math.Abs(r32) < 1e-10 && Math.Abs(r33 - 1.0) < 1e-10)
                 {
-                    // Row-major 4x4: [r00,r01,r02,tx, r10,r11,r12,ty, r20,r21,r22,tz, 0,0,0,1]
-                    // Convert to column-major 3x4: [r00,r10,r20, r01,r11,r21, r02,r12,r22, tx,ty,tz]
-                    finalTrf = new double[]
-                    {
-                        trf[0], trf[4], trf[8],   // Col0
-                        trf[1], trf[5], trf[9],   // Col1
-                        trf[2], trf[6], trf[10],  // Col2
-                        trf[3], trf[7], trf[11],  // Translation
-                    };
                     int sid = BitConverter.ToInt32(d, i + 128);
                     if (sid > 0)
+                    {
                         symbolId = sid;
+                        rowMajor = true;
+                    }
                 }
             }
 
@@ -822,10 +893,7 @@ internal static class BlockParser
             {
                 int sid = BitConverter.ToInt32(d, i + TRF_BYTES);
                 if (sid > 0)
-                {
                     symbolId = sid;
-                    finalTrf = trf;
-                }
             }
 
             if (symbolId <= 0) continue;
@@ -841,7 +909,11 @@ internal static class BlockParser
 
             familyInstanceTransforms[eid] = new FamilyInstanceData
             {
-                Trf = finalTrf,
+                // Convert row-major 4x4 to column-major 3x4 only for the accepted candidate.
+                Trf = rowMajor
+                    ? [trf[0], trf[4], trf[8], trf[1], trf[5], trf[9],
+                        trf[2], trf[6], trf[10], trf[3], trf[7], trf[11]]
+                    : trf.ToArray(),
                 SymbolId = symbolId,
             };
             return;
@@ -990,9 +1062,8 @@ internal static class BlockParser
     private static void ExtractFamilySymbolDoubles(byte[] d, int start, int end, uint eid,
         Dictionary<uint, Dictionary<uint, double>> resultByEid)
     {
-        for (int i = start; i + 8 <= end; i++)
+        for (int i = start; (i = FindParamSentinel(d, i, end - 8)) >= 0; i++)
         {
-            if (d[i] != 0xFF || d[i+1] != 0xFF || d[i+2] != 0xFF || d[i+3] != 0xFF) continue;
             uint paramKey = BitConverter.ToUInt32(d, i + 4);
             // Plausible project param def ID range
             if (paramKey < 200 || paramKey > int.MaxValue) continue;
@@ -1004,8 +1075,6 @@ internal static class BlockParser
             double ad = Math.Abs(dv);
             if (ad != 0 && (ad < 1e-12 || ad > 1e9)) continue;
             // Skip values that look like packed int data - high u32 must be a reasonable double sign/exponent
-            uint hi = BitConverter.ToUInt32(d, i - 4);
-            // Reject if hi bytes look like an unrelated int (e.g. another element id)
             if (ad == 0)
             {
                 // For zero values, require explicit "all zeros" preceding 8 bytes
@@ -1017,7 +1086,7 @@ internal static class BlockParser
             if (!resultByEid.TryGetValue(eid, out var map))
                 resultByEid[eid] = map = new Dictionary<uint, double>();
             // Prefer first occurrence per (eid, paramKey)
-            if (!map.ContainsKey(paramKey)) map[paramKey] = dv;
+            map.TryAdd(paramKey, dv);
         }
     }
 
@@ -1033,9 +1102,7 @@ internal static class BlockParser
         // a project elem-id, preceded by >=8 zero bytes and followed by >=12 zero bytes + FFFFFFFF.
         for (int i = start + 8; i + 24 <= end; i += 2)
         {
-            bool zerosBefore = true;
-            for (int z = 1; z <= 8; z++) if (d[i - z] != 0) { zerosBefore = false; break; }
-            if (!zerosBefore) continue;
+            if (BitConverter.ToUInt64(d, i - 8) != 0) continue;
 
             int v1 = BitConverter.ToInt32(d, i);
             int v2 = BitConverter.ToInt32(d, i + 4);
@@ -1043,20 +1110,12 @@ internal static class BlockParser
             if (v2 < 200) continue;
             if (v2 < 100_000) continue;
 
-            bool zerosAfter = true;
-            for (int z = 8; z < 16; z++) if (d[i + z] != 0) { zerosAfter = false; break; }
-            if (!zerosAfter) continue;
-            bool foundSentinel = false;
-            for (int z = 16; z < 28 && i + z + 4 <= end; z++)
-            {
-                if (d[i + z] == 0xFF && d[i + z + 1] == 0xFF && d[i + z + 2] == 0xFF && d[i + z + 3] == 0xFF)
-                { foundSentinel = true; break; }
-            }
-            if (!foundSentinel) continue;
+            if (BitConverter.ToUInt64(d, i + 8) != 0
+                || FindParamSentinel(d, i + 16, Math.Min(i + 27, end - 4)) < 0) continue;
 
             if (!resultByEid.TryGetValue(eid, out var map))
                 resultByEid[eid] = map = new Dictionary<int, int>();
-            if (!map.ContainsKey(v2)) map[v2] = v1;
+            map.TryAdd(v2, v1);
         }
     }
 
@@ -1067,9 +1126,8 @@ internal static class BlockParser
     private static void ExtractFamilySymbolInts(byte[] d, int start, int end, uint eid,
         Dictionary<uint, Dictionary<int, int>> resultByEid)
     {
-        for (int i = start; i + 18 <= end; i++)
+        for (int i = start; (i = FindParamSentinel(d, i, end - 18)) >= 0; i++)
         {
-            if (d[i] != 0xFF || d[i+1] != 0xFF || d[i+2] != 0xFF || d[i+3] != 0xFF) continue;
             int paramKey = BitConverter.ToInt32(d, i + 4);
             // Require LARGER threshold than for strings/doubles to avoid matching the inner sentinel
             // of string entries (where i+4 is the "typeMarker" like 0x0EB6 = 3766).
@@ -1087,7 +1145,7 @@ internal static class BlockParser
 
             if (!resultByEid.TryGetValue(eid, out var map))
                 resultByEid[eid] = map = new Dictionary<int, int>();
-            if (!map.ContainsKey(paramKey)) map[paramKey] = value;
+            map.TryAdd(paramKey, value);
         }
     }
 
@@ -1100,9 +1158,8 @@ internal static class BlockParser
     private static void ExtractFamilySymbolStrings(byte[] d, int start, int end, uint eid,
         Dictionary<uint, Dictionary<int, string>> resultByEid)
     {
-        for (int i = start; i + 8 <= end; i++)
+        for (int i = start; (i = FindParamSentinel(d, i, end - 8)) >= 0; i++)
         {
-            if (d[i] != 0xFF || d[i+1] != 0xFF || d[i+2] != 0xFF || d[i+3] != 0xFF) continue;
             int paramKey = BitConverter.ToInt32(d, i + 4);
             // Plausible param key: positive user param or BIP (-1000000..-1200000 range)
             bool isPositive = paramKey > 200;
@@ -1111,12 +1168,7 @@ internal static class BlockParser
 
             // Walk back looking for the inner FFFFFFFF that separates the string from the outer
             // sentinel. Search within 30 bytes back (typical type-marker + zeros = 14 bytes).
-            int innerSentinel = -1;
-            for (int b = Math.Max(start, i - 30); b + 4 <= i; b++)
-            {
-                if (d[b] == 0xFF && d[b+1] == 0xFF && d[b+2] == 0xFF && d[b+3] == 0xFF)
-                { innerSentinel = b; break; }
-            }
+            int innerSentinel = FindParamSentinel(d, Math.Max(start, i - 30), i - 4);
             if (innerSentinel < 0) continue;
             int strEnd = innerSentinel;
             // Try slen values; require slen u32 at (strEnd - slen*2 - 4)
@@ -1145,7 +1197,7 @@ internal static class BlockParser
                 string s = sb.ToString();
                 if (!resultByEid.TryGetValue(eid, out var map))
                     resultByEid[eid] = map = new Dictionary<int, string>();
-                if (!map.ContainsKey(paramKey)) map[paramKey] = s;
+                map.TryAdd(paramKey, s);
                 break;
             }
         }
@@ -1172,9 +1224,8 @@ internal static class BlockParser
         var allEntries = new List<(int offset, int entryLen, uint binKey, ushort marker, ushort slen, string? str)>();
 
         int pos = start;
-        while (pos + 18 <= end)
+        while ((pos = FindParamSentinel(d, pos, end - 18)) >= 0)
         {
-            if (BitConverter.ToUInt32(d, pos) != 0xFFFFFFFF) { pos++; continue; }
             // Validate basic shape: 4 zeros at +8-11
             bool zerosOk = true;
             for (int z = 0; z < 4 && zerosOk; z++) if (d[pos + 8 + z] != 0) zerosOk = false;
@@ -1372,21 +1423,6 @@ internal static class BlockParser
         }
     }
 
-    public static void ExtractBlockDoubles(byte[] d, int start, int end, uint eid, Dictionary<uint, List<double>> elemDoubles)
-    {
-        for (int j = start; j + 8 <= end; j += 4)
-        {
-            double dv = BitConverter.ToDouble(d, j);
-            if (dv != 0 && !double.IsNaN(dv) && !double.IsInfinity(dv)
-                && Math.Abs(dv) < 1e12 && Math.Abs(dv) > 1e-20)
-            {
-                if (!elemDoubles.ContainsKey(eid)) elemDoubles[eid] = new List<double>();
-                if (!elemDoubles[eid].Contains(dv) && elemDoubles[eid].Count < 30)
-                    elemDoubles[eid].Add(dv);
-            }
-        }
-    }
-
     // 0x702 block: user param values (strings + doubles)
     // Mixed entry types, all preceded by [FF FF FF FF:4][paramDefId:4]:
     //   String: [FF FF FF FF:4][paramDefId:4][zeros:6][slen:2][zeros:2][string:slen*2 UTF-16LE]
@@ -1402,9 +1438,8 @@ internal static class BlockParser
         // The 8 bytes just BEFORE an entry's sentinel are the trailing double value for THAT
         // entry (slen=0 case). I.e. the entry's "tail" doubles are stored at the boundary
         // overlapping with the previous entry's padding.
-        for (int i = start; i + 18 <= end; i++)
+        for (int i = start; (i = FindParamSentinel(d, i, end - 18)) >= 0; i++)
         {
-            if (BitConverter.ToUInt32(d, i) != 0xFFFFFFFF) continue;
             uint paramDefId = BitConverter.ToUInt32(d, i + 4);
             // Structural validation: paramKey followed by 6 zeros, then 2-byte slen, then padding.
             // (The 0x702 block does NOT carry the 0x725-style marker byte - these 6 bytes are zero.)
@@ -1454,6 +1489,13 @@ internal static class BlockParser
         }
     }
 
+    private static int FindParamSentinel(byte[] data, int start, int lastStart)
+    {
+        if (start > lastStart) return -1;
+        int offset = data.AsSpan(start, lastStart - start + 4).IndexOf((ReadOnlySpan<byte>)[0xFF, 0xFF, 0xFF, 0xFF]);
+        return offset < 0 ? -1 : start + offset;
+    }
+
     // Extract BIP ElementId values from 0x702 block's BIP section.
     // The BIP section precedes user param entries. It contains sentinel-delimited entries.
     // Key patterns:
@@ -1465,18 +1507,17 @@ internal static class BlockParser
         Dictionary<uint, ElementRecord> records)
     {
         if (!records.TryGetValue(eid, out var rec)) return;
-        var body = rec.Body;
-        int mp = -1;
-        for (int ii = 0; ii < body.Length - 1; ii++)
-            if (BitConverter.ToUInt16(body, ii) == 0x0548) { mp = ii; break; }
+        var body = rec.Body.Span;
+        ReadOnlySpan<byte> bodyMarker = BitConverter.IsLittleEndian ? [0x48, 0x05] : [0x05, 0x48];
+        int mp = body.IndexOf(bodyMarker);
         if (mp < 0) return;
 
         // Collect ElementId BIP keys from body entries (ft=4, negative key, ElementId storage type)
         var elementIdBips = new List<int>();
         for (int p = 2; p + 14 <= mp; p += 14)
         {
-            int k = BitConverter.ToInt32(body, p + 4);
-            ushort ft = BitConverter.ToUInt16(body, p + 8);
+            int k = BitConverter.ToInt32(body.Slice(p + 4));
+            ushort ft = BitConverter.ToUInt16(body.Slice(p + 8));
             if (ft != 4 || k >= -1 || k < -2_000_000) continue;
             if (!BipNames.Lookup.TryGetValue(k, out string? nm)) continue;
             if (BipHelpers.BipStorageType(nm) == StorageType.ElementId)
@@ -1484,26 +1525,24 @@ internal static class BlockParser
         }
         if (elementIdBips.Count == 0) return;
 
-        int blockLen = end - start;
         if (!elemBipInts.TryGetValue(eid, out var intDict))
             elemBipInts[eid] = intDict = new Dictionary<int, int>();
 
         // Extract sentinel values from BIP section (scan until long FF gap = ELEM_TYPE_PARAM)
         // Sentinel pattern: [FFFFFFFF+][value:4] -- the value after each FF run
         var sentinelValues = new List<(int val, bool inElemSet)>();
-        for (int i = 0; i < blockLen - 8; i++)
+        for (int i = start; (i = FindParamSentinel(d, i, end - 9)) >= 0; i++)
         {
-            if (BitConverter.ToUInt32(d, start + i) != 0xFFFFFFFF) continue;
             int ffEnd = i + 4;
-            while (ffEnd < blockLen && d[start + ffEnd] == 0xFF) ffEnd++;
-            if (ffEnd + 4 > blockLen) break;
-            uint val = BitConverter.ToUInt32(d, start + ffEnd);
+            while (ffEnd < end && d[ffEnd] == 0xFF) ffEnd++;
+            if (ffEnd + 4 > end) break;
+            uint val = BitConverter.ToUInt32(d, ffEnd);
 
             if (val > 0)
             {
                 int afterVal = ffEnd + 4;
                 int ffCount = 0;
-                while (afterVal + ffCount < blockLen && d[start + afterVal + ffCount] == 0xFF)
+                while (afterVal + ffCount < end && d[afterVal + ffCount] == 0xFF)
                     ffCount++;
                 if (ffCount >= 20 && elemSet.Contains(val))
                 {
@@ -2010,9 +2049,13 @@ internal static class BlockParser
     internal static void CollectShadingEntries(byte[] d,
         Dictionary<uint, Dictionary<(int Color, int Shininess), int>> entries)
     {
-        for (int j = 0; j + 28 <= d.Length; j++)
+        ReadOnlySpan<byte> signature = [0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 0, 0];
+        int lastStart = d.Length - 28;
+        for (int j = 0; j <= lastStart; j++)
         {
-            if (BitConverter.ToUInt32(d, j) != 0xFFFFFFFF || BitConverter.ToUInt32(d, j + 4) != 0) continue;
+            int next = d.AsSpan(j, lastStart - j + signature.Length).IndexOf(signature);
+            if (next < 0) break;
+            j += next;
             uint c = BitConverter.ToUInt32(d, j + 8);
             uint s = BitConverter.ToUInt32(d, j + 12);
             uint hid = BitConverter.ToUInt32(d, j + 16);
@@ -2066,39 +2109,13 @@ internal static class BlockParser
         }
     }
 
-    /// <summary>Scans the blocks of a chunk for image-symbol blocks (class 0x089A) and records the pixel size of each
-    /// image.</summary>
-    internal static void CollectImageSizes(byte[] chunk, ParsingState state)
-    {
-        int pos = 0;
-        while (pos + 16 <= chunk.Length)
-        {
-            uint eid = BitConverter.ToUInt32(chunk, pos);
-            int size = BitConverter.ToInt32(chunk, pos + 8);
-            uint classIdx = BitConverter.ToUInt32(chunk, pos + 12);
-            if (eid == 0 || eid > 50_000_000 || size <= 0 || size > MaxBlockSize || pos + 16 + size > chunk.Length)
-            {
-                pos++;
-                continue;
-            }
-            if ((classIdx & 0xFFFF) == 0x089A && size >= 0x88 && !state.ImageSizes.ContainsKey(eid))
-            {
-                int width = BitConverter.ToInt32(chunk, pos + 16 + 0x80);
-                int height = BitConverter.ToInt32(chunk, pos + 16 + 0x84);
-                if (width is > 0 and < 20000 && height is > 0 and < 20000)
-                    state.ImageSizes[eid] = (width, height);
-            }
-            pos += 16 + size;
-        }
-    }
-
     /// <summary>
     /// Scans the blocks of a chunk for the plane of a view: the schema stores m_horzDir (a horizontal unit vector), the
     /// view origin, the view scale, m_vertDir (a vertical unit vector) and m_viewDir (a horizontal unit vector) as
     /// thirteen consecutive doubles. The block walk of the project's own data does not always reach them, so they are
     /// found by signature and kept under the element id of the block.
     /// </summary>
-    internal static void CollectViewPlanes(byte[] chunk, ParsingState state)
+    internal static void CollectViewPlanes(byte[] chunk, ParsingState state, bool includeImages = false)
     {
         int pos = 0;
         while (pos + 16 <= chunk.Length)
@@ -2110,6 +2127,13 @@ internal static class BlockParser
             {
                 pos++;
                 continue;
+            }
+            if (includeImages && (classIdx & 0xFFFF) == 0x089A && size >= 0x88 && !state.ImageSizes.ContainsKey(eid))
+            {
+                int width = BitConverter.ToInt32(chunk, pos + 16 + 0x80);
+                int height = BitConverter.ToInt32(chunk, pos + 16 + 0x84);
+                if (width is > 0 and < 20000 && height is > 0 and < 20000)
+                    state.ImageSizes[eid] = (width, height);
             }
             // The view's own block (class 0x3F8) stores the plane as its origin, the view scale, the vertical and the
             // camera direction; the older signature below is kept for the blocks that store it as thirteen consecutive
@@ -2164,8 +2188,15 @@ internal static class BlockParser
 
     private static void TryFindViewPlane(byte[] d, int start, int end, uint eid, ParsingState state)
     {
-        for (int i = start; i + 13 * 8 <= end; i++)
+        // With |vx| and |vy| at most 0.01, the unit-length tolerance requires
+        // |vz| in [0.998, 1.001]. Its IEEE 754 exponent can only have these bytes.
+        int limit = end - 103;
+        for (int i = start; i < limit; i++)
         {
+            int next = d.AsSpan(i + 78, limit - i).IndexOfAny((byte)0xEF, (byte)0xF0);
+            if (next < 0) break;
+            i += next;
+            if ((d[i + 79] & 0x7F) != 0x3F) continue;
             double hx = BitConverter.ToDouble(d, i), hy = BitConverter.ToDouble(d, i + 8);
             double hz = BitConverter.ToDouble(d, i + 16);
             if (!double.IsFinite(hx) || !double.IsFinite(hy) || !double.IsFinite(hz)) continue;
@@ -2283,11 +2314,13 @@ internal static class BlockParser
     private static void ExtractViewName(byte[] d, int start, int end, uint eid,
         Dictionary<uint, string> names)
     {
-        for (int j = start; j + 30 <= end; j++)
+        ReadOnlySpan<byte> signature = [0xFF, 0xFF, 0xFF, 0xFF, 0xB5, 0x0B, 1, 0, 0, 0];
+        int lastStart = end - 30;
+        for (int j = start; j <= lastStart; j++)
         {
-            if (BitConverter.ToUInt32(d, j) != 0xFFFFFFFF) continue;
-            if (BitConverter.ToUInt16(d, j + 4) != 0x0BB5) continue;
-            if (BitConverter.ToUInt32(d, j + 6) != 1) continue;
+            int next = d.AsSpan(j, lastStart - j + signature.Length).IndexOf(signature);
+            if (next < 0) break;
+            j += next;
             if (BitConverter.ToUInt32(d, j + 14) != 0) continue;
             uint ln = BitConverter.ToUInt32(d, j + 18);
             if (ln < 1 || ln > 100 || j + 22 + (int)ln * 2 > end) return;
@@ -2383,8 +2416,14 @@ internal static class BlockParser
             if (ElementIdEncoding.IsSupported(eid))
             {
                 int ds = pos + 16, de = ds + (int)dataSize;
-                for (int j = ds; j + 10 <= de; j++)
+                int limit = de - 9;
+                for (int j = ds; j < limit; j++)
                 {
+                    // -1,200,000 through -1,000,000 have 0xED..0xF0 in byte two.
+                    int next = d.AsSpan(j + 2, limit - j).IndexOfAnyInRange((byte)0xED, (byte)0xF0);
+                    if (next < 0) break;
+                    j += next;
+                    if (d[j + 3] != 0xFF) continue;
                     int bip = BitConverter.ToInt32(d, j);
                     if (bip > -1_000_000 || bip < -1_200_000) continue;
                     uint ln = BitConverter.ToUInt32(d, j + 4);
@@ -2420,7 +2459,7 @@ internal static class BlockParser
     internal static void CollectLevelElevations(byte[] d, ParsingState state)
     {
         // marker: -0.0 followed by -1.0
-        byte[] mark = [0, 0, 0, 0, 0, 0, 0, 0x80, 0, 0, 0, 0, 0, 0, 0xF0, 0xBF];
+        ReadOnlySpan<byte> mark = [0, 0, 0, 0, 0, 0, 0, 0x80, 0, 0, 0, 0, 0, 0, 0xF0, 0xBF];
         int pos = 0;
         while (pos + 16 <= d.Length)
         {
@@ -2440,18 +2479,15 @@ internal static class BlockParser
             if (dataSize == 0) { pos++; continue; }
             if (pos + 16 + (int)dataSize > d.Length) break;
 
-            if (ElementIdEncoding.IsSupported(eid) && !state.LevelElevCandidates.ContainsKey(eid))
+            if (dataSize >= 24 && ElementIdEncoding.IsSupported(eid) && !state.LevelElevCandidates.ContainsKey(eid))
             {
-                int ds = pos + 16, de = ds + (int)dataSize;
-                for (int j = ds + 8; j + 16 <= de; j++)
+                int ds = pos + 16;
+                int marker = d.AsSpan(ds + 8, (int)dataSize - 8).IndexOf(mark);
+                if (marker >= 0)
                 {
-                    bool m = true;
-                    for (int k = 0; k < 16 && m; k++) if (d[j + k] != mark[k]) m = false;
-                    if (!m) continue;
-                    double elev = BitConverter.ToDouble(d, j - 8);
+                    double elev = BitConverter.ToDouble(d, ds + marker);
                     if (!double.IsNaN(elev) && Math.Abs(elev) < 1e5)
                         state.LevelElevCandidates[eid] = elev;
-                    break;
                 }
             }
             pos += 16 + (int)dataSize;
@@ -2470,13 +2506,20 @@ internal static class BlockParser
         Dictionary<uint, Dictionary<int, double>> hvac,
         Dictionary<uint, (int Power, int Occupancy, int Lighting)> schedules)
     {
-        for (int o = 0; o + 0xCF <= d.Length; o++)
+        if (d.Length < 0xCF) return;
+        // Both Kelvin values must have 0x40 as the high byte of the double.
+        int limit = d.Length - 0xCF + 1;
+        for (int o = 0; o < limit; o++)
         {
-            uint eid = BitConverter.ToUInt32(d, o + 0x24);
-            if (eid == 0 || !knownIds.Contains(eid) || hvac.ContainsKey(eid)) continue;
+            int next = d.AsSpan(o + 0x5E, limit - o).IndexOf((byte)0x40);
+            if (next < 0) break;
+            o += next;
+            if (d[o + 0xB6] != 0x40) continue;
             double cool = BitConverter.ToDouble(d, o + 0x57);
             double heat = BitConverter.ToDouble(d, o + 0xAF);
             if (!(cool > 250 && cool < 330 && heat > 250 && heat < 330)) continue;
+            uint eid = BitConverter.ToUInt32(d, o + 0x24);
+            if (eid == 0 || !knownIds.Contains(eid) || hvac.ContainsKey(eid)) continue;
             double ll = BitConverter.ToDouble(d, o + 0x47);
             double dh = BitConverter.ToDouble(d, o + 0xA7);
             if (double.IsNaN(ll) || ll < 0 || ll >= 1e4 || double.IsNaN(dh) || dh < 0 || dh > 1) continue;

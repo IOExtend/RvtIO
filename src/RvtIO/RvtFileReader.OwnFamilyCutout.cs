@@ -6,7 +6,7 @@ namespace RvtIO;
 public partial class RvtFileReader
 {
     internal static void RecordOwnFamilyCutoutInputs(ParsingState state, byte[] data,
-        int start, uint size, ushort classId, uint owner)
+        int start, uint size, ushort classId, uint owner, TfBlockDeserializer.WallCompleteInputRead? complete = null)
     {
         bool own = start >= 0 && start <= data.Length - 4 && BitConverter.ToUInt32(data, start) == owner;
         if (classId == 1772)
@@ -35,14 +35,15 @@ public partial class RvtFileReader
         }
         if (classId is 3524 or 361)
         {
+            if (own) complete ??= new(data, start, size, classId);
             state.OwnWallCutoutSteps[owner] = state.OwnWallCutoutSteps.TryGetValue(owner, out var old)
                 ? (old.BlockCount + 1, null, null, null)
                 : (1, own ? TfBlockDeserializer.ExtractOwnWallCutoutSteps(data, start, size, classId, out _) : null,
-                    own ? TfBlockDeserializer.ExtractOwnWallLocationLine(data, start, size, classId, out _) : null,
+                    own ? TfBlockDeserializer.ExtractOwnWallLocationLine(data, start, size, classId, out _, complete) : null,
                     own ? TfBlockDeserializer.ExtractOwnWallCrossSection(data, start, size, classId) : null);
             state.OwnWallHelpers[owner] = state.OwnWallHelpers.TryGetValue(owner, out var oldHelper)
                 ? (oldHelper.BlockCount + 1, null)
-                : (1, own ? TfBlockDeserializer.ExtractOwnWallHelperInput(data, start, size, classId) : null);
+                : (1, own ? TfBlockDeserializer.ExtractOwnWallHelperInput(data, start, size, classId, complete) : null);
             state.OwnWallSide0Ids.Remove(owner);
             state.OwnWallBaseFaces.Remove(owner);
             state.OwnCurrentWallRoots.Remove(owner);
@@ -51,7 +52,7 @@ public partial class RvtFileReader
                 && OwnPartitionParts.MatchesFrame(data, start, size, current.NodeSha256);
             if (currentRoot) state.OwnCurrentWallRoots.Add(owner);
             bool single = own && state.OwnWallCutoutSteps[owner].BlockCount == 1;
-            if ((currentRoot || single) && TfBlockDeserializer.ExtractOwnWallCompleteInputs(data, start, size, classId, out _) is { } input)
+            if ((currentRoot || single) && complete?.Read(out _) is { } input)
             {
                 if (currentRoot && state.OwnWallCutoutSteps[owner].Steps is { Count: > 0 }
                     && TfBlockDeserializer.SelectOwnWallSide0Id(input) is int sideId)

@@ -716,12 +716,12 @@ namespace RvtIO.Model
         /// these parameters of an element are listed, so a stored parameter with an empty text value is
         /// still "held" for a property that reads it by name.</summary>
         [JsonIgnore]
-        internal HashSet<int>? NativeStoredParameterIds { get; set; }
+        internal IReadOnlyCollection<int>? NativeStoredParameterIds { get; set; }
 
         /// <summary>Ids of the parameters stored in the element's four root parameter stores (double, integer,
         /// string, element id value sets); null when the element's native record was not decoded.
         /// <see cref="NativeParameterStoresComplete"/> tells whether every store of the record was read.</summary>
-        internal HashSet<int>? NativeParameterStoreIds { get; set; }
+        internal IReadOnlyCollection<int>? NativeParameterStoreIds { get; set; }
 
         internal bool NativeParameterStoresComplete { get; set; }
 
@@ -1144,7 +1144,7 @@ namespace RvtIO.Model
         public Parameter? LookupParameter(string name)
         {
             foreach (var p in Parameters)
-                if (p.Definition?.Name == name) return p;
+                if (p.DefinitionName == name) return p;
             return null;
         }
 
@@ -1155,7 +1155,7 @@ namespace RvtIO.Model
         {
             int bipId = (int)bip;
             foreach (var p in Parameters)
-                if (p.Definition?.Id == bipId) return p;
+                if (p.DefinitionId == bipId) return p;
             return null;
         }
 
@@ -1166,7 +1166,7 @@ namespace RvtIO.Model
         {
             var result = new List<Parameter>();
             foreach (var p in Parameters)
-                if (p.Definition?.Name == name) result.Add(p);
+                if (p.DefinitionName == name) result.Add(p);
             return result;
         }
 
@@ -1181,7 +1181,7 @@ namespace RvtIO.Model
             {
                 foreach (var p in Parameters)
                 {
-                    if (p.Definition?.Name is "ELEM_TYPE_PARAM" && p.Value is int id && id > 0)
+                    if (p.DefinitionName is "ELEM_TYPE_PARAM" && p.Value is int id && id > 0)
                         return id;
                 }
                 return -1;

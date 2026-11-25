@@ -37,7 +37,7 @@ internal static class ExactIfcStringParameterResolver
     {
         string cleanPropertyName = RemoveAsciiSpaces(propertyName);
         var candidates = element.Parameters.Where(parameter =>
-            parameter.Definition?.Name is string name
+            parameter.DefinitionName is string name
             && string.Equals(
                 RemoveAsciiSpaces(name), cleanPropertyName,
                 StringComparison.InvariantCultureIgnoreCase)).ToList();

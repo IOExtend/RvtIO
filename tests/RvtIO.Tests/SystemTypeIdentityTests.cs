@@ -18,6 +18,19 @@ public class SystemTypeIdentityTests
         Assert.Equal(500, TfBlockDeserializer.ExtractSystemOccurrenceTypeId(block, 0, Size(block), (ushort)classId));
     }
 
+    [Fact]
+    public void CompleteOwnRootKeepsTypeLinkWhenDeferredParameterStoreIsTruncated()
+    {
+        const ushort classId = 3524;
+        byte[] block = Block(classId, "truncated_store");
+        var parameters = TfBlockDeserializer.ExtractParams(block, 0, Size(block), classId);
+
+        Assert.NotNull(parameters);
+        Assert.False(parameters.RootParameterStoresComplete);
+        Assert.Equal(parameters.Fields["m_WallAttributesId"],
+            TfBlockDeserializer.ExtractSystemOccurrenceTypeId(block, 0, Size(block), classId));
+    }
+
     [Theory]
     [InlineData("footer")] [InlineData("size")] [InlineData("class")]
     [InlineData("owner")] [InlineData("zero_owner")] [InlineData("zero_type")]
@@ -275,6 +288,12 @@ public class SystemTypeIdentityTests
         {
             if (field.Declaring == 37 && field.Name == "m_docAccess") { writer.Write(1u); continue; }
             if (field.Declaring == 37 && field.Name == "m_id") { writer.Write(100); continue; }
+            if (mutation == "truncated_store" && field is { Declaring: 37, Name: "m_pParamValueSetDouble" })
+            {
+                writer.Write(uint.MaxValue);
+                writer.Write((ushort)0xB47);
+                continue;
+            }
             if (field.Name is "m_WallAttributesId" or "m_floorAttributesId" or "m_ceilingAttributesId")
             {
                 if (mutation == "truncated") break;
@@ -283,6 +302,7 @@ public class SystemTypeIdentityTests
             }
             WriteDefault(field);
         }
+        if (mutation == "truncated_store") writer.Write(1u);
         writer.Write(0u);
         byte[] block = stream.ToArray(); uint size = (uint)block.Length - 16;
         BitConverter.GetBytes(size).CopyTo(block, 8); BitConverter.GetBytes(size).CopyTo(block, block.Length - 4);

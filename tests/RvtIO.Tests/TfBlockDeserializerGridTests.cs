@@ -208,6 +208,22 @@ public class TfBlockDeserializerGridTests
     }
 
     [Fact]
+    public void TfWalkKeepsNativeParameterUpdatesInStreamOrder()
+    {
+        var (first, _) = CreateLevelBlock(10);
+        var (another, _) = CreateLevelBlock(20);
+        var (replacement, _) = CreateLevelBlock(30);
+        BitConverter.GetBytes(78u).CopyTo(another, 0);
+        var state = new ParsingState { Chunks = [[.. first, .. another, .. replacement]], AllKnownIds = [77, 78] };
+
+        RvtFileReader.RunTfStreamWalk(state);
+
+        Assert.Equal([77u, 78u], state.NativeParams.Keys.ToArray());
+        Assert.Equal(30.0, state.NativeParams[77].DoubleFields["__levelElevation"]);
+        Assert.Equal(20.0, state.NativeParams[78].DoubleFields["__levelElevation"]);
+    }
+
+    [Fact]
     public void SchemaDecodedGridDatum_IsAttachedAsTheAuthoritativeElementCurve()
     {
         var state = new ParsingState();

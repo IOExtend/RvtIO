@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text.Json;
 using RvtIO.Internal;
 using RvtIO.Model;
@@ -12,8 +11,7 @@ public class WallThermalFallbackProvenanceTests
     private static readonly int[] ThermalIds = [-1005430, -1005436, -1005435, -1005434, -1005431];
 
     private static void Enrich(RevitFileInfo info, ParsingState? state) =>
-        typeof(ElementBuilder).GetMethod("EnrichTypeLevelBips", BindingFlags.Static | BindingFlags.NonPublic)!
-            .Invoke(null, [info, state]);
+        ElementBuilder.EnrichTypeLevelBips(info, state, info.Elements.ToDictionary(element => element.Id));
 
     private static (RevitFileInfo Info, Element Wall) Model()
     {
@@ -21,6 +19,100 @@ public class WallThermalFallbackProvenanceTests
             Parameters = [new Parameter { Id = -1001000, Value = 0.375, StorageType = StorageType.Double }] };
         var material = new Element { Id = 20, CategoryId = -2000700 };
         return (new RevitFileInfo { Elements = [wall, material] }, wall);
+    }
+
+    [Fact]
+    public void EnrichUsesTheFirstParameterWhenTheSameIdOccursTwice()
+    {
+        var (info, wall) = Model();
+        var first = BipHelpers.MakeBipParam(-1005500, "STRUCTURAL_MATERIAL_PARAM", StorageType.ElementId, -1);
+        var second = BipHelpers.MakeBipParam(-1005500, "STRUCTURAL_MATERIAL_PARAM", StorageType.ElementId, -2);
+        wall.Parameters.AddRange([first, second]);
+
+        Enrich(info, new ParsingState());
+
+        Assert.Equal(20, first.Value);
+        Assert.Equal(-2, second.Value);
+        Assert.Equal([first, second], wall.Parameters.Where(parameter => parameter.Id == -1005500));
+    }
+
+    [Fact]
+    public void CommonDefaultsRetainStoredValuesAndAppendInRuleOrder()
+    {
+        var (info, wall) = Model();
+        var stored = BipHelpers.MakeBipParam(-1010104, "ALL_MODEL_URL", StorageType.String, "stored");
+        wall.Parameters.Add(stored);
+
+        Enrich(info, new ParsingState());
+
+        Assert.Same(stored, Assert.Single(wall.Parameters, parameter => parameter.Id == -1010104));
+        Assert.Equal("stored", stored.Value);
+        int first = wall.Parameters.FindIndex(parameter => parameter.Id == -1010103);
+        Assert.True(first >= 0);
+        Assert.Equal(-1010105, wall.Parameters[first + 1].Id);
+        Assert.Equal(-1001205, wall.Parameters[^1].Id);
+        Assert.All(wall.Parameters.Skip(first), parameter => Assert.True(parameter.HasNoRevitValue));
+    }
+
+    [Fact]
+    public void CommonDefaultDefinitionsCanBeEditedIndependently()
+    {
+        var (info, wall) = Model();
+        Enrich(info, new ParsingState());
+
+        const int descriptionId = -1010103;
+        var wallDescription = Assert.Single(wall.Parameters, parameter => parameter.Id == descriptionId);
+        var materialDescription = Assert.Single(info.Elements[1].Parameters, parameter => parameter.Id == descriptionId);
+        wallDescription.Definition.Name = "Edited wall description";
+
+        Assert.Equal("ALL_MODEL_DESCRIPTION", materialDescription.Definition.Name);
+        Assert.Equal("", materialDescription.Value);
+    }
+
+    [Fact]
+    public void DerivedOffsetCanReadAnElevationQueuedInTheSameBatch()
+    {
+        var level = new Element
+        {
+            Id = 1,
+            CategoryId = -2000240,
+            Parameters = [BipHelpers.MakeBipParam(-1007102, "LEVEL_ELEV", StorageType.Double, 1.25)],
+        };
+        var instance = new Element { Id = 2, CategoryId = -2000151, References = [1], BoundingBox = [0, 0, 3, 5, 2, 5] };
+
+        Enrich(new RevitFileInfo { Elements = [level, instance] }, new ParsingState());
+
+        var elevation = Assert.Single(instance.Parameters, parameter => parameter.Id == -1001360);
+        var offset = Assert.Single(instance.Parameters, parameter => parameter.Id == -1001364);
+        Assert.Equal(1.75, elevation.Value);
+        Assert.Equal(elevation.Value, offset.Value);
+        Assert.True(instance.Parameters.IndexOf(elevation) < instance.Parameters.IndexOf(offset));
+    }
+
+    [Fact]
+    public void TypeReferencesKeepPriorityAndOnlyLevelSelectionExcludesSelf()
+    {
+        var phaseZero = new Element { Id = 0, CategoryId = -2000112, TypeId = 10 };
+        var otherPhase = new Element { Id = 11, CategoryId = -2000112 };
+        var level = new Element { Id = 1, CategoryId = -2000240, TypeId = 10 };
+        var otherLevel = new Element { Id = 2, CategoryId = -2000240 };
+        var host = new Element { Id = 3, CategoryId = -2000011 };
+        var otherHost = new Element { Id = 4, CategoryId = -2000011 };
+        var type = new Element { Id = 10, References = [1, 2, 0, 3] };
+        var instance = new Element { Id = 20, CategoryId = -2000170, TypeId = 10, References = [11, 4] };
+
+        Enrich(new RevitFileInfo
+        {
+            Elements = [phaseZero, otherPhase, level, otherLevel, host, otherHost, type, instance],
+        }, new ParsingState());
+
+        Assert.Equal(2, Value(level, -1001352));
+        Assert.Equal(1, Value(instance, -1001352));
+        Assert.Equal(0, Value(phaseZero, -1012100));
+        Assert.Equal(0, Value(instance, -1012100));
+        Assert.Equal(3, Value(instance, -1002108));
+
+        static object? Value(Element element, int id) => Assert.Single(element.Parameters, p => p.Id == id).Value;
     }
 
     [Theory]

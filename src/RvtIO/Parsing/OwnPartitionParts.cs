@@ -32,40 +32,44 @@ internal static class OwnPartitionParts
 
     internal static Dictionary<uint, WallParts>? Read(byte[] raw, Classes classes, int idWidth, out string? failure)
     {
-        var nodes = new Dictionary<uint, byte[]>();
-        var geometry = new Dictionary<uint, byte[]>();
-        var ambiguous = new HashSet<uint>();
-        try
+        var collector = new Collector(classes, idWidth);
+        bool walked = PartitionFraming.Walk(raw, classes.Tags, idWidth, collector.Observe, out failure, out _);
+        failure = collector.Failure ?? failure;
+        return walked ? collector.Finish() : null;
+    }
+
+    internal sealed class Collector(Classes classes, int idWidth)
+    {
+        private readonly Dictionary<uint, byte[]> nodes = new();
+        private readonly Dictionary<uint, byte[]> geometry = new();
+        private readonly HashSet<uint> ambiguous = new();
+        private readonly ulong terminator = idWidth == 8 ? ulong.MaxValue : uint.MaxValue;
+
+        internal string? Failure { get; private set; }
+
+        internal void Observe(PartitionFraming.Record record)
         {
-            bool walked = PartitionFraming.Walk(raw, classes.Tags, idWidth, record =>
+            if (Failure != null || record.Owner == terminator) return;
+            if (record.Owner > uint.MaxValue) { Failure = "record-owner"; return; }
+            uint owner = (uint)record.Owner;
+            var body = record.Body.Span;
+            if (body.Length < 2) { Failure = "record-class"; return; }
+            if (record.Block != 0)
             {
-                ulong terminator = idWidth == 8 ? ulong.MaxValue : uint.MaxValue;
-                if (record.Owner == terminator) return;
-                if (record.Owner > uint.MaxValue) throw new InvalidDataException("record-owner");
-                uint owner = (uint)record.Owner;
-                var body = record.Body.Span;
-                if (body.Length < 2) throw new InvalidDataException("record-class");
-                if (record.Block != 0)
-                {
-                    if (nodes.ContainsKey(owner)) ambiguous.Add(owner);
-                    return;
-                }
-                ushort kind = BinaryPrimitives.ReadUInt16LittleEndian(body);
-                var selected = record.Channel == 102 ? nodes : record.Channel == 103 ? geometry : null;
-                if (selected == null) return;
-                bool wanted = record.Channel == 102 ? classes.NodeKinds.Contains(kind) : kind == classes.GeometryKind;
-                // A repeated deposit replaces the previous one, including a different root class.
-                if (wanted) selected[owner] = SHA256.HashData(record.Item.Span);
-                else selected.Remove(owner);
-            }, out failure, out _);
-            if (!walked) return null;
+                if (nodes.ContainsKey(owner)) ambiguous.Add(owner);
+                return;
+            }
+            ushort kind = BinaryPrimitives.ReadUInt16LittleEndian(body);
+            var selected = record.Channel == 102 ? nodes : record.Channel == 103 ? geometry : null;
+            if (selected == null) return;
+            bool wanted = record.Channel == 102 ? classes.NodeKinds.Contains(kind) : kind == classes.GeometryKind;
+            // A repeated deposit replaces the previous one, including a different root class.
+            if (wanted) selected[owner] = SHA256.HashData(record.Item.Span);
+            else selected.Remove(owner);
         }
-        catch (InvalidDataException exception)
-        {
-            failure = exception.Message;
-            return null;
-        }
-        return nodes.Where(pair => !ambiguous.Contains(pair.Key) && geometry.ContainsKey(pair.Key))
+
+        internal Dictionary<uint, WallParts>? Finish() => Failure != null ? null
+            : nodes.Where(pair => !ambiguous.Contains(pair.Key) && geometry.ContainsKey(pair.Key))
             .ToDictionary(pair => pair.Key, pair => new WallParts(pair.Value, geometry[pair.Key]));
     }
 }

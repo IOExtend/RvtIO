@@ -21,6 +21,47 @@ public class DerivedInstanceParamsTests
     private static Parameter P(int id, StorageType storage, object value) => BipHelpers.MakeBipParam(id, id.ToString(), storage, value);
     private static object? Value(Element e, int id) => e.Parameters.FirstOrDefault(p => p.Id == id)?.Value;
 
+    [Fact]
+    public void TypeVotesCountEachOwnerOnceAndKeepTheFirstReferenceOnATie()
+    {
+        var first = new Element { Id = 1, CategoryId = -2000011, References = [1002, 1002, 1001] };
+        var tie = new Element { Id = 2, CategoryId = -2000011, References = [1003, 1001] };
+        var wall = new Element { Id = 3, CategoryId = -2000011, References = [1003] };
+        var other = new Element { Id = 4, CategoryId = -2000023, References = [1002, 1001] };
+        var info = new RevitFileInfo { Elements = [other, first, tie, wall] };
+
+        ElementBuilder.ResolveTypeParams(info, info.Elements.ToDictionary(element => element.Id));
+
+        Assert.Equal(1001, Value(first, -1002050));
+        Assert.Equal(1003, Value(tie, -1002050));
+        Assert.Null(Value(other, -1002050));
+    }
+
+    [Fact]
+    public void TypeElementIdParametersKeepReferenceOrderAndEachInstancesStoredValues()
+    {
+        var stored = new Element { Id = 10, TypeId = 20, Parameters = [P(501, StorageType.ElementId, 3000)] };
+        var empty = new Element { Id = 11, TypeId = 20 };
+        var type = new Element { Id = 20, References = [502, 501, 502, 503] };
+        var first = new Element { Id = 501, TypeId = 2000, Name = "First" };
+        var second = new Element { Id = 502, TypeId = 2000, Name = "Second" };
+        var foreign = new Element { Id = 503, TypeId = 2000, Name = "Unverified definition" };
+        var info = new RevitFileInfo { Elements = [stored, empty, type, first, second, foreign, new Element { Id = 2000 }] };
+        var state = new ParsingState();
+        state.OwnedElementClassRoots[501] = new(1, 2870);
+        state.OwnedElementClassRoots[502] = new(1, 2870);
+        state.OwnedElementClassRoots[503] = new(2, 2870);
+
+        ElementBuilder.PropagateTypeElementIdParams(info, state, info.Elements.ToDictionary(element => element.Id));
+
+        Assert.Equal([501, 502], stored.Parameters.Select(parameter => parameter.Id));
+        Assert.Equal([502, 501], empty.Parameters.Select(parameter => parameter.Id));
+        Assert.Equal(3000, Value(stored, 501));
+        Assert.Equal(2000, Value(empty, 501));
+        Assert.NotSame(stored.Parameters[1], empty.Parameters[0]);
+        Assert.NotSame(stored.Parameters[1].Definition, empty.Parameters[0].Definition);
+    }
+
     private static Element Level(int id, double elevation, string name = "L", double computationHeight = 0)
     {
         var level = new Element { Id = id, IsNativeLevel = true };

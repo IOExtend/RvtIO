@@ -75,6 +75,37 @@ public class CompactJsonExporterTests
         Assert.All(elements, item => Assert.Equal(0, item.GetProperty("properties").GetArrayLength()));
     }
 
+    [Fact]
+    public void LargeExport_PreservesSerialBytesAndReport()
+    {
+        var info = Info();
+        for (int id = 2200; id >= 100; id--)
+            info.Elements.Add(id % 2 == 0 ? Row(id, 3524, -2000011, typeId: 10) : Row(id, null, null));
+
+        var identity = new CompactIdentity(CompactUniverse.Select(info));
+        var serial = CompactPropertySources.Create(info, null, true, CompactHeaderCategory.Of, identity: identity);
+        var parallel = CompactPropertySources.Create(info, null, true, identity: identity);
+        Assert.False(serial.CanFork);
+        Assert.True(parallel.CanFork);
+
+        static (byte[] Bytes, CompactExportStats Stats, string Report) Export(
+            RevitFileInfo info, CompactIdentity identity, CompactPropertySources source)
+        {
+            using var output = new MemoryStream();
+            using var report = new StringWriter();
+            var stats = CompactJsonExporter.Export(info, output, source, report, identity);
+            source.Builtin.WriteReport(report);
+            return (output.ToArray(), stats, report.ToString());
+        }
+
+        var expected = Export(info, identity, serial);
+        var actual = Export(info, identity, parallel);
+        Assert.Equal(expected.Bytes, actual.Bytes);
+        Assert.Equal(expected.Stats, actual.Stats);
+        Assert.Equal(expected.Report, actual.Report);
+        Assert.Equal(serial.Builtin.LastIds, parallel.Builtin.LastIds);
+    }
+
     private static string[] ElementNames(byte[] json)
     {
         using var doc = JsonDocument.Parse(json);

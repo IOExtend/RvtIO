@@ -150,20 +150,16 @@ internal class ParsingState
     public HashSet<uint> AllKnownIds { get; set; } = new();
     public Dictionary<uint, List<string>> ElemStrings { get; set; } = new();
     public Dictionary<uint, List<string>> ElemScanStrings { get; set; } = new();
-    public Dictionary<uint, List<double>> ElemDoubles { get; set; } = new();
+    // PrePropagateBipDoubles can share inherited maps. After that pass they are read-only.
     public Dictionary<uint, Dictionary<int, double>> ElemBipDoubles { get; set; } = new();
     public Dictionary<uint, Dictionary<uint, string>> ElemParamStrings { get; set; } = new();
     public Dictionary<uint, Dictionary<int, int>> ElemBipInts { get; set; } = new();
     public Dictionary<uint, BaseElementFields> ElemBaseFields { get; set; } = new();
     public Dictionary<uint, GRepData> GrepBlocks { get; set; } = new();
+    // Symbol-local faces are read-only to the placement pass. The cache is scoped to model building.
+    internal Dictionary<GRepData, Model.GeometryData?>? SymbolPlacementGeometry { get; set; }
     internal Dictionary<uint, (int BlockCount, TfBlockDeserializer.OwnRailingQuantityInput? Input)> RailingQuantityInputs { get; } = new();
 
-    /// <summary>While set, the symbols placed from <see cref="GrepBlocks"/> are taken at the Coarse detail level.</summary>
-    public bool CoarseView { get; set; }
-    public bool IncludeNonVisibleQuantities { get; set; }
-
-    /// <summary>The detail level the geometry is placed at: 0 Fine, 1 Coarse, 2 Medium.</summary>
-    public int DetailView { get; set; }
     public Dictionary<uint, (int BlockCount, GRepData? Body, string? Failure)> OwnWallPlanarBodies { get; } = new();
 
     /// <summary>FamilySymbol.m_complexCutGeoms decoded as an exact family-local BRep.
@@ -597,6 +593,7 @@ internal class ParsingState
 
     /// <summary>Block classIdx inventory: classIdx -> (count, totalBytes, sampleElemIds, sampleData).</summary>
     public Dictionary<uint, BlockClassStats> BlockClassInventory { get; set; } = new();
+    internal bool CollectBlockClassInventory { get; init; } = true;
 
     /// <summary>ForgeTypeId Spec Registry extracted from 0x0FBD blocks.
     /// Maps spec URN -> (symbolURN, unitURN, conversionFactor).</summary>

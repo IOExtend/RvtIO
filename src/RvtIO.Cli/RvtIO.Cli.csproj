@@ -9,7 +9,7 @@
     <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
     <!-- The read and export are allocation-heavy: server GC with a large gen0 budget cut a full run by ~20%. -->
     <ServerGarbageCollection>true</ServerGarbageCollection>
-    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
   </PropertyGroup>
 
   <ItemGroup>

@@ -113,14 +113,14 @@ internal static partial class Program
             // RVTIO_INSPECT_ALL=1 lists every parameter, not the first twenty.
             int listedParameters = Environment.GetEnvironmentVariable("RVTIO_INSPECT_ALL") == "1" ? int.MaxValue : 20;
             foreach (var p in elem.Parameters.Take(listedParameters))
-                Console.WriteLine($"    [{p.Id}] {p.Definition?.Name ?? "?"} = {p.Value} ({p.StorageType})");
+                Console.WriteLine($"    [{p.Id}] {p.DefinitionName ?? "?"} = {p.Value} ({p.StorageType})");
             if (elem.Parameters.Count > listedParameters)
                 Console.WriteLine($"    ... +{elem.Parameters.Count - listedParameters} more");
             foreach (var p in elem.Parameters.Skip(listedParameters).Where(parameter =>
-                parameter.Definition?.Name?.Contains("WIDTH", StringComparison.OrdinalIgnoreCase) == true
-                || parameter.Definition?.Name?.Contains("HEIGHT", StringComparison.OrdinalIgnoreCase) == true
-                || parameter.Definition?.Name?.Contains("ROUGH", StringComparison.OrdinalIgnoreCase) == true))
-                Console.WriteLine($"    size [{p.Id}] {p.Definition?.Name ?? "?"} = {p.Value} ({p.StorageType})");
+                parameter.DefinitionName?.Contains("WIDTH", StringComparison.OrdinalIgnoreCase) == true
+                || parameter.DefinitionName?.Contains("HEIGHT", StringComparison.OrdinalIgnoreCase) == true
+                || parameter.DefinitionName?.Contains("ROUGH", StringComparison.OrdinalIgnoreCase) == true))
+                Console.WriteLine($"    size [{p.Id}] {p.DefinitionName ?? "?"} = {p.Value} ({p.StorageType})");
             if (elem.References != null)
                 Console.WriteLine($"  References ({elem.References.Count}): {string.Join(", ", elem.References)}");
             if (elem.Dimension != null)

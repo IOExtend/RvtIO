@@ -896,7 +896,7 @@ public partial class IfcExporter
             foreach (Element? owner in new[] { instance, type })
                 if (owner != null)
                     foreach (var parameter in owner.Parameters)
-                        if (parameter.Definition?.Name == name && !parameter.HasNoRevitValue && !parameter.IsApproximate
+                        if (parameter.DefinitionName == name && !parameter.HasNoRevitValue && !parameter.IsApproximate
                             && parameter.Value is double named && (!double.IsFinite(named) || Math.Abs(named) < 1e29) && named > 0
                             && owner.BoundingBoxDimensionParamIds?.Contains(parameter.Id) != true)
                             return named;
