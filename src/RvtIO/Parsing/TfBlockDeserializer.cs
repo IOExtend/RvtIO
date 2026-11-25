@@ -4415,6 +4415,13 @@ internal static partial class TfBlockDeserializer
     private static void ReadField(Cursor c, TfField f, List<(ushort, uint)> queue, int depth,
         NativeParams? capture)
     {
+        // Every Element-derived record starts with these same fields. They use the
+        // ordinary field grammar: no release-specific override is declared on Element.
+        if (f.Declaring == 37 && depth == 0 && !CaptureAllFields)
+        {
+            ReadDeclaredField(c, f, queue, depth, capture);
+            return;
+        }
         if (CaptureAllFields)
         {
             diagCurrentField = FieldKey(f);
@@ -4630,6 +4637,11 @@ internal static partial class TfBlockDeserializer
         }
         if (depth > 40) throw Fail;
         if (!c.ExactWallCompleteInputs && TryFieldOverride(c, f, queue, depth, capture)) return;
+        ReadDeclaredField(c, f, queue, depth, capture);
+    }
+
+    private static void ReadDeclaredField(Cursor c, TfField f, List<(ushort, uint)> queue, int depth, NativeParams? capture)
+    {
         int hi = f.Mods >> 4;
         if (hi == 6)
         {

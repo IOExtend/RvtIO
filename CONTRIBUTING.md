@@ -92,6 +92,19 @@ files again after the change, using the same options. Compare the before
 and after IFC and JSON outputs, investigate differences, and explain
 intentional changes in the pull request.
 
+For a timed large-model comparison, build both Release CLIs for the same framework in
+separate directories. Run them sequentially on the same machine, with enough temporary
+disk space for one complete export (full JSON can be much larger than the input):
+
+```sh
+python tools/benchmark-export.py model.rvt before/RvtIO.Cli.dll after/RvtIO.Cli.dll --runs 3 --min-speedup 2
+```
+
+The script alternates build order, fixes the IFC timestamp and checks SHA-256 of IFC,
+both JSON formats, Scene and the report after each run. It prints wall time, peak
+working set on Windows and median batch speedup. `--compare-separate` also times four
+independent candidate exports; their speedup from batching is reported separately.
+
 ## Pull requests
 
 Include:

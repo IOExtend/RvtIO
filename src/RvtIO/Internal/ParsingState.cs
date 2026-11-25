@@ -2,7 +2,7 @@ using RvtIO.Parsing;
 
 namespace RvtIO.Internal;
 
-internal class ParsingState
+internal class ParsingState : JsonReadFacts
 {
     public Dictionary<uint, OwnPartitionParts.WallParts>? OwnPartitionWallParts { get; set; }
     public Dictionary<uint, int> OwnWallSide0Ids { get; } = new();
@@ -83,10 +83,6 @@ internal class ParsingState
         return null;
     }
 
-    /// <summary>First block classId (low16) seen per element in the continuous walk. Used to
-    /// assign category from the empirical high-purity classIdx->category table, applied late.</summary>
-    public Dictionary<uint, ushort> ElemClassIdx { get; } = new();
-
     /// <summary>ElementHeader.m_categroryId of the element records the continuous walk accepted (see <see cref="ElementHeaderCategory"/>);
     /// a null value marks an id whose records disagree or whose header could not be read.</summary>
     public Dictionary<uint, int?> HeaderCategories { get; } = new();
@@ -101,11 +97,7 @@ internal class ParsingState
     /// a verdict when the records agree it is there or agree there is none, null when they disagree or no record was read.</summary>
     public Dictionary<uint, Parsing.ElementHeaderBox?> HeaderBoundingBoxes { get; } = new();
 
-    /// <summary>The file's own class schema when its element ids are 64-bit (Revit 2025 layout, see <see cref="Parsing.WideElementRecords"/>);
-    /// null for the 32-bit layouts, which keep the shipped Revit 2022 tables.</summary>
-    public Parsing.FileSchema? WideSchema { get; set; }
-
-    /// <summary>The partition chunks of this <see cref="WideSchema"/> file were rewritten into the Revit 2022 layout (<see cref="Parsing.R22Transcoder"/>),
+    /// <summary>The partition chunks of this <see cref="JsonReadFacts.WideSchema"/> file were rewritten into the Revit 2022 layout (<see cref="Parsing.R22Transcoder"/>),
     /// so the 2022 record, block and geometry readers apply to them.</summary>
     public bool R22View { get; set; }
 
@@ -132,16 +124,13 @@ internal class ParsingState
     /// instead of scanning the partition chunks.</summary>
     internal bool ReadsFramedRecords => (WideSchema == null || R22View) && FramedPartitions is { Count: > 0 } framed && framed.All(f => f is { IdWidth: 4 });
 
-    /// <summary>The own name of an element of a <see cref="WideSchema"/> file, read from its root block by the schema-driven walk.</summary>
-    public Dictionary<uint, string> WideNames { get; } = new();
-
     /// <summary>The bars of the reinforcement elements (Rebar, RebarInSystem) by element id, read by <see cref="Parsing.RebarReader"/>.</summary>
     public Dictionary<uint, Parsing.RebarBars> RebarBars { get; } = new();
 
     /// <summary>The beam systems (JoistSystem) by element id, read by <see cref="Parsing.RebarReader"/>.</summary>
     public Dictionary<uint, Parsing.JoistSystemData> JoistSystems { get; } = new();
 
-    /// <summary>Schema name of the Element-derived root class per element id, filled only for <see cref="WideSchema"/> files.</summary>
+    /// <summary>Schema name of the Element-derived root class per element id, filled only for <see cref="JsonReadFacts.WideSchema"/> files.</summary>
     public Dictionary<uint, string> NativeRootClassNames { get; } = new();
 
     /// <summary>Local worksharing username from BasicFileInfo ("Username: ..."); null when not
@@ -157,7 +146,8 @@ internal class ParsingState
     public Dictionary<uint, BaseElementFields> ElemBaseFields { get; set; } = new();
     public Dictionary<uint, GRepData> GrepBlocks { get; set; } = new();
     // Symbol-local faces are read-only to the placement pass. The cache is scoped to model building.
-    internal Dictionary<GRepData, Model.GeometryData?>? SymbolPlacementGeometry { get; set; }
+    internal System.Collections.Concurrent.ConcurrentDictionary<GRepData, Lazy<Model.GeometryData?>>? SymbolPlacementGeometry { get; set; }
+    internal Dictionary<uint, (Model.Parameter.DefinitionData Data, string? ForgeId)>? ReaderParameterDefinitions { get; set; }
     internal Dictionary<uint, (int BlockCount, TfBlockDeserializer.OwnRailingQuantityInput? Input)> RailingQuantityInputs { get; } = new();
 
     public Dictionary<uint, (int BlockCount, GRepData? Body, string? Failure)> OwnWallPlanarBodies { get; } = new();
@@ -239,17 +229,9 @@ internal class ParsingState
     /// <summary>Semantic Element kind/owner prefix, independent of display names
     /// and later subtype fields. Every Element root counts against target uniqueness.</summary>
     public Dictionary<uint, (int BlockCount, ushort? ClassId)> ComputedSymbolTargetClasses { get; } = new();
-    /// <summary>Own FamilySymbol SymbolInfo name; every Symbol subclass root counts.</summary>
-    public Dictionary<uint, (int BlockCount, string? Name)> FamilySymbolNames { get; } = new();
 
     /// <summary>Own roof/railing attribute links; all HostObject/BaseRailing roots count.</summary>
     public Dictionary<uint, (int BlockCount, ushort ClassId, int? TypeId)> RoofOrRailingTypeIds { get; } = new();
-    /// <summary>Own RoofAttributes/StairsRailingAttr names; all Symbol roots count.</summary>
-    public Dictionary<uint, (int BlockCount, ushort ClassId, string? Name)> RoofOrRailingTypeNames { get; } = new();
-
-    /// <summary>Own Symbol-subclass roots: every root counts; only a well-formed own root
-    /// records its class and family discriminator. Duplicates clear both.</summary>
-    public Dictionary<uint, (int BlockCount, ushort ClassId, int? Discriminator)> SystemTypeRoots { get; } = new();
 
     /// <summary>Own StairsRunType/StairsLandingType/StairsSupportType SymbolInfo names. SystemTypeRoots
     /// separately counts every Symbol root, including unsupported/conflicting classes.</summary>
@@ -332,12 +314,6 @@ internal class ParsingState
     public Dictionary<uint, (int BlockCount, RawCompoundStructureLayer[]? Layers)>
         CeilingCompoundStructureLayerSource { get; set; } = new();
 
-    /// <summary>Own HostObjAttr CompoundStructure fields and own SymbolInfo name.
-    /// Deferred objects after these records are not part of this metadata validation.
-    /// Every HostObjAttr root counts, including unsupported/malformed/duplicate roots.</summary>
-    public Dictionary<uint, (int BlockCount, ushort ClassId, RawCompoundStructureLayer[]? Layers, string? TypeName)>
-        HostTypeCompoundStructures { get; } = new();
-
     /// <summary>Own bounded class-646 CEILING_THICKNESS getter result in internal feet.
     /// HostTypeCompoundStructures and SystemTypeRoots retain all ambiguity counts.</summary>
     public Dictionary<uint, double?> CompoundCeilingTypeThicknessFeet { get; } = new();
@@ -408,9 +384,6 @@ internal class ParsingState
     /// detail arcs the GInfoBlob pattern scan can't reach).</summary>
     public Dictionary<uint, (int GStyle, double Length, Model.LocationCurve? Arc)> CurveGeometry { get; set; } = new();
 
-    /// <summary>Native parameter stores per element, deserialized from the Element base
-    /// class m_pParamValueSet* containers (schema-driven).</summary>
-    public Dictionary<uint, TfBlockDeserializer.NativeParams> NativeParams { get; set; } = new();
     /// <summary>Elements whose NativeParams came from a block of their own ElemTable class (the element root).</summary>
     public HashSet<uint> NativeParamsFromRootClass { get; } = new();
 
@@ -529,11 +502,6 @@ internal class ParsingState
 
     /// <summary>Element names extracted natively from 0xFFFF blocks (SymbolInfo.Name equivalent).</summary>
     public Dictionary<uint, string> NativeElementNames { get; set; } = new();
-
-    /// <summary>Authoritative element names from name-table entries.
-    /// Pattern: [01][holderEid][FF x28][01][targetId][len][UTF-16 name][catId][parentHolderId|GUID].
-    /// Maps NAMED element id (targetId) -> name.</summary>
-    public Dictionary<uint, string> ElementNameTable { get; set; } = new();
 
     /// <summary>Name-holder element -> named element. The holder is the small companion
     /// element that owns the name-table block (often targetId+1).</summary>

@@ -15,6 +15,22 @@ internal static partial class Program
         IfcProfile Profile, string? ExportPhaseOption, string? RoomPhaseOption, bool IncludeIfcRevitParameters, bool RevitParameterGroups, bool BaseQuantities,
         string JsonClassPrefix, bool OpeningLegacyAxes, DateTimeOffset? IfcTimestamp, IfcUnitFamily? IfcLengthUnit);
 
+    private sealed record ExportInput(RevitFileInfo Geometry, RevitFileInfo Json, JsonReadFacts GeometryNames,
+        JsonReadFacts JsonFacts, ParsingState? QuantityState, IReadOnlyCollection<uint> TableRows);
+
+    private static ExportInput ReadExportInput(string path, RvtReaderOptions options, bool compact, bool dumpSolids, bool debugNative)
+    {
+        var reader = new RvtFileReader(options);
+        var model = reader.Read(path);
+        var state = reader.LastParsingState ?? throw new InvalidOperationException("The reader kept no parsing state.");
+        var json = reader.WideModel ?? model;
+        var names = new JsonReadFacts(state, compact && reader.WideState == null, debugNative && reader.WideState == null);
+        // The quantity pass may still need raw geometry. All other consumers read the model and named maps only.
+        var quantities = compact && (json.GeometryUndecoded || dumpSolids) && (state.R22View || !model.GeometryUndecoded)
+            ? state : null;
+        return new(model, json, names, reader.WideState is { } wide ? new JsonReadFacts(wide, compact, debugNative) : names, quantities, state.ElemTable.Keys);
+    }
+
     // The export: reads the file and writes the IFC, the compact JSON or the full JSON dump.
     private static int Export(ExportArguments arguments)
     {
@@ -103,10 +119,9 @@ internal static partial class Program
         string inputName = Path.GetFileName(rvtPath);
         long inputBytes = File.Exists(rvtPath) ? new FileInfo(rvtPath).Length : 0;
 
-        var reader = new RvtFileReader(options);
         var swRead = System.Diagnostics.Stopwatch.StartNew();
-        RevitFileInfo rvtInfo;
-        try { rvtInfo = reader.Read(rvtPath); }
+        ExportInput input;
+        try { input = ReadExportInput(rvtPath, options, compactJsonPath != null, args.Contains("--dev-solids"), args.Contains("--dev-native")); }
         catch (RvtInputException ex)
         {
             return EndRun(reportPath, ExportReport.Failed(inputName, inputBytes, ex.Kind, ex.Message, RvtExitCodes.InputError, readDiagnostics, raiseLimits, allowPartial, null, strict),
@@ -127,7 +142,7 @@ internal static partial class Program
         }
         Console.Error.WriteLine($"Timing: read {swRead.Elapsed.TotalSeconds:F1}s");
         var report = ExportReport.ForRead(inputName, inputBytes, readDiagnostics, raiseLimits, allowPartial,
-            reader.LastParsingState?.ElemTable.Keys.ToList() ?? [], rvtInfo, strict);
+            input.TableRows, input.Geometry, strict);
         foreach (var hit in readDiagnostics.LimitHits)
             Console.Error.WriteLine($"warning: stream {hit.Stream} was cut by the reader limit {hit.Limit} ({hit.Value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)}): {hit.Detail}");
         if (report.ExitCode == RvtExitCodes.LimitExceeded)
@@ -144,15 +159,14 @@ internal static partial class Program
                 $"error: the read of '{inputName}' was partial ({reasons}). Nothing was exported (exit code {report.ExitCode}). Omit --strict to export what was read.");
         }
 
-        var jsonModel = reader.WideModel ?? rvtInfo;
-        var jsonState = reader.WideState ?? reader.LastParsingState ?? throw new InvalidOperationException("The reader kept no parsing state.");
-        var ifcModel = rvtInfo;
-        var ifcState = reader.LastParsingState ?? throw new InvalidOperationException("The reader kept no parsing state.");
+        var jsonModel = input.Json;
+        var jsonState = input.JsonFacts;
+        var ifcModel = input.Geometry;
 
         if (scenePath != null)
         {
             var swScene = System.Diagnostics.Stopwatch.StartNew();
-            var doc = RvtDocument.FromInfo(ifcModel);
+            var doc = RvtDocument.ForSceneExport(ifcModel);
             var sceneResult = RvtIO.Scene.RvtSceneReader.Read(doc, new RvtIO.Scene.RvtSceneOptions
             {
                 ModelKey = Path.GetFileName(rvtPath)
@@ -191,7 +205,7 @@ internal static partial class Program
             if (roomPhase != null) Console.Error.WriteLine($"IFC room export phase: {roomPhase}");
             // A 64-bit-id file has no scanned fallback names: the exporter reads the validated ones, as the JSON dump does.
             if (ifcModel.GeometryUndecoded)
-                RvtIO.Export.ValidatedElementNames.Apply(ifcModel, ifcState);
+                RvtIO.Export.ValidatedElementNames.Apply(ifcModel, input.GeometryNames);
             var skipLog = new SkipLog();
             var exporter = new IfcExporter(Console.Error, includeIfcRevitParameters) { SkipLog = skipLog, ExportPhaseId = exportPhase, ExportAllPhases = exportPhaseOption == "all", RoomExportPhaseId = roomPhase, ExportRoomsOfAllPhases = roomPhaseOption == "all", RevitParameterGroups = revitParameterGroups, Profile = profile, BaseQuantities = baseQuantities, OpeningQuantitiesSwapped = openingLegacyAxes, Timestamp = ifcTimestamp, LengthUnit = ifcLengthUnit };
             var swExport = System.Diagnostics.Stopwatch.StartNew();
@@ -228,9 +242,9 @@ internal static partial class Program
             var compactGate = RvtIO.Compact.CompactValueGate.ForLayout(jsonModel.GeometryUndecoded);
             CompactSolidQuantities? compactQuantities = null;
             // Only wide-layout property rules and the explicit solids dump consume this index.
-            if ((jsonModel.GeometryUndecoded || solidsPath != null) && (ifcState.R22View || !ifcModel.GeometryUndecoded))
+            if ((jsonModel.GeometryUndecoded || solidsPath != null) && input.QuantityState is { } quantityState)
             {
-                compactQuantities = CompactSolidQuantities.From(ifcModel, ifcState, compactGate.HasSolidRules);
+                compactQuantities = CompactSolidQuantities.From(ifcModel, quantityState, compactGate.HasSolidRules);
             }
             else if (jsonModel.GeometryUndecoded)
             {
@@ -240,9 +254,7 @@ internal static partial class Program
             // --dev-solids-only stops after it
             if (solidsPath != null)
             {
-                var measured = compactQuantities ?? ((ifcState.R22View || !ifcModel.GeometryUndecoded)
-                    ? CompactSolidQuantities.From(ifcModel, ifcState, null)
-                    : CompactSolidQuantities.Read(rvtPath, options, null));
+                var measured = compactQuantities ?? CompactSolidQuantities.Read(rvtPath, options, null);
                 using var solidsWriter = new StreamWriter(solidsPath, false, new System.Text.UTF8Encoding(false));
                 RvtIO.Compact.CompactSolidFacts.Dump(measured, jsonModel.SerializedFormatSettings, solidsWriter);
                 if (args.Contains("--dev-solids-only")) return 0;
@@ -301,7 +313,7 @@ internal static partial class Program
             CompactJsonExporter.Export(jsonModel, compactJsonPath, compactSource, Console.Error, compactIdentity,
                 new CompactJsonExportOptions { JsonClassNamePrefix = jsonClassPrefix });
             compactSource.Builtin.WriteReport(Console.Error);
-            if (ifcPath == null)
+            if (reportPath != null && ifcPath == null)
                 report.SetJsonExport(jsonModel, full: false);
         }
 
@@ -313,7 +325,7 @@ internal static partial class Program
                 DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
                 NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
                 Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-                Converters = { new JsonStringEnumConverter(), new RvtIO.Model.ParameterListConverter() },
+                Converters = { new JsonStringEnumConverter() },
             };
         #if !NET9_0_OR_GREATER
             jsonOpts.Converters.Add(new RvtIO.Cli.ShortestDoubleConverter());
@@ -327,13 +339,14 @@ internal static partial class Program
 
             // De-duplicate parameter definitions into a shared table so each element parameter only stores its value (keyed by id).
             jsonModel.BuildParameterDefinitionTable();
+            jsonOpts.Converters.Add(new ParameterListConverter(jsonModel.ParameterDefinitions!.Keys, jsonOpts.Encoder));
 
             // Stream directly to the file (avoids building one ~GB string in memory, which runs out of memory on large files).
             using (var fs = File.Create(fullJsonPath))
-                JsonSerializer.Serialize(fs, jsonModel, jsonOpts);
+                FullJsonOutput.Write(fs, jsonModel, jsonOpts);
             Console.Error.WriteLine($"JSON written to {fullJsonPath} ({jsonModel.Elements.Count} elements, " +
                 $"{jsonModel.ParameterDefinitions?.Count ?? 0} param defs)");
-            if (ifcPath == null && compactJsonPath == null)
+            if (reportPath != null && ifcPath == null && compactJsonPath == null)
                 report.SetJsonExport(jsonModel, full: true);
         }
         return EndRun(reportPath, report, null);

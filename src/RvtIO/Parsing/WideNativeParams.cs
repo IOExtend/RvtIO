@@ -35,6 +35,9 @@ internal sealed partial class WideNativeParams
     /// <summary>Revit's internal names ("SecretInternal..." styles) are not the names Revit prints.</summary>
     private const string InternalNamePrefix = "SecretInternal";
 
+    private static readonly Dictionary<string, int> NameFieldOrder = NameFields
+        .Select((name, index) => (name, index)).ToDictionary(field => field.name, field => field.index, StringComparer.Ordinal);
+
     internal const string GroupTypeKey = "301:m_groupTypeId";
 
     private const string ParamDefPointerKey = "2870:m_pParamDef.class";
@@ -66,7 +69,6 @@ internal sealed partial class WideNativeParams
     private const string DiscriminatorKey = "sys:discriminator";
 
     private readonly WideBlockWalker _walker;
-    private readonly HashSet<string> _nameFields = new(NameFields, StringComparer.Ordinal);
     private readonly SchemaDocument _schema;
     private readonly Dictionary<string, int> _r22ByName;
     private readonly Dictionary<int, TfBlockDeserializer.TfClass> _r22;
@@ -129,7 +131,7 @@ internal sealed partial class WideNativeParams
         if (Revit2027ApiValues.RootFields.Contains(key)) return key;
         bool keyed = r22 != 0 && _r22[r22].Fields.Any(f => f.Name == field.Name) && _bases.Contains(key);
         bool rootName = TfBlockDeserializer.CapturedFieldNames.Contains(field.Name);
-        bool name = field.Type == 8 && _nameFields.Contains(declaring.Name + "." + field.Name);
+        bool name = field.Type == 8 && NameFieldOrder.ContainsKey(declaring.Name + "." + field.Name);
         if (keyed || rootName || name) return key;
         // the origin of the plane a datum plane (a Level) stands on, read by LevelElevation
         if (declaring.Name == "Plane" && field.Name == "m_origin") return PlaneOriginKey;
@@ -178,17 +180,22 @@ internal sealed partial class WideNativeParams
     {
         // the SymbolInfo name of a leader or dimension style is not always the name Revit prints
         if (_walker.IsA(rootClassId, "LeaderStyle") || _walker.IsA(rootClassId, "DimensionStyle")) return null;
-        foreach (string field in NameFields)
+        Span<bool> seen = stackalloc bool[NameFields.Length];
+        seen.Clear();
+        int best = NameFields.Length;
+        string? name = null;
+        foreach (var c in walk.Captures)
         {
-            if (field == "ParamDef.m_caption" && !_walker.IsA(rootClassId, "ParamElem")) continue;
-            foreach (var c in walk.Captures)
-            {
-                if (c.Kind != WideBlockWalker.CaptureKind.Text || c.DeclaringClass + "." + c.Field != field) continue;
-                if (c.Text is { Length: > 0 } text && !text.StartsWith(InternalNamePrefix, StringComparison.Ordinal)) return text;
-                break;      // the first object of that class decides
-            }
+            if (c.Kind != WideBlockWalker.CaptureKind.Text || !NameFieldOrder.TryGetValue(c.DeclaringClass + "." + c.Field, out int rank)
+                || rank >= best || seen[rank]) continue;
+            seen[rank] = true; // The first text for a given field decides, even when it cannot name the element.
+            if (c.Text is not { Length: > 0 } text || text.StartsWith(InternalNamePrefix, StringComparison.Ordinal)
+                || (NameFields[rank] == "ParamDef.m_caption" && !_walker.IsA(rootClassId, "ParamElem"))) continue;
+            if (rank == 0) return text;
+            best = rank;
+            name = text;
         }
-        return null;
+        return name;
     }
 
     /// <summary>The elevation (feet) of a Level: the Z of the origin of its datum plane, which the Revit 2022 reader takes from the

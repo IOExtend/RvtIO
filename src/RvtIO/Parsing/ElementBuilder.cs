@@ -254,16 +254,14 @@ internal static partial class ElementBuilder
 
             var cache = state.SymbolPlacementGeometry;
             GeometryData? own;
-            if (cache == null) own = BuildLocalFaces();
+            if (symbol.Faces.Count == 0) own = null;
+            else if (cache == null) own = BuildGeometryData(symbol, state.SeparateFacesWithDistinctOpenings, includeEdgesAndInstances: false);
             else
             {
-                // Concurrent placements share the same local faces. Transforms run outside the lock.
-                lock (cache)
-                    if (!cache.TryGetValue(symbol, out own))
-                    {
-                        own = BuildLocalFaces();
-                        cache.Add(symbol, own);
-                    }
+                // Only placements of the same representation wait for its local faces.
+                own = cache.GetOrAdd(symbol, static (block, separate) => new Lazy<GeometryData?>(
+                    () => BuildGeometryData(block, separate, includeEdgesAndInstances: false)),
+                    state.SeparateFacesWithDistinctOpenings).Value;
             }
             if (own?.Faces is { Count: > 0 })
             {
@@ -284,9 +282,6 @@ internal static partial class ElementBuilder
             if (detail != GeometryDetail.CoarseQuantities) SetGeometryBoundsFromFaces(result);
             return result;
 
-            GeometryData? BuildLocalFaces() => symbol.Faces.Count > 0
-                ? BuildGeometryData(symbol, state.SeparateFacesWithDistinctOpenings, includeEdgesAndInstances: false)
-                : null;
         }
         finally
         {
@@ -864,11 +859,7 @@ internal static partial class ElementBuilder
         int AddEdge(int v0, int v1)
         {
             int idx = geo.Edges!.Count;
-            geo.Edges.Add(new GeoEdge
-            {
-                Start = geo.Vertices![v0],
-                End = geo.Vertices[v1],
-            });
+            geo.Edges.Add(new GeoEdge(geo.Vertices![v0], geo.Vertices[v1]));
             return idx;
         }
 
@@ -923,10 +914,8 @@ internal static partial class ElementBuilder
                     }
                     seenFaces[key] = geo.Faces.Count;
                 }
-                var gf = new GeoFace
+                var gf = new GeoFace(fp.Origin, fp.XVector) // V2 stores the polygon normal in XVector.
                 {
-                    Origin = fp.Origin,
-                    Normal = fp.XVector, // V2 stashes the polygon normal here
                     OuterVertices = poly,
                     InnerVertices = fp.InnerVertices,
                     AlternativeOuterVertices = fp.AlternativeOuterVertices,
@@ -977,12 +966,10 @@ internal static partial class ElementBuilder
                 fp.XVector[2] * fp.YVector[0] - fp.XVector[0] * fp.YVector[2],
                 fp.XVector[0] * fp.YVector[1] - fp.XVector[1] * fp.YVector[0],
             };
-            var geoFace = new GeoFace
+            var geoFace = new GeoFace(fp.Origin, normal, includePlaneAxes: false)
             {
-                Origin = fp.Origin,
                 XVector = fp.XVector,
                 YVector = fp.YVector,
-                Normal = normal,
                 Envelope = fp.Envelope,
                 RenderStyleId = fp.RenderStyleId,
                 GeometryNode = fp.GeometryNode,
@@ -3645,22 +3632,12 @@ internal static partial class ElementBuilder
                     existing.HasNoRevitValue = namedUnset;
                     continue;
                 }
-                string? namedForge = null, namedName = null;
-                if (state.ForgeParamDefs.TryGetValue((uint)named.ParamId, out var namedDef))
-                    (namedForge, namedName) = namedDef;
-                e.Parameters.Add(new Parameter
-                {
-                    Id = named.ParamId,
-                    StorageType = namedStorage,
-                    Value = namedValue,
-                    HasNoRevitValue = namedUnset,
-                    IsReadOnly = false,
-                    ForgeId = namedForge,
-                    Guid = state.ParamDefGuids.TryGetValue((uint)named.ParamId, out var namedGuid)
-                        ? namedGuid : BipHelpers.ParseGuidFromForgeId(namedForge),
-                    Definition = new Definition { Id = named.ParamId, Name = namedName },
-                });
-                byId[named.ParamId] = e.Parameters[^1];
+                var parameter = CreateUserParameter((uint)named.ParamId, state);
+                parameter.StorageType = namedStorage;
+                parameter.Value = namedValue;
+                parameter.HasNoRevitValue = namedUnset;
+                e.Parameters.Add(parameter);
+                byId[named.ParamId] = parameter;
             }
             // Parameters stored verbatim in a schema field.
             NativeFieldParameters.CollectPresentRows(np, nativeFieldRows, nativeFieldValues);
@@ -5143,18 +5120,17 @@ internal static partial class ElementBuilder
     /// Attaches the own-root top-attachment flag to each uniquely materialized wall whose single
     /// SWall/ArcWall root was read exactly. Returns how many walls received a value.
     /// </summary>
-    internal static int ApplyWallJoinedToTop(IReadOnlyList<Element> elements, ParsingState state)
+    internal static int ApplyWallJoinedToTop(IReadOnlyList<Element> elements, ParsingState state,
+        IReadOnlyDictionary<int, Element>? unique = null)
     {
-        var counts = new Dictionary<int, int>();
-        foreach (Element element in elements)
-            counts[element.Id] = counts.GetValueOrDefault(element.Id) + 1;
+        unique ??= BuildUniqueElementIndex(elements);
         int applied = 0;
         foreach (Element element in elements)
         {
             element.SerializedWallJoinedToTop = null;
             if (element.Id <= 0
                 || element.CategoryId != -2000011
-                || counts[element.Id] != 1
+                || !unique.ContainsKey(element.Id)
                 || !state.WallJoinedToTop.TryGetValue((uint)element.Id, out var source)
                 || source.BlockCount != 1
                 || source.JoinedToTop is not bool joinedToTop)
@@ -5204,18 +5180,17 @@ internal static partial class ElementBuilder
     /// Attaches the exact control joins of each uniquely materialized wall's own driver (<see
     /// cref="TfBlockDeserializer.ExtractWallEndJoins"/>).
     /// </summary>
-    internal static int ApplyWallEndJoins(IReadOnlyList<Element> elements, ParsingState state)
+    internal static int ApplyWallEndJoins(IReadOnlyList<Element> elements, ParsingState state,
+        IReadOnlyDictionary<int, Element>? unique = null)
     {
-        var counts = new Dictionary<int, int>();
-        foreach (Element element in elements)
-            counts[element.Id] = counts.GetValueOrDefault(element.Id) + 1;
+        unique ??= BuildUniqueElementIndex(elements);
         int applied = 0;
         foreach (Element element in elements)
         {
             element.SerializedWallEndJoins = null;
             if (element.Id <= 0
                 || element.CategoryId != -2000011
-                || counts[element.Id] != 1
+                || !unique.ContainsKey(element.Id)
                 || !state.WallEndJoins.TryGetValue((uint)element.Id, out var source)
                 || source.BlockCount != 1
                 || source.Joins is not { } joins)
@@ -5231,17 +5206,15 @@ internal static partial class ElementBuilder
     /// CompoundStructure layers to uniquely materialized OST_Ceilings types.
     /// </summary>
     internal static (int Materials, int CeilingTypes) ApplyCeilingFinishSource(
-        IReadOnlyList<Element> elements, ParsingState state)
+        IReadOnlyList<Element> elements, ParsingState state, IReadOnlyDictionary<int, Element>? unique = null)
     {
-        var counts = new Dictionary<int, int>();
-        foreach (Element element in elements)
-            counts[element.Id] = counts.GetValueOrDefault(element.Id) + 1;
+        unique ??= BuildUniqueElementIndex(elements);
         int materials = 0, ceilingTypes = 0;
         foreach (Element element in elements)
         {
             element.SerializedMaterialName = null;
             element.SerializedCeilingTypeLayers = null;
-            if (element.Id <= 0 || counts[element.Id] != 1) continue;
+            if (element.Id <= 0 || !unique.ContainsKey(element.Id)) continue;
             if (state.MaterialNames.TryGetValue((uint)element.Id, out var material)
                 && material.BlockCount == 1 && material.Name != null)
             {
@@ -5281,19 +5254,16 @@ internal static partial class ElementBuilder
         };
     }
 
-    internal static int ApplyHostTypeCompoundStructures(IReadOnlyList<Element> elements, ParsingState state)
+    internal static int ApplyHostTypeCompoundStructures(IReadOnlyList<Element> elements, ParsingState state,
+        IReadOnlyDictionary<int, Element>? unique = null)
     {
-        var counts = new Dictionary<int, int>();
+        unique ??= BuildUniqueElementIndex(elements);
+        int applied = 0;
         foreach (var element in elements)
         {
             element.SerializedHostTypeLayers = null;
             element.ValidatedHostTypeLayerSetName = null;
-            counts[element.Id] = counts.GetValueOrDefault(element.Id) + 1;
-        }
-        int applied = 0;
-        foreach (var element in elements)
-        {
-            if (!TryGetAgreedHostType(element, counts[element.Id], state, out var validation)) continue;
+            if (!unique.ContainsKey(element.Id) || !TryGetAgreedHostType(element, 1, state, out var validation)) continue;
             element.SerializedHostTypeLayers = validation.Layers;
             if (!string.IsNullOrWhiteSpace(validation.TypeName) && !string.IsNullOrEmpty(element.ValidatedSystemFamilyName))
                 element.ValidatedHostTypeLayerSetName = $"{element.ValidatedSystemFamilyName}:{validation.TypeName}";
@@ -7637,6 +7607,7 @@ internal static partial class ElementBuilder
     /// </summary>
     private static void CoerceParamStorageByForge(RevitFileInfo rvtInfo, ParsingState? state)
     {
+        var byForgeId = new Dictionary<string, (bool Text, bool Boolean, bool Numeric)>(StringComparer.Ordinal);
         foreach (var e in rvtInfo.Elements)
         {
             foreach (var p in e.Parameters)
@@ -7653,38 +7624,37 @@ internal static partial class ElementBuilder
                 }
                 var fid = p.ForgeId;
                 if (string.IsNullOrEmpty(fid)) continue;
-                bool isStringSpec = fid.Contains("spec.string") || fid.Contains("string:url");
-                bool isBoolSpec = fid.Contains("spec.bool") || fid.Contains("spec:bool");
-                bool isNumericSpec = fid.Contains("spec.aec:") || fid.Contains("spec.number")
-                    || fid.Contains("spec:length") || fid.Contains("spec:area")
-                    || fid.Contains("spec:volume") || fid.Contains("spec.int");
-
                 bool isEmptyPlaceholder = p.Value == null
                     || (p.Value is string s && (string.IsNullOrEmpty(s) || s == "-1"))
                     || (p.Value is int iv && (iv == 0 || iv == -1))
                     || (p.Value is double dv && dv == 0.0);
                 if (!isEmptyPlaceholder) continue;
+                if (!byForgeId.TryGetValue(fid, out var spec))
+                    byForgeId[fid] = spec = (fid.Contains("spec.string") || fid.Contains("string:url"),
+                        fid.Contains("spec.bool") || fid.Contains("spec:bool"),
+                        fid.Contains("spec.aec:") || fid.Contains("spec.number") || fid.Contains("spec:length")
+                            || fid.Contains("spec:area") || fid.Contains("spec:volume") || fid.Contains("spec.int"));
 
                 bool wasNoRevitValue = p.HasNoRevitValue
                     || p.Value == null
                     || (p.Value is string ps && ps == "-1")
                     || (p.Value is int piv && piv == -1);
-                if (isStringSpec && p.StorageType != StorageType.String)
+                if (spec.Text && p.StorageType != StorageType.String)
                 {
                     p.StorageType = StorageType.String;
                     p.Value = "";
                     if (wasNoRevitValue) p.HasNoRevitValue = true;
                 }
-                else if (isBoolSpec && p.StorageType != StorageType.Integer)
+                else if (spec.Boolean && p.StorageType != StorageType.Integer)
                 {
                     p.StorageType = StorageType.Integer;
-                    p.Value = 0;
+                    p.Value = Parameter.BoxParsedValue(0);
                     if (wasNoRevitValue) p.HasNoRevitValue = true;
                 }
-                else if (isNumericSpec && p.StorageType == StorageType.String)
+                else if (spec.Numeric && p.StorageType == StorageType.String)
                 {
                     p.StorageType = StorageType.Double;
-                    p.Value = 0.0;
+                    p.Value = Parameter.BoxParsedValue(0.0);
                     if (wasNoRevitValue) p.HasNoRevitValue = true;
                 }
             }
@@ -7697,9 +7667,8 @@ internal static partial class ElementBuilder
         Dictionary<uint, FamilyParameterDefinition> definitions)
     {
         if (definitions.TryGetValue(id, out var definition)) return definition;
-        var (forgeId, displayName) = state.ForgeParamDefs.GetValueOrDefault(id);
-        Guid? guid = state.ParamDefGuids.TryGetValue(id, out var stored) ? stored : BipHelpers.ParseGuidFromForgeId(forgeId);
-        definition = new(new Parameter.DefinitionData((int)id, displayName, guid: guid), forgeId);
+        var (data, forgeId) = DefinitionOf(id, state);
+        definition = new(data, forgeId);
         definitions.Add(id, definition);
         return definition;
     }
@@ -7815,29 +7784,20 @@ internal static partial class ElementBuilder
             var p = FindParameterById(e.Parameters, projKey);
             if (p == null)
             {
-                string? forgeId = null, dn = null;
-                Guid? guid = null;
-                if (projKey > 0 && state.ForgeParamDefs.TryGetValue((uint)projKey, out var def))
-                { forgeId = def.ForgeId; dn = def.DisplayName; }
-                if (projKey > 0 && state.ParamDefGuids.TryGetValue((uint)projKey, out var binGuid)) guid = binGuid;
-                else guid = BipHelpers.ParseGuidFromForgeId(forgeId);
-                if (dn == null && projKey < 0 && Lookup.BipNames.Lookup.TryGetValue(projKey, out var bipName))
-                    dn = bipName;
-                e.Parameters.Add(new Parameter
+                if (projKey > 0)
                 {
-                    Id = projKey,
-                    StorageType = StorageType.String,
-                    Value = value,
-                    IsReadOnly = projKey < 0 && BipHelpers.IsBipReadOnly(dn),
-                    ForgeId = forgeId,
-                    Guid = guid,
-                    Definition = new Definition
-                    {
-                        Id = projKey,
-                        Name = dn,
-                        BuiltInParameter = projKey < 0 ? dn : null,
-                    },
-                });
+                    var parameter = CreateUserParameter((uint)projKey, state);
+                    parameter.StorageType = StorageType.String;
+                    parameter.Value = value;
+                    e.Parameters.Add(parameter);
+                }
+                else
+                {
+                    string? name = projKey < 0 ? Lookup.BipNames.Lookup.GetValueOrDefault(projKey) : null;
+                    var parameter = BipHelpers.MakeBipParam(projKey, name, StorageType.String, value);
+                    parameter.IsReadOnly = projKey < 0 && BipHelpers.IsBipReadOnly(name);
+                    e.Parameters.Add(parameter);
+                }
             }
             else
             {
@@ -8798,6 +8758,34 @@ internal static partial class ElementBuilder
     }
 
 
+    // The field and GUID maps are complete before building elements in parallel. Share the
+    // immutable metadata, not the Parameter or its publicly editable Definition.
+    internal static Dictionary<uint, (Parameter.DefinitionData, string?)> ReaderParameterDefinitions(ParsingState state)
+    {
+        var definitions = new Dictionary<uint, (Parameter.DefinitionData, string?)>(state.ForgeParamDefs.Count);
+        foreach (uint id in state.ForgeParamDefs.Keys) definitions.Add(id, ReadDefinition(id, state));
+        foreach (var (id, guid) in state.ParamDefGuids)
+            if (!definitions.ContainsKey(id)) definitions.Add(id, (new((int)id, null, guid: guid), null));
+        return definitions;
+    }
+
+    private static (Parameter.DefinitionData, string?) ReadDefinition(uint id, ParsingState state)
+    {
+        var (forgeId, name) = state.ForgeParamDefs.GetValueOrDefault(id);
+        Guid? guid = state.ParamDefGuids.TryGetValue(id, out var stored) ? stored : BipHelpers.ParseGuidFromForgeId(forgeId);
+        return (new((int)id, name, guid: guid), forgeId);
+    }
+
+    private static (Parameter.DefinitionData, string?) DefinitionOf(uint id, ParsingState state) =>
+        state.ReaderParameterDefinitions?.TryGetValue(id, out var definition) == true
+            ? definition : ReadDefinition(id, state);
+
+    private static Parameter CreateUserParameter(uint id, ParsingState state)
+    {
+        var (data, forgeId) = DefinitionOf(id, state);
+        return new Parameter(data) { Id = (int)id, ForgeId = forgeId };
+    }
+
     private static void AddBodyBipParams(Element elem, ElementRecord rec, uint elemId, ParsingState state, HashSet<int> seenIds)
     {
         if (rec.BipParams.Count == 0) return;
@@ -8805,7 +8793,7 @@ internal static partial class ElementBuilder
         {
             if (b.BipId == 0 || !seenIds.Add(b.BipId)) continue;
             var param = b.BipId < 0 ? BipHelpers.MakeBipParam(b.BipId, b.BipName, null, null)
-                : new Parameter { Id = b.BipId, StorageType = StorageType.None };
+                : CreateUserParameter((uint)b.BipId, state);
 
             if (b.BipId < 0)
             {
@@ -8870,18 +8858,6 @@ internal static partial class ElementBuilder
             }
             else
             {
-                string? forgeId = null, displayName = null;
-                Guid? paramGuid = null;
-                if (state.ForgeParamDefs.TryGetValue((uint)b.BipId, out var def))
-                { forgeId = def.ForgeId; displayName = def.DisplayName; }
-                if (state.ParamDefGuids.TryGetValue((uint)b.BipId, out var binGuid))
-                    paramGuid = binGuid;
-                else
-                    paramGuid = BipHelpers.ParseGuidFromForgeId(forgeId);
-                param.ForgeId = forgeId;
-                param.Guid = paramGuid;
-                param.Definition.Id = b.BipId;
-                param.Definition.Name = displayName;
                 param.IsReadOnly = rec.WritableParamIds?.Contains(b.BipId) != true;
                 if (state.ElemBipDoubles.TryGetValue(elemId, out var userDblVals)
                     && userDblVals.TryGetValue(b.BipId, out double userDbl))
@@ -8906,24 +8882,11 @@ internal static partial class ElementBuilder
         foreach (var (paramDefId, strVal) in paramStrMap)
         {
             if (!existingIds.Add((int)paramDefId)) continue;
-            string? forgeId = null, displayName = null;
-            Guid? paramGuid = null;
-            if (state.ForgeParamDefs.TryGetValue(paramDefId, out var def))
-            { forgeId = def.ForgeId; displayName = def.DisplayName; }
-            if (state.ParamDefGuids.TryGetValue(paramDefId, out var binGuid))
-                paramGuid = binGuid;
-            else
-                paramGuid = BipHelpers.ParseGuidFromForgeId(forgeId);
-            elem.Parameters.Add(new Parameter
-            {
-                Id = (int)paramDefId,
-                StorageType = StorageType.String,
-                Value = strVal,
-                IsReadOnly = rec.WritableParamIds?.Contains((int)paramDefId) != true,
-                ForgeId = forgeId,
-                Guid = paramGuid,
-                Definition = new Definition { Id = (int)paramDefId, Name = displayName },
-            });
+            var parameter = CreateUserParameter(paramDefId, state);
+            parameter.StorageType = StorageType.String;
+            parameter.Value = strVal;
+            parameter.IsReadOnly = rec.WritableParamIds?.Contains((int)paramDefId) != true;
+            elem.Parameters.Add(parameter);
         }
     }
 
@@ -8940,20 +8903,10 @@ internal static partial class ElementBuilder
             }
             else
             {
-                string? forgeId = null, displayName = null;
-                Guid? paramGuid = null;
-                if (state.ForgeParamDefs.TryGetValue((uint)bipKey, out var def))
-                { forgeId = def.ForgeId; displayName = def.DisplayName; }
-                if (state.ParamDefGuids.TryGetValue((uint)bipKey, out var binGuid))
-                    paramGuid = binGuid;
-                else
-                    paramGuid = BipHelpers.ParseGuidFromForgeId(forgeId);
-                elem.Parameters.Add(new Parameter
-                {
-                    Id = bipKey, StorageType = StorageType.Double, Value = bipVal,
-                    ForgeId = forgeId, Guid = paramGuid,
-                    Definition = new Definition { Id = bipKey, Name = displayName },
-                });
+                var parameter = CreateUserParameter((uint)bipKey, state);
+                parameter.StorageType = StorageType.Double;
+                parameter.Value = Parameter.BoxParsedValue(bipVal);
+                elem.Parameters.Add(parameter);
             }
         }
     }
@@ -8971,21 +8924,10 @@ internal static partial class ElementBuilder
             }
             else
             {
-                // User integer parameter (positive key = param definition element ID)
-                string? forgeId = null, displayName = null;
-                Guid? paramGuid = null;
-                if (state.ForgeParamDefs.TryGetValue((uint)bipKey, out var def))
-                { forgeId = def.ForgeId; displayName = def.DisplayName; }
-                if (state.ParamDefGuids.TryGetValue((uint)bipKey, out var binGuid))
-                    paramGuid = binGuid;
-                else
-                    paramGuid = BipHelpers.ParseGuidFromForgeId(forgeId);
-                elem.Parameters.Add(new Parameter
-                {
-                    Id = bipKey, StorageType = StorageType.Integer, Value = bipVal,
-                    ForgeId = forgeId, Guid = paramGuid,
-                    Definition = new Definition { Id = bipKey, Name = displayName },
-                });
+                var parameter = CreateUserParameter((uint)bipKey, state);
+                parameter.StorageType = StorageType.Integer;
+                parameter.Value = Parameter.BoxParsedValue(bipVal);
+                elem.Parameters.Add(parameter);
             }
         }
     }

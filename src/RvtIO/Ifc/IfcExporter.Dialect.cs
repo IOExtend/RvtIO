@@ -307,7 +307,8 @@ public partial class IfcExporter
     /// The trailing attributes of an IfcStairFlight in the current profile: NumberOfRiser, RiserHeight and NumberOfTreads of the run
     /// (its own riser count and per-run riser height), TreadLength of its stairs. An attribute whose source is not decoded stays unset.
     /// </summary>
-    internal static string StairFlightAttributes(Element run, IReadOnlyDictionary<int, Element> elementsById)
+    internal static string StairFlightAttributes(Element run, IReadOnlyDictionary<int, Element> elementsById,
+        Dictionary<int, List<Element>>? stairRuns = null)
     {
         string risers = "$", treads = "$", riserHeight = "$", treadLength = "$";
         if (run.SerializedStairRunInput is { Numbers: { } numbers } input && input.OwnerId == run.Id)
@@ -317,7 +318,7 @@ public partial class IfcExporter
             if (runRisers > 0 && indexSpan > 0)
             {
                 risers = runRisers.ToString(CultureInfo.InvariantCulture);
-                if (StairRunCountsAgree(run, elementsById, numbers, current: true) && StairRunTreads(run, numbers, current: true) is int count && count > 0)
+                if (StairRunCountsAgree(run, elementsById, numbers, current: true, stairRuns) && StairRunTreads(run, numbers, current: true) is int count && count > 0)
                     treads = count.ToString(CultureInfo.InvariantCulture);
                 double runRiserMillimetres = (numbers.TopElevation - numbers.BottomElevation) / indexSpan * 304.8;
                 if (double.IsFinite(runRiserMillimetres) && runRiserMillimetres > 0)

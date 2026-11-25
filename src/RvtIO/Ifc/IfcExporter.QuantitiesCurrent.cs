@@ -1632,11 +1632,15 @@ public partial class IfcExporter
     private List<QuantityValue> ColumnQuantitiesCurrent(Element element, ProfileExtrusion? body)
     {
         var result = new List<QuantityValue>();
-        var shells = ShellsOfCurrent(element.Geometry);
-        var totals = SolidTotalsCurrent(shells);
+        // Most written extrusions already carry their section and have a stored volume.
+        // Orienting and measuring the whole shell is only needed by the fallback.
+        List<ShellInfo>? shells = null;
+        List<ShellInfo> Shells() => shells ??= ShellsOfCurrent(element.Geometry);
+        (double Volume, double Area)? totals = null;
+        (double Volume, double Area)? Totals() => totals ??= SolidTotalsCurrent(Shells());
         // The measures of the node with the end faces stand for the solid of a round column (a vertical cylinder) only.
-        var capTotals = RoundCylinderCurrent(element.Geometry) != null ? CapNodeTotalsCurrent(element.Geometry) : null;
-        if ((ExtrusionDataCurrent(body, shells) ?? RoundExtrusionDataCurrent(element.Geometry)) is { } extrusion)
+        (double Volume, double Area)? CapTotals() => RoundCylinderCurrent(element.Geometry) != null ? CapNodeTotalsCurrent(element.Geometry) : null;
+        if ((ExtrusionDataCurrent(body, body == null ? Shells() : []) ?? RoundExtrusionDataCurrent(element.Geometry)) is { } extrusion)
         {
             double length = extrusion.Depth, area = extrusion.Area;
             // The outer surface counts the loops of the holes as well (outer + inner perimeter).
@@ -1653,14 +1657,15 @@ public partial class IfcExporter
             double? netVolume = element.MediumSolidTotals?.Volume
                 ?? (extrusion.NominalArea is { } nomArea && (element.HasMediumAlternatives || NodeSolidTotalsCurrent(element.Geometry) == null)
                     ? length * nomArea
-                    : (ComputedHostVolumeCurrent(element) ?? NodeSolidTotalsCurrent(element.Geometry)?.Volume ?? capTotals?.Volume ?? totals?.Volume));
+                    : (ComputedHostVolumeCurrent(element) ?? NodeSolidTotalsCurrent(element.Geometry)?.Volume ?? CapTotals()?.Volume ?? Totals()?.Volume));
             AddIfPositive(result, QuantityKind.Volume, "NetVolume", netVolume);
         }
         else
         {
-            AddIfPositive(result, QuantityKind.Area, "CrossSectionArea", ComputedHostAreaCurrent(element) ?? (capTotals?.Area ?? totals?.Area) / 2);
+            var capTotals = CapTotals();
+            AddIfPositive(result, QuantityKind.Area, "CrossSectionArea", ComputedHostAreaCurrent(element) ?? (capTotals?.Area ?? Totals()?.Area) / 2);
             AddIfPositive(result, QuantityKind.Volume, "NetVolume",
-                ComputedHostVolumeCurrent(element) ?? NodeSolidTotalsCurrent(element.Geometry)?.Volume ?? capTotals?.Volume ?? totals?.Volume);
+                ComputedHostVolumeCurrent(element) ?? NodeSolidTotalsCurrent(element.Geometry)?.Volume ?? capTotals?.Volume ?? Totals()?.Volume);
         }
         return result;
     }
@@ -1704,9 +1709,10 @@ public partial class IfcExporter
     /// the riser indices of the run (a sketched run without an end riser keeps all of it), and only where the risers agree with those stored
     /// for its stair. It is not the NumberOfTreads attribute of the flight, which counts the risers of such a run one less, as the file does:
     /// an assembled run whose attribute is set still takes no Length. Null without a run input or when the counts do not agree.</summary>
-    internal static int? RunLengthTreadsCurrent(Element run, IReadOnlyDictionary<int, Element> elementsById) =>
+    internal static int? RunLengthTreadsCurrent(Element run, IReadOnlyDictionary<int, Element> elementsById,
+        Dictionary<int, List<Element>>? stairRuns = null) =>
         run.SerializedStairRunInput is { Numbers: { } numbers } input && input.OwnerId == run.Id
-            && StairRunRisers(run, numbers) > 0 && StairRunCountsAgree(run, elementsById, numbers)
+            && StairRunRisers(run, numbers) > 0 && StairRunCountsAgree(run, elementsById, numbers, current: false, stairRuns)
             && StairRunTreads(run, numbers) is int treads && treads > 0 ? treads : null;
 
     /// <summary>The inputs of the Length surrogate of a run are the ones it was calibrated on: the family of the run before its type was

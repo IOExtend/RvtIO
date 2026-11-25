@@ -23,11 +23,12 @@ namespace RvtIO.Model
         internal sealed record DisplayUnits(string? SpecType, string? Symbol, double? Factor);
 
         private static readonly DisplayUnits NoDisplayUnits = new(null, null, null);
+        private static readonly DefinitionData EmptyDefinition = new(0, null);
         private object? _definition;
         private DisplayUnits? _displayUnits;
 
         /// <summary>Creates a parameter with its own empty definition.</summary>
-        public Parameter() => _definition = new Definition();
+        public Parameter() => _definition = EmptyDefinition;
 
         internal Parameter(Definition definition) => _definition = definition;
         internal Parameter(DefinitionData definition)
@@ -418,7 +419,19 @@ namespace RvtIO.Model
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public string? SourceElementId => NativeElementId?.ToString(CultureInfo.InvariantCulture);
 
-        internal long? NativeElementId { get; set; }
+        // Keep the presence flag alongside the other flags, rather than a padded
+        // Nullable<long> on every parameter. Zero and long.MinValue are both representable.
+        private bool _hasNativeElementId;
+        private long _nativeElementId;
+        internal long? NativeElementId
+        {
+            get => _hasNativeElementId ? _nativeElementId : null;
+            set
+            {
+                _nativeElementId = value.GetValueOrDefault();
+                _hasNativeElementId = value.HasValue;
+            }
+        }
 
         /// <summary>
         /// Get a formatted display string for the value.

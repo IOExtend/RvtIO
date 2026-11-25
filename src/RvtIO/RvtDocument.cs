@@ -356,10 +356,13 @@ public class RvtDocument
     public static RvtDocument FromInfo(RevitFileInfo info)
     {
         ArgumentNullException.ThrowIfNull(info);
-        return new RvtDocument(CloneForDocument(info));
+        return new RvtDocument(CloneForDocument(info, sceneOnly: false));
     }
 
-    private static RevitFileInfo CloneForDocument(RevitFileInfo info)
+    // Used only while mapping the CLI scene. The view is never handed to a caller that could edit a parameter.
+    internal static RvtDocument ForSceneExport(RevitFileInfo info) => new(CloneForDocument(info, sceneOnly: true));
+
+    private static RevitFileInfo CloneForDocument(RevitFileInfo info, bool sceneOnly)
     {
         var cloned = info.ShallowCopy();
         cloned.Elements = new List<Element>(info.Elements.Count);
@@ -369,7 +372,12 @@ public class RvtDocument
             copy.Parameters = new List<Parameter>(elem.Parameters.Count);
             foreach (var p in elem.Parameters)
             {
-                copy.Parameters.Add(p.ShallowCopy(p.Value));
+                // Document construction can repair two empty references, remap an element ID or resolve a zero target.
+                // All other parameters are only read by the scene mapper.
+                bool needsCopy = !sceneOnly || p.HasResolvedZeroElementId
+                    || (p.StorageType == StorageType.ElementId && p.Value is int id && (id == 0 || info.ElementIds != null))
+                    || (!p.HasValue && p.DefinitionName is "SYMBOL_ID_PARAM" or "ELEM_FAMILY_PARAM");
+                copy.Parameters.Add(needsCopy ? p.ShallowCopy(p.Value) : p);
             }
             cloned.Elements.Add(copy);
         }

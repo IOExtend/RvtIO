@@ -13,6 +13,18 @@ namespace RvtIO.Model
     /// </summary>
     public class ParameterListConverter : JsonConverter<List<Parameter>>
     {
+        private readonly Dictionary<int, JsonEncodedText>? _keys;
+
+        /// <summary>Writes values using the caller's serializer options and converters.</summary>
+        public ParameterListConverter() { }
+
+        // The CLI's full dump uses fixed JSON options and knows every parameter key before writing.
+        internal ParameterListConverter(IEnumerable<int> definitionIds, System.Text.Encodings.Web.JavaScriptEncoder encoder)
+        {
+            _keys = definitionIds.ToDictionary(id => id, id => JsonEncodedText.Encode(
+                id.ToString(System.Globalization.CultureInfo.InvariantCulture), encoder));
+        }
+
         /// <inheritdoc />
         public override List<Parameter> Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
             => throw new NotSupportedException("ParameterListConverter is write-only.");
@@ -27,11 +39,14 @@ namespace RvtIO.Model
                 // First occurrence wins (matches Element.LookupParameter semantics) so a
                 // rare duplicate id does not produce an invalid repeated JSON property.
                 if (!seen.Add(p.Id)) continue;
-                writer.WritePropertyName(p.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                if (_keys != null && _keys.TryGetValue(p.Id, out var key))
+                    writer.WritePropertyName(key);
+                else writer.WritePropertyName(p.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 if (p.SourceElementId is string sourceId)
                     writer.WriteStringValue(sourceId);
-                else
-                    JsonSerializer.Serialize(writer, p.Value, options);
+                else if (_keys != null && p.Value is int integer) writer.WriteNumberValue(integer);
+                else if (_keys != null && p.Value is string text) writer.WriteStringValue(text);
+                else JsonSerializer.Serialize(writer, p.Value, options);
             }
             writer.WriteEndObject();
         }

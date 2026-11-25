@@ -17,10 +17,10 @@ internal sealed class CompactElementNames
 {
     private readonly Dictionary<int, Element> _byId;
     private readonly Dictionary<int, int> _counts;
-    private readonly ParsingState? _state;
+    private readonly JsonReadFacts? _state;
     private readonly ConcurrentDictionary<int, string?> _cache = new();
 
-    public CompactElementNames(RevitFileInfo info, ParsingState? state)
+    public CompactElementNames(RevitFileInfo info, JsonReadFacts? state)
     {
         ArgumentNullException.ThrowIfNull(info);
         _state = state;
@@ -33,7 +33,7 @@ internal sealed class CompactElementNames
         }
     }
 
-    internal void ApplyValidatedNames(RevitFileInfo info, ParsingState state) =>
+    internal void ApplyValidatedNames(RevitFileInfo info, JsonReadFacts state) =>
         ValidatedElementNames.Apply(info, state, _byId, _counts);
 
     /// <summary>The element with the id, null when the file has none.</summary>

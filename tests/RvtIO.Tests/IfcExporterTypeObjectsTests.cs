@@ -1227,7 +1227,7 @@ public class IfcExporterTypeObjectsTests
         var writer = new StepWriter();
         var values = new List<int>();
         typeof(IfcExporter).GetMethod("AddStairFlightProperties", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
-            .Invoke(null, [writer, run, elements, values, false]);
+            .Invoke(null, [writer, run, elements, values, false, new Dictionary<int, List<Element>> { [stairs.Id] = [run] }]);
         var written = values.Select(id => Enumerable.Range(0, writer.EntityCount).Select(writer.EntityAt).Single(e => e.Id == id).Args).ToList();
         Assert.Equal(
         [

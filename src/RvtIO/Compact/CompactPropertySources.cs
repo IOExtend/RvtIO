@@ -39,7 +39,7 @@ internal sealed class CompactPropertySources : ICompactPropertySource
     internal CompactPropertySources Fork() => new(_builtin.Fork(), _ifc, _user, _identityRules);
 
     /// <summary>The composite of a file.</summary>
-    internal static CompactPropertySources Create(RevitFileInfo info, ParsingState? state, bool? isProjectDocument,
+    internal static CompactPropertySources Create(RevitFileInfo info, JsonReadFacts? state, bool? isProjectDocument,
         Func<Element, int?>? headerCategory = null, bool gated = true, CompactIdentity? identity = null,
         CompactSolidQuantities? quantities = null, CompactElementNames? names = null)
     {

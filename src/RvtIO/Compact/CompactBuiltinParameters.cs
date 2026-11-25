@@ -43,7 +43,7 @@ internal sealed class CompactBuiltinParameters
     private readonly Func<Element, int?> _headerCategory;
     private readonly bool _usesDefaultHeaderCategory;
     private readonly CompactValueGate? _gate;
-    private readonly ParsingState? _state;
+    private readonly JsonReadFacts? _state;
     private readonly CompactSolidQuantities? _quantities;
     private readonly double? _surveyOffsetFeet;
     private readonly string? _lookupNoneText;
@@ -59,7 +59,7 @@ internal sealed class CompactBuiltinParameters
     /// <param name="surveyOffsetFeet">Shared (survey) elevation minus internal elevation of the active project location, null when the
     /// location is not resolved exactly.</param>
     public CompactBuiltinParameters(CompactElementNames names, CompactFormatSettings? format, CompactListFileFacts file,
-        Func<Element, int?>? headerCategory = null, CompactValueGate? gate = null, ParsingState? state = null, double? surveyOffsetFeet = null,
+        Func<Element, int?>? headerCategory = null, CompactValueGate? gate = null, JsonReadFacts? state = null, double? surveyOffsetFeet = null,
         string? lookupNoneText = null, CompactSolidQuantities? quantities = null)
     {
         _quantities = quantities;
@@ -376,7 +376,8 @@ internal sealed class CompactBuiltinParameters
     /// <summary>The first FamilyParams record of the element for the id (the reader keeps the first of a repeated id).</summary>
     private TfBlockDeserializer.NamedParamRecord? OwnRecord(Element element, int id)
     {
-        if (_state == null || !_state.NativeParams.TryGetValue((uint)element.Id, out var native)) return null;
+        if (_state == null) return null;
+        var native = _state.StoresOf((uint)element.Id);
         foreach (var record in native.NamedParams)
             if (record.ParamId == id) return record;
         return null;
@@ -420,13 +421,16 @@ internal sealed class CompactBuiltinParameters
         }
         // a number is printed from the value of the store itself: the reader's parameter of the same id can have been replaced by a
         // derived value (wall openings: Base Offset stored as 109,01, 0 in the reader's parameter)
-        if (storage == StorageType.Double && _state != null && _state.NativeParams.TryGetValue((uint)element.Id, out var native)
-            && native.Doubles.Any(item => item.ParamId == id))
+        if (storage == StorageType.Double && _state != null)
         {
-            if (spec.Length == 0 || _format == null) { reason = "double without a spec or format settings"; return null; }
-            string? formatted = CompactValueFormatter.Format(native.Doubles.First(item => item.ParamId == id).Value, spec, _format);
-            if (formatted == null) reason = "stored double not formatted (unit or spec unknown)";
-            return formatted;
+            foreach (var row in _state.StoresOf((uint)element.Id).Doubles)
+            {
+                if (row.ParamId != id) continue;
+                if (spec.Length == 0 || _format == null) { reason = "double without a spec or format settings"; return null; }
+                string? formatted = CompactValueFormatter.Format(row.Value, spec, _format);
+                if (formatted == null) reason = "stored double not formatted (unit or spec unknown)";
+                return formatted;
+            }
         }
         if (held == null) reason = "stored value not available as text";
         return held;

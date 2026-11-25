@@ -37,7 +37,7 @@ internal static class ValidatedElementNames
     /// number of elements that keep a name. Destructive: call it only on the way to the JSON dump, never before the IFC
     /// export or the API, which read <see cref="Element.Name"/> as a fallback.
     /// </summary>
-    internal static int Apply(RevitFileInfo info, ParsingState state)
+    internal static int Apply(RevitFileInfo info, JsonReadFacts state)
     {
         var byId = new Dictionary<int, Element>(info.Elements.Count);
         var counts = new Dictionary<int, int>(info.Elements.Count);
@@ -49,7 +49,7 @@ internal static class ValidatedElementNames
         return Apply(info, state, byId, counts);
     }
 
-    internal static int Apply(RevitFileInfo info, ParsingState state,
+    internal static int Apply(RevitFileInfo info, JsonReadFacts state,
         IReadOnlyDictionary<int, Element> byId, IReadOnlyDictionary<int, int> counts)
     {
         // Resolve everything before assigning: no resolution may read another element's replaced Name.
@@ -67,7 +67,7 @@ internal static class ValidatedElementNames
 
     /// <summary>The first validated name of the element, in the order of <see cref="Candidates"/>; null when unvalidated.</summary>
     internal static Validation? Resolve(
-        Element element, IReadOnlyDictionary<int, Element> byId, IReadOnlyDictionary<int, int> counts, ParsingState state)
+        Element element, IReadOnlyDictionary<int, Element> byId, IReadOnlyDictionary<int, int> counts, JsonReadFacts state)
     {
         foreach (Validation validation in Candidates(element, byId, counts, state))
             return validation;
@@ -76,11 +76,11 @@ internal static class ValidatedElementNames
 
     /// <summary>The validated names of the element in priority order. A named element (a type, level or material) reports
     /// its own name and nothing else; only an occurrence with no name of its own reports the name of its type, as the
-    /// Revit API does. A type element (it owns a Symbol-subclass root, <see cref="ParsingState.SystemTypeRoots"/>) has no
+    /// Revit API does. A type element (it owns a Symbol-subclass root, <see cref="JsonReadFacts.SystemTypeRoots"/>) has no
     /// type: the link it carries points at another symbol, so without a validated name of its own it has none.
     /// Two different names in the result would contradict each other.</summary>
     internal static IEnumerable<Validation> Candidates(
-        Element element, IReadOnlyDictionary<int, Element> byId, IReadOnlyDictionary<int, int> counts, ParsingState state)
+        Element element, IReadOnlyDictionary<int, Element> byId, IReadOnlyDictionary<int, int> counts, JsonReadFacts state)
     {
         if (element.Id < 0 || element.Id == 0 && state.WideSchema == null && !state.ElemClassIdx.ContainsKey(0)) yield break;
         bool named = false;
@@ -96,7 +96,7 @@ internal static class ValidatedElementNames
 
     /// <summary>The element is itself the named one. The own SymbolInfo name of a unique type root comes before the name
     /// table: the table holds another string for the pipe, flex pipe and insulation types.</summary>
-    private static IEnumerable<Validation> OwnNames(Element element, ParsingState state)
+    private static IEnumerable<Validation> OwnNames(Element element, JsonReadFacts state)
     {
         uint id = (uint)element.Id;
         if (state.WideNames.TryGetValue(id, out string? wideName) && Named(wideName)) yield return new(wideName, "wide-own-name");
@@ -114,15 +114,14 @@ internal static class ValidatedElementNames
             yield return new(symbol.Name!, "family-symbol");
         if (state.ElementNameTable.TryGetValue(id, out string? tableName) && Named(tableName))
             yield return new(tableName, "name-table");
-        if (state.NativeParams.TryGetValue(id, out var native) && native.Fields.ContainsKey("__isLevel")
-            && native.StringFields.TryGetValue("m_text", out string? levelName) && Named(levelName))
+        if (state.StoresOf(id).LevelName is { } levelName && Named(levelName))
             yield return new(levelName, "level");
         if (Named(element.SerializedMaterialName)) yield return new(element.SerializedMaterialName!, "material");
     }
 
     /// <summary>An occurrence: the name of its type, through the links the IFC exporter confirms.</summary>
     private static IEnumerable<Validation> TypeNames(
-        Element element, IReadOnlyDictionary<int, Element> byId, IReadOnlyDictionary<int, int> counts, ParsingState state)
+        Element element, IReadOnlyDictionary<int, Element> byId, IReadOnlyDictionary<int, int> counts, JsonReadFacts state)
     {
         if (IfcExporter.ResolveMepCurveTypeName(element, byId) is { } mepName && Named(mepName))
             yield return new(mepName, "mep-curve-type");
@@ -151,7 +150,7 @@ internal static class ValidatedElementNames
     /// <summary>The SymbolInfo name of the host object type's own unique root, when its class and category agree with the
     /// occurrences (<see cref="ElementBuilder.ApplyHostTypeCompoundStructures"/> sets <see cref="Element.SerializedHostTypeLayers"/>
     /// only then).</summary>
-    private static string? HostTypeName(Element type, ParsingState state) =>
+    private static string? HostTypeName(Element type, JsonReadFacts state) =>
         type.SerializedHostTypeLayers != null
         && state.HostTypeCompoundStructures.TryGetValue((uint)type.Id, out var validation) && Named(validation.TypeName)
             ? validation.TypeName : null;

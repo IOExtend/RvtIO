@@ -49,6 +49,34 @@ public class WideNativeParamsTests
 
     private static readonly WideNativeParams Params = new(Schema());
 
+    [Theory]
+    [InlineData("Symbol", "Symbol")]
+    [InlineData("", "Family")]
+    [InlineData("SecretInternalStyle", "Family")]
+    public void OwnName_PrefersTheHighestRankedFieldAndOnlyItsFirstText(string symbol, string expected)
+    {
+        var walk = new WideBlockWalker.Walk();
+        void Name(string declaring, string text) => walk.Captures.Add(new("name", WideBlockWalker.CaptureKind.Text,
+            0, 0, text, false, 0, declaring, "m_name"));
+        Name("Material", "Material");
+        Name("SymbolInfo", symbol);
+        Name("SymbolInfo", "Second symbol");
+        Name("FamilyBase", "Family");
+        Assert.Equal(expected, Params.OwnName(walk, RootId));
+    }
+
+    [Fact]
+    public void OwnName_UsesAParameterCaptionOnlyForAParameterElement()
+    {
+        var schema = Schema();
+        schema.Classes.Add(new(22, "ParamElem", 0, 1, [], []));
+        var reader = new WideNativeParams(schema);
+        var walk = new WideBlockWalker.Walk();
+        walk.Captures.Add(new("caption", WideBlockWalker.CaptureKind.Text, 0, 0, "Caption", false, 0, "ParamDef", "m_caption"));
+        Assert.Null(reader.OwnName(walk, RootId));
+        Assert.Equal("Caption", reader.OwnName(walk, 22));
+    }
+
     private static byte[] Block(int classId, Action<BinaryWriter> body)
     {
         var stream = new MemoryStream();
