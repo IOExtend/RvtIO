@@ -93,6 +93,9 @@ internal static partial class TfBlockDeserializer
                 [new("m_cda", 14, 0, 413, null)]),
         };
 
+    private static readonly Dictionary<ushort, TfField[]> GElementGraphFieldsByClass =
+        GElementGraphSchemas.Keys.ToDictionary(id => id, id => GElementGraphFields(id).ToArray());
+
     private static bool HasGElementGraphSchemas() => GElementGraphSchemas.All(pair =>
         Schemas.TryGetValue(pair.Key, out var actual) && actual.Name == pair.Value.Name
         && actual.Base == pair.Value.Base && actual.Fields.SequenceEqual(pair.Value.Fields));

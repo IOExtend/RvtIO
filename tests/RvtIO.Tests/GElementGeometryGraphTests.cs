@@ -117,13 +117,16 @@ public class GElementGeometryGraphTests
     }
 
     [Theory]
-    [InlineData("faces")] [InlineData("edges")] [InlineData("interior")]
-    public void CountLimitAndRemainingBytesAreBothEnforced(string key)
+    [InlineData("faces", 1978, "m_pFaces")]
+    [InlineData("edges", 2092, "m_pEdges")]
+    [InlineData("interior", 1244, "m_interiorEdgePnts")]
+    public void CountLimitAndRemainingBytesAreBothEnforced(string key, int declaring, string field)
     {
         foreach(uint count in new[] { 100001u,100000u })
         {
             var (bytes,offsets) = Block(); BitConverter.GetBytes(count).CopyTo(bytes,offsets[key]);
-            Assert.Null(Read(bytes,out var failure)); Assert.NotNull(failure);
+            Assert.Null(Read(bytes, out var failure));
+            Assert.Equal($"field:{declaring}:{field}:{offsets[key]}", failure);
         }
     }
 
