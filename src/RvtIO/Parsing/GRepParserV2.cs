@@ -26,7 +26,10 @@ internal static partial class GRepParserV2
     private static double ChordTolerance => TessellationChordToleranceFeet * (t_coarseTessellation ? 16 : 1);
 
     private sealed class DecodeStop : Exception { }
-    private static readonly DecodeStop Stop = new();
+    [ThreadStatic] private static DecodeStop? t_stop;
+
+    // Throwing updates the exception's stack trace. Reuse it only on the current thread.
+    private static DecodeStop Stop => t_stop ??= new();
 
     /// <summary>
     /// Serialized class ids of the Face and Edge objects whose per-block counts feed <see
