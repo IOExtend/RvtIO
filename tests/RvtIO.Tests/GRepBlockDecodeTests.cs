@@ -117,6 +117,52 @@ public class GRepBlockDecodeTests
     }
 
     [Fact]
+    public void DecodeBrowserBatches_ParallelizesOnlyTheDecodeAndPreservesOrder()
+    {
+        const int count = 11;
+        const int workers = 2;
+        int caller = Environment.CurrentManagedThreadId;
+        int prepared = 0;
+        int applied = 0;
+        int started = 0;
+        var blocks = SyntheticBlocks(count);
+        var updates = new List<int>();
+        using var firstBatch = new Barrier(workers);
+
+        BlockParser.DecodeBrowserBatches(count,
+            index =>
+            {
+                Assert.Equal(caller, Environment.CurrentManagedThreadId);
+                Assert.Equal(prepared++, index);
+                Assert.InRange(prepared - applied, 1, workers);
+                return index;
+            },
+            index =>
+            {
+                if (Environment.ProcessorCount >= workers && Interlocked.Increment(ref started) <= workers)
+                    Assert.True(firstBatch.SignalAndWait(DecodeWait));
+                return blocks[index];
+            },
+            (index, geometry) =>
+            {
+                Assert.Equal(caller, Environment.CurrentManagedThreadId);
+                Assert.Equal(applied++, index);
+                Assert.Same(blocks[index], geometry);
+            },
+            workers, (completed, total) =>
+            {
+                Assert.Equal(caller, Environment.CurrentManagedThreadId);
+                Assert.Equal(count, total);
+                Assert.Equal(applied, completed);
+                updates.Add(completed);
+            });
+
+        Assert.Equal(count, applied);
+        Assert.Equal(0, updates[0]);
+        Assert.Equal(count, updates[^1]);
+    }
+
+    [Fact]
     public void DecodeGRepBlocks_AFailedDecodeOutsideABrowserAppliesNothingAndStaysAMalformedInputFailure()
     {
         var applied = new List<int>();

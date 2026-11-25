@@ -25,8 +25,9 @@ internal static class BlockParser
             {
                 var job = pending[index];
                 var (data, start) = job.Stored?.Read() ?? (job.Chunk, job.Start);
-                return GRepParserV2.Parse(data, start, job.Size);
+                return (Data: data, Start: start, job.Size);
             },
+            block => GRepParserV2.Parse(block.Data, block.Start, block.Size),
             (index, geometry) => ApplyPendingGRep(state, pending[index], geometry), progress);
     }
 
@@ -47,10 +48,54 @@ internal static class BlockParser
     }
 
     /// <summary>Decodes <paramref name="count"/> blocks and applies each result on the calling thread in index order.
-    /// A browser decodes and applies one block at a time; elsewhere the blocks are decoded in parallel.</summary>
+    /// The single-threaded browser path decodes and applies one block at a time.</summary>
     internal static void DecodeGRepBlocksInOrder(int count, Func<int, GRepData?> decode, Action<int, GRepData?> apply,
         Action<int, int>? progress = null) =>
         DecodeGRepBlocksInOrder(count, decode, apply, OperatingSystem.IsBrowser(), progress);
+
+    internal static void DecodeGRepBlocksInOrder<T>(int count, Func<int, T> read, Func<T, GRepData?> decode,
+        Action<int, GRepData?> apply, Action<int, int>? progress = null)
+    {
+        if (!OperatingSystem.IsBrowser() || Environment.ProcessorCount < 2)
+        {
+            DecodeGRepBlocksInOrder(count, index => decode(read(index)), apply, progress);
+            return;
+        }
+
+        // Scratch reads and result commits call browser imports on the reader's owning thread.
+        DecodeBrowserBatches(count, read, decode, apply, Math.Min(4, Environment.ProcessorCount), progress);
+    }
+
+    internal static void DecodeBrowserBatches<T>(int count, Func<int, T> read, Func<T, GRepData?> decode,
+        Action<int, GRepData?> apply, int workers, Action<int, int>? progress)
+    {
+        if (count == 0) return;
+        // Keep at most one decoded block per worker waiting to be committed.
+        var inputs = new T[Math.Min(count, workers)];
+        var results = new GRepData?[inputs.Length];
+        var options = new ParallelOptions { MaxDegreeOfParallelism = workers };
+        var clock = progress == null ? null : System.Diagnostics.Stopwatch.StartNew();
+        progress?.Invoke(0, count);
+        for (int offset = 0; offset < count; offset += inputs.Length)
+        {
+            int length = Math.Min(inputs.Length, count - offset);
+            for (int index = 0; index < length; index++)
+                inputs[index] = read(offset + index);
+            Parallel.For(0, length, options, index => results[index] = decode(inputs[index]));
+            for (int index = 0; index < length; index++)
+            {
+                apply(offset + index, results[index]);
+                results[index] = null;
+                inputs[index] = default!;
+            }
+            int completed = offset + length;
+            if (clock != null && (completed == count || clock.ElapsedMilliseconds >= 500))
+            {
+                progress!(completed, count);
+                clock.Restart();
+            }
+        }
+    }
 
     /// <summary>The seam of the overload above: <paramref name="sequential"/> selects the one-block-at-a-time path of a
     /// browser.</summary>

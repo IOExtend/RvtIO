@@ -997,13 +997,18 @@ public partial class RvtFileReader
         {
             int first = start;
             int count = Math.Min(partialResults.Length, chunks.Count - first);
-            // Keep both memory use and merge order independent of task completion order.
-            Parallel.For(0, count, index =>
+            void Scan(int index)
             {
                 var localStrings = new Dictionary<uint, List<string>>();
                 StringScanner.ScanChunk(chunks[first + index], state.AllKnownIds, localStrings, firstNameOnly);
                 if (localStrings.Count > 0) partialResults[index] = localStrings;
-            });
+            }
+            // The OPFS stream can only be read on the worker that opened it.
+            if (OperatingSystem.IsBrowser() && chunks.Store != null)
+            {
+                for (int index = 0; index < count; index++) Scan(index);
+            }
+            else Parallel.For(0, count, Scan);
             MergeElemScanStringsInChunkOrder(partialResults, state.ElemScanStrings, seen, firstNameOnly);
             Array.Clear(partialResults);
             start += count;
@@ -3029,11 +3034,15 @@ public partial class RvtFileReader
             index =>
             {
                 var job = jobs[index];
-                var clock = slowDiag ? System.Diagnostics.Stopwatch.StartNew() : null;
                 var (data, start) = job.Block.Read();
-                var geometry = GRepParserV2.Parse(data, start, job.Size);
+                return (Data: data, Start: start, job.Size, job.Eid);
+            },
+            block =>
+            {
+                var clock = slowDiag ? System.Diagnostics.Stopwatch.StartNew() : null;
+                var geometry = GRepParserV2.Parse(block.Data, block.Start, block.Size);
                 if (clock != null && (clock.ElapsedMilliseconds > 2000 || geometry?.Faces.Count > 100000))
-                    DiagnosticSink.WriteLine($"slow GRep eid={job.Eid} ms={clock.ElapsedMilliseconds} faces={geometry?.Faces.Count}");
+                    DiagnosticSink.WriteLine($"slow GRep eid={block.Eid} ms={clock.ElapsedMilliseconds} faces={geometry?.Faces.Count}");
                 return geometry;
             },
             (index, geometry) =>
