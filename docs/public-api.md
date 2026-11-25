@@ -213,10 +213,10 @@ instance included, gets its own triangles. The shared symbol triangles keep the 
 faces reverses the winding of a placement with a negative determinant. The own triangles of an element, those of a mirrored
 instance included, are wound around the normals of their faces.
 
-The drawable elements follow a subset of the product rules of the IFC export of the current profile, and the materials and the
-hidden Geometry nodes follow its rules: they are listed in the documentation comment of `ElementMeshes`, with the product rules
-that are not applied (the "export to IFC" flag, topography, walls that are not visible and others), so the meshes can include
-elements that the IFC leaves out. Curved surfaces are the dense polygons the reader decodes for them.
+The drawable elements follow a subset of the product rules of the current IFC profile, including exclusion of topography stored
+in model-group definitions. `ElementMeshes` documents these rules, its material and hidden Geometry node handling, and IFC
+rules specific to export, such as the export flag and assembly of the site. Curved surfaces are the dense polygons the reader
+decodes for them.
 
 ## Writing and save-as
 
