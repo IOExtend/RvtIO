@@ -1200,15 +1200,19 @@ public sealed class SetParameterTests : IDisposable
     }
 
     [Theory]
-    [InlineData("12.75 ft", "unverified-parameter-storage")]
-    [InlineData(null, "unsupported-parameter-clear")]
-    public void RefusesAWholeBatchWhenWallHeightCannotBeWritten(string? height, string errorCode)
+    [InlineData(BuiltInParameter.WALL_USER_HEIGHT_PARAM, "12.75 ft", "unverified-parameter-storage")]
+    [InlineData(BuiltInParameter.WALL_BASE_OFFSET, "-2 ft", "unverified-parameter-storage")]
+    [InlineData(BuiltInParameter.WALL_TOP_OFFSET, "2 ft", "unverified-parameter-storage")]
+    [InlineData(BuiltInParameter.WALL_USER_HEIGHT_PARAM, null, "unsupported-parameter-clear")]
+    [InlineData(BuiltInParameter.WALL_BASE_OFFSET, null, "unsupported-parameter-clear")]
+    [InlineData(BuiltInParameter.WALL_TOP_OFFSET, null, "unsupported-parameter-clear")]
+    public void RefusesAWholeBatchWhenAWallDimensionCannotBeWritten(BuiltInParameter parameter, string? value, string errorCode)
     {
         string source = CreateSource(builtIn: BuiltInParameter.ALL_MODEL_MARK);
         byte[] original = SHA256.HashData(File.ReadAllBytes(source));
         var refused = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetParameters(source, Output,
             [new(ProjectId, (int)BuiltInParameter.ALL_MODEL_MARK, "New mark"),
-             new(ProjectId, (int)BuiltInParameter.WALL_USER_HEIGHT_PARAM, height)]));
+             new(ProjectId, (int)parameter, value)]));
         Assert.Equal(errorCode, refused.Kind);
         Assert.False(File.Exists(Output));
         Assert.Equal(original, SHA256.HashData(File.ReadAllBytes(source)));

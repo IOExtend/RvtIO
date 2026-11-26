@@ -13,12 +13,16 @@ internal static partial class WallHeightWriter
     private const int GeometryChannel = 103;
     // This internal slot is distinct from the wall type's height parameter.
     private const int ComputedWallHeight = -1001101;
+    private const int ComputedWallBaseOffset = -1001111;
     private const double MinimumVerifiedHeight = 0.1;
     // Revit's Application.VertexTolerance in internal feet.
     private const double VertexTolerance = 0.0005233832795;
     private const double MinimumNotchHeadGap = VertexTolerance / 0.9;
     private const double ModelRadius = 10 * 5280;
     private const string All = WideBlockWalker.AllItemsKeyPrefix;
+
+    internal static bool IsWallDimension(BuiltInParameter parameter) =>
+        parameter is BuiltInParameter.WALL_USER_HEIGHT_PARAM or BuiltInParameter.WALL_BASE_OFFSET or BuiltInParameter.WALL_TOP_OFFSET;
 
     internal static ParameterWriter.PlanResult? Plan(RootStorage root, PartitionFraming.Tags tags, int idWidth,
         SchemaDocument schema, IReadOnlySet<long> elementIds, ParameterWriter.Edit edit, ParameterWriter.Pending pending)
@@ -32,6 +36,8 @@ internal static partial class WallHeightWriter
             ? CaptureKey(c, f) : null, []);
         var records = new Dictionary<int, (int Partition, byte[] Body)>();
         var openingRecords = new Dictionary<long, byte[]?>();
+        bool offsetEdit = edit.Parameter != BuiltInParameter.WALL_USER_HEIGHT_PARAM;
+        var levels = new Dictionary<long, byte[]?>();
         var globals = new HashSet<long>();
         var wallTypes = new HashSet<long>();
         var related = new HashSet<ulong>();
@@ -93,6 +99,8 @@ internal static partial class WallHeightWriter
                     throw ParameterWriter.Unverified("A global parameter has duplicate project records.");
                 if (name == "BasicWallType")
                     wallTypes.Add((long)record.Owner);
+                if (offsetEdit && name == "Level" && !levels.TryAdd((long)record.Owner, record.Body.ToArray()))
+                    levels[(long)record.Owner] = null;
                 if (name == "SWallRectOpening" && !openingRecords.TryAdd((long)record.Owner, record.Body.ToArray()))
                     openingRecords[(long)record.Owner] = null;
             }
@@ -108,11 +116,13 @@ internal static partial class WallHeightWriter
             throw ParameterWriter.Unverified("The element is outside the verified basic wall context.");
 
         long topConstraint = wall.Integer(-1, "VWall.m_upToLevelId");
-        if (topConstraint > 0)
+        if (!offsetEdit && topConstraint > 0)
             throw new RvtWriteRefusedException("read-only-parameter", "A level constrains the top of the wall.");
+        if (edit.Parameter == BuiltInParameter.WALL_TOP_OFFSET && topConstraint == -1)
+            throw new RvtWriteRefusedException("read-only-parameter", "The top of the wall has no level constraint.");
         GlobalParameterWriter.VerifyElementParameter(walker, wall.Walk, idWidth, elementIds, globals, edit.ParameterId);
         long roomBounding = wall.Integer(-1, "HostObj.m_roomBounding");
-        if (topConstraint != -1 || wall.Walk.Queue.Any(tag => walker.IsA(tag, "GroupMembership"))
+        if (topConstraint is 0 or < -1 || wall.Walk.Queue.Any(tag => walker.IsA(tag, "GroupMembership"))
             || roomBounding is not (0 or 1) || (roomBounding == 1 && hasSpatialContext)
             || wall.Integer(-1, "Element.m_constrInfo#") != 0
             || wall.Integer(-1, "VWall.m_embeddedTo#") != 0 || wall.Integer(-1, "VWall.m_isStructuralSignificant") != 0
@@ -124,32 +134,40 @@ internal static partial class WallHeightWriter
             || headerRecord.Integer(parents, "ElementParents.m_nonDetermRegenChildren#") != 0)
             throw ParameterWriter.Unverified("The wall can regenerate unverified dependent elements.");
 
-        double height = ParameterMeasurement.Parse(UnitType.UT_Length, edit.Value!) is >= MinimumVerifiedHeight and double value
-            ? value : throw new RvtWriteRefusedException("invalid-parameter-value", "Unconnected Height requires an explicit unit and a length of at least 0.1 ft.");
+        double value = ParameterMeasurement.Parse(UnitType.UT_Length, edit.Value!) is double measured
+            && (offsetEdit || measured >= MinimumVerifiedHeight)
+            ? measured : throw new RvtWriteRefusedException("invalid-parameter-value", offsetEdit
+                ? "A wall offset requires a finite length with an explicit unit."
+                : "Unconnected Height requires an explicit unit and a length of at least 0.1 ft.");
         var original = ParameterWriter.FindValue(walker, wall.Walk, edit, StorageType.Double)?.Value
             ?? throw Layout();
         var mirror = ParameterWriter.FindValue(walker, wall.Walk, edit with { ParameterId = ComputedWallHeight }, StorageType.Double)?.Value
             ?? throw Layout();
         int outline = headerRecord.Target(-1, "ElementHeader.m_pBBox", "Outline");
-        var interval = new HeightInterval(headerRecord.Real(outline, "Outline.m_minmax@0/2"), original.Real, height);
+        var interval = offsetEdit ? PlanOffset(wall, walker, edit, topConstraint, value, mirror, LevelElevation)
+            : new HeightInterval(headerRecord.Real(outline, "Outline.m_minmax@0/2"), original.Real, value);
         if (mirror.Real != interval.Before || !double.IsFinite(interval.Top) || interval.Top <= interval.Base
+            || headerRecord.Real(outline, "Outline.m_minmax@0/2") != interval.BoundsBase
             || !SameCoordinate(headerRecord.Real(outline, "Outline.m_minmax@1/2"), interval.Top))
             throw Layout();
         double x = Math.Max(Math.Abs(headerRecord.Real(outline, "Outline.m_minmax@0/0")),
             Math.Abs(headerRecord.Real(outline, "Outline.m_minmax@1/0")));
         double y = Math.Max(Math.Abs(headerRecord.Real(outline, "Outline.m_minmax@0/1")),
             Math.Abs(headerRecord.Real(outline, "Outline.m_minmax@1/1")));
-        double z = Math.Max(Math.Abs(interval.Base), Math.Abs(interval.NewTop));
-        if (interval.NewTop <= interval.Base || x * x + y * y + z * z > ModelRadius * ModelRadius)
+        double z = Math.Max(Math.Abs(interval.NewBoundsBase), Math.Abs(interval.NewTop));
+        if (interval.After < MinimumVerifiedHeight || interval.NewTop <= interval.NewBase || x * x + y * y + z * z > ModelRadius * ModelRadius)
             throw new RvtWriteRefusedException("invalid-parameter-value", "The wall would extend beyond the verified model coordinate range.");
 
         var openings = ReadOpenings(wall, walker, interval, edit.ElementId, related, openingRecords);
         var changes = openings.Where(o => o.Cut != o.Destination).ToArray();
         bool rebuildCut = changes.Length != 0 || openings.Any(o => IsAtBoundary(o.Cut));
+        bool changed = value != original.Real;
+        if (changed && interval.NewBase != interval.Base && rebuildCut)
+            throw ParameterWriter.Unverified("Moving the wall base would require an unverified opening rebuild.");
         bool removesCuts = CanRemoveOpeningCuts(openings);
         bool activatesCuts = CanActivateOpeningCuts(openings);
         bool replay = CanReplayTopCuts(openings) || CanReplayBoundaryCuts(openings);
-        if (height != interval.Before && rebuildCut && !removesCuts && !activatesCuts && !replay && !CanChangeTopOpening(openings))
+        if (changed && rebuildCut && !removesCuts && !activatesCuts && !replay && !CanChangeTopOpening(openings))
             throw ParameterWriter.Unverified("The opening topology change is outside the verified wall layout.");
         var geometry = Read(GeometryChannel, "GElement");
         if (!GElementArchiveHandles.IsCanonical(geometry.Walk))
@@ -171,11 +189,12 @@ internal static partial class WallHeightWriter
                 throw ParameterWriter.Unverified("The wall face topology does not match the cached solid.");
             tables[i] = (start.ValueOffset, end.ValueOffset);
         }
-        wall.Write(original, height);
-        wall.Write(mirror, height);
+        wall.Write(original, value);
+        wall.Write(mirror, interval.After);
+        headerRecord.Write(outline, "Outline.m_minmax@0/2", interval.NewBoundsBase);
         headerRecord.Write(outline, "Outline.m_minmax@1/2", interval.NewTop);
 
-        if (height == interval.Before)
+        if (!changed)
             return null;
         if (rebuildCut)
         {
@@ -209,7 +228,7 @@ internal static partial class WallHeightWriter
             var resized = ReadBody(solid, "GElement", true);
             if (!GElementArchiveHandles.IsCanonical(resized.Walk))
                 throw Layout();
-            var finalHeight = interval with { Before = interval.After };
+            var finalHeight = new HeightInterval(interval.NewBase, interval.After, interval.After);
             byte[] topology = ResizeGeometry(resized, finalHeight,
                 openings.Select(o => o with { Cut = o.Destination }).ToArray());
             byte[] element = transition.Apply(topology, tables);
@@ -243,11 +262,22 @@ internal static partial class WallHeightWriter
             return ReadBody(record.Body, expectedClass, channel == GeometryChannel);
         }
 
+        double LevelElevation(long id)
+        {
+            if (!levels.TryGetValue(id, out var body) || body is null)
+                throw ParameterWriter.Unverified("A wall constraint level does not have a unique project record.");
+            var level = ReadBody(body, "Level", false);
+            if (level.Integer(-1, "Element.m_id") != id || level.Integer(-1, "Element.m_designOptionId") != -1)
+                throw Layout();
+            int datum = level.Target(-1, "DatumPlane.m_pSurface", "Plane");
+            return level.Real(datum, "Plane.m_origin@2");
+        }
+
         Archive ReadBody(byte[] body, string expectedClass, bool traceReferences)
         {
             int tag = BinaryPrimitives.ReadUInt16LittleEndian(body);
             if (walker.Class(tag)?.Name != expectedClass)
-                throw new RvtWriteRefusedException("unsupported-parameter-owner", "Unconnected Height requires a verified straight basic wall.");
+                throw new RvtWriteRefusedException("unsupported-parameter-owner", "A wall dimension requires a verified straight basic wall.");
             var walk = walker.Run(body, 0, body.Length, tag, traceArchiveReferences: traceReferences);
             if (!walk.Exact || walk.EmptyEntityAt >= 0)
                 throw Layout();
@@ -259,6 +289,46 @@ internal static partial class WallHeightWriter
 
         long OpeningId(OpeningInterval opening) => wall.Integer(opening.Step, "WallCutoutGStepBase.m_instId");
     }
+
+    private static HeightInterval PlanOffset(Archive wall, WideBlockWalker walker, ParameterWriter.Edit edit,
+        long topConstraint, double value, WideBlockWalker.Capture computedHeight, Func<long, double> levelElevation)
+    {
+        WideBlockWalker.Capture ReadDouble(int parameterId) =>
+            ParameterWriter.FindValue(walker, wall.Walk, edit with { ParameterId = parameterId }, StorageType.Double)?.Value
+            ?? throw Layout();
+
+        var baseOffset = ReadDouble((int)BuiltInParameter.WALL_BASE_OFFSET);
+        var baseMirror = ReadDouble(ComputedWallBaseOffset);
+        if (baseOffset.Real != baseMirror.Real)
+            throw Layout();
+
+        double datum = levelElevation(wall.Integer(-1, "Element.m_assocLevelId"));
+        double originalBase = datum + baseOffset.Real;
+        bool moveBase = edit.Parameter == BuiltInParameter.WALL_BASE_OFFSET;
+        double newBase = datum + (moveBase ? value : baseOffset.Real);
+        double originalHeight, newHeight;
+        if (topConstraint == -1)
+        {
+            originalHeight = ReadDouble((int)BuiltInParameter.WALL_USER_HEIGHT_PARAM).Real;
+            newHeight = originalHeight;
+        }
+        else
+        {
+            double topDatum = levelElevation(topConstraint);
+            double topOffset = ReadDouble((int)BuiltInParameter.WALL_TOP_OFFSET).Real;
+            originalHeight = ConstrainedHeight(datum, baseOffset.Real, topDatum, topOffset);
+            newHeight = ConstrainedHeight(datum, moveBase ? value : baseOffset.Real, topDatum, moveBase ? topOffset : value);
+        }
+        if (originalHeight != computedHeight.Real)
+            throw Layout();
+        if (moveBase)
+            wall.Write(baseMirror, value);
+        return new(originalBase, originalHeight, newHeight) { NewBase = newBase, EditsOffset = true };
+    }
+
+    // Revit removes the base offset before subtracting the base level's elevation.
+    internal static double ConstrainedHeight(double baseElevation, double baseOffset, double topElevation, double topOffset) =>
+        topElevation + topOffset - baseOffset - baseElevation;
 
     private static IReadOnlyList<OpeningInterval> ReadOpenings(Archive wall, WideBlockWalker walker, HeightInterval height,
         long owner, IReadOnlySet<ulong> related, IReadOnlyDictionary<long, byte[]?> openingRecords)
@@ -306,7 +376,7 @@ internal static partial class WallHeightWriter
             double bottom = Math.Min(z0, z1);
             double top = Math.Max(z0, z1);
             var cut = CutAt(height.Base, height.Top, bottom, top);
-            var destination = CutAt(height.Base, height.NewTop, bottom, top);
+            var destination = CutAt(height.NewBase, height.NewTop, bottom, top);
             if (opening.Integer(rectangle, "RectOpeningData.m_nUvFaceId") != 0 || left <= leftLimit || right >= rightLimit
                 || right <= left || cut == OpeningCut.Unverified || destination == OpeningCut.Unverified)
                 throw ParameterWriter.Unverified("The opening may change topology at the requested height.");
@@ -449,6 +519,8 @@ internal static partial class WallHeightWriter
             if (!planes.Add(plane) || frame != new PlaneFrame(1, 1, height.Base))
                 throw Layout();
             ResizeEnvelope(wall, plane, frame, height, []);
+            if (height.NewBase != height.Base)
+                wall.Write(plane, "Plane.m_origin@2", height.NewBase);
         }
         if (!planes.SetEquals(wall.Nodes("Plane")))
             throw Layout();
@@ -463,8 +535,9 @@ internal static partial class WallHeightWriter
         int atHeadCount = openings.Count(o => o.Cut == OpeningCut.AtHead);
         foreach (string field in new[] { "GRep.m_bBox", "GRep.m_tightbBox" })
         {
-            if (geometry.Real(-1, field + "@0/2") != height.Base || !SameCoordinate(geometry.Real(-1, field + "@1/2"), height.Top))
+            if (geometry.Real(-1, field + "@0/2") != height.BoundsBase || !SameCoordinate(geometry.Real(-1, field + "@1/2"), height.Top))
                 throw Layout();
+            geometry.Write(-1, field + "@0/2", height.NewBoundsBase);
             geometry.Write(-1, field + "@1/2", height.NewTop);
         }
         if (geometry.Integer(-1, "GGroup.m_subNodes#") != 5)
@@ -504,20 +577,47 @@ internal static partial class WallHeightWriter
                     throw Layout();
         }
 
-        var faces = new Dictionary<long, PlaneFrame>();
-        var planes = new HashSet<int>();
+        var facePlanes = solidFaces.Keys.ToDictionary(face => face, face => geometry.Target(face, "Face.m_pSurf", "Plane"));
+        int planeCount = facePlanes.Values.Distinct().Count();
+        if (planeCount != facePlanes.Count)
+            throw Layout();
+        var faces = solidFaces.ToDictionary(pair => pair.Value, pair => ReadPlane(geometry, facePlanes[pair.Key], height, openingLevels));
+        bool project = height.NeedsEndpointProjection;
+        uint reversedEnd = 0;
+        var projectedSides = new HashSet<uint>();
+        var auxiliaryFaces = new HashSet<uint>();
+        if (project)
+        {
+            foreach (var (face, handle) in solidFaces)
+                if (!physicalSolidFaces.Contains(face))
+                    auxiliaryFaces.Add(handle);
+            if (openings.Count != 0 || physicalSolidFaces.Select(face => solidFaces[face]).Where(handle =>
+                    faces[handle] is { Axis: 1, Direction: -1 } frame && frame.Origin == height.Top).ToArray()
+                is not [var end])
+                throw ParameterWriter.Unverified("The offset would require projecting endpoints in an unverified wall shape.");
+            reversedEnd = end;
+            foreach (int edge in solidEdges.Values)
+            {
+                uint a = geometry.BackReference(edge, "GEdge.m_pFace@0");
+                uint b = geometry.BackReference(edge, "GEdge.m_pFace@1");
+                uint side = a == end ? b : b == end ? a : 0;
+                if (faces.TryGetValue(side, out var frame) && frame == new PlaneFrame(1, 1, height.Base))
+                    projectedSides.Add(side);
+            }
+            if (projectedSides.Count != 2)
+                throw Layout();
+        }
         var loops = new HashSet<int>();
         var fillings = new HashSet<int>();
         var faceTopology = new SortedDictionary<int, List<List<int>>>();
         foreach (var (face, handle) in solidFaces)
         {
-            int plane = geometry.Target(face, "Face.m_pSurf", "Plane");
+            int plane = facePlanes[face];
             int loopOwner = face;
             string loopField = "GFace.m_pFirstLoop";
             int? loop = geometry.OptionalTarget(loopOwner, loopField, "EdgeLoop");
-            var frame = ReadPlane(geometry, plane, height, openingLevels);
-            if (!planes.Add(plane) || !faces.TryAdd(handle, frame)
-                || loop is null && !openingLevels.Contains(frame.Origin)
+            var frame = faces[handle];
+            if (loop is null && !openingLevels.Contains(frame.Origin)
                 || geometry.Integer(face, "GFace.m_oBackgroundFilling") != 0)
                 throw Layout();
             List<List<int>>? contours = null;
@@ -536,28 +636,29 @@ internal static partial class WallHeightWriter
                 VerifyEdgeLoop(geometry, loopIndex, geometry.Handle(loopOwner, loopField), handle, solidEdges, contour);
                 if (contour is not null)
                     contours!.Add(contour);
-                ResizeEnvelope(geometry, loopIndex, frame, height, openingLevels);
+                ResizeSavedEnvelope(loopIndex, frame, handle);
                 loopOwner = loopIndex;
                 loopField = "GEdgeLoop.m_nextLoop";
                 loop = geometry.OptionalTarget(loopOwner, loopField, "EdgeLoop");
             }
-            ResizeEnvelope(geometry, plane, frame, height, openingLevels);
+            ResizeSavedEnvelope(plane, frame, handle);
 
-            if (frame.Origin == height.Top)
-                geometry.Write(plane, "Plane.m_origin@2", height.NewTop);
+            double newOrigin = height.MoveEndpoint(frame.Origin);
+            if (newOrigin != frame.Origin)
+                geometry.Write(plane, "Plane.m_origin@2", newOrigin);
             if (geometry.OptionalTarget(face, "GFace.m_pGFilling", "GFilling") is int filling)
             {
                 if (!fillings.Add(filling) || geometry.Integer(filling, "GFilling.m_pGFace") != handle
                     || geometry.Integer(filling, "GFilling.m_data") != 0)
                     throw Layout();
-                if (frame.Origin == height.Top && frame.Axis >= 0)
+                if (newOrigin != frame.Origin && frame.Axis >= 0)
                 {
                     var origin = geometry.Field(filling, $"FillPatternPlacer.m_origin@{frame.Axis}");
-                    geometry.Write(origin, origin.Real - (height.NewTop - height.Top) * frame.Direction);
+                    geometry.Write(origin, origin.Real - (newOrigin - frame.Origin) * frame.Direction);
                 }
             }
         }
-        if (groups.Count + solids.Count + solidFaces.Count + solidEdges.Count + planes.Count + loops.Count + fillings.Count != geometry.Walk.Queue.Count)
+        if (groups.Count + solids.Count + solidFaces.Count + solidEdges.Count + planeCount + loops.Count + fillings.Count != geometry.Walk.Queue.Count)
             throw Layout();
 
         foreach (int edge in solidEdges.Values)
@@ -575,11 +676,39 @@ internal static partial class WallHeightWriter
                     continue;
                 if (geometry.Values(edge, $"EdgePnt.uv@{side}/{frame.Axis}").ToArray() is not [var first, var last])
                     throw Layout();
-                ResizeUv(geometry, first, frame, height, openingLevels);
-                ResizeUv(geometry, last, frame, height, openingLevels);
+                if (project)
+                {
+                    bool projectsBase = projectedSides.Contains(handle)
+                        && geometry.BackReference(edge, $"GEdge.m_pFace@{1 - side}") == reversedEnd;
+                    double oldBase = projectsBase ? height.ProjectedBase : height.Base;
+                    double newBase = projectsBase ? height.NewProjectedBase : height.NewBase;
+                    ResizeProjectedUv(geometry, first, frame, height, oldBase, newBase, auxiliaryFaces.Contains(handle));
+                    ResizeProjectedUv(geometry, last, frame, height, oldBase, newBase, auxiliaryFaces.Contains(handle));
+                }
+                else
+                {
+                    ResizeUv(geometry, first, frame, height, openingLevels);
+                    ResizeUv(geometry, last, frame, height, openingLevels);
+                }
             }
         }
         return EncodeFaceTopology(faceTopology);
+
+        void ResizeSavedEnvelope(int index, PlaneFrame frame, uint handle)
+        {
+            if (!project)
+            {
+                ResizeEnvelope(geometry, index, frame, height, openingLevels);
+                return;
+            }
+            if (frame.Axis < 0)
+                return;
+            double oldBase = projectedSides.Contains(handle) ? height.BoundsBase : height.Base;
+            double newBase = projectedSides.Contains(handle) ? height.NewBoundsBase : height.NewBase;
+            bool auxiliary = auxiliaryFaces.Contains(handle);
+            ResizeProjectedUv(geometry, geometry.Field(index, $"Envelope.m_corners@0/{frame.Axis}"), frame, height, oldBase, newBase, auxiliary);
+            ResizeProjectedUv(geometry, geometry.Field(index, $"Envelope.m_corners@1/{frame.Axis}"), frame, height, oldBase, newBase, auxiliary);
+        }
     }
 
     private static void ResizeGeometryControl(Archive geometry, int solid, bool physical, HeightInterval height)
@@ -587,7 +716,7 @@ internal static partial class WallHeightWriter
         const int hasControlCommand = 0x4000;
         var x = Bounds(0);
         var y = Bounds(1);
-        var command = EncodeGeometryControl(x, y, (height.Base, height.NewTop));
+        var command = EncodeGeometryControl(x, y, (physical ? height.NewBoundsBase : height.NewBase, height.NewTop));
         int flags = geometry.Int32(solid, "GInfo.m_flags");
         geometry.WriteInt32(solid, "GInfo.m_controlCommand", unchecked((int)command.GetValueOrDefault()));
         geometry.WriteInt32(solid, "GInfo.m_flags", command.HasValue ? flags | hasControlCommand : flags & ~hasControlCommand);
@@ -700,7 +829,18 @@ internal static partial class WallHeightWriter
     private readonly record struct HeightInterval(double Base, double Before, double After)
     {
         internal double Top => Base + Before;
-        internal double NewTop => Base + After;
+        internal double NewBase { get; init; } = Base;
+        internal double NewTop => NewBase + After;
+        internal bool EditsOffset { get; init; }
+        // The end plane facing down from the top reprojects its lower vertices onto adjoining
+        // sides. That round trip can move the stored lower bound by a floating-point rounding step.
+        internal double ProjectedBase => Top - (Top - Base);
+        internal double NewProjectedBase => NewTop - (NewTop - NewBase);
+        internal double BoundsBase => EditsOffset ? Math.Min(Base, ProjectedBase) : Base;
+        internal double NewBoundsBase => EditsOffset ? Math.Min(NewBase, NewProjectedBase) : NewBase;
+        internal bool NeedsEndpointProjection => EditsOffset && (Top - Base != Before || NewTop - NewBase != After
+            || ProjectedBase != Base || NewProjectedBase != NewBase);
+        internal double MoveEndpoint(double position) => position == Base ? NewBase : position == Top ? NewTop : position;
     }
 
     private readonly record struct PlaneFrame(int Axis, double Direction, double Origin);
@@ -744,14 +884,29 @@ internal static partial class WallHeightWriter
         bool movesWithTop = SameCoordinate(worldZ, height.Top);
         if (worldZ != height.Base && !movesWithTop && !openingLevels.Contains(worldZ))
             throw Layout();
-        double destinationZ = movesWithTop ? height.NewTop : worldZ;
-        double destinationOrigin = plane.Origin == height.Top ? height.NewTop : plane.Origin;
+        double destinationZ = movesWithTop ? height.NewTop : height.MoveEndpoint(worldZ);
+        double destinationOrigin = height.MoveEndpoint(plane.Origin);
         if (destinationZ != worldZ || destinationOrigin != plane.Origin)
         {
             double coordinate = (destinationZ - destinationOrigin) * plane.Direction;
             if (coordinate != point.Real)
                 record.Write(point, coordinate);
         }
+    }
+
+    private static void ResizeProjectedUv(Archive record, WideBlockWalker.Capture point, PlaneFrame frame, HeightInterval height,
+        double oldBase, double newBase, bool auxiliary)
+    {
+        if (point.Kind != WideBlockWalker.CaptureKind.Real)
+            throw Layout();
+        // An auxiliary face can project the upper vertex one world-coordinate rounding step away from the physical solid.
+        double world = frame.Origin + point.Real * frame.Direction;
+        double destination = point.Real == (oldBase - frame.Origin) * frame.Direction ? newBase
+            : point.Real == (height.Top - frame.Origin) * frame.Direction || auxiliary && SameCoordinate(world, height.Top)
+                ? height.NewTop : throw Layout();
+        double coordinate = (destination - height.MoveEndpoint(frame.Origin)) * frame.Direction;
+        if (coordinate != point.Real)
+            record.Write(point, coordinate);
     }
 
     // Revit can round a cut's top coordinate to the adjacent double when projecting it onto a face.

@@ -7,6 +7,16 @@ namespace RvtIO.Tests;
 public class WallHeightWriterTests
 {
     [Theory]
+    [InlineData(1.1, 0.7, 15.91, 0, 14.110000000000001)]
+    [InlineData(7.7, 1.18, 15.91, 0.03, 7.06)]
+    [InlineData(7.7, 1.18, 15.91, -0.76, 6.2700000000000005)]
+    [InlineData(7.7, 1.18, 15.91, 1.89, 8.920000000000002)]
+    [InlineData(7.7, 0, 15.91, -1.25, 6.96)]
+    public void ComputesHeightBetweenOffsetLevelsInRevitOrder(double baseElevation, double baseOffset,
+        double topElevation, double topOffset, double height) =>
+        Assert.Equal(height, WallHeightWriter.ConstrainedHeight(baseElevation, baseOffset, topElevation, topOffset));
+
+    [Theory]
     [InlineData(0, 0.5, 0x00000002u)]
     [InlineData(0, 3.999999998, 0x00000002u)]
     [InlineData(0, 3.999999999, 0x01000002u)]

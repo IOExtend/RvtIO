@@ -48,6 +48,7 @@ readable project record for the element and a verified source for the parameter 
 | Straight wall or top-level loaded Generic Model, Door, Window, or Furniture instance | `ALL_MODEL_INSTANCE_COMMENTS` (Comments). |
 | Straight wall, room, or top-level loaded Generic Model, Door, Window, or Furniture instance | `ALL_MODEL_IMAGE` (Image). |
 | Verified straight basic wall with an unconnected top | `WALL_USER_HEIGHT_PARAM` (Unconnected Height). Pass a length with units, such as `"3200 mm"`. |
+| Verified straight basic wall with level constraints | `WALL_BASE_OFFSET` (Base Offset), and `WALL_TOP_OFFSET` (Top Offset) when the top is constrained to a level. Pass a signed length with units, such as `"-150 mm"`. |
 | Basic wall type | `ALL_MODEL_TYPE_IMAGE` (Type Image). |
 | Basic wall type, primary or directly linked derived family symbol | `ALL_MODEL_TYPE_MARK` (Type Mark). Pass the ID of the type or symbol whose value you want to write. |
 | Basic wall type or verified loaded family type | `ALL_MODEL_TYPE_COMMENTS`, `ALL_MODEL_DESCRIPTION`, `ALL_MODEL_MANUFACTURER`, `ALL_MODEL_MODEL`, `ALL_MODEL_URL`, and `ALL_MODEL_COST`. Cost takes a finite invariant number with no currency symbol; a change that Revit can suppress within its numeric comparison tolerance is refused. |
@@ -232,7 +233,7 @@ An identical value produces a lossless copy. The input and existing destination 
 The command uses exit code 0 for success, 1 for invalid arguments, 2 for input or I/O errors, and 5 for a refused edit.
 Low-level `Rewrite` accepts raw stream or record payloads and does not perform parameter editability checks.
 
-### Wall unconnected height
+### Wall height and offsets
 
 RvtIO verifies the wall body, bounds, and saved face references before applying a height edit. It recomputes the
 compact bounds of the physical solid and each auxiliary solid from their updated geometry. The wall must be in
@@ -244,9 +245,21 @@ separated rectangular openings. This covers paths across the sill and head, acti
 and removal of a cut. When Revit would add or remove an opening warning, the writer updates its records and
 registries in the same batch. [Autodesk built-in parameter reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/fb011c91-be7e-f737-28c7-3f1e1917a0e0.htm)
 
-Pass a finite length of at least `0.1 ft` in `mm`, `cm`, `m`, `in`, or `ft`. Revit exposes the parameter as
+For Unconnected Height, pass a finite length of at least `0.1 ft` in `mm`, `cm`, `m`, `in`, or `ft`. Revit exposes it as
 read-only on the tested level-constrained walls. RvtIO also refuses ambiguous positions near a cut boundary,
 unverified dependencies such as a dimension or room topology, and unverified joins and geometry.
+
+Base Offset changes the elevation above or below the base level. For an unconnected wall, the whole wall moves
+and its unconnected height is preserved. When the top has a level constraint, the new base changes the computed
+height and the top remains at the elevation set by its constraint and offset. Top Offset changes that top
+elevation while preserving the base. Revit exposes Top Offset as read-only when the wall top is unconnected.
+Pass a finite signed length with the same units as Unconnected Height. The resulting wall must be at least
+`0.1 ft` tall and inside the writer's verified coordinate range.
+
+Verified existing rectangular openings keep their absolute elevations. RvtIO can also rebuild verified
+opening transitions when Top Offset moves the wall top through the opening. Base Offset is refused when moving
+the base would require rebuilding a cut. RvtIO also refuses wall offset edits with openings when projecting
+their saved vertices requires an unverified layout.
 
 ## Editing a standalone family
 
@@ -851,12 +864,20 @@ control. Revit 2020–2025 and 2027 confirmed the height, geometry quantities, a
 and reopening without Audit. Revit 2027 verified the converted 2026-format file after upgrade. A later invalid
 height refused the entire batch and left the source unchanged.
 
+The Base Offset and Top Offset checks compared unconnected and level-constrained walls against Revit API
+assignments. Revit 2020–2025 and 2027 preserved the assigned values, calculated height, and geometry after
+opening, saving, and reopening without Audit. Revit 2027 also verified the 2026-format files after upgrade.
+Revit 2025 additionally verified walls on fractional level elevations, offsets that retain rectangular openings,
+and a Top Offset crossing and recrossing the head of a rectangular opening. Batches with a later read-only
+assignment, clear, missing unit, or invalid height left the source byte-for-byte intact and wrote no output.
+
 ## Remaining parameter coverage
 
 | Case | Current boundary |
 | --- | --- |
 | Read-only values | Revit API rejects assignments to parameters such as computed wall area. RvtIO also rejects these assignments. |
-| Wall Unconnected Height | RvtIO supports the verified straight wall and rectangular opening cases above, including a single wall with joins allowed and Room Bounding when there is no saved spatial context. Joined walls, walls that can form a new join, changes affecting spatial topology, other host cuts, and constrained geometry still require coverage. A level-constrained top is read-only through the tested Revit API. |
+| Wall Unconnected Height | RvtIO supports the verified straight wall and rectangular opening cases above, including a single wall with joins allowed and Room Bounding when there is no saved spatial context. Joined walls, walls that can form a new join, changes affecting spatial topology, and other host cuts still require coverage. Revit exposes Unconnected Height as read-only when a level constrains the top. |
+| Wall Base Offset and Top Offset | RvtIO supports the verified straight wall and rectangular opening cases described above. Revit exposes Top Offset as read-only on a wall with an unconnected top. Base movement that changes the topology of a rectangular opening and offsets on walls with unverified joins, dependencies or geometry still require coverage. |
 | Clearing an RVT value | Revit API `ClearValue()` requires a shared definition with `HideWhenNoValue`. RvtIO also checks the binding and stored value layout. |
 | Additional writable RVT built-ins and element classes | The RVT parameter writer supports the combinations in the table above. Other built-in fields, loaded family categories, and layouts beyond verified directly linked derived symbols still require coverage. |
 | Additional built-ins in standalone families | The verified Generic Model, Door, Window, and Furniture fields are listed above. Other built-ins, other family categories, and selecting an unnamed family type still require coverage. |
