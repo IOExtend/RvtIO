@@ -7,7 +7,8 @@ namespace RvtIO.Writing;
 
 internal static partial class WallHeightWriter
 {
-    private static (Dictionary<double, double> Elevations, List<RvtPartitionRecordEdit> Edits) MoveLevelOpenings(
+    private static (HeightInterval Height, Dictionary<int, HeightInterval>? FaceHeights, List<RvtPartitionRecordEdit> Edits)
+        MoveLevelOpenings(
         RootStorage root, PartitionFraming.Tags tags, int idWidth, ParameterWriter.Pending pending,
         Archive wall, WideBlockWalker walker, HeightInterval wallHeight, IReadOnlyList<OpeningInterval> openings,
         LevelMove move, Func<byte[], string, bool, Archive> read, Func<long, double> levelElevation)
@@ -27,6 +28,8 @@ internal static partial class WallHeightWriter
         long wallBaseLevel = wall.Integer(-1, "Element.m_assocLevelId");
         long wallTopLevel = wall.Integer(-1, "VWall.m_upToLevelId");
         var elevations = new Dictionary<double, double>();
+        var openingHeights = new List<(int Step, double PreviousBottom, double PreviousTop, double Bottom, double Top)>();
+        bool sharedElevationMovesApart = false;
         var edits = new List<RvtPartitionRecordEdit>();
         foreach (var (id, cut) in owners)
         {
@@ -76,8 +79,9 @@ internal static partial class WallHeightWriter
                 || CutAt(wallHeight.NewBase, wallHeight.NewTop, bottom, top) != OpeningCut.Interior)
                 throw ParameterWriter.Unverified("Moving the level would take a rectangular opening outside its verified interior cut.");
 
-            AddElevation(cut.Bottom, bottom);
-            AddElevation(cut.Top, top);
+            sharedElevationMovesApart |= !AddElevation(cut.Bottom, bottom);
+            sharedElevationMovesApart |= !AddElevation(cut.Top, top);
+            openingHeights.Add((cut.Step, cut.Bottom, cut.Top, bottom, top));
             _ = ResizeGeometry(geometry, interval, [], openingSolid: true);
             if (bottom == cut.Bottom && top == cut.Top && nextLowerDatum == lowerDatum)
                 continue;
@@ -94,7 +98,26 @@ internal static partial class WallHeightWriter
             edits.AddRange([new(partition, HeaderChannel, (ulong)id, headerBody),
                 new(partition, ElementChannel, (ulong)id, body), new(partition, GeometryChannel, (ulong)id, geometryBody)]);
         }
-        return (elevations, edits);
+        if (!sharedElevationMovesApart)
+            return (wallHeight with { OpeningElevations = elevations }, null, edits);
+
+        // Shared elevations have to be resolved through the original cutting faces.
+        wallHeight = wallHeight with { OpeningElevationsRequiringOwner = elevations.Keys.ToHashSet() };
+        var cuttingFaces = new Dictionary<int, HeightInterval>();
+        foreach (var (step, previousBottom, previousTop, bottom, top) in openingHeights)
+        {
+            var height = wallHeight with
+            {
+                OpeningElevations = new Dictionary<double, double> { [previousBottom] = bottom, [previousTop] = top },
+            };
+            for (int side = 0; side < 4; side++)
+            {
+                long tag = wall.Integer(step, $"WallRectOpeningGStep.m_OpeningFacesIds@{side}");
+                if (tag <= 0 || tag >= int.MaxValue || !cuttingFaces.TryAdd((int)tag, height))
+                    throw Layout();
+            }
+        }
+        return (wallHeight, cuttingFaces, edits);
 
         (int Partition, byte[] Body) Record(long id, int channel) =>
             records.TryGetValue((id, channel), out var record) ? record : throw Layout();
@@ -105,10 +128,53 @@ internal static partial class WallHeightWriter
         double Destination(long id, double previous) => id != move.Id ? previous
             : previous == move.Previous ? move.Destination : throw Layout();
 
-        void AddElevation(double before, double after)
+        bool AddElevation(double before, double after) =>
+            elevations.TryAdd(before, after) || elevations[before] == after;
+    }
+
+    private static (Dictionary<uint, HeightInterval> Faces, Dictionary<int, HeightInterval> Edges) FindOpeningGeometry(
+        Archive geometry, IReadOnlyDictionary<int, HeightInterval> cuttingFaces, IReadOnlyDictionary<int, uint> faceHandles,
+        IReadOnlySet<int> physicalFaces, IReadOnlyDictionary<uint, int> edges)
+    {
+        var faces = new Dictionary<uint, HeightInterval>();
+        foreach (int face in physicalFaces)
+            if (cuttingFaces.TryGetValue(GeometryTag(geometry, face), out var height))
+                faces.Add(faceHandles[face], height);
+        if (faces.Count != cuttingFaces.Count)
+            throw Layout();
+
+        var sides = edges.Values.ToDictionary(edge => edge, edge =>
+            (First: geometry.BackReference(edge, "GEdge.m_pFace@0"), Second: geometry.BackReference(edge, "GEdge.m_pFace@1")));
+        var virtualFaces = new Dictionary<uint, HeightInterval>();
+        foreach (int face in physicalFaces)
         {
-            if (!elevations.TryAdd(before, after) && elevations[before] != after)
-                throw ParameterWriter.Unverified("Two opening edges at the same elevation would move to different elevations.");
+            uint handle = faceHandles[face];
+            if (geometry.OptionalTarget(face, "GFace.m_pFirstLoop", "EdgeLoop") is not null)
+                continue;
+            if (faces.ContainsKey(handle))
+                throw Layout();
+            var adjacent = sides.Values.Where(pair => pair.First == handle || pair.Second == handle)
+                .Select(pair => pair.First == handle ? pair.Second : pair.First).Distinct().ToArray();
+            if (adjacent.Length != 4 || !faces.TryGetValue(adjacent[0], out var owner)
+                || adjacent.Any(other => !faces.TryGetValue(other, out var height) || height != owner))
+                throw Layout();
+            virtualFaces.Add(handle, owner);
         }
+        foreach (var (handle, owner) in virtualFaces)
+            faces.Add(handle, owner);
+        if (faces.Values.GroupBy(owner => owner).Any(group => group.Count() != 6))
+            throw Layout();
+
+        var edgeHeights = new Dictionary<int, HeightInterval>();
+        foreach (var (edge, (first, second)) in sides)
+        {
+            bool firstOpening = faces.TryGetValue(first, out var a);
+            bool secondOpening = faces.TryGetValue(second, out var b);
+            if (firstOpening && secondOpening && a != b)
+                throw Layout();
+            if (firstOpening || secondOpening)
+                edgeHeights.Add(edge, firstOpening ? a : b);
+        }
+        return (faces, edgeHeights);
     }
 }

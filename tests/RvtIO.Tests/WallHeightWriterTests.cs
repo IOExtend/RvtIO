@@ -56,6 +56,23 @@ public class WallHeightWriterTests
     }
 
     [Fact]
+    public void ResolvesSharedElevationsWithinAnOpeningAndRejectsAnUnownedEdge()
+    {
+        var wall = new WallHeightWriter.HeightInterval(0.75, 12.875, 11.875)
+        {
+            NewBase = 1.75,
+            OpeningElevationsRequiringOwner = new HashSet<double> { 2.75, 6.75, 10.75 },
+        };
+        var firstOpening = wall with { OpeningElevations = new Dictionary<double, double> { [2.75] = 3.75, [6.75] = 6.75 } };
+        var secondOpening = wall with { OpeningElevations = new Dictionary<double, double> { [6.75] = 7.75, [10.75] = 10.75 } };
+
+        Assert.Equal(6.75, firstOpening.MoveEndpoint(6.75));
+        Assert.Equal(7.75, secondOpening.MoveEndpoint(6.75));
+        Assert.Throws<RvtWriteRefusedException>(() => wall.MoveEndpoint(6.75));
+        Assert.Throws<RvtWriteRefusedException>(() => firstOpening.MoveEndpoint(10.75));
+    }
+
+    [Fact]
     public void VerifiesAnAuxiliaryTopAgainstTheExactSavedReferenceHeight()
     {
         const double height = 0.9127000000000003, saved = 0.912700000000001, upper = 1.612700000000001;

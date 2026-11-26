@@ -180,11 +180,13 @@ internal static partial class WallHeightWriter
 
         var openings = ReadOpenings(wall, walker, interval, edit.ElementId, related, openingRecords, levelMove is not null);
         List<RvtPartitionRecordEdit> openingEdits = [];
+        Dictionary<int, HeightInterval>? openingFaceHeights = null;
         if (levelMove is { } openingMove && openings.Count != 0)
         {
             var openingPlan = MoveLevelOpenings(root, tags, idWidth, pending, wall, walker, interval, openings,
                 openingMove, ReadBody, LevelElevation);
-            interval = interval with { OpeningElevations = openingPlan.Elevations };
+            interval = openingPlan.Height;
+            openingFaceHeights = openingPlan.FaceHeights;
             openingEdits = openingPlan.Edits;
         }
         var changes = openings.Where(o => o.Cut != o.Destination).ToArray();
@@ -217,7 +219,7 @@ internal static partial class WallHeightWriter
         LevelMove? baseMove = levelMove is { } movement && movement.Id == baseConstraint ? movement : null;
         ResizeReferencePlanes(wall, interval, openings.Count, hasOtherWall, extendedReference, baseMove);
         double fillingShift = baseMove is { } translated ? translated.Destination - translated.Previous : 0;
-        byte[] faceTopology = ResizeGeometry(geometry, interval, openings, fillingShift);
+        byte[] faceTopology = ResizeGeometry(geometry, interval, openings, fillingShift, cuttingFaces: openingFaceHeights);
         int[] topologyNodes = wall.Nodes("GeometryTopology").ToArray();
         if (topologyNodes.Length != 2)
             throw ParameterWriter.Unverified("The wall does not have both verified face topology tables.");
@@ -711,7 +713,7 @@ internal static partial class WallHeightWriter
     }
 
     private static byte[] ResizeGeometry(Archive geometry, HeightInterval height, IReadOnlyList<OpeningInterval> openings,
-        double fillingShift = 0, bool openingSolid = false)
+        double fillingShift = 0, bool openingSolid = false, IReadOnlyDictionary<int, HeightInterval>? cuttingFaces = null)
     {
         var openingLevels = openings.Where(o => !IsOutsideWall(o.Cut)).SelectMany(o => new[] { o.Bottom, o.Top }).ToHashSet();
         int interiorCount = openings.Count(o => o.Cut == OpeningCut.Interior);
@@ -763,6 +765,8 @@ internal static partial class WallHeightWriter
                     throw Layout();
         }
 
+        var openingGeometry = cuttingFaces is null ? default
+            : FindOpeningGeometry(geometry, cuttingFaces, solidFaces, physicalSolidFaces, solidEdges);
         var facePlanes = solidFaces.Keys.ToDictionary(face => face, face => geometry.Target(face, "Face.m_pSurf", "Plane"));
         int planeCount = facePlanes.Values.Distinct().Count();
         if (planeCount != facePlanes.Count)
@@ -804,6 +808,7 @@ internal static partial class WallHeightWriter
             string loopField = "GFace.m_pFirstLoop";
             int? loop = geometry.OptionalTarget(loopOwner, loopField, "EdgeLoop");
             var frame = faces[handle];
+            var faceHeight = openingGeometry.Faces?.GetValueOrDefault(handle, height) ?? height;
             if (loop is null && !openingLevels.Contains(frame.Origin)
                 || geometry.Integer(face, "GFace.m_oBackgroundFilling") != 0)
                 throw Layout();
@@ -820,17 +825,20 @@ internal static partial class WallHeightWriter
                     || geometry.Integer(loopIndex, "GEdgeLoop.m_open") != 0)
                     throw Layout();
                 List<int>? contour = contours is null ? null : [];
-                VerifyEdgeLoop(geometry, loopIndex, geometry.Handle(loopOwner, loopField), handle, solidEdges, contour);
+                var loopHeight = VerifyEdgeLoop(geometry, loopIndex, geometry.Handle(loopOwner, loopField), handle,
+                    solidEdges, contour, openingGeometry.Edges);
+                if (openingGeometry.Faces?.ContainsKey(handle) == true && loopHeight != faceHeight)
+                    throw Layout();
                 if (contour is not null)
                     contours!.Add(contour);
-                ResizeSavedEnvelope(loopIndex, frame, handle);
+                ResizeSavedEnvelope(loopIndex, frame, handle, loopHeight ?? faceHeight);
                 loopOwner = loopIndex;
                 loopField = "GEdgeLoop.m_nextLoop";
                 loop = geometry.OptionalTarget(loopOwner, loopField, "EdgeLoop");
             }
-            ResizeSavedEnvelope(plane, frame, handle);
+            ResizeSavedEnvelope(plane, frame, handle, faceHeight);
 
-            double newOrigin = height.MoveEndpoint(frame.Origin);
+            double newOrigin = faceHeight.MoveEndpoint(frame.Origin);
             if (newOrigin != frame.Origin)
                 geometry.Write(plane, "Plane.m_origin@2", newOrigin);
             if (geometry.OptionalTarget(face, "GFace.m_pGFilling", "GFilling") is int filling)
@@ -854,6 +862,7 @@ internal static partial class WallHeightWriter
         {
             if (geometry.Integer(edge, "GEdge.m_interiorEdgePnts#") != 0)
                 throw Layout();
+            var edgeHeight = openingGeometry.Edges?.GetValueOrDefault(edge, height) ?? height;
             for (int side = 0; side < 2; side++)
             {
                 uint handle = geometry.BackReference(edge, $"GEdge.m_pFace@{side}");
@@ -877,25 +886,25 @@ internal static partial class WallHeightWriter
                     // The split cutter edges under the top can record the projection of its preceding double.
                     bool projectedCutTop = cutterEdge && frame == otherFrame && frame is { Axis: 0, Direction: -1 }
                         && openings.Any(o => o.Cut == OpeningCut.ThroughTop && o.Top == frame.Origin);
-                    ResizeProjectedUv(geometry, first, frame, height, oldBase, newBase, auxiliaryFaces.Contains(handle), openingLevels,
+                    ResizeProjectedUv(geometry, first, frame, edgeHeight, oldBase, newBase, auxiliaryFaces.Contains(handle), openingLevels,
                         projectedCutBase, projectedCutTop);
-                    ResizeProjectedUv(geometry, last, frame, height, oldBase, newBase, auxiliaryFaces.Contains(handle), openingLevels,
+                    ResizeProjectedUv(geometry, last, frame, edgeHeight, oldBase, newBase, auxiliaryFaces.Contains(handle), openingLevels,
                         projectedCutBase, projectedCutTop);
                 }
                 else
                 {
-                    ResizeUv(geometry, first, frame, height, openingLevels);
-                    ResizeUv(geometry, last, frame, height, openingLevels);
+                    ResizeUv(geometry, first, frame, edgeHeight, openingLevels);
+                    ResizeUv(geometry, last, frame, edgeHeight, openingLevels);
                 }
             }
         }
         return EncodeFaceTopology(faceTopology);
 
-        void ResizeSavedEnvelope(int index, PlaneFrame frame, uint handle)
+        void ResizeSavedEnvelope(int index, PlaneFrame frame, uint handle, HeightInterval envelopeHeight)
         {
             if (!project)
             {
-                ResizeEnvelope(geometry, index, frame, height, openingLevels);
+                ResizeEnvelope(geometry, index, frame, envelopeHeight, openingLevels);
                 return;
             }
             if (frame.Axis < 0)
@@ -903,8 +912,8 @@ internal static partial class WallHeightWriter
             double oldBase = projectedSides.Contains(handle) ? height.BoundsBase : height.Base;
             double newBase = projectedSides.Contains(handle) ? height.NewBoundsBase : height.NewBase;
             bool auxiliary = auxiliaryFaces.Contains(handle);
-            ResizeProjectedUv(geometry, geometry.Field(index, $"Envelope.m_corners@0/{frame.Axis}"), frame, height, oldBase, newBase, auxiliary, openingLevels);
-            ResizeProjectedUv(geometry, geometry.Field(index, $"Envelope.m_corners@1/{frame.Axis}"), frame, height, oldBase, newBase, auxiliary, openingLevels);
+            ResizeProjectedUv(geometry, geometry.Field(index, $"Envelope.m_corners@0/{frame.Axis}"), frame, envelopeHeight, oldBase, newBase, auxiliary, openingLevels);
+            ResizeProjectedUv(geometry, geometry.Field(index, $"Envelope.m_corners@1/{frame.Axis}"), frame, envelopeHeight, oldBase, newBase, auxiliary, openingLevels);
         }
     }
 
@@ -974,15 +983,21 @@ internal static partial class WallHeightWriter
         }
     }
 
-    private static void VerifyEdgeLoop(Archive geometry, int loop, uint loopHandle, uint faceHandle,
-        IReadOnlyDictionary<uint, int> edges, List<int>? contour)
+    private static HeightInterval? VerifyEdgeLoop(Archive geometry, int loop, uint loopHandle, uint faceHandle,
+        IReadOnlyDictionary<uint, int> edges, List<int>? contour, IReadOnlyDictionary<int, HeightInterval>? edgeHeights)
     {
         uint previous = loopHandle;
         uint current = geometry.BackReference(loop, "GEdgeLoop.m_next");
         int traversed = 0;
+        HeightInterval? opening = null;
         while (current != loopHandle)
         {
             if (traversed++ >= edges.Count || !edges.TryGetValue(current, out int edge))
+                throw Layout();
+            HeightInterval? edgeHeight = edgeHeights?.TryGetValue(edge, out var owner) == true ? owner : null;
+            if (traversed == 1)
+                opening = edgeHeight;
+            else if (opening != edgeHeight)
                 throw Layout();
             bool first = geometry.BackReference(edge, "GEdge.m_pFace@0") == faceHandle;
             bool second = geometry.BackReference(edge, "GEdge.m_pFace@1") == faceHandle;
@@ -999,6 +1014,7 @@ internal static partial class WallHeightWriter
         }
         if (traversed < 3 || previous != geometry.BackReference(loop, "GEdgeLoop.m_prev"))
             throw Layout();
+        return opening;
     }
 
     private static int GeometryTag(Archive geometry, int node) => geometry.Integer(node, "GInfo.m_tag") is >= 0 and < int.MaxValue and var tag
@@ -1037,8 +1053,20 @@ internal static partial class WallHeightWriter
         internal bool NeedsEndpointProjection => Top - Base != Before || NewTop - NewBase != After
             || ProjectedBase != Base || NewProjectedBase != NewBase;
         internal IReadOnlyDictionary<double, double>? OpeningElevations { get; init; }
-        internal double MoveEndpoint(double position) => position == Base ? NewBase : position == Top ? NewTop
-            : OpeningElevations?.GetValueOrDefault(position, position) ?? position;
+        internal IReadOnlySet<double>? OpeningElevationsRequiringOwner { get; init; }
+
+        internal double MoveEndpoint(double position)
+        {
+            if (position == Base)
+                return NewBase;
+            if (position == Top)
+                return NewTop;
+            if (OpeningElevations?.TryGetValue(position, out double elevation) == true)
+                return elevation;
+            if (OpeningElevationsRequiringOwner?.Contains(position) == true)
+                throw ParameterWriter.Unverified("The wall geometry does not identify the opening at this elevation.");
+            return position;
+        }
     }
 
     private readonly record struct PlaneFrame(int Axis, double Direction, double Origin);
