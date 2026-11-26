@@ -489,6 +489,7 @@ internal static partial class WallHeightWriter
             if (geometry.Integer(q, "GBRep.m_pFaces#") != faceCount || geometry.Integer(q, "Geometry.m_pEdges#") != edgeCount
                 || geometry.Integer(q, "Geometry.m_sharedSurfInfo#") != 0)
                 throw Layout();
+            ResizeGeometryControl(geometry, q, q == solid, height);
             for (int i = 0; i < faceCount; i++)
             {
                 string field = $"GBRep.m_pFaces@{i}";
@@ -579,6 +580,72 @@ internal static partial class WallHeightWriter
             }
         }
         return EncodeFaceTopology(faceTopology);
+    }
+
+    private static void ResizeGeometryControl(Archive geometry, int solid, bool physical, HeightInterval height)
+    {
+        const int hasControlCommand = 0x4000;
+        var x = Bounds(0);
+        var y = Bounds(1);
+        var command = EncodeGeometryControl(x, y, (height.Base, height.NewTop));
+        int flags = geometry.Int32(solid, "GInfo.m_flags");
+        geometry.WriteInt32(solid, "GInfo.m_controlCommand", unchecked((int)command.GetValueOrDefault()));
+        geometry.WriteInt32(solid, "GInfo.m_flags", command.HasValue ? flags | hasControlCommand : flags & ~hasControlCommand);
+
+        (double Min, double Max) Bounds(int axis)
+        {
+            if (physical)
+                return (geometry.Real(-1, $"GRep.m_tightbBox@0/{axis}"), geometry.Real(-1, $"GRep.m_tightbBox@1/{axis}"));
+
+            // Each auxiliary solid is a single planar face. Use its own footprint, which can lie
+            // in a different horizontal cell from the physical wall.
+            int face = geometry.Target(solid, "GBRep.m_pFaces@0", "Face");
+            int plane = geometry.Target(face, "Face.m_pSurf", "Plane");
+            double origin = geometry.Real(plane, $"Plane.m_origin@{axis}");
+            double u = geometry.Real(plane, $"Plane.m_xVec@{axis}");
+            double v = geometry.Real(plane, $"Plane.m_yVec@{axis}");
+            double u0 = u * geometry.Real(plane, "Envelope.m_corners@0/0");
+            double u1 = u * geometry.Real(plane, "Envelope.m_corners@1/0");
+            double v0 = v * geometry.Real(plane, "Envelope.m_corners@0/1");
+            double v1 = v * geometry.Real(plane, "Envelope.m_corners@1/1");
+            return (origin + Math.Min(u0, u1) + Math.Min(v0, v1), origin + Math.Max(u0, u1) + Math.Max(v0, v1));
+        }
+    }
+
+    internal static uint? EncodeGeometryControl((double Min, double Max) x, (double Min, double Max) y,
+        (double Min, double Max) z)
+    {
+        int? xCode = EncodeAxis(x, 254, 8);
+        int? yCode = EncodeAxis(y, 254, 8);
+        int? zCode = EncodeAxis(z, 30, 4);
+        // An unencodable axis omits the entire command. A command can also encode to the value zero.
+        return xCode is int a && yCode is int b && zCode is int c ? (uint)a | (uint)b << 12 | (uint)c << 24 : null;
+
+        static int? EncodeAxis((double Min, double Max) bounds, int largestCenter, int signBit)
+        {
+            const double padding = 1e-9;
+            if (!double.IsFinite(bounds.Min) || !double.IsFinite(bounds.Max) || bounds.Min > bounds.Max)
+                throw Layout();
+
+            double midpoint = bounds.Min * 0.5 + bounds.Max * 0.5;
+            double lower = bounds.Min - padding;
+            double upper = bounds.Max + padding;
+            double step = 4;
+            // Start with a four-foot cell and quadruple its size while the padded bounds do not fit.
+            for (int scale = 0; scale < signBit; scale++, step *= 4)
+            {
+                double index = Math.Abs(midpoint) / step;
+                double magnitude = Math.Truncate(index);
+                if (index - magnitude > 0.5)
+                    magnitude++;
+                int cell = (int)Math.Min(magnitude, largestCenter);
+                double center = (midpoint < 0 ? -cell : cell) * step;
+                double distance = Math.Max(center - lower, upper - center);
+                if (distance < step || (scale == signBit - 1 && distance == step))
+                    return cell * (signBit * 2) | (midpoint < 0 ? signBit : 0) | scale;
+            }
+            return null;
+        }
     }
 
     private static void VerifyEdgeLoop(Archive geometry, int loop, uint loopHandle, uint faceHandle,
@@ -721,6 +788,14 @@ internal static partial class WallHeightWriter
 
         internal int Int32(int queue, string key) => Integer(queue, key) is >= int.MinValue and <= int.MaxValue and var value
             ? (int)value : throw Layout();
+
+        internal void WriteInt32(int queue, string key, int value)
+        {
+            if (Field(queue, key) is not { Kind: WideBlockWalker.CaptureKind.Integer, ValueOffset: >= sizeof(ushort) and int offset }
+                || offset > body.Length - sizeof(int))
+                throw Layout();
+            BinaryPrimitives.WriteInt32LittleEndian(body.AsSpan(offset), value);
+        }
 
         internal double Real(int queue, string key) => Field(queue, key) is
             { Kind: WideBlockWalker.CaptureKind.Real, Real: var value } && double.IsFinite(value) ? value : throw Layout();

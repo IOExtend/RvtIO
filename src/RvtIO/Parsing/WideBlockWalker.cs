@@ -458,18 +458,11 @@ internal sealed partial class WideBlockWalker
                 return;
             }
             case 4:
-            {
-                int p = Take(c, 4);
-                int v = BitConverter.ToInt32(c.D, p);
-                Note(CaptureKind.Integer, v, 0, null, p);
-                if (record != null) record[f.Name] = (long)v;
-                return;
-            }
             case 5:
             {
                 int p = Take(c, 4);
                 int v = BitConverter.ToInt32(c.D, p);
-                Note(CaptureKind.Integer, v, 0, null);
+                Note(CaptureKind.Integer, v, 0, null, p);
                 if (record != null) record[f.Name] = (long)v;
                 return;
             }

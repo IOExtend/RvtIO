@@ -7,6 +7,35 @@ namespace RvtIO.Tests;
 public class WallHeightWriterTests
 {
     [Theory]
+    [InlineData(0, 0.5, 0x00000002u)]
+    [InlineData(0, 3.999999998, 0x00000002u)]
+    [InlineData(0, 3.999999999, 0x01000002u)]
+    [InlineData(0, 4, 0x01000002u)]
+    [InlineData(0, 8, 0x01000002u)]
+    [InlineData(-2, -1.5, 0x04000002u)]
+    [InlineData(5.875, 6.125, 0x08000002u)]
+    [InlineData(-6.125, -5.875, 0x0c000002u)]
+    [InlineData(13.125, 17.125, 0x20000002u)]
+    [InlineData(122, 123.999999998, 0xf0000002u)]
+    [InlineData(122, 124, 0x41000002u)]
+    [InlineData(0, 255.999999999, 0x03000002u)]
+    [InlineData(0, 256, null)]
+    [InlineData(-24576, -24575.75, null)]
+    public void EncodesTheHeightIntervalOfTheGeometry(double minimum, double maximum, uint? expected)
+    {
+        Assert.Equal(expected, WallHeightWriter.EncodeGeometryControl((0, 20), (-0.25, 0.25), (minimum, maximum)));
+    }
+
+    [Fact]
+    public void KeepsEachSolidInItsOwnHorizontalCells()
+    {
+        Assert.Equal(0u, WallHeightWriter.EncodeGeometryControl((0, 1), (0, 1), (0, 0.5)));
+        Assert.Equal(0x01008002u, WallHeightWriter.EncodeGeometryControl((0, 20), (-0.25, -0.25), (0, 8)));
+        Assert.Equal(0x014d027cu, WallHeightWriter.EncodeGeometryControl(
+            (-40000, -39500), (309.6719160104905, 310.32808398950215), (0, 8)));
+    }
+
+    [Theory]
     [InlineData("PlanTopologies", 0, false, true)]
     [InlineData("PlanTopologies", 1, false, false)]
     [InlineData("PlanTopologies", 0, true, false)]

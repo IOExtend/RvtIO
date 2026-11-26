@@ -234,7 +234,8 @@ Low-level `Rewrite` accepts raw stream or record payloads and does not perform p
 
 ### Wall unconnected height
 
-RvtIO verifies the wall body, bounds, and saved face references before applying a height edit. The wall must be in
+RvtIO verifies the wall body, bounds, and saved face references before applying a height edit. It recomputes the
+compact bounds of the physical solid and each auxiliary solid from their updated geometry. The wall must be in
 the main model. Room Bounding can be enabled when the project has no rooms, spaces, areas, or saved spatial
 topology. For a project with a single wall, an end can allow joins if the stored join and healing records are
 empty. With multiple walls, both end joins must be disabled on the edited wall. A wall with a verified rectangular
@@ -842,10 +843,13 @@ Batches containing a later clear or invalid height left the source byte-for-byte
 The Revit 2025 controls showed that a wall can form a new join at the same plan endpoints when its height reaches
 a wall above it, and that an unoccupied saved circuit can still modify a spatial plan. RvtIO refused batches
 with those dependencies, as well as existing joins and room boundaries.
-In a closed footprint with no saved plan, Revit 2025 also confirmed a reduction to `0.5 ft` after saving and
-reopening without Audit. At that height the API quantities matched and the saved `GInfo.m_controlCommand` flags
-of five curves differed from those written by Revit. The flags also differed on a short wall with Room Bounding
-disabled.
+The compact bounds checks compared the command and its presence flag on each solid. They included height
+changes across packing boundaries, negative and elevated bases, oblique and long walls, existing rectangular
+openings, and changes that make the full command encodable or unencodable. A valid command with value zero
+retains the presence flag. All five commands for a closed footprint reduced to `0.5 ft` matched the Revit 2025
+control. Revit 2020–2025 and 2027 confirmed the height, geometry quantities, and packed commands after Save As
+and reopening without Audit. Revit 2027 verified the converted 2026-format file after upgrade. A later invalid
+height refused the entire batch and left the source unchanged.
 
 ## Remaining parameter coverage
 

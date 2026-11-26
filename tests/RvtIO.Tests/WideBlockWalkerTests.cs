@@ -179,6 +179,23 @@ public class WideBlockWalkerTests
     }
 
     [Fact]
+    public void Walk_CapturesTheOffsetOfThePackedGeometryFlags()
+    {
+        var schema = new SchemaDocument
+        {
+            Classes = [new(1, "GInfo", 0, 1, [Field("m_controlCommand", 4), Field("m_flags", 5)], [])],
+        };
+        var block = Block(1, w => { w.Write(2); w.Write(0x80004000u); });
+        var walker = new WideBlockWalker(schema, (declaring, field) => declaring.Name + "." + field.Name, []);
+        var walk = walker.Run(block, 0, block.Length, 1);
+
+        Assert.True(walk.Exact, walk.Error);
+        var flags = Assert.Single(walk.Captures, c => c.Key == "GInfo.m_flags");
+        Assert.Equal(sizeof(ushort) + sizeof(int), flags.ValueOffset);
+        Assert.Equal(0x80004000u, BitConverter.ToUInt32(block, flags.ValueOffset));
+    }
+
+    [Fact]
     public void Walk_WithRootOnlyReadsTheFieldsOfTheElementAndStopsBeforeItsQueuedObjects()
     {
         var block = DerivedBlock(withStore: true);
