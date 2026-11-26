@@ -1,6 +1,6 @@
 # Printing a plan
 
-`rvtio print` renders the plan of one level of a Revit project to a PDF page without Revit. This is the first view
+`rvtio print` renders the plan of one level of a Revit project to a PDF page or an SVG drawing without Revit. This is the first view
 renderer of the sheet printing work described in [issue #18](https://github.com/IOExtend/RvtIO/issues/18): it draws the
 model geometry the reader decodes, not the linework Revit generates for a view. It is a working drawing of the level,
 not yet a printed sheet.
@@ -13,6 +13,9 @@ rvtio print project.rvt --list-levels
 
 # the plan of one level at 1:100 on the smallest paper that holds it
 rvtio print project.rvt plan.pdf --level 355 --scale 100
+
+# the same level plan exported as SVG (1 user unit = 1 mm, UTF-8 XML with scale and sheet metadata)
+rvtio print project.rvt plan.svg --level 355 --scale 100
 
 # a fixed paper size
 rvtio print project.rvt plan.pdf --level "Уровень 1" --scale 200 --paper A3
@@ -44,8 +47,9 @@ of its level. A plan view is a `DBViewPlan` of the
 file whose name matches a printable level (or whose stored elevation equals the level's); a section or an elevation is
 left out until its renderer exists.
 
-The library API is `RvtIO.Print.PlanPrinter`: `Levels(document)` returns the printable levels, and
-`Render(document, levelId, scale, options)` returns a `PdfDocument` with one page.
+The library API is `RvtIO.Print.PlanPrinter`: `Levels(document)` returns the printable levels,
+`Render(document, levelId, scale, options)` returns a `PdfDocument` with one page, and
+`RenderSvg(document, levelId, scale, options)` writes the same level plan geometry, scale, and paper layout as UTF-8 SVG XML.
 
 ## Images
 
