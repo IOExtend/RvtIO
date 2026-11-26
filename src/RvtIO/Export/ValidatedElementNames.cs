@@ -83,6 +83,11 @@ internal static class ValidatedElementNames
         Element element, IReadOnlyDictionary<int, Element> byId, IReadOnlyDictionary<int, int> counts, JsonReadFacts state)
     {
         if (element.Id < 0 || element.Id == 0 && state.WideSchema == null && !state.ElemClassIdx.ContainsKey(0)) yield break;
+        if (element.ValidatedCurveName is string curveName)
+        {
+            yield return new(curveName, "curve-data");
+            yield break;
+        }
         bool named = false;
         foreach (Validation validation in OwnNames(element, state))
         {

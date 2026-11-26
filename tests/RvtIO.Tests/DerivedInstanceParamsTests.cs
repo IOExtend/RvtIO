@@ -18,8 +18,68 @@ public class DerivedInstanceParamsTests
         Assert.Equal(-1L, line.TypeElementId);
     }
 
+    [Theory]
+    [InlineData(false, -1)]
+    [InlineData(true, -1)]
+    [InlineData(true, 3000)]
+    public void CurveElementDoesNotUseTheSketchPlaneAsItsType(bool wide, int initialTypeId)
+    {
+        var line = new Element
+        {
+            Id = 2000, CategoryId = -2000045, TypeId = initialTypeId, References = [3000],
+            NativeRootClassName = wide ? "CurveElem" : null,
+            SerializedOwnElementClassId = wide ? null : (ushort)838,
+        };
+        line.Parameters.Add(P(-1006210, StorageType.ElementId, 4000));
+        var neighbor = new Element
+        {
+            Id = 2001, CategoryId = -2000045, TypeId = -1, References = [3000],
+            NativeRootClassName = wide ? "CurveElem" : null,
+            SerializedOwnElementClassId = wide ? null : (ushort)838,
+        };
+        var sketchPlane = new Element { Id = 3000, CategoryId = -2000045 };
+
+        ElementBuilder.PostProcess(new RevitFileInfo { Elements = [line, neighbor, sketchPlane] });
+
+        Assert.Equal(-1L, line.TypeElementId);
+        Assert.Equal(-1L, neighbor.TypeElementId);
+        Assert.DoesNotContain(line.Parameters, p => p.Id is -1002050 or -1002052 or -1002000 && p.HasRevitValue);
+        Assert.Equal(4000, Value(line, -1006210));
+        Assert.Equal(new[] { 3000 }, line.References);
+    }
+
     private static Parameter P(int id, StorageType storage, object value) => BipHelpers.MakeBipParam(id, id.ToString(), storage, value);
     private static object? Value(Element e, int id) => e.Parameters.FirstOrDefault(p => p.Id == id)?.Value;
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void SunStudyReferencesDoNotSupplyElementTypes(bool native)
+    {
+        var settings = new Element
+        {
+            Id = 2000, CategoryId = -2009609, Name = "Study", References = [3000],
+            NativeRootClassName = native ? "SunAndShadowSettings" : null,
+            SerializedOwnElementClassId = native ? null : (ushort)3878,
+        };
+        var annotation = new Element
+        {
+            Id = 3000, CategoryId = -2009609, Name = "Path", TypeId = 2000, References = [2000],
+            NativeRootClassName = native ? "SunAnnotationElem" : null,
+            SerializedOwnElementClassId = native ? null : (ushort)3879,
+        };
+        var control = new Element { Id = 4000, CategoryId = -2009609, Name = "Study", References = [5000] };
+        var other = new Element { Id = 5000, CategoryId = -2009609, Name = "Path", TypeId = 4000, References = [4000] };
+        ElementBuilder.PostProcess(new RevitFileInfo { Elements = [settings, annotation, control, other] });
+        Assert.Equal(-1L, settings.TypeElementId);
+        Assert.Equal(-1L, annotation.TypeElementId);
+        Assert.Equal(5000L, control.TypeElementId);
+        Assert.Equal(control.Name, settings.Name);
+        Assert.Equal(other.Name, annotation.Name);
+        Assert.Equal(new[] { 3000 }, settings.References);
+        Assert.Equal(new[] { 2000 }, annotation.References);
+        Assert.DoesNotContain(settings.Parameters, p => p.Id is -1002050 or -1002052 or -1002000 && p.HasRevitValue);
+    }
 
     [Fact]
     public void TypeVotesCountEachOwnerOnceAndKeepTheFirstReferenceOnATie()

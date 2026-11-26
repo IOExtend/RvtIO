@@ -47,7 +47,10 @@ namespace RvtIO.Model
             _ = Definition; // Shallow copies share the same mutable definition.
             var copy = (Parameter)MemberwiseClone();
             if (!Equals(copy._value, value))
+            {
                 copy.HasResolvedZeroElementId = false;
+                copy.HasComputedInvalidCategory = false;
+            }
             copy._value = value;
             return copy;
         }
@@ -156,6 +159,7 @@ namespace RvtIO.Model
                 _value = value;
                 HasNoRevitValue = false;
                 HasResolvedZeroElementId = false;
+                HasComputedInvalidCategory = false;
             }
         }
 
@@ -219,6 +223,9 @@ namespace RvtIO.Model
         /// target element with id <c>0</c> in this parameter's reference domain (such as project phase <c>0</c>).</summary>
         [JsonIgnore]
         internal bool HasResolvedZeroElementId { get; set; }
+
+        // Revit can expose INVALID as the computed value of a category parameter.
+        internal bool HasComputedInvalidCategory { get; set; }
 
         /// <summary>True when <paramref name="parameterId"/> stores a reference to a <c>ProjectPhase</c> element.</summary>
         internal static bool IsPhaseElementIdParameter(int parameterId) =>
@@ -354,7 +361,7 @@ namespace RvtIO.Model
         /// project phase <c>0</c>, or non-positive pointers on host-id parameters),
         /// <c>-1</c> placeholders on non-integer built-in parameters, and unstored default slots synthesized by
         /// the reader, while remaining <c>true</c> for stored <c>0</c>, <c>0.0</c>, <c>false</c>, <c>""</c>,
-        /// valid resolved id-<c>0</c> targets, and valid negative <see cref="StorageType.ElementId"/> option or category values.
+        /// valid resolved id-<c>0</c> targets, and verified category values (including a computed invalid category).
         /// </summary>
         [JsonIgnore]
         public bool HasRevitValue
@@ -366,7 +373,8 @@ namespace RvtIO.Model
                 return StorageType switch
                 {
                     StorageType.Double => _value is double d && double.IsFinite(d) && Math.Abs(d) < 1e29,
-                    StorageType.ElementId => _value is int eid && IsSetElementId(Id, eid, HasResolvedZeroElementId),
+                    StorageType.ElementId => _value is int eid && (IsSetElementId(Id, eid, HasResolvedZeroElementId)
+                        || eid == -1 && HasComputedInvalidCategory && Id is -1140362 or -1140363),
                     StorageType.Integer => _value is int iv
                         ? !(iv == -1 && (Id is >= -1019017 and <= -1019012
                             || (Id < 0 && Parsing.ApiParameterDefinitions.TryGetStorage(Id, out var apiSt) && apiSt != StorageType.Integer)))

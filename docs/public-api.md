@@ -60,6 +60,55 @@ unresolved `ElementId` sentinels `-1`, uninitialized `0` without a resolved id-0
 non-integer built-in parameters, unstored reader placeholders and `Parameter.IsApproximate` estimates; stored `0`, `0.0`,
 `false`, `""`, valid resolved id-0 references such as project phase `0`, and valid negative `ElementId` option or category values are kept).
 
+Model and detail curves identified by their own `CurveElem` records have `TypeElementId` equal to `-1`.
+Sun study settings and their annotations also have `TypeElementId` equal to `-1`. Their references to each other remain available.
+Section and callout markers can recover their type from the linked view's `DBView.m_dbViewTypeId`.
+In historical files, a primary `Viewer` marker reports the type of its linked view, including an area
+plan type, when the view points back to the marker. If the retained view records agree on an invalid type, the marker reports `-1`.
+The historical reader checks the view's link back to its primary marker. When saved view copies disagree on the type,
+it uses the copy identified by the view's increment.
+Plans, schedules, project views and system navigator views report `-1` when their own records agree on an invalid view type.
+A historical viewport reports its saved `Viewport.m_attrId` when its retained records agree and the ID identifies
+a `ViewportAttributes` record or is explicitly `-1`. Wall sweeps report `-1` when their records agree
+on an invalid `WallSweep.m_typeId`. Elements whose class has no type, including reference planes, plan regions,
+curtain grid lines and energy analysis surfaces, report `-1` when their own records confirm the class.
+This also applies to graphics styles, category records, fonts, family parameter elements, sketch planes and family definitions.
+In historical projects the reader takes the category from `ElementHeader.m_categroryId` when all
+retained headers agree and each partition has matching, completely decoded records of the same
+class and owner. A stored `-1` gives a null category. Boundary conditions can have a derived
+subcategory in Revit and are excluded from this recovery.
+For a family instance or wall with conflicting categories, the reader checks the occurrence
+in the partition that supplies its type. The category must agree across all editions naming that
+type and with every header of the verified type element.
+View markers obtain their two built-in category parameters from the view referenced by
+`Viewer.m_dbViewId`. Pipe, duct and conduit center lines obtain them from the element
+referenced by `CenterLine.m_OwnerId`. Both results require matching bodies and headers
+in every retained partition. A resolved view with no category yields a parameter value of
+`-1` with `HasRevitValue` true. Material property sets expose their own category but both
+category parameters have `HasRevitValue` false.
+Graphics styles, family parameter elements, category records and fonts with a verified
+invalid header category report `-1` with `HasRevitValue` true for both parameters.
+This also applies to project parameter bindings (`ParamBinding`), family surrogates,
+sketches derived from `SketchBase` and filters derived from `FilterElement`.
+For records derived from `ParamElem` or `Symbol`, the two parameters can also hold
+the built-in category ID from the verified header.
+For a master or slave import symbol with a positive category ID, the reader resolves
+the referenced `CategoryElem` and preserves its source ID in both parameters.
+In historical files, element types identified by complete records derived from `Symbol` in the file's
+schema have `TypeElementId` equal to `-1`. Instances can refer to those elements as their types.
+With `--keep-all-copies`, a single family instance record can restore its saved symbol when the previous type
+points to a verified non-symbol record. A wall's increment can also identify its saved stacked wall type.
+Scene meshes and IFC export omit the parent of a stacked wall when its family type parameter
+references a verified stacked wall type. This also applies when the parent's saved category is
+`OST_StackedWalls`. The member walls remain eligible for export.
+With the English locale, the reader and full JSON report the curve name from its saved detail flag, header
+category, family link and curve data when the retained records agree. A model or detail curve in the project
+can report `Model Lines` or `Detail Lines`. A sketch profile linked to a verified family can report `Line`.
+In a loaded family, a detail line or filled-region boundary reports `Line` when its own sketch membership
+points to a `VarSketch` with the same family and sketch plane.
+For free lines in a family, the saved visibility flags and the element's integer parameter set distinguish
+`Symbolic Lines` from `Model Lines`.
+
 Compact JSON formats numeric user parameters using the specification's document format options, unit conversion,
 accuracy, symbol and suppression settings. If the document settings, specification's format or required unit/symbol
 data cannot be recovered, the numeric property is omitted. This does not change raw parameter values in full JSON.

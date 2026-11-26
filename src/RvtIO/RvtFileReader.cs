@@ -911,12 +911,19 @@ public partial class RvtFileReader
             ?? (lengthOptions == null ? null : ProjectLengthUnits.StoredLengthUnit(lengthOptions.Value, out lengthUnitIssue));
         if (rvtInfo.SerializedLengthUnit == null)
             rvtInfo.SerializedLengthUnitIssue = state.WideLengthUnitIssue ?? lengthUnitIssue;
-        if ((wideSchema?.Release != 2027 || r22View)
+        bool applyTypeLinks = wideSchema?.Release != 2027 || r22View;
+        bool englishCurveNames = string.Equals(systemFamilyLocale, "ENU", StringComparison.OrdinalIgnoreCase);
+        if ((applyTypeLinks || englishCurveNames)
             && (wideSchema?.Document ?? TfSchemaReader.Read(root)) is { } typeSchema)
         {
             int typeLinks = FramedElementTypes.Apply(typeSchema, EntitySchemaReader.Read(root, typeSchema),
                 framedStreams, state, rvtInfo.Elements, routing.UnroutedTypePartitions,
-                recoverUnanchoredTypes: !_options.ResolveCurrentCopies);
+                recoverUnanchoredTypes: applyTypeLinks && !_options.ResolveCurrentCopies,
+                englishCurveNames: englishCurveNames, applyTypeLinks: applyTypeLinks,
+                projectCategories: applyTypeLinks && root.EnumerateEntries().Any(entry =>
+                    entry.Type == EntryType.Stream && entry.Name.Equals("ProjectInformation", StringComparison.OrdinalIgnoreCase))
+                    && !root.EnumerateEntries().Any(entry =>
+                        entry.Type == EntryType.Stream && entry.Name.Equals("PartAtom", StringComparison.OrdinalIgnoreCase)));
             diag?.WriteLine($"Framed type references: {typeLinks} corrected");
         }
         rvtInfo.ElementIds = ids;
@@ -2476,19 +2483,32 @@ public partial class RvtFileReader
     internal static void RecordFramedRoots(ParsingState state,
         List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner)>? unanchoredTypeRoots = null)
     {
+        var untypedClasses = state.FramedUntypedElementClasses;
+        untypedClasses.Clear();
+        HashSet<uint>? shortRoots = null;
         var roots = new List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner, int? Partition)>();
         foreach (var frame in state.FramedPartitions!)
             foreach (var record in frame!.Items)
             {
-                if (record.Channel != 102 || record.Length < 18 || record.Owner > uint.MaxValue) continue;
+                if (record.Channel != 102 || record.Owner > uint.MaxValue) continue;
                 uint owner = (uint)record.Owner;
                 if (owner == 0 && !state.AllKnownIds.Contains(0)) continue;
+                if (record.Length < 18)
+                {
+                    (shortRoots ??= []).Add(owner);
+                    continue;
+                }
                 // the item [owner:4][checksum:4][size:4][class:2 ...][size:4] is the block layout the walk hands over
                 var (data, start, _) = frame.Bytes(record);
                 ushort classId = BitConverter.ToUInt16(data, start + 12);
                 if (!state.ElemClassIdx.ContainsKey(owner)) state.ElemClassIdx[owner] = classId;
+                // CurveElem, SunAndShadowSettings and SunAnnotationElem in the 2022 layout.
+                if (classId is 838 or 3878 or 3879 && state.ElemTable.ContainsKey(owner))
+                    untypedClasses.TryAdd(owner, classId);
                 roots.Add((data, start, (uint)(record.Length - 16), classId, owner, frame.Partition));
             }
+        if (shortRoots != null)
+            foreach (uint owner in shortRoots) untypedClasses.Remove(owner);
         // a file with its own class schema has the roots of its element index seeded already (ReadWideElementIndex): the record replaces
         // the seed where it is counted; a root the count leaves out, such as one whose rewrite failed (unknown tag), keeps it
         if (state.WideSchema != null)
@@ -2496,6 +2516,10 @@ public partial class RvtFileReader
                 if (StairComponentSource.CountsClassRoot(state, classId, owner)) state.OwnedElementClassRoots.Remove(owner);
         foreach (var (data, start, size, classId, owner, partition) in roots)
         {
+            if (untypedClasses.TryGetValue(owner, out ushort expectedClass) && (classId != expectedClass
+                || !TfBlockDeserializer.TryExtractOwnElementClass(data, start, size, classId, out int namedOwner)
+                || namedOwner != owner))
+                untypedClasses.Remove(owner);
             StairComponentSource.Record(state, data, start, size, classId, owner);
             if (classId == 1012 && state.WideSchema == null
                 || state.StaleCopiesRemoved && (classId is 2335 or 3971

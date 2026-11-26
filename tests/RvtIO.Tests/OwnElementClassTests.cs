@@ -120,6 +120,41 @@ public class OwnElementClassTests
         Assert.Equal(new StairComponentSource.ElementClassRoot(2, null), walked.OwnedElementClassRoots[123]);
     }
 
+    [Theory]
+    [InlineData(838, 838, false, false, true)]
+    [InlineData(838, 3708, false, false, false)]
+    [InlineData(838, 838, true, false, false)]
+    [InlineData(838, 838, false, true, false)]
+    [InlineData(3878, 3878, false, false, true)]
+    [InlineData(3879, 3879, false, false, true)]
+    [InlineData(3878, 3879, false, false, false)]
+    [InlineData(3879, 3879, true, false, false)]
+    public void UntypedElementRequiresAllRetainedProjectRecordsToAgree(
+        ushort firstClass, ushort secondClass, bool wrongOwner, bool shortRecord, bool recognized)
+    {
+        byte[] first = Frame(firstClass), second = Frame(secondClass);
+        if (wrongOwner) BitConverter.GetBytes(124).CopyTo(second, 50);
+        if (shortRecord) second = second[..16];
+        var state = new ParsingState
+        {
+            ElemTable = new() { [123] = 0 },
+            FramedPartitions =
+            [
+                new PartitionFraming.Framed([first], [new(102, 123, 0, first.Length)], 4, 1),
+                new PartitionFraming.Framed([second], [new(102, 123, 0, second.Length)], 4, 2),
+            ],
+        };
+        var line = new Element { Id = 123, CategoryId = -2000045, TypeId = 3000, References = [3000] };
+        var plane = new Element { Id = 3000, CategoryId = line.CategoryId };
+
+        RvtFileReader.RecordFramedRoots(state);
+        ElementBuilder.PostProcess(new RevitFileInfo { Elements = [line, plane] }, state);
+
+        Assert.Null(line.RootClassName);
+        Assert.Equal(recognized ? -1L : 3000L, line.TypeElementId);
+        Assert.Equal(new[] { 3000 }, line.References);
+    }
+
     [Fact]
     public void AFileWithItsOwnClassSchema_CountsTheRecordInPlaceOfTheSeededRoot_AndKeepsTheSeedOfARootLeftWithoutA2022Class()
     {

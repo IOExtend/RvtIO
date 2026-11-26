@@ -1472,17 +1472,25 @@ internal static partial class ElementBuilder
         return -1;
     }
 
+    private static string? TypeResolutionClass(Element element, ParsingState? state)
+        => element.RootClassName ?? (!element.IsBlockOnly &&
+            state?.FramedUntypedElementClasses.TryGetValue((uint)element.Id, out ushort id) == true
+                ? TfClassNames.NameOf(id) : null);
+
+    private static bool HasUntypedRoot(Element element, ParsingState? state)
+        => TypeResolutionClass(element, state) is "CurveElem" or "SunAndShadowSettings" or "SunAnnotationElem";
+
     /// <summary>
     /// Resolve ELEM_TYPE_PARAM / ELEM_FAMILY_AND_TYPE_PARAM / SYMBOL_ID_PARAM to the real type
     /// element id for instances whose binary body didn't carry it.
     /// </summary>
-    internal static void ResolveTypeParams(RevitFileInfo info, IReadOnlyDictionary<int, Element> byId)
+    internal static void ResolveTypeParams(RevitFileInfo info, IReadOnlyDictionary<int, Element> byId, ParsingState? state = null)
     {
         // Weak (automatic) dimensions reference their dim style FIRST - a small built-in element id
         // (e.g. 277), below the >1000 cutoff of the voting heuristic underneath.
         foreach (var e in info.Elements)
         {
-            if (e.CategoryId != -2000261 || e.References is not { Count: > 0 }) continue;
+            if (e.CategoryId != -2000261 || e.References is not { Count: > 0 } || HasUntypedRoot(e, state)) continue;
             int t = e.References[0];
             if (t <= 0 || TypeParamOf(e) > 0) continue;
             AddBipIfMissing(e, -1002050, "ELEM_TYPE_PARAM", t);
@@ -1504,7 +1512,7 @@ internal static partial class ElementBuilder
             int t = TypeParamOf(e);
             if (t > 0) seed.Add(t);
             if (e.References is not { Count: > 0 }) continue;
-            if (t <= 0) unresolved.Add(e);
+            if (t <= 0 && !HasUntypedRoot(e, state)) unresolved.Add(e);
             if (e.CategoryId is not int c) continue;
             seenRefs.Clear();
             foreach (var r in e.References)
@@ -6136,8 +6144,19 @@ internal static partial class ElementBuilder
         // 1. ELEM_TYPE_PARAM value if it references a real element of the same category 2.
         // SYMBOL_ID_PARAM value (same check) 3.
         ReadOnlySpan<int> typeParamIds = [-1002050, -1002000, -1002052];
+        List<Element>? sunStudyElements = null;
         foreach (var e in rvtInfo.Elements)
         {
+            string? root = TypeResolutionClass(e, state);
+            // A curve references a sketch plane and line style, without an element type.
+            if (root == "CurveElem")
+            {
+                e.TypeId = -1;
+                continue;
+            }
+            if (root is "SunAndShadowSettings" or "SunAnnotationElem")
+                (sunStudyElements ??= []).Add(e);
+
             // Trust current TypeId only if it resolves to an element of the SAME category.
             // Otherwise it's likely a Tf-class index or a leaked phase/sentinel value.
             bool currentValid = e.TypeId > 0 && elemByIdLookup.TryGetValue(e.TypeId, out var curType)
@@ -6597,7 +6616,7 @@ internal static partial class ElementBuilder
             }
         }
 
-        ResolveTypeParams(rvtInfo, elemByIdLookup);
+        ResolveTypeParams(rvtInfo, elemByIdLookup, state);
         ApplyDetailLines(rvtInfo, state);
         ApplyBlockSignatureCategories(rvtInfo, state);
         // Native (schema-deserialized) params land BEFORE the default-emitting passes so
@@ -6750,6 +6769,9 @@ internal static partial class ElementBuilder
         CreateElemTablePlaceholders(rvtInfo, state, elemByIdLookup);
         ApplyHeaderBoundingBoxes(rvtInfo, state);
         Parameter.ResolveZeroElementIds(rvtInfo, state);
+        // The sun-study reference also participates in name propagation. Correct only the resulting type.
+        if (sunStudyElements != null)
+            foreach (var element in sunStudyElements) element.TypeId = -1;
         // NOTE: PropagateFamilyTypeValues remains disabled. The chain rule that works perfectly for
         // instance 0x0702 values (value of entry K belongs to chain[K] = next entry's binKey) does
         // NOT generalize to type-level 0x0725 values.
