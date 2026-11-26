@@ -49,7 +49,9 @@ left out until its renderer exists.
 
 The library API is `RvtIO.Print.PlanPrinter`: `Levels(document)` returns the printable levels,
 `Render(document, levelId, scale, options)` returns a `PdfDocument` with one page, and
-`RenderSvg(document, levelId, scale, options)` writes the same level plan geometry, scale, and paper layout as UTF-8 SVG XML.
+`RenderSvg(document, levelId, scale, options)` returns the level plan as SVG text.
+`WriteSvg(document, output, levelId, scale, options)` writes the same SVG as UTF-8 and leaves the destination stream open.
+PDF and SVG share geometry, scale, and paper layout. Use finite, non-negative margins that leave a positive area on the paper.
 
 ## Images
 

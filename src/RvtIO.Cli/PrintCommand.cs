@@ -217,7 +217,7 @@ internal static class PrintCommand
                 try
                 {
                     using (var fs = File.Create(temporarySvg))
-                        PlanPrinter.RenderSvg(document, fs, levelId, scale, new PlanPrintOptions { PaperSize = paper },
+                        PlanPrinter.WriteSvg(document, fs, levelId, scale, new PlanPrintOptions { PaperSize = paper },
                             out svgPaper, out effectiveScale);
                     File.Move(temporarySvg, outputPath!, overwrite: true);
                 }

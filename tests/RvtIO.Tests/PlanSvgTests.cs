@@ -240,6 +240,42 @@ public class PlanSvgTests
     }
 
     [Fact]
+    public void WriteSvg_MatchesTheStringApiAndLeavesTheStreamOpen()
+    {
+        var doc = SamplePlanDocument();
+        var options = new PlanPrintOptions { MarginMillimetres = 0 };
+        using var output = new MemoryStream();
+
+        PlanPrinter.WriteSvg(doc, output, options: options);
+
+        Assert.True(output.CanWrite);
+        Assert.Equal(PlanPrinter.RenderSvg(doc, null, options: options),
+            System.Text.Encoding.UTF8.GetString(output.ToArray()));
+    }
+
+    [Theory]
+    [InlineData(0, 297, 10)]
+    [InlineData(210, -1, 10)]
+    [InlineData(double.NaN, 297, 10)]
+    [InlineData(210, double.PositiveInfinity, 10)]
+    [InlineData(210, 297, -1)]
+    [InlineData(210, 297, double.NaN)]
+    [InlineData(210, 297, double.PositiveInfinity)]
+    [InlineData(210, 297, 105)]
+    [InlineData(297, 210, 106)]
+    [InlineData(double.Epsilon, 297, 0)]
+    public void PlanPrinting_RejectsInvalidLayoutBeforeWritingSvg(double width, double height, double margin)
+    {
+        var doc = SamplePlanDocument();
+        var options = new PlanPrintOptions { PaperSize = new PdfPageSize(width, height), MarginMillimetres = margin };
+        using var output = new MemoryStream();
+
+        Assert.Throws<ArgumentOutOfRangeException>("options", () => PlanPrinter.WriteSvg(doc, output, options: options));
+        Assert.Equal(0, output.Length);
+        Assert.Throws<ArgumentOutOfRangeException>("options", () => PlanPrinter.Render(doc, options: options));
+    }
+
+    [Fact]
     public void CliPrintCommand_WritesValidSvgAndHandlesErrors()
     {
         string dir = Path.Combine(Path.GetTempPath(), "rvtio-print-svg-" + Guid.NewGuid().ToString("N"));

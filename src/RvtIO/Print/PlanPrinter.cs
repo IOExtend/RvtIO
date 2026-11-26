@@ -11,7 +11,7 @@ public sealed class PlanPrintOptions
     /// <summary>The paper size; null chooses the smallest of A4 to A0 that holds the drawing at the view scale.</summary>
     public PdfPageSize? PaperSize { get; set; }
 
-    /// <summary>The margin around the drawing, in millimetres.</summary>
+    /// <summary>The non-negative, finite margin around the drawing, in millimetres.</summary>
     public double MarginMillimetres { get; set; } = 10;
 
     /// <summary>The width in millimetres a wall is drawn with when neither the wall nor its type stores one.</summary>
@@ -149,6 +149,7 @@ public static class PlanPrinter
     /// <param name="options">The paper and margin; null uses the defaults.</param>
     /// <exception cref="InvalidOperationException">The document has no level with a wall or column, or the level has
     /// nothing with a location line to draw.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The scale is not positive, or the paper and margin cannot fit the plan.</exception>
     public static PdfDocument Render(RvtDocument document, int? levelId = null, int scale = 100,
         PlanPrintOptions? options = null)
     {
@@ -170,11 +171,12 @@ public static class PlanPrinter
     /// <param name="options">The paper and margin; null uses the defaults.</param>
     /// <exception cref="InvalidOperationException">The document has no level with a wall or column, or the level has
     /// nothing with a location line to draw.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The scale is not positive, or the paper and margin cannot fit the plan.</exception>
     public static string RenderSvg(RvtDocument document, int? levelId = null, int scale = 100,
         PlanPrintOptions? options = null)
     {
         using var stream = new MemoryStream();
-        RenderSvg(document, stream, levelId, scale, options, out _, out _);
+        WriteSvg(document, stream, levelId, scale, options);
         return System.Text.Encoding.UTF8.GetString(stream.ToArray());
     }
 
@@ -186,11 +188,12 @@ public static class PlanPrinter
     /// <param name="options">The paper and margin; null uses the defaults.</param>
     /// <exception cref="InvalidOperationException">The document has no level with a wall or column, or the level has
     /// nothing with a location line to draw.</exception>
-    public static void RenderSvg(RvtDocument document, Stream output, int? levelId = null, int scale = 100,
+    /// <exception cref="ArgumentOutOfRangeException">The scale is not positive, or the paper and margin cannot fit the plan.</exception>
+    public static void WriteSvg(RvtDocument document, Stream output, int? levelId = null, int scale = 100,
         PlanPrintOptions? options = null) =>
-        RenderSvg(document, output, levelId, scale, options, out _, out _);
+        WriteSvg(document, output, levelId, scale, options, out _, out _);
 
-    internal static void RenderSvg(RvtDocument document, Stream output, int? levelId, int scale,
+    internal static void WriteSvg(RvtDocument document, Stream output, int? levelId, int scale,
         PlanPrintOptions? options, out PdfPageSize paper, out double effectiveScale)
     {
         ArgumentNullException.ThrowIfNull(document);
@@ -583,14 +586,20 @@ public static class PlanPrinter
 
     internal static PlanLayout ComputePageLayout(RvtDocument document, int levelId, int scale, PlanPrintOptions options)
     {
+        double margin = options.MarginMillimetres;
+        if (!double.IsFinite(margin) || margin < 0)
+            throw new ArgumentOutOfRangeException(nameof(options), "The plan margin must be finite and non-negative.");
+
         PlanContent content = CollectLevel(document, levelId)
             ?? throw new InvalidOperationException("The level has no wall or column with a location line to draw.");
         double contentWidth = (content.MaxX - content.MinX) / scale;
         double contentHeight = (content.MaxY - content.MinY) / scale;
-        PdfPageSize paper = options.PaperSize ?? SmallestPaper(contentWidth + 2 * options.MarginMillimetres,
-            contentHeight + 2 * options.MarginMillimetres);
-        double usableWidth = paper.WidthMillimetres - 2 * options.MarginMillimetres;
-        double usableHeight = paper.HeightMillimetres - 2 * options.MarginMillimetres;
+        PdfPageSize paper = options.PaperSize ?? SmallestPaper(contentWidth + 2 * margin, contentHeight + 2 * margin);
+        double usableWidth = paper.WidthMillimetres - 2 * margin;
+        double usableHeight = paper.HeightMillimetres - 2 * margin;
+        if (!double.IsFinite(usableWidth) || !double.IsFinite(usableHeight) || usableWidth <= 0 || usableHeight <= 0)
+            throw new ArgumentOutOfRangeException(nameof(options), "The paper must leave a positive, finite area inside the margins.");
+
         double effectiveScale = scale;
         if (contentWidth > usableWidth || contentHeight > usableHeight)
         {
@@ -598,6 +607,9 @@ public static class PlanPrinter
                                      usableHeight / Math.Max(contentHeight, 1e-9));
             effectiveScale = scale / factor;
         }
+        if (!double.IsFinite(effectiveScale))
+            throw new ArgumentOutOfRangeException(nameof(options), "The plan cannot fit on the paper at a finite scale.");
+
         double offsetX = (paper.WidthMillimetres - (content.MaxX - content.MinX) / effectiveScale) / 2;
         double offsetY = (paper.HeightMillimetres - (content.MaxY - content.MinY) / effectiveScale) / 2;
         return new PlanLayout(content, paper, effectiveScale, offsetX, offsetY);
