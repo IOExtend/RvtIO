@@ -488,7 +488,16 @@ public class RevisionDiffTests
         Assert.False(diff.HasSemanticChanges);
         Assert.Empty(diff.Added);
         Assert.Empty(diff.Removed);
-        Assert.Empty(diff.Modified);
+        Assert.All(diff.Modified, item =>
+        {
+            Assert.NotEmpty(item.UnavailableAspects);
+            if (item.GeometryChange is { } geometry)
+            {
+                Assert.Equal(RvtDiffAvailability.Partial, geometry.Availability);
+                Assert.Empty(geometry.ChangedAspects);
+            }
+        });
+        Assert.Equal(diff.TotalMatchedElements, diff.UnchangedCount + diff.Modified.Count);
 
         string j1 = diff.ToJson(indented: false);
         string j2 = diff.ToJson(indented: false);

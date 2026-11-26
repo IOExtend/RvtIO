@@ -251,7 +251,7 @@ public sealed class RvtDiffRelationshipChange
     public IReadOnlyList<RvtDiffElementRef>? NewTargets { get; init; }
 }
 
-/// <summary>Full breakdown of confirmed modifications on a matched element pair.</summary>
+/// <summary>Confirmed modifications and unavailable aspects for a matched element pair.</summary>
 public sealed class RvtDiffModifiedElement
 {
     /// <summary>Canonical identity key linking the pair.</summary>
