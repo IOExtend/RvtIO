@@ -32,7 +32,8 @@ public partial class IfcExporter
     /// <summary>The classes that are room related (generic family instances only).</summary>
     internal static bool IsRoomRelatedClassCurrent(string ifcType) =>
         ifcType.StartsWith("IFCFLOW", StringComparison.Ordinal) || ifcType.StartsWith("IFCDISTRIBUTION", StringComparison.Ordinal)
-        || ifcType is "IFCENERGYCONVERSIONDEVICE" or "IFCELECTRICDISTRIBUTIONPOINT" or "IFCFURNISHINGELEMENT" or "IFCFURNITURE"
+        || ifcType is "IFCENERGYCONVERSIONDEVICE" or "IFCELECTRICDISTRIBUTIONPOINT" or "IFCELECTRICDISTRIBUTIONBOARD"
+            or "IFCOUTLET" or "IFCSWITCHINGDEVICE" or "IFCFURNISHINGELEMENT" or "IFCFURNITURE"
             or "IFCSYSTEMFURNITUREELEMENT" or "IFCBUILDINGELEMENTPROXY";
 
     /// <summary>Whether the instance is asked for a room at all: a plain family instance that is exported as a room-related

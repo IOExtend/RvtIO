@@ -12,8 +12,8 @@ internal static partial class Program
     /// <summary>The values of the command line that decide the export.</summary>
     private sealed record ExportArguments(string[] Args, string RvtPath, string? IfcPath, string? CompactJsonPath, string? FullJsonPath, string? ScenePath,
         string? ExternalDumpPath, string? ExternalDumpClassPrefix,
-        IfcProfile Profile, string? ExportPhaseOption, string? RoomPhaseOption, bool IncludeIfcRevitParameters, bool RevitParameterGroups, bool BaseQuantities,
-        string JsonClassPrefix, bool OpeningLegacyAxes, DateTimeOffset? IfcTimestamp, IfcUnitFamily? IfcLengthUnit);
+        IfcProfile Profile, string JsonClassPrefix,
+        IfcExportConfiguration MergedIfcConfiguration, string? SaveIfcConfigPath);
 
     private sealed record ExportInput(RevitFileInfo Geometry, RevitFileInfo Json, JsonReadFacts GeometryNames,
         JsonReadFacts JsonFacts, ParsingState? QuantityState, IReadOnlyCollection<uint> TableRows);
@@ -34,7 +34,7 @@ internal static partial class Program
     // The export: reads the file and writes the IFC, the compact JSON or the full JSON dump.
     private static int Export(ExportArguments arguments)
     {
-        var (args, rvtPath, ifcPath, compactJsonPath, fullJsonPath, scenePath, externalDumpPath, externalDumpClassPrefix, profile, exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, openingLegacyAxes, ifcTimestamp, ifcLengthUnit) = arguments;
+        var (args, rvtPath, ifcPath, compactJsonPath, fullJsonPath, scenePath, externalDumpPath, externalDumpClassPrefix, profile, jsonClassPrefix, mergedIfcConfig, saveIfcConfigPath) = arguments;
         WarnIfRevitLocalization(args);
 
         var exportOutputs = new List<(string Option, string Path)>();
@@ -182,21 +182,22 @@ internal static partial class Program
         {
             // Without the option the current profile exports the rooms of the last project phase that exists as a phase element (the
             // exporter resolves it); the legacy profile target exports every room. "all" keeps every room, "last" and an ID are explicit.
-            int? roomPhase = roomPhaseOption is "last" ? ifcModel.SerializedDefaultExportPhaseId
-                : roomPhaseOption is not (null or "all") ? int.Parse(roomPhaseOption, System.Globalization.CultureInfo.InvariantCulture) : null;
+            var phases = mergedIfcConfig.Phases;
+            bool lastRoomPhase = phases.RoomScope == IfcRoomPhaseScope.LastPhase;
+            int? roomPhase = lastRoomPhase ? ifcModel.SerializedDefaultExportPhaseId : phases.RoomPhaseId;
             if (ifcModel.SerializedProjectPhaseIds is { } authoredPhases)
                 Console.Error.WriteLine($"Project phases (authored order): {string.Join(",", authoredPhases)}");
-            bool roomPhaseValidated = roomPhase != null && ifcModel.SerializedProjectPhaseIds?.Contains(roomPhase.Value) == true;
-            if (roomPhaseOption is not (null or "all") && !roomPhaseValidated)
+            if ((lastRoomPhase || roomPhase.HasValue)
+                && (roomPhase is not int roomId || ifcModel.SerializedProjectPhaseIds?.Contains(roomId) != true))
             {
                 Console.Error.WriteLine("Room export phase cannot be resolved from the validated project phase order.");
                 return 1;
             }
-            if (!roomPhaseValidated) roomPhase = null;
-            // The phase of the whole export (elements and rooms). Without the option the current profile exports the last phase and the legacy profile all of them.
-            int? exportPhase = exportPhaseOption is "last" ? ifcModel.SerializedDefaultExportPhaseId
-                : exportPhaseOption is not (null or "all") ? int.Parse(exportPhaseOption, System.Globalization.CultureInfo.InvariantCulture) : null;
-            if (exportPhaseOption is not (null or "all") && (exportPhase == null || ifcModel.SerializedProjectPhaseIds?.Contains(exportPhase.Value) != true))
+
+            bool lastExportPhase = phases.Scope == IfcPhaseScope.LastPhase;
+            int? exportPhase = lastExportPhase ? ifcModel.SerializedDefaultExportPhaseId : phases.PhaseId;
+            if ((lastExportPhase || exportPhase.HasValue)
+                && (exportPhase is not int phaseId || ifcModel.SerializedProjectPhaseIds?.Contains(phaseId) != true))
             {
                 Console.Error.WriteLine("Export phase cannot be resolved from the validated project phase order.");
                 return 1;
@@ -206,13 +207,27 @@ internal static partial class Program
             // A 64-bit-id file has no scanned fallback names: the exporter reads the validated ones, as the JSON dump does.
             if (ifcModel.GeometryUndecoded)
                 RvtIO.Export.ValidatedElementNames.Apply(ifcModel, input.GeometryNames);
+
+            // Pin the validated phase for this export and keep "last" in the reusable setup.
+            var runtimeConfig = mergedIfcConfig with
+            {
+                Phases = phases with
+                {
+                    Scope = lastExportPhase ? IfcPhaseScope.SpecificPhase : phases.Scope,
+                    PhaseId = exportPhase,
+                    RoomScope = lastRoomPhase ? IfcRoomPhaseScope.SpecificPhase : phases.RoomScope,
+                    RoomPhaseId = roomPhase,
+                },
+            };
             var skipLog = new SkipLog();
-            var exporter = new IfcExporter(Console.Error, includeIfcRevitParameters) { SkipLog = skipLog, ExportPhaseId = exportPhase, ExportAllPhases = exportPhaseOption == "all", RoomExportPhaseId = roomPhase, ExportRoomsOfAllPhases = roomPhaseOption == "all", RevitParameterGroups = revitParameterGroups, Profile = profile, BaseQuantities = baseQuantities, OpeningQuantitiesSwapped = openingLegacyAxes, Timestamp = ifcTimestamp, LengthUnit = ifcLengthUnit };
+            var exporter = new IfcExporter(runtimeConfig, Console.Error) { SkipLog = skipLog };
             var swExport = System.Diagnostics.Stopwatch.StartNew();
             exporter.Export(ifcModel, ifcPath);
             Console.Error.WriteLine($"Timing: export {swExport.Elapsed.TotalSeconds:F1}s");
             Console.Error.WriteLine($"IFC written to {ifcPath}");
             report.SetExport("ifc", exporter.ExportedProducts, skipLog, exporter.ExportedElementQualities);
+            if (saveIfcConfigPath != null && !RvtIO.Cli.IfcConfigurationOptions.SaveConfiguration(saveIfcConfigPath, mergedIfcConfig))
+                return RvtExitCodes.Usage;
         }
 
         if (compactJsonPath != null)
