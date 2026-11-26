@@ -9,6 +9,7 @@ RvtIO is a .NET library and command line tool that reads Autodesk Revit projects
 - Reads elements, parameters, geometry, file metadata and project information.
 - Queries elements through `FilteredElementCollector`.
 - Exports IFC2X3 coordination view (default) and IFC4 (ISO 16739-1:2018 / ADD2 TC1; `ReferenceView_V1.2` and `DesignTransferView_V1.0`), with shared JSON/API configuration presets and optional Revit parameters as property sets.
+- Exports binary glTF 2.0 (`.glb`) directly via `GlbExporter` / `--glb` in Y-up metres with shared family symbol meshes, PBR colors/transparency, and element/material metadata in `extras`.
 - Writes compact JSON or a full JSON dump with every parameter and geometry.
 - Returns the triangle meshes of the model elements, with one shared mesh per family symbol for repeated instances (`ElementMeshes`).
 - Lists the sheets of a file and the viewports placed on them (`SheetCatalog`), with the sheet number, name, issue date, by-lines, the viewports of each sheet and the elements each sheet owns. Page size, view placement and 2D content are not decoded yet; the catalog reports each limit.
@@ -76,13 +77,19 @@ rvtio --ifc-capabilities
 
 See [IFC export and configuration](docs/ifc-export.md) for the exact IFC4 edition details, supported MVD exchange scenarios, precedence rules, validation checks, and capability matrix.
 
+Export a project to binary glTF 2.0 (GLB):
+
+```sh
+rvtio project.rvt project.glb
+```
+
 Export multiple formats in a single read:
 
 ```sh
-rvtio project.rvt --ifc project.ifc --compact-json project.compact.json --scene project.scene.json
+rvtio project.rvt --ifc project.ifc --glb project.glb --compact-json project.compact.json --scene project.scene.json
 ```
 
-A `.ifc` output path selects IFC. Any other output path selects JSON, which is compact by default. When `--ifc`, `--compact-json`, `--full-json`, or `--scene` are specified, the model is read once and each requested format is exported sequentially. Positional output arguments remain fully backward compatible. Single-output and multi-output exports produce byte-identical files. On Revit 2023+ (own-schema) models, JSON formats retain their wide-schema representation by default (use `--r22-layout` to export JSON in Revit 2022 layout too), while IFC and Scene exports use the Revit 2022 geometry layout, sharing decoded quantities without reading the model again. If no output path is given, the tool writes `output.json`. Diagnostics go to standard error.
+A `.ifc` output path selects IFC and a `.glb` output path selects binary glTF 2.0 (GLB). Any other output path selects JSON, which is compact by default. When `--ifc`, `--glb`, `--compact-json`, `--full-json`, or `--scene` are specified, the model is read once and each requested format is exported sequentially. Positional output arguments remain fully backward compatible. Single-output and multi-output exports produce byte-identical files. On Revit 2023+ (own-schema) models, JSON formats retain their wide-schema representation by default (use `--r22-layout` to export JSON in Revit 2022 layout too), while IFC, GLB, and Scene exports use the Revit 2022 geometry layout, sharing decoded geometry and quantities without reading the model again. If no output path is given, the tool writes `output.json`. Diagnostics go to standard error. See [GLB export](docs/glb-export.md).
 
 List the sheets and the viewports placed on them:
 

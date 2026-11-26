@@ -4,11 +4,12 @@ title: RvtIO
 
 # RvtIO
 
-RvtIO is a .NET library and command line tool that reads Autodesk Revit projects (`.rvt`) and families (`.rfa`) directly from disk, without Revit or the Revit API, and exports IFC and JSON.
+RvtIO is a .NET library and command line tool that reads Autodesk Revit projects (`.rvt`) and families (`.rfa`) directly from disk, without Revit or the Revit API, and exports IFC, binary glTF 2.0 (GLB), and JSON.
 
 - Reads elements, parameters, geometry, file metadata and project information.
 - Queries elements through `FilteredElementCollector`.
 - Exports IFC2X3 coordination view (default) and IFC4 (ISO 16739-1:2018 / ADD2 TC1; `ReferenceView_V1.2` and `DesignTransferView_V1.0`), with shared typed/JSON export configuration and optional Revit parameters as property sets.
+- Exports binary glTF 2.0 (`.glb`) via `GlbExporter` using `ElementMeshes` geometry in Y-up metres with shared symbol meshes, PBR materials, and element/material metadata in `extras`.
 - Writes compact JSON or a full JSON dump with every parameter and geometry.
 - Returns the triangle meshes of the model elements, with one shared mesh per family symbol for repeated instances (`ElementMeshes`).
 

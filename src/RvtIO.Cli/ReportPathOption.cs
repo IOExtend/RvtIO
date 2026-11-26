@@ -7,7 +7,7 @@ internal static class ReportPathOption
     /// <summary>The dump options of the export whose value is an output path.</summary>
     public static readonly string[] DumpOptions =
         ["--dev-candidates", "--dev-trace", "--dev-facts", "--dev-solids", "--dev-user-params", "--dev-collisions",
-         "--ifc", "--scene", "--full-json", "--json"];
+         "--ifc", "--glb", "--scene", "--full-json", "--json"];
 
     /// <summary>Every file the command line names as an output: the input never, the export and every named dump.</summary>
     public static IEnumerable<string> OutputPaths(string[] args, string rvtPath, string? outputPath, string? externalDumpPath)
