@@ -287,6 +287,14 @@ dotnet test
 
 Tests requiring real Revit files are skipped with a message unless `RVTIO_TEST_FILES` points to a folder containing the private fixtures. The repository includes no Revit models.
 
+To run the reproducible RE1 IFC comparison against Autodesk Revit's reference exports across two RvtIO commits (`origin/main` vs `HEAD`):
+
+```sh
+python tools/measure/measure_re1.py --base origin/main --head HEAD
+```
+
+See [RE1 reproducible comparison](docs/measure.md) for pinned SHA-256 checksums, Revit export settings, tolerances, and manual CI dispatch.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md). Release changes are recorded in [CHANGELOG.md](CHANGELOG.md).
