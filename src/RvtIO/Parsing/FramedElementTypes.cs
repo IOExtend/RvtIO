@@ -123,7 +123,7 @@ internal sealed class FramedElementTypes
         "PipeFittingCenterLine", "DuctFittingCenterLine", "PropertySetElement",
     ];
 
-    private enum HeaderParameterValue { InvalidOnly, BuiltInCategory }
+    private enum HeaderParameterValue { InvalidOnly, NamedOnly, InvalidOrNamed }
     private readonly Dictionary<int, HeaderParameterValue> _headerParameterClasses = new();
     private readonly HashSet<long> _headerParameterOwners = [];
 
@@ -188,9 +188,13 @@ internal sealed class FramedElementTypes
         if (applyTypeLinks && projectCategories)
             foreach (var cls in schema.Classes)
             {
-                if (_walker.IsA(cls.Id, "Symbol") || _walker.IsA(cls.Id, "ParamElem"))
-                    _headerParameterClasses.Add(cls.Id, HeaderParameterValue.BuiltInCategory);
+                if (_walker.IsA(cls.Id, "Symbol") || _walker.IsA(cls.Id, "ParamElem") || _walker.IsA(cls.Id, "DBView"))
+                    _headerParameterClasses.Add(cls.Id, HeaderParameterValue.InvalidOrNamed);
+                else if (cls.Name is "RoomTag" or "LegendComponent" || _walker.IsA(cls.Id, "Dimension"))
+                    _headerParameterClasses.Add(cls.Id, HeaderParameterValue.NamedOnly);
                 else if (cls.Name is "GStyleElem" or "ParamElemFamily" or "CategoryElem" or "FontElem" or "ParamBinding"
+                    or "SketchPlane" or "PostedWarningElem" or "Family" or "DBDrawing" or "AppearanceAssetElem"
+                    or "ExtentElem" or "FillPatternElem" or "RefTableElem" or "LinePatternElem"
                     || _walker.IsA(cls.Id, "FamilySurrogateBase") || _walker.IsA(cls.Id, "SketchBase") || _walker.IsA(cls.Id, "FilterElement"))
                     _headerParameterClasses.Add(cls.Id, HeaderParameterValue.InvalidOnly);
             }
@@ -560,8 +564,8 @@ internal sealed class FramedElementTypes
             var record = records[owner];
             if (!owners.TryGetValue(owner, out var element) || !record.Complete || record.Category is not long category
                 || record.RootClass is not int cls || !_headerParameterClasses.TryGetValue(cls, out var policy)) continue;
-            if (category == (int)BuiltInCategory.INVALID
-                || policy == HeaderParameterValue.BuiltInCategory && category is >= int.MinValue and < 0
+            if (category == (int)BuiltInCategory.INVALID && policy != HeaderParameterValue.NamedOnly
+                || policy != HeaderParameterValue.InvalidOnly && category is >= int.MinValue and < -1
                     && BuiltInCategoryNames.Lookup.ContainsKey((int)category))
                 SetCategoryParameters(element, (int)category, true);
             else if (category > 0 && _walker.Class(cls)?.Name is ("MasterImportSymbol" or "SlaveImportSymbol")

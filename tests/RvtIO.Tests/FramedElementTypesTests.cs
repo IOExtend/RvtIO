@@ -108,6 +108,15 @@ public class FramedElementTypesTests
     [InlineData(8, "SelectionFilterElement", true)]
     [InlineData(4, "FamilySurrogate", true)]
     [InlineData(8, "NonPlanarSketch", true)]
+    [InlineData(4, "Family", true)]
+    [InlineData(8, "SketchPlane", true)]
+    [InlineData(4, "PostedWarningElem", true)]
+    [InlineData(8, "DBDrawing", true)]
+    [InlineData(4, "AppearanceAssetElem", true)]
+    [InlineData(8, "ExtentElem", true)]
+    [InlineData(4, "FillPatternElem", true)]
+    [InlineData(8, "RefTableElem", true)]
+    [InlineData(4, "LinePatternElem", true)]
     [InlineData(4, "Other", false)]
     public void InvalidCategoryCanBeAComputedValueForAnUncategorizedOwner(int width, string kind, bool expected)
     {
@@ -140,6 +149,33 @@ public class FramedElementTypesTests
         var element = new Element { Id = 10 };
         f.Apply(element);
         Assert.Empty(element.Parameters);
+    }
+
+    [Theory]
+    [InlineData(4, "RoomTag", -2000485, true)]
+    [InlineData(8, "LegendComponent", -2000576, true)]
+    [InlineData(4, "LinearDimString", -2000261, true)]
+    [InlineData(8, "DBViewPlan", -2000279, true)]
+    [InlineData(4, "DBViewPlan", -1, true)]
+    [InlineData(4, "RoomTag", -1, false)]
+    [InlineData(8, "LinearDimString", -1, false)]
+    [InlineData(4, "Family", -2000279, false)]
+    [InlineData(8, "LegendComponent", 42, false)]
+    [InlineData(4, "DBViewPlan", -12345678, false)]
+    public void DrawingCategoryParametersRequireTheVerifiedHeaderValue(int width, string kind, int category, bool expected)
+    {
+        var f = new Fixture(width);
+        f.Add(kind, 10, writer =>
+        {
+            if (kind is "RoomTag" or "LinearDimString" or "DBViewPlan") f.Id(writer, -1);
+            if (kind == "DBViewPlan") f.Id(writer, -1);
+        }, partition: 2);
+        f.AddHeaderId(10, category, partition: 2);
+        var element = new Element { Id = 10 };
+        f.Apply(element);
+        var parameters = element.Parameters.Where(p => p.Id is -1140362 or -1140363).ToArray();
+        Assert.Equal(expected ? new[] { -1140362, -1140363 } : [], parameters.Select(p => p.Id));
+        Assert.All(parameters, p => { Assert.Equal(category, p.Value); Assert.True(p.HasRevitValue); });
     }
 
     [Theory]
@@ -1129,6 +1165,7 @@ public class FramedElementTypesTests
                 "ScheduleInstance", "BuildingOperatingYearSchedule", "DPart", "FaceSplitter", "PartMaker", "Matchline",
                 "Property", "RevisionCloud", "ShaftOpening", "BoundaryConditions", "ProjectPhase",
                 "GStyleElem", "CategoryElem", "FontElem", "SketchPlane", "PostedWarningElem", "DBDrawing",
+                "AppearanceAssetElem", "ExtentElem", "FillPatternElem", "RefTableElem", "LinePatternElem",
                 "FamSymSurrogate", "NestedFamSymRefElem", "KeynoteTable" })
                 Class(kind, element);
             Class("WallSweep", element, Ref("m_typeId"));

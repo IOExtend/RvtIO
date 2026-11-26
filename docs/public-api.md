@@ -96,6 +96,10 @@ For records derived from `ParamElem` or `Symbol`, the two parameters can also ho
 the built-in category ID from the verified header.
 For a master or slave import symbol with a positive category ID, the reader resolves
 the referenced `CategoryElem` and preserves its source ID in both parameters.
+In the verified historical records, both parameters also hold the header's named category
+for dimensions, room tags and legend components. Views can carry a named category or
+`-1`. An invalid category on a sketch plane, project family, drawing, warning, appearance asset,
+extent, fill pattern, reference table or line pattern gives both parameters the value `-1`.
 In historical files, element types identified by complete records derived from `Symbol` in the file's
 schema have `TypeElementId` equal to `-1`. Instances can refer to those elements as their types.
 With `--keep-all-copies`, a single family instance record can restore its saved symbol when the previous type
