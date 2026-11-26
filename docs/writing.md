@@ -267,8 +267,9 @@ base requires verified saved cut history. The base can coincide exactly with the
 openings with verified cut histories and separated positions along the wall. At the sill the opening cuts the wall and
 splits the outline of its base face. At the head the opening keeps its guide faces and posts the warning without cutting
 the wall. This covers contacts at both openings and a contact at one opening while the other remains interior, cuts through
-the base, or falls below it. Transitions outside these layouts, near-contact positions outside the verified ranges, and
-unverified vertex projections are still refused.
+the base, or falls below it. The writer also handles verified positions within Revit's vertex tolerance and positions
+just beyond it that retain an interior cut or a cut through the base. It refuses the unverified positions at the
+tolerance limits, combined cuts outside these layouts, and unverified vertex projections.
 
 ## Editing a standalone family
 
@@ -904,9 +905,16 @@ The two-opening checks covered matching and staggered opening elevations, an una
 that add or remove two warnings on the same wall. Revit 2020–2025 and 2027 matched the API controls after saving and
 reopening without Audit. The 2026-format files were checked after upgrade in Revit 2027. Revit 2027 also checked the
 opposite creation order of the two openings. The checks compared assigned offsets, bounds, quantities, opening
-ownership and warnings. Revit also accepted tested near-contact positions that
-RvtIO still refuses. Near the opening head, the number of stored edges can differ from both the exact contact and the
-ordinary cut through the base.
+ownership and warnings.
+
+The near-contact checks compared positions just above and below the sill and head with Revit API assignments.
+The tested positions inside the tolerance retain the contact geometry. The tested positions farther from the edge
+retain an interior cut or a cut through the base. Fifteen positions per format matched after saving and reopening
+without Audit in Revit 2020–2025 and 2027. The 2026-format files were checked after upgrade in Revit 2027. Revit
+2024 and 2027 also verified replacements between these positions and ordered batches. Revit 2027 additionally
+checked oblique walls, level-constrained walls and two openings on the same wall. At the lower tolerance limit of
+the head, Revit 2027 saved an uncut wall with additional edges. That layout still requires coverage. In the tested
+batches, a later edit that reached this boundary left the source byte-for-byte intact and produced no output.
 
 ## Remaining parameter coverage
 

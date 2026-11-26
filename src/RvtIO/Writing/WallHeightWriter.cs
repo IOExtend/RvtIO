@@ -486,13 +486,21 @@ internal static partial class WallHeightWriter
             return OpeningCut.Unverified;
         if (wallBase > openingTop + VertexTolerance)
             return OpeningCut.BelowWall;
-        if (wallBase == openingTop)
+        bool distinctContacts = openingTop - openingBottom > 2 * VertexTolerance;
+        if (wallBase == openingTop || distinctContacts && WithinBaseContact(wallBase, openingTop))
             return OpeningCut.AtBaseHead;
-        if (wallBase == openingBottom && wallTop > openingTop + VertexTolerance)
+        if ((wallBase == openingBottom || distinctContacts && WithinBaseContact(wallBase, openingBottom))
+            && wallTop > openingTop + VertexTolerance)
             return OpeningCut.AtBaseSill;
         if (openingBottom < wallBase + MinimumVerifiedHeight)
-            return wallBase > Math.BitIncrement(openingBottom + MinimumNotchGap) && openingTop >= wallBase + MinimumVerifiedHeight
-                && wallTop > openingTop + VertexTolerance ? OpeningCut.ThroughBottom : OpeningCut.Unverified;
+        {
+            if (wallTop <= openingTop + VertexTolerance)
+                return OpeningCut.Unverified;
+            if (wallBase < Math.BitDecrement(openingBottom - MinimumNotchGap))
+                return OpeningCut.Interior;
+            return wallBase > Math.BitIncrement(openingBottom + MinimumNotchGap)
+                && wallBase < Math.BitDecrement(openingTop - MinimumNotchGap) ? OpeningCut.ThroughBottom : OpeningCut.Unverified;
+        }
         double upperSill = openingBottom + VertexTolerance;
         double lowerHead = openingTop - VertexTolerance;
         if (wallTop < openingBottom - VertexTolerance)
@@ -507,6 +515,10 @@ internal static partial class WallHeightWriter
         if (wallTop <= Math.BitIncrement(upperSill) || wallTop >= Math.BitDecrement(openingTop - MinimumNotchGap))
             return OpeningCut.Unverified;
         return OpeningCut.ThroughTop;
+
+        // Revit can retain an intermediate cut at the tolerance limit itself.
+        static bool WithinBaseContact(double elevation, double openingEdge) =>
+            elevation > Math.BitIncrement(openingEdge - VertexTolerance) && elevation < Math.BitDecrement(openingEdge + VertexTolerance);
     }
 
     internal readonly record struct OpeningInterval(int Step, double Left, double Right, double Bottom, double Top,
