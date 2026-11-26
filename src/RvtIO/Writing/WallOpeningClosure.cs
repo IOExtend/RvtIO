@@ -22,7 +22,8 @@ internal static partial class WallHeightWriter
                     throw Layout();
 
             if (sourceEdges.Keys.Any(faces.ContainsKey)
-                || !replay && !removesCuts && cutters.Count == 0 && (_head == _headEdgeA || _head == _headEdgeB))
+                || !replay && !removesCuts && cutters.Count == 0 && (_head == _headEdgeA || _head == _headEdgeB
+                    || _throughBottom && (_sill == _sillEdgeA || _sill == _sillEdgeB)))
                 throw Layout();
             foreach (var face in faces.Values)
                 ReadLoops(face, sourceEdges);
@@ -74,9 +75,11 @@ internal static partial class WallHeightWriter
             else if (_opening.Cut == OpeningCut.Interior)
             {
                 var contours = faces.Where(pair => pair.Value.Loops.Count != 0).ToDictionary(pair => pair.Key, pair => pair.Value.Contours);
-                var notch = new Notch(_opening, _openingEdges, _head, _headEdgeA, _headEdgeB, _sill, _left, _right,
+                var notch = new Notch(_opening, _openingEdges, _throughBottom ? _sill : _head,
+                    _throughBottom ? _sillEdgeA : _headEdgeA, _throughBottom ? _sillEdgeB : _headEdgeB,
+                    _throughBottom ? _head : _sill, _left, _right,
                     _openingFaces.Get((5, 2, -1, 0)), _openingFaces.Get((5, 9, -1, 0)));
-                var topCut = new TopCutEdges();
+                var topCut = new BoundaryCutEdges();
                 edges = OpenCut(faces, edges, contours, topCut, height, notch, (key, _) => AllocateEdge(key));
                 if (_addedTags is not (0 or 20))
                     throw Layout();
@@ -139,17 +142,25 @@ internal static partial class WallHeightWriter
 
         private Dictionary<int, Edge> CloseCut(Dictionary<int, Face> faces, Dictionary<int, Edge> source, HeightInterval height)
         {
-            if (new[] { _head, _headEdgeA, _headEdgeB }.Any(tag => faces.ContainsKey(tag) || source.ContainsKey(tag)))
+            int missing = _throughBottom ? _sill : _head;
+            int edgeA = _throughBottom ? _sillEdgeA : _headEdgeA;
+            int edgeB = _throughBottom ? _sillEdgeB : _headEdgeB;
+            int opposite = _throughBottom ? _head : _sill;
+            double retainedElevation = _throughBottom ? _opening.Top : _opening.Bottom;
+            double restoredElevation = _throughBottom ? _opening.Bottom : _opening.Top;
+            double boundary = _throughBottom ? height.NewBase : height.NewTop;
+            if (new[] { missing, edgeA, edgeB }.Any(tag => faces.ContainsKey(tag) || source.ContainsKey(tag)))
                 throw Layout();
-            var sill = Find(faces, _sill);
-            if (sill.Loops is not [var sillLoop] || !SameCoordinate(sill.Frame.Origin.Z, _opening.Bottom)
-                || sill.Frame.X.Z != 0 || sill.Frame.Y.Z != 0)
+            var retained = Find(faces, opposite);
+            if (retained.Loops is not [var retainedLoop] || !SameCoordinate(retained.Frame.Origin.Z, retainedElevation)
+                || retained.Frame.X.Z != 0 || retained.Frame.Y.Z != 0)
                 throw Layout();
-            faces.Add(_head, CreateHead(sill, sillLoop));
+            faces.Add(missing, CreateOpeningFace(retained, retainedLoop, missing, restoredElevation));
 
             // Retain split edges in history so a later regeneration can reuse their tags.
-            var separated = _openingEdges.SelectTags(k => k.A == 4 || k.A == 17 && k.B == _roof).ToHashSet();
-            var upperBorder = new[] { 3, 6, 10, 14 }.Select(k => _openingEdges.Get((3, k, -1, -1))).ToHashSet();
+            var separated = _openingEdges.SelectTags(k => k.A == 4 || k.A == 17 && k.B == _boundary).ToHashSet();
+            int[] borderKinds = _throughBottom ? [4, 7, 11, 15] : [3, 6, 10, 14];
+            var border = borderKinds.Select(k => _openingEdges.Get((3, k, -1, -1))).ToHashSet();
             var revealSides = RevealSides();
             var edges = new Dictionary<int, Edge>();
             foreach (var (tag, original) in source)
@@ -159,42 +170,42 @@ internal static partial class WallHeightWriter
                 var edge = original;
                 if (edge.A < 0 || edge.B < 0)
                 {
-                    if (!upperBorder.Remove(tag))
+                    if (!border.Remove(tag))
                         throw Layout();
-                    edge.Node.SetHeadEdgeActive(true);
-                    edge = edge with { A = _head, B = edge.A >= 0 ? edge.A : edge.B };
+                    edge.Node.SetOpeningBorderActive(true);
+                    edge = edge with { A = missing, B = edge.A >= 0 ? edge.A : edge.B };
                 }
                 else if (revealSides.Remove(tag))
                 {
-                    if (SameCoordinate(edge.Segment.First.Z, height.NewTop) == SameCoordinate(edge.Segment.Last.Z, height.NewTop))
+                    if (SameCoordinate(edge.Segment.First.Z, boundary) == SameCoordinate(edge.Segment.Last.Z, boundary))
                         throw Layout();
-                    edge = edge with { Segment = edge.Segment.MoveZ(height.NewTop, _opening.Top) };
+                    edge = edge with { Segment = edge.Segment.MoveZ(boundary, restoredElevation) };
                 }
                 else if (Generator(tag) != _baseGenerator &&
-                    (SameCoordinate(edge.Segment.First.Z, height.NewTop) || SameCoordinate(edge.Segment.Last.Z, height.NewTop)))
+                    (SameCoordinate(edge.Segment.First.Z, boundary) || SameCoordinate(edge.Segment.Last.Z, boundary)))
                     throw Layout();
                 edges.Add(tag, edge);
             }
-            if (upperBorder.Count != 0 || revealSides.Count != 0)
+            if (border.Count != 0 || revealSides.Count != 0)
                 throw Layout();
-            InsertHeadEdge(_sideA, _headEdgeA);
-            InsertHeadEdge(_sideB, _headEdgeB);
+            InsertSideEdge(_sideA, edgeA);
+            InsertSideEdge(_sideB, edgeB);
             return edges;
 
-            void InsertHeadEdge(int face, int tag)
+            void InsertSideEdge(int face, int tag)
             {
-                var template = Find(edges, SideEdge(face, _sill));
-                if (template.A != face || template.B != _sill)
+                var template = Find(edges, SideEdge(face, opposite));
+                if (template.A != face || template.B != opposite)
                     throw Layout();
                 var node = template.Node.Clone();
                 node.SetTag(tag);
-                edges.Add(tag, new(node, face, _head,
-                    new(template.Segment.Last.WithZ(_opening.Top), template.Segment.First.WithZ(_opening.Top))));
+                edges.Add(tag, new(node, face, missing,
+                    new(template.Segment.Last.WithZ(restoredElevation), template.Segment.First.WithZ(restoredElevation))));
             }
         }
 
         private void RebuildSolid(Dictionary<int, Face> faces, Dictionary<int, Edge> edges,
-            Dictionary<int, List<int[]>> loops, TopCutEdges? topCut = null)
+            Dictionary<int, List<int[]>> loops, BoundaryCutEdges? topCut = null)
         {
             var physicalEdges = new HashSet<(int Tag, int Side)>();
             foreach (var (tag, edge) in edges)
@@ -219,7 +230,7 @@ internal static partial class WallHeightWriter
                 }
             }
 
-            int sideLength = 4 * loops[_roof].Count;
+            int sideLength = 4 * loops[_boundary].Count;
             foreach (var (tag, contours) in loops)
             {
                 var face = Find(faces, tag);
@@ -267,21 +278,21 @@ internal static partial class WallHeightWriter
         private HashSet<int> RevealSides() =>
             [SideEdge(_sideA, _left), SideEdge(_sideA, _right), SideEdge(_sideB, _left), SideEdge(_sideB, _right)];
 
-        private Face CreateHead(Face sill, GeometryArchive.Node sillLoop)
+        private static Face CreateOpeningFace(Face retained, GeometryArchive.Node retainedLoop, int tag, double elevation)
         {
-            var node = sill.Node.Clone();
-            var plane = sill.Plane.Clone();
-            var filling = sill.Node.Target("GFace.m_pGFilling").Clone();
-            var loop = sillLoop.Clone();
-            node.SetTag(_head);
+            var node = retained.Node.Clone();
+            var plane = retained.Plane.Clone();
+            var filling = retained.Node.Target("GFace.m_pGFilling").Clone();
+            var loop = retainedLoop.Clone();
+            node.SetTag(tag);
             node.SetOwned("Face.m_pSurf", plane);
             node.SetOwned("GFace.m_pGFilling", filling);
             node.SetOwned("GFace.m_pFirstLoop", loop);
             filling.SetWeak("GFilling.m_pGFace", node);
             filling.SetReal("FillPatternPlacer.m_origin@0", -filling.Real("FillPatternPlacer.m_origin@0"));
             filling.SetReal("FillPatternPlacer.m_dir@0", -filling.Real("FillPatternPlacer.m_dir@0"));
-            var frame = sill.Frame with { Origin = sill.Frame.Origin.WithZ(_opening.Top), X = sill.Frame.X.Scale(-1) };
-            plane.SetReal("Plane.m_origin@2", _opening.Top);
+            var frame = retained.Frame with { Origin = retained.Frame.Origin.WithZ(elevation), X = retained.Frame.X.Scale(-1) };
+            plane.SetReal("Plane.m_origin@2", elevation);
             plane.SetReal("Plane.m_xVec@0", frame.X.X);
             plane.SetReal("Plane.m_xVec@1", frame.X.Y);
             return new(node, plane, frame) { Loops = [loop] };
@@ -327,10 +338,12 @@ internal static partial class WallHeightWriter
                 [SideEdge(_sideA, _sill), aLeft, _headEdgeA, aRight]);
             contours[_sideB] = SideContours(_sideB, BaseSideOutline(1),
                 [SideEdge(_sideB, _sill), bRight, _headEdgeB, bLeft]);
-            contours[_roof] = [BaseRoofOutline()];
+            contours[_boundary] = [_throughBottom ? BaseFloorOutline() : BaseRoofOutline()];
             contours[_left] = [[leftHead, aLeft, CutEdge(7), bLeft]];
             contours[_right] = [[rightHead, bRight, CutEdge(15), aRight]];
             contours[_head] = [[leftHead, _headEdgeB, rightHead, _headEdgeA]];
+            if (_throughBottom)
+                contours[_sill] = [[CutEdge(15), _sillEdgeB, CutEdge(7), _sillEdgeA]];
             foreach (var (tag, loops) in contours)
                 if (loops.Count != (tag == _sideA || tag == _sideB ? openingCount + 1 : 1))
                     throw Layout();
@@ -345,6 +358,9 @@ internal static partial class WallHeightWriter
 
         private int[] BaseRoofOutline() =>
             [BaseSideEdge(3, 0), _baseEdges.Get((2, 1, 3, -1)), BaseSideEdge(3, 1), _baseEdges.Get((2, 3, 0, -1))];
+
+        private int[] BaseFloorOutline() =>
+            [BaseSideEdge(2, 0), _baseEdges.Get((2, 0, 2, -1)), BaseSideEdge(2, 1), _baseEdges.Get((2, 2, 1, -1))];
 
         private int BaseSideEdge(int end, int side) => _baseEdges.Get((1, end, side, -1));
 

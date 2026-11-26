@@ -16,6 +16,18 @@ public class WallHeightWriterTests
         double topElevation, double topOffset, double height) =>
         Assert.Equal(height, WallHeightWriter.ConstrainedHeight(baseElevation, baseOffset, topElevation, topOffset));
 
+    [Fact]
+    public void ClassifiesARectangularOpeningCrossingTheWallBase()
+    {
+        Assert.Equal(WallHeightWriter.OpeningCut.Interior, WallHeightWriter.CutAt(0, 8, 2, 5));
+        Assert.Equal(WallHeightWriter.OpeningCut.ThroughBottom, WallHeightWriter.CutAt(2.25, 10.25, 2, 5));
+        Assert.Equal(WallHeightWriter.OpeningCut.ThroughBottom, WallHeightWriter.CutAt(2.0006103515625, 10.0006103515625, 2, 5));
+        Assert.Equal(WallHeightWriter.OpeningCut.Unverified, WallHeightWriter.CutAt(2, 10, 2, 5));
+        Assert.Equal(WallHeightWriter.OpeningCut.Unverified, WallHeightWriter.CutAt(2.00048828125, 10.00048828125, 2, 5));
+        Assert.Equal(WallHeightWriter.OpeningCut.Unverified, WallHeightWriter.CutAt(2.25, 4, 2, 5));
+        Assert.Equal(WallHeightWriter.OpeningCut.Unverified, WallHeightWriter.CutAt(5.25, 13.25, 2, 5));
+    }
+
     [Theory]
     [InlineData(0, 0.5, 0x00000002u)]
     [InlineData(0, 3.999999998, 0x00000002u)]

@@ -256,10 +256,12 @@ elevation while preserving the base. Revit exposes Top Offset as read-only when 
 Pass a finite signed length with the same units as Unconnected Height. The resulting wall must be at least
 `0.1 ft` tall and inside the writer's verified coordinate range.
 
-Verified existing rectangular openings keep their absolute elevations. RvtIO can also rebuild verified
-opening transitions when Top Offset moves the wall top through the opening. Base Offset is refused when moving
-the base would require rebuilding a cut. RvtIO also refuses wall offset edits with openings when projecting
-their saved vertices requires an unverified layout.
+Verified existing rectangular openings keep their absolute elevations. RvtIO can rebuild verified transitions when
+Top Offset moves the wall top through an opening. Base Offset can move the wall base through the sill of an interior
+opening, adjust an existing cut through the base, or restore the sill when the opening becomes interior again. A second
+separated interior opening can remain in place during the transition. RvtIO preserves the assigned edge tags in the
+geometry history so that a later transition can reuse them. Coincident boundaries, base movement across the entire
+opening, simultaneous transitions of two bottom cuts, and unverified vertex projections are still refused.
 
 ## Editing a standalone family
 
@@ -871,13 +873,21 @@ Revit 2025 additionally verified walls on fractional level elevations, offsets t
 and a Top Offset crossing and recrossing the head of a rectangular opening. Batches with a later read-only
 assignment, clear, missing unit, or invalid height left the source byte-for-byte intact and wrote no output.
 
+Base Offset transitions from interior to a cut through the base, along an existing bottom cut, and back to an
+interior opening were compared with Revit API controls for straight and oblique walls. Revit 2020–2025 and 2027
+confirmed the offsets, absolute opening elevations and bounds after opening, saving and reopening without Audit.
+The 2026-format files were verified after upgrade in Revit 2027. Computed areas and volumes agreed within
+floating-point rounding. Revit 2025 also verified a level-constrained top and a second, unchanged rectangular
+opening on the same wall. Revit 2027 verified a base crossing less than 0.2 mm past the sill. A later attempt to
+place the base at the sill refused the whole batch.
+
 ## Remaining parameter coverage
 
 | Case | Current boundary |
 | --- | --- |
 | Read-only values | Revit API rejects assignments to parameters such as computed wall area. RvtIO also rejects these assignments. |
 | Wall Unconnected Height | RvtIO supports the verified straight wall and rectangular opening cases above, including a single wall with joins allowed and Room Bounding when there is no saved spatial context. Joined walls, walls that can form a new join, changes affecting spatial topology, and other host cuts still require coverage. Revit exposes Unconnected Height as read-only when a level constrains the top. |
-| Wall Base Offset and Top Offset | RvtIO supports the verified straight wall and rectangular opening cases described above. Revit exposes Top Offset as read-only on a wall with an unconnected top. Base movement that changes the topology of a rectangular opening and offsets on walls with unverified joins, dependencies or geometry still require coverage. |
+| Wall Base Offset and Top Offset | RvtIO supports the verified straight wall and rectangular opening cases described above. Revit exposes Top Offset as read-only on a wall with an unconnected top. Opening transitions outside the verified range and offsets on walls with unverified joins, dependencies or geometry still require coverage. |
 | Clearing an RVT value | Revit API `ClearValue()` requires a shared definition with `HideWhenNoValue`. RvtIO also checks the binding and stored value layout. |
 | Additional writable RVT built-ins and element classes | The RVT parameter writer supports the combinations in the table above. Other built-in fields, loaded family categories, and layouts beyond verified directly linked derived symbols still require coverage. |
 | Additional built-ins in standalone families | The verified Generic Model, Door, Window, and Furniture fields are listed above. Other built-ins, other family categories, and selecting an unnamed family type still require coverage. |

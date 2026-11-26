@@ -10,7 +10,7 @@ internal static partial class WallHeightWriter
             var contours = faces.Where(pair => pair.Value.Contours.Count != 0)
                 .ToDictionary(pair => pair.Key, pair => pair.Value.Contours);
             var generators = _generators.ToList();
-            var topCut = new TopCutEdges();
+            var topCut = new BoundaryCutEdges();
             var axisFace = _wall.Target(-1, "VWall.m_pRefFaces@0", "Face");
             var axisPlane = _wall.Target(axisFace, "Face.m_pSurf", "Plane");
             var wallAxis = Vector("Plane.m_xVec");

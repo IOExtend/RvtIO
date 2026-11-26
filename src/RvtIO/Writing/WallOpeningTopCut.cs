@@ -4,25 +4,27 @@ internal static partial class WallHeightWriter
 {
     private sealed partial class OpeningTransition
     {
-        private sealed class TopCutEdges
+        private sealed class BoundaryCutEdges
         {
             internal HashSet<int> Inactive { get; } = [];
             internal Dictionary<int, Frame> Unfaced { get; } = [];
         }
 
-        private sealed record Notch(OpeningInterval Opening, History Edges, int Head, int HeadEdgeA, int HeadEdgeB,
-            int Sill, int Left, int Right, int Back, int Front);
+        private sealed record Notch(OpeningInterval Opening, History Edges, int CrossingFace, int CrossingEdgeA, int CrossingEdgeB,
+            int OppositeFace, int Left, int Right, int Back, int Front);
 
         private Dictionary<int, Edge> OpenCut(Dictionary<int, Face> faces, Dictionary<int, Edge> source,
-            Dictionary<int, List<int[]>> contours, TopCutEdges topCut, HeightInterval height, Notch notch,
+            Dictionary<int, List<int[]>> contours, BoundaryCutEdges topCut, HeightInterval height, Notch notch,
             Func<(int, int, int, int), bool, int> allocate)
         {
-            var head = Find(faces, notch.Head);
+            var crossingFace = Find(faces, notch.CrossingFace);
             int back = notch.Back;
             int front = notch.Front;
             bool atHead = notch.Opening.Destination == OpeningCut.AtHead;
-            if (head.Loops.Count != (atHead ? 0 : 1) || !SameCoordinate(head.Frame.Origin.Z, notch.Opening.Top)
-                || head.Frame.X.Z != 0 || head.Frame.Y.Z != 0
+            double crossing = _throughBottom ? notch.Opening.Bottom : notch.Opening.Top;
+            double boundary = _throughBottom ? height.NewBase : height.NewTop;
+            if (crossingFace.Loops.Count != (atHead ? 0 : 1) || !SameCoordinate(crossingFace.Frame.Origin.Z, crossing)
+                || crossingFace.Frame.X.Z != 0 || crossingFace.Frame.Y.Z != 0
                 || Find(faces, back).Loops.Count != 0 || Find(faces, front).Loops.Count != 0)
                 throw Layout();
 
@@ -34,129 +36,146 @@ internal static partial class WallHeightWriter
             var axis = Vector("Plane.m_xVec");
             double Station(Point p) => p.Minus(origin).Dot(axis);
 
-            var edgeA = Find(source, notch.HeadEdgeA);
-            var edgeB = Find(source, notch.HeadEdgeB);
-            var (aLeft, aRight) = edgeA.Segment;
-            var (bRight, bLeft) = edgeB.Segment;
-            if (edgeA.A != _sideA || edgeB.A != _sideB || edgeA.B != notch.Head || edgeB.B != notch.Head
+            var edgeA = Find(source, notch.CrossingEdgeA);
+            var edgeB = Find(source, notch.CrossingEdgeB);
+            var (aLeft, aRight) = OrientForStation(edgeA.Segment);
+            var (bRight, bLeft) = OrientForStation(edgeB.Segment);
+            if (edgeA.A != _sideA || edgeB.A != _sideB || edgeA.B != notch.CrossingFace || edgeB.B != notch.CrossingFace
                 || Math.Abs(Station(aLeft) - notch.Opening.Left) >= 1e-9 || Math.Abs(Station(bLeft) - notch.Opening.Left) >= 1e-9
                 || Math.Abs(Station(aRight) - notch.Opening.Right) >= 1e-9 || Math.Abs(Station(bRight) - notch.Opening.Right) >= 1e-9
-                || !new[] { aLeft, aRight, bLeft, bRight }.All(p => SameCoordinate(p.Z, notch.Opening.Top)))
+                || !new[] { aLeft, aRight, bLeft, bRight }.All(p => SameCoordinate(p.Z, crossing)))
                 throw Layout();
 
-            int AcrossHead(int kind) => notch.Edges.Get((3, kind, -1, -1));
-            var topBorders = new Dictionary<int, (int Face, Segment Segment)>
+            int CutterEdge(int kind) => notch.Edges.Get((3, kind, -1, -1));
+            var borderEdges = _throughBottom ? new Dictionary<int, (int Face, Segment Segment)>
             {
-                [AcrossHead(3)] = (back, new(bRight, bLeft)),
-                [AcrossHead(6)] = (notch.Left, new(bLeft, aLeft)),
-                [AcrossHead(10)] = (front, new(aLeft, aRight)),
-                [AcrossHead(14)] = (notch.Right, new(aRight, bRight)),
+                [CutterEdge(4)] = (back, new(bLeft, bRight)),
+                [CutterEdge(7)] = (notch.Left, new(aLeft, bLeft)),
+                [CutterEdge(11)] = (front, new(aRight, aLeft)),
+                [CutterEdge(15)] = (notch.Right, new(bRight, aRight)),
+            } : new Dictionary<int, (int Face, Segment Segment)>
+            {
+                [CutterEdge(3)] = (back, new(bRight, bLeft)),
+                [CutterEdge(6)] = (notch.Left, new(bLeft, aLeft)),
+                [CutterEdge(10)] = (front, new(aLeft, aRight)),
+                [CutterEdge(14)] = (notch.Right, new(aRight, bRight)),
             };
             var revealSides = new HashSet<int> { SideEdge(_sideA, notch.Left), SideEdge(_sideA, notch.Right),
                 SideEdge(_sideB, notch.Left), SideEdge(_sideB, notch.Right) };
             var edges = new Dictionary<int, Edge>();
             foreach (var (tag, original) in source)
             {
-                if (!atHead && (tag == notch.HeadEdgeA || tag == notch.HeadEdgeB))
+                if (!atHead && (tag == notch.CrossingEdgeA || tag == notch.CrossingEdgeB))
                     continue;
                 var edge = original;
-                if (atHead && (edge.A == notch.Head || edge.B == notch.Head))
+                if (atHead && (edge.A == notch.CrossingFace || edge.B == notch.CrossingFace))
                 {
-                    if (!topBorders.Remove(tag) && tag != notch.HeadEdgeA && tag != notch.HeadEdgeB)
+                    if (!borderEdges.Remove(tag) && tag != notch.CrossingEdgeA && tag != notch.CrossingEdgeB)
                         throw Layout();
                 }
-                else if (topBorders.Remove(tag, out var border))
+                else if (borderEdges.Remove(tag, out var border))
                 {
-                    if (!(edge.A == notch.Head && edge.B == border.Face || edge.B == notch.Head && edge.A == border.Face)
+                    if (!(edge.A == notch.CrossingFace && edge.B == border.Face || edge.B == notch.CrossingFace && edge.A == border.Face)
                         || !edge.Segment.Matches(border.Segment) && !edge.Segment.Matches(new(border.Segment.Last, border.Segment.First)))
                         throw Layout();
-                    edge.Node.SetHeadEdgeActive(false);
+                    edge.Node.SetOpeningBorderActive(false);
                     edge = edge with { A = border.Face, B = -1, Segment = border.Segment };
-                    if (!topCut.Unfaced.TryAdd(tag, head.Frame))
+                    if (!topCut.Unfaced.TryAdd(tag, crossingFace.Frame))
                         throw Layout();
                 }
-                else if (edge.A == notch.Head || edge.B == notch.Head || (edge.A < 0 || edge.B < 0) && !topCut.Unfaced.ContainsKey(tag))
+                else if (edge.A == notch.CrossingFace || edge.B == notch.CrossingFace || (edge.A < 0 || edge.B < 0) && !topCut.Unfaced.ContainsKey(tag))
                     throw Layout();
                 else if (revealSides.Remove(tag))
                 {
-                    if (SameCoordinate(edge.Segment.First.Z, notch.Opening.Top) == SameCoordinate(edge.Segment.Last.Z, notch.Opening.Top))
+                    if (SameCoordinate(edge.Segment.First.Z, crossing) == SameCoordinate(edge.Segment.Last.Z, crossing))
                         throw Layout();
-                    edge = edge with { Segment = edge.Segment.MoveZ(notch.Opening.Top, height.NewTop) };
+                    edge = edge with { Segment = edge.Segment.MoveZ(crossing, boundary) };
                 }
                 edges.Add(tag, edge);
             }
-            if (topBorders.Count != 0 || revealSides.Count != 0 || !atHead && !faces.Remove(notch.Head))
+            if (borderEdges.Count != 0 || revealSides.Count != 0 || !atHead && !faces.Remove(notch.CrossingFace))
                 throw Layout();
 
-            var roof = contours[_roof];
-            int roofA = 0, roofB = 0, leftEnd = 0, rightEnd = 0, roofLoop = -1;
-            for (int i = 0; i < roof.Count; i++)
+            var wallBoundary = contours[_boundary];
+            int boundaryA = 0, boundaryB = 0, leftEnd = 0, rightEnd = 0, boundaryLoop = -1;
+            for (int i = 0; i < wallBoundary.Count; i++)
             {
-                int[] loop = roof[i];
-                int a = Only(loop.Where(tag => OppositeRoofFace(tag) == _sideA));
-                int b = Only(loop.Where(tag => OppositeRoofFace(tag) == _sideB));
-                var (aHigh, aLow) = Find(edges, a).Segment;
-                var (bLow, bHigh) = Find(edges, b).Segment;
+                int[] loop = wallBoundary[i];
+                int a = Only(loop.Where(tag => OppositeBoundaryFace(tag) == _sideA));
+                int b = Only(loop.Where(tag => OppositeBoundaryFace(tag) == _sideB));
+                var segmentA = Find(edges, a).Segment;
+                var segmentB = Find(edges, b).Segment;
+                var (aHigh, aLow) = OrientForStation(segmentA);
+                var (bLow, bHigh) = OrientForStation(segmentB);
                 if (Station(aLow) >= notch.Opening.Left || Station(aHigh) <= notch.Opening.Right
                     || Station(bLow) >= notch.Opening.Left || Station(bHigh) <= notch.Opening.Right)
                     continue;
-                if (roofLoop != -1 || loop.Length != 4 || topCut.Inactive.Contains(a) || topCut.Inactive.Contains(b))
+                if (boundaryLoop != -1 || loop.Length != 4 || topCut.Inactive.Contains(a) || topCut.Inactive.Contains(b))
                     throw Layout();
-                roofLoop = i;
-                roofA = a;
-                roofB = b;
+                boundaryLoop = i;
+                boundaryA = a;
+                boundaryB = b;
                 leftEnd = EndAt(loop, aLow, bLow);
                 rightEnd = EndAt(loop, aHigh, bHigh);
             }
-            if (roofLoop == -1 || leftEnd == rightEnd)
+            if (boundaryLoop == -1 || leftEnd == rightEnd)
                 throw Layout();
 
-            // The two wall sides allocate their splits in order, then the roof creates its four intersections.
-            var (aRest, aStart) = Split(roofA, Station, notch.Opening.Left, height.NewTop);
+            // Both boundary faces split the wall sides left to right, with opposite edge directions.
+            var (aFirst, aSecond) = Split(boundaryA, Station, notch.Opening.Left, boundary);
+            var (aRest, aStart) = _throughBottom ? (aSecond, aFirst) : (aFirst, aSecond);
             if (!atHead)
-                _ = Split(AcrossHead(12), p => p.Z, height.NewTop, height.NewTop);
-            var (aEnd, aGap) = Split(aRest, Station, notch.Opening.Right, height.NewTop);
+                _ = Split(CutterEdge(12), p => p.Z, boundary, boundary);
+            (aFirst, aSecond) = Split(aRest, Station, notch.Opening.Right, boundary);
+            var (aEnd, aGap) = _throughBottom ? (aSecond, aFirst) : (aFirst, aSecond);
             if (!atHead)
-                _ = Split(AcrossHead(16), p => p.Z, height.NewTop, height.NewTop);
-            var (bStart, bRest) = Split(roofB, Station, notch.Opening.Left, height.NewTop);
+                _ = Split(CutterEdge(16), p => p.Z, boundary, boundary);
+            var (bFirst, bSecond) = Split(boundaryB, Station, notch.Opening.Left, boundary);
+            var (bStart, bRest) = _throughBottom ? (bSecond, bFirst) : (bFirst, bSecond);
             if (!atHead)
-                _ = Split(AcrossHead(8), p => p.Z, height.NewTop, height.NewTop);
-            var (bGap, bEnd) = Split(bRest, Station, notch.Opening.Right, height.NewTop);
+                _ = Split(CutterEdge(8), p => p.Z, boundary, boundary);
+            (bFirst, bSecond) = Split(bRest, Station, notch.Opening.Right, boundary);
+            var (bGap, bEnd) = _throughBottom ? (bSecond, bFirst) : (bFirst, bSecond);
             if (!atHead)
-                _ = Split(AcrossHead(17), p => p.Z, height.NewTop, height.NewTop);
+                _ = Split(CutterEdge(17), p => p.Z, boundary, boundary);
 
-            _ = RoofEdge(back, bLeft, bRight);
-            int leftRoof = RoofEdge(notch.Left, aLeft, bLeft);
-            _ = RoofEdge(front, aLeft, aRight);
-            int rightRoof = RoofEdge(notch.Right, bRight, aRight);
+            _ = BoundaryEdge(back, bLeft, bRight);
+            int leftBoundary = _throughBottom ? BoundaryEdge(notch.Left, bLeft, aLeft) : BoundaryEdge(notch.Left, aLeft, bLeft);
+            _ = BoundaryEdge(front, aLeft, aRight);
+            int rightBoundary = _throughBottom ? BoundaryEdge(notch.Right, aRight, bRight) : BoundaryEdge(notch.Right, bRight, aRight);
             if (edges.Count != source.Count + (atHead ? 12 : 18) || faces.Values.Count(f => f.Loops.Count != 0) < 9)
                 throw Layout();
 
             int al = SideEdge(_sideA, notch.Left), ar = SideEdge(_sideA, notch.Right);
             int bl = SideEdge(_sideB, notch.Left), br = SideEdge(_sideB, notch.Right);
-            int sillA = SideEdge(_sideA, notch.Sill), sillB = SideEdge(_sideB, notch.Sill);
-            if (!atHead && !contours.Remove(notch.Head))
+            int oppositeA = SideEdge(_sideA, notch.OppositeFace), oppositeB = SideEdge(_sideB, notch.OppositeFace);
+            if (!atHead && !contours.Remove(notch.CrossingFace))
                 throw Layout();
-            contours[_sideA] = SideContours(_sideA, roofA, [aEnd, ar, sillA, al, aStart],
-                [notch.HeadEdgeA, al, ar, sillA]);
-            contours[_sideB] = SideContours(_sideB, roofB, [bStart, bl, sillB, br, bEnd],
-                [notch.HeadEdgeB, bl, br, sillB]);
-            roof[roofLoop] = [rightEnd, bEnd, rightRoof, aEnd];
-            roof.Add([leftEnd, aStart, leftRoof, bStart]);
-            contours[notch.Left] = [[AcrossHead(7), bl, leftRoof, al]];
-            contours[notch.Right] = [[AcrossHead(15), ar, rightRoof, br]];
-            topCut.Inactive.UnionWith([roofA, roofB, aRest, aGap, bRest, bGap]);
+            contours[_sideA] = SideContours(_sideA, boundaryA,
+                _throughBottom ? [aStart, al, oppositeA, ar, aEnd] : [aEnd, ar, oppositeA, al, aStart],
+                [notch.CrossingEdgeA, al, ar, oppositeA]);
+            contours[_sideB] = SideContours(_sideB, boundaryB,
+                _throughBottom ? [bEnd, br, oppositeB, bl, bStart] : [bStart, bl, oppositeB, br, bEnd],
+                [notch.CrossingEdgeB, bl, br, oppositeB]);
+            wallBoundary[boundaryLoop] = _throughBottom ? [rightEnd, aEnd, rightBoundary, bEnd] : [rightEnd, bEnd, rightBoundary, aEnd];
+            wallBoundary.Add(_throughBottom ? [leftEnd, bStart, leftBoundary, aStart] : [leftEnd, aStart, leftBoundary, bStart]);
+            contours[notch.Left] = [_throughBottom ? [CutterEdge(6), al, leftBoundary, bl] : [CutterEdge(7), bl, leftBoundary, al]];
+            contours[notch.Right] = [_throughBottom ? [CutterEdge(14), br, rightBoundary, ar] : [CutterEdge(15), ar, rightBoundary, br]];
+            topCut.Inactive.UnionWith([boundaryA, boundaryB, aRest, aGap, bRest, bGap]);
             return edges;
+
+            Segment OrientForStation(Segment segment) =>
+                _throughBottom ? new(segment.Last, segment.First) : segment;
 
             int SideEdge(int side, int face) => notch.Edges.Get((17, side, face, 0));
 
-            int OppositeRoofFace(int tag)
+            int OppositeBoundaryFace(int tag)
             {
                 var edge = Find(edges, tag);
-                return edge.Incident(1 - edge.Side(_roof));
+                return edge.Incident(1 - edge.Side(_boundary));
             }
 
-            int EndAt(int[] roofEdges, Point a, Point b) => Only(roofEdges.Where(tag =>
+            int EndAt(int[] boundaryEdges, Point a, Point b) => Only(boundaryEdges.Where(tag =>
                 Find(edges, tag).Segment.Matches(new(a, b)) || Find(edges, tag).Segment.Matches(new(b, a))));
 
             List<int[]> SideContours(int side, int parent, int[] insert, HashSet<int> removed)
@@ -185,13 +204,13 @@ internal static partial class WallHeightWriter
                     AddEdge((4, parent, 1, -1), edge with { Segment = new(middle, last) }));
             }
 
-            int RoofEdge(int face, Point start, Point end) => AddEdge((17, _roof, face, 0),
-                new(Find(edges, roofA).Node, _roof, face, new(start.WithZ(height.NewTop), end.WithZ(height.NewTop))));
+            int BoundaryEdge(int face, Point start, Point end) => AddEdge((17, _boundary, face, 0),
+                new(Find(edges, boundaryA).Node, _boundary, face, new(start.WithZ(boundary), end.WithZ(boundary))));
 
             int AddEdge((int, int, int, int) key, Edge template)
             {
-                int tag = allocate(key, key.Item1 == 4 && (template.A == _roof || template.B == _roof));
-                if (source.ContainsKey(tag) || faces.ContainsKey(tag) || tag == notch.Head)
+                int tag = allocate(key, key.Item1 == 4 && (template.A == _boundary || template.B == _boundary));
+                if (source.ContainsKey(tag) || faces.ContainsKey(tag) || tag == notch.CrossingFace)
                     throw Layout();
                 var edge = template.Node.Clone();
                 edge.SetTag(tag);

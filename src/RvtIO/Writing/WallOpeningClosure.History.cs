@@ -14,6 +14,8 @@ internal static partial class WallHeightWriter
         private readonly History _baseFaces, _baseEdges, _openingFaces, _openingEdges;
         private readonly int _sideA, _sideB, _roof, _sill, _left, _right, _head;
         private readonly int _headEdgeA, _headEdgeB;
+        private readonly int _boundary, _sillEdgeA, _sillEdgeB;
+        private readonly bool _throughBottom;
         private readonly bool _createdHead;
         private int _addedTags;
         private readonly List<(int Start, int End, byte[] Bytes)> _edits = [];
@@ -44,6 +46,8 @@ internal static partial class WallHeightWriter
             _sideA = _baseFaces.Get((2, -1, -1, 0));
             _sideB = _baseFaces.Get((1, -1, -1, 0));
             _roof = _baseFaces.Get((3, 3, -1, 0));
+            _throughBottom = opening.Cut == OpeningCut.ThroughBottom || opening.Destination == OpeningCut.ThroughBottom;
+            _boundary = _throughBottom ? _baseFaces.Get((3, 2, -1, 0)) : _roof;
             if (!_baseFaces.Tags.Concat(_baseEdges.Tags).All(t => Generator(t) == _baseGenerator))
                 throw Layout();
             if (activatesCuts)
@@ -52,7 +56,8 @@ internal static partial class WallHeightWriter
             _left = _openingFaces.Get((5, 5, -1, 0));
             _right = _openingFaces.Get((5, 13, -1, 0));
             int OpeningFace(int slot) => wall.Int32(opening.Step, $"WallRectOpeningGStep.m_OpeningFacesIds@{slot}");
-            if (OpeningFace(0) != _sill || OpeningFace(2) != _left || OpeningFace(3) != _right
+            if (OpeningFace(0) != (opening.Cut == OpeningCut.ThroughBottom ? -1 : _sill)
+                || OpeningFace(2) != _left || OpeningFace(3) != _right
                 || !_openingFaces.Tags.Concat(_openingEdges.Tags).All(t => Generator(t) == _openingGenerator))
                 throw Layout();
 
@@ -81,11 +86,17 @@ internal static partial class WallHeightWriter
                 _createdHead = true;
             }
 
-            var headFace = wall.Field(opening.Step, "WallRectOpeningGStep.m_OpeningFacesIds@1");
-            bool openingUp = opening.Cut == OpeningCut.Interior;
-            if (!wall.Matches(headFace.ValueOffset, headFace.ValueOffset + 4, IntBytes(openingUp ? _head : -1)))
+            if (_throughBottom)
+            {
+                _sillEdgeA = _openingEdges.Get((17, _sideA, _sill, 0));
+                _sillEdgeB = _openingEdges.Get((17, _sideB, _sill, 0));
+            }
+            var crossingFace = wall.Field(opening.Step, $"WallRectOpeningGStep.m_OpeningFacesIds@{(_throughBottom ? 0 : 1)}");
+            int crossingTag = _throughBottom ? _sill : _head;
+            bool hasCrossingFace = opening.Cut == OpeningCut.Interior;
+            if (!wall.Matches(crossingFace.ValueOffset, crossingFace.ValueOffset + 4, IntBytes(hasCrossingFace ? crossingTag : -1)))
                 throw Layout();
-            _edits.Add((headFace.ValueOffset, headFace.ValueOffset + 4, IntBytes(openingUp ? -1 : _head)));
+            _edits.Add((crossingFace.ValueOffset, crossingFace.ValueOffset + 4, IntBytes(hasCrossingFace ? -1 : crossingTag)));
         }
 
         internal void ClearCutSteps(IEnumerable<OpeningInterval> openings)

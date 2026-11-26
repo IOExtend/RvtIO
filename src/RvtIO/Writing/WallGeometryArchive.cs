@@ -164,7 +164,7 @@ internal static partial class WallHeightWriter
                 Edits[styleAt] = new(idWidth, identifier, []);
             }
 
-            internal void SetHeadEdgeActive(bool active)
+            internal void SetOpeningBorderActive(bool active)
             {
                 int offset = Offset("GEdge.m_flags");
                 int flags = Integer("GEdge.m_flags");
