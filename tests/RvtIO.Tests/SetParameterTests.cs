@@ -1342,6 +1342,7 @@ public sealed class SetParameterTests : IDisposable
 
     [Theory]
     [InlineData(Kind.Text, "First text ✓", false, false)]
+    [InlineData(Kind.Text, "", true, false)]
     [InlineData(Kind.Integer, "-17", false, false)]
     [InlineData(Kind.YesNo, "1", true, false)]
     [InlineData(Kind.Number, "8.625", true, false)]
@@ -1458,6 +1459,9 @@ public sealed class SetParameterTests : IDisposable
     }
 
     [Theory]
+    [InlineData(OwnerKind.Wall, 1, true)]
+    [InlineData(OwnerKind.WallType, 2, false)]
+    [InlineData(OwnerKind.Room, 1, true)]
     [InlineData(OwnerKind.Floor, 1, true)]
     [InlineData(OwnerKind.RoofType, 2, false)]
     public void WritesAnExplicitFirstEmptyTextOnAVerifiedSystemElement(OwnerKind owner, int binding, bool shared)
@@ -1472,9 +1476,9 @@ public sealed class SetParameterTests : IDisposable
     }
 
     [Theory]
-    [InlineData(false, "", false, "invalid-parameter-value")]
-    [InlineData(true, "New", false, "read-only-parameter")]
-    [InlineData(false, "New", true, "unverified-parameter-storage")]
+    [InlineData(false, "\0", false, "invalid-parameter-value")]
+    [InlineData(true, "", false, "read-only-parameter")]
+    [InlineData(false, "", true, "unverified-parameter-storage")]
     public void RefusesUnsafeFirstAssignments(bool readOnly, string value, bool unsorted, string code)
     {
         var parameter = new UserParameter(Kind.Text, true, ReadOnly: readOnly,

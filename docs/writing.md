@@ -64,9 +64,8 @@ readable project record for the element and a verified source for the parameter 
 
 For project and shared parameters, the writer checks the definition's read-only flag and verifies the category binding in the main model.
 Revit API editability governs shared parameters that the UI displays as read-only. First assignment of a wall comment
-requires a wall in the main model. First assignment of project-bound text on walls, basic wall types, and rooms requires
-a non-empty value. The supported built-in Comments and text identity fields and project-bound text on loaded family
-elements, floors, footprint roofs, ceilings, and their verified types accept an empty string on first assignment.
+requires a wall in the main model. The supported built-in Comments and text identity fields and verified project-bound
+text accept an empty string on first assignment. An explicit empty string has a stored value.
 Ordinary element edits also work in projects with global parameters. RvtIO checks project associations by the
 parameter ID on the element. A supported parameter can be assigned or cleared when another parameter on that
 element has an association. The associated parameter is read-only. Group membership and unverified association
@@ -585,6 +584,13 @@ replacement, clearing the verified shared values, ordered batches, and updating 
 an existing global association. The 48 edited projects matched the Revit API values, presence flags, associations,
 and element bounds after Save As and reopening without Audit in Revit 2020–2025 and 2027. Revit 2027 checked the
 2026 format after upgrade. All 40 refused batches left the source bytes intact and produced no output.
+
+Empty-text checks covered walls, basic wall types, and rooms with non-shared definitions and shared definitions
+with either setting of `HideWhenNoValue`. A first empty assignment and a new empty assignment after clearing
+both returned `HasValue=true`. Clearing a shared parameter with `HideWhenNoValue` returned `HasValue=false`.
+The 40 edited projects also covered replacement and ordered batches. Revit 2020–2025 and 2027 confirmed the
+values and presence flags after Save As and reopening without Audit. Revit 2027 checked the 2026 format after
+upgrade. All 32 refused batches preserved the source bytes and created no output.
 
 Independent Mass, Force, Mass Density, Speed, Slope, and Time checks covered 64 files. Project fixtures included
 shared values on walls and wall types, family-defined values on loaded primary types and top-level instances,

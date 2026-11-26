@@ -397,9 +397,6 @@ internal static class ParameterWriter
                 throw Unverified("The controlled property has no verified saved value.");
             if (walk.EmptyEntityAt >= 0 || projectInfo || (comments && ownerClass == "SWall" && category != (int)BuiltInCategory.OST_Walls))
                 throw Unverified("The first value requires a verified main-model element and parameter store.");
-            if (storage == StorageType.String && edit.Value!.Length == 0 && edit.UserDefined
-                && ownerClass is "SWall" or "BasicWallType" or "RoomElem")
-                throw new RvtWriteRefusedException("invalid-parameter-value", "The first text value must be non-empty.");
             updated = InsertValue(formats, walker, walk, body, idWidth, edit, storage, replacement);
         }
 
