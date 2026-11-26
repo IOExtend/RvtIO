@@ -168,7 +168,7 @@ See [sheets and viewports](sheets.md) for what is decoded, what the limits are a
 
 | Type | Use |
 |---|---|
-| `PlanPrinter` | `Levels(document)` lists the levels a plan can be printed for; `Render(document, levelId, scale, options)` returns a `PdfDocument` with the plan of one level: walls with their stored width, column footprints, clipped grids. |
+| `PlanPrinter` | `Levels(document)` lists the printable levels. `Render(document, levelId, scale, options)` returns a `PdfDocument` with the plan of one level, including walls with their stored width, column footprints, and clipped grids. `RenderSvg(document, ...)` returns the same level plan as SVG text. `WriteSvg(document, output, ...)` writes it as UTF-8 to a stream. |
 | `PlanPrintOptions` | `PaperSize` (null picks the smallest paper that holds the drawing), `MarginMillimetres`, `FallbackWallWidthMillimetres`, `DrawFrame`. |
 | `PlanLevel`, `PlanView` | A printable level (id, name, elevation) and a printable plan view (id, name, level, scale). |
 | `ViewPrinter` | `Render(document, viewIds, options)` prints views into one PDF document, one page per view: a plan, an elevation or a section (`PlanPrinter.Views`, `ElevationPrinter.Views`), a 3D view (an isometric massing page) and a rendering (its image page). `OtherViews(document)` lists the 3D views and the renderings. |
