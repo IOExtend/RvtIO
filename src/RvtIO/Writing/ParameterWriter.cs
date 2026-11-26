@@ -75,7 +75,8 @@ internal static class ParameterWriter
         var parameter = (BuiltInParameter)parameterId;
         if (parameterId == (int)BuiltInParameter.HOST_AREA_COMPUTED)
             throw new RvtWriteRefusedException("read-only-parameter", "Revit computes HOST_AREA_COMPUTED and exposes it as read-only.");
-        if (parameterId <= 0 && parameter is not (BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS or BuiltInParameter.ALL_MODEL_MARK)
+        if (parameterId <= 0 && parameter is not (BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS or BuiltInParameter.ALL_MODEL_MARK
+                or BuiltInParameter.DATUM_TEXT)
             && !WallHeightWriter.IsWallDimension(parameter) && !IsTypeIdentity(parameter) && !IsImage(parameter)
             && !Fields.ContainsKey(parameter))
             throw new RvtWriteRefusedException("unsupported-parameter", $"Writing {parameter} has not been verified.");
@@ -122,6 +123,8 @@ internal static class ParameterWriter
             throw new RvtWriteRefusedException("missing-element", $"Element {edit.ElementId} was not found in the element table.");
         if (!edit.UserDefined && WallHeightWriter.IsWallDimension(edit.Parameter))
             return WallHeightWriter.Plan(root, tags, idWidth, schema, elementIds, edit, pending);
+        if (edit.Parameter == BuiltInParameter.DATUM_TEXT)
+            return DatumNameWriter.Plan(root, tags, idWidth, schema, elementIds, edit, pending);
         if (edit.UserDefined && !elementIds.Contains(edit.ParameterId))
             throw new RvtWriteRefusedException("missing-parameter-definition", $"Parameter definition {edit.ParameterId} was not found in the element table.");
 

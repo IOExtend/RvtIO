@@ -49,6 +49,7 @@ readable project record for the element and a verified source for the parameter 
 | Straight wall, room, or top-level loaded Generic Model, Door, Window, or Furniture instance | `ALL_MODEL_IMAGE` (Image). |
 | Verified straight basic wall with an unconnected top | `WALL_USER_HEIGHT_PARAM` (Unconnected Height). Pass a length with units, such as `"3200 mm"`. |
 | Verified straight basic wall with level constraints | `WALL_BASE_OFFSET` (Base Offset), and `WALL_TOP_OFFSET` (Top Offset) when the top is constrained to a level. Pass a signed length with units, such as `"-150 mm"`. |
+| Level, straight or radial grid, or multi-segment grid in the main model | `DATUM_TEXT` (Name). A multi-segment grid assignment updates the name on the grid and all verified member records. |
 | Basic wall type | `ALL_MODEL_TYPE_IMAGE` (Type Image). |
 | Basic wall type, primary or directly linked derived family symbol | `ALL_MODEL_TYPE_MARK` (Type Mark). Pass the ID of the type or symbol whose value you want to write. |
 | Basic wall type or verified loaded family type | `ALL_MODEL_TYPE_COMMENTS`, `ALL_MODEL_DESCRIPTION`, `ALL_MODEL_MANUFACTURER`, `ALL_MODEL_MODEL`, `ALL_MODEL_URL`, and `ALL_MODEL_COST`. Cost takes a finite invariant number with no currency symbol; a change that Revit can suppress within its numeric comparison tolerance is refused. |
@@ -596,6 +597,15 @@ elevations, grid curves, and grid membership after Save As and reopening without
 Revit 2027 checked the 2026 format after upgrade. All 40 refused batches preserved the source bytes and created
 no output.
 
+Datum name checks compared two levels, a straight grid, a radial grid, and a multi-segment grid containing two
+member grids. RvtIO trims boundary whitespace, validates the name, checks uniqueness among levels or among grids, and verifies
+both directions of multi-segment membership. Revit refuses an empty or duplicate name and direct assignment to a member grid.
+The 40 edited projects matched native API names and read-only flags after Save As and reopening without Audit
+in Revit 2020–2025 and 2027. Revit 2027 checked the 2026 format after upgrade. All 40 invalid batches preserved the
+source bytes and created no output. A separate Revit 2025 check renamed a level with a plan using the same name.
+RvtIO's level-only rename matched the API after choosing **No** in the corresponding-view dialog and after
+Save As and reopening without Audit. [Autodesk documentation on renaming levels and corresponding views](https://help.autodesk.com/cloudhelp/2023/ENU/RevitLT-DocumentPresent/files/GUID-C67D39DB-57A3-4A79-9705-C78791647CDD.htm) [Autodesk MultiSegmentGrid.Text reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/8ec5e47a-8821-5d3c-0951-33d051a58b96.htm)
+
 Empty-text checks covered walls, basic wall types, and rooms with non-shared definitions and shared definitions
 with either setting of `HideWhenNoValue`. A first empty assignment and a new empty assignment after clearing
 both returned `HasValue=true`. Clearing a shared parameter with `HideWhenNoValue` returned `HasValue=false`.
@@ -986,6 +996,7 @@ each case the source bytes stayed intact and no output was created.
 | Wall Base Offset and Top Offset | RvtIO supports the verified straight wall and rectangular opening cases described above. Revit exposes Top Offset as read-only on a wall with an unconnected top. Opening transitions outside the verified range and offsets on walls with unverified joins, dependencies or geometry still require coverage. |
 | Clearing an RVT value | Revit API `ClearValue()` requires a shared definition with `HideWhenNoValue`. RvtIO also checks the binding and stored value layout. |
 | Additional writable RVT built-ins and element classes | The RVT parameter writer supports the combinations in the table above. Other built-in fields, loaded family categories, and layouts beyond verified directly linked derived symbols still require coverage. |
+| Datum names | Revit exposes `DATUM_TEXT` as read-only on individual multi-segment grid members. The tested level and grid type name parameter (`SYMBOL_NAME_PARAM`) is read-only through `Parameter.Set`, and the tested levels expose their writable name as `DATUM_TEXT`. Grouped elements, design options, other datum classes, and renaming corresponding views with a level still require RvtIO coverage. |
 | Additional built-ins in standalone families | The verified Generic Model, Door, Window, and Furniture fields are listed above. Other built-ins, other family categories, and selecting an unnamed family type still require coverage. |
 | User Currency parameters in standalone families | RvtIO supports verified type values, instance defaults, and formula dependencies. Additional Currency display formats still require coverage. |
 | Family-declared Currency parameters in projects | RvtIO supports the verified primary type and top-level instance assignments, exact type formula inverses, and existing global associations described above. Other formula paths and geometry dependencies still require coverage. |

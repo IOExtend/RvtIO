@@ -1484,6 +1484,65 @@ public sealed class SetParameterTests : IDisposable
         Assert.False(File.Exists(Output));
     }
 
+    [Fact]
+    public void RenamesADatumAndEveryVerifiedMemberOfAMultiSegmentGrid()
+    {
+        string source = CreateSource(datumNames: true);
+
+        RvtWriter.SetParameters(source, Output,
+        [
+            new(DatumLevelId, (int)BuiltInParameter.DATUM_TEXT, "Grid A"),
+            new(DatumLineId, (int)BuiltInParameter.DATUM_TEXT, "Grid B"),
+            new(DatumChainId, (int)BuiltInParameter.DATUM_TEXT, "  Grid A  "),
+        ]);
+
+        using var root = RootStorage.OpenRead(Output);
+        Assert.Equal(DatumBody(DatumLevelId, 77, "Grid A"), ReadBody(root, DatumLevelId));
+        Assert.Equal(DatumBody(DatumLineId, 93, "Grid B"), ReadBody(root, DatumLineId));
+        Assert.Equal(DatumBody(DatumChainId, 95, "Grid A"), ReadBody(root, DatumChainId));
+        foreach (int id in new[] { DatumFirstMemberId, DatumSecondMemberId })
+            Assert.Equal(DatumBody(id, 93, "Grid A", DatumChainId), ReadBody(root, (ulong)id));
+    }
+
+    [Theory]
+    [InlineData(DatumFirstMemberId, "Separate", "read-only-parameter")]
+    [InlineData(DatumLineId, "Chain A", "invalid-parameter-value")]
+    [InlineData(DatumLineId, "", "invalid-parameter-value")]
+    [InlineData(DatumChainId, "A[B", "invalid-parameter-value")]
+    [InlineData(DatumChainId, null, "unsupported-parameter-clear")]
+    public void RefusesTheEntireBatchWhenADatumCannotBeRenamed(int id, string? newName, string reason)
+    {
+        string source = CreateSource(datumNames: true);
+        byte[] original = File.ReadAllBytes(source);
+
+        var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetParameters(source, Output,
+        [
+            new(DatumLevelId, (int)BuiltInParameter.DATUM_TEXT, "Renamed level"),
+            new(id, (int)BuiltInParameter.DATUM_TEXT, newName),
+        ]));
+
+        Assert.Equal(reason, error.Kind);
+        Assert.Equal(original, File.ReadAllBytes(source));
+        Assert.False(File.Exists(Output));
+    }
+
+    [Fact]
+    public void RefusesTheEntireBatchWhenTheGridChainAndItsMemberDisagree()
+    {
+        string source = CreateSource(datumNames: true, omitDatumMemberLink: true);
+        byte[] original = File.ReadAllBytes(source);
+
+        var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetParameters(source, Output,
+        [
+            new(DatumLevelId, (int)BuiltInParameter.DATUM_TEXT, "Renamed level"),
+            new(DatumChainId, (int)BuiltInParameter.DATUM_TEXT, "Renamed chain"),
+        ]));
+
+        Assert.Equal("unverified-parameter-storage", error.Kind);
+        Assert.Equal(original, File.ReadAllBytes(source));
+        Assert.False(File.Exists(Output));
+    }
+
     [Theory]
     [InlineData(OwnerKind.Wall, 1, true)]
     [InlineData(OwnerKind.WallType, 2, false)]
@@ -2477,7 +2536,7 @@ public sealed class SetParameterTests : IDisposable
         UserParameter? user = null, FamilyFixture? family = null, int release = 2022,
         BuiltInParameter? builtIn = null, string? builtInValue = null, GlobalFixture? globalParameter = null,
         GlobalFormulaFixture? globalFormulas = null, ProjectAssociation? association = null, OrdinaryTarget? projectTarget = null,
-        int? targetLevelDesignOption = null, ProjectImage? image = null)
+        int? targetLevelDesignOption = null, ProjectImage? image = null, bool datumNames = false, bool omitDatumMemberLink = false)
     {
         var tags = Tags(release);
         bool material = user?.Kind is Kind.Material or Kind.FamilyType || family?.BoundFamilyType == true || image is not null;
@@ -2576,10 +2635,19 @@ public sealed class SetParameterTests : IDisposable
         Add("ForeignElemRef", new Fld("m_id", 4)); // 71
         Add("std::pair< ElementId, ForeignElemRef >", Reference("first", 14), Reference("second", 71)); // 72
         Add("FamilyDocument", Reference("m_big2SmallMap2", 72, 0x50)); // 73
-        Add("ElementIdPlusIndex", Reference("m_elementId", 14), new("m_index", 4)); // 74
-        Add("ElementIdIndexPairSet", Reference("m_data", 74, 0x50)); // 75
-        schema.Top(new("SpecializedFamilySymbol", new Back(46), 1, [], [])); // 76
-        schema.Top(new("Level", new Back(20), 1, user?.Owner == OwnerKind.Level ? ownerFields : [], [])); // 77
+        if (datumNames)
+        {
+            schema.Top(new("DatumPlane", new Back(20), 1, [new("m_text", 8)], [])); // 74
+            Add("GridChainMembershipCell", Reference("m_gridChainId", 14)); // 75
+            Add("std::pair< int, ElementId >", new("first", 4), Reference("second", 14)); // 76
+        }
+        else
+        {
+            Add("ElementIdPlusIndex", Reference("m_elementId", 14), new("m_index", 4)); // 74
+            Add("ElementIdIndexPairSet", Reference("m_data", 74, 0x50)); // 75
+            schema.Top(new("SpecializedFamilySymbol", new Back(46), 1, [], [])); // 76
+        }
+        schema.Top(new("Level", new Back(datumNames ? 74 : 20), 1, user?.Owner == OwnerKind.Level ? ownerFields : [], [])); // 77
         Add("SymbolInfo", new Fld("m_name", 8)); // 78
         schema.Top(new("Symbol", new Back(20), 1, [new Fld("m_symbolInfo", 14, 1)], [])); // 79
         var imageFields = new Fld[] { Reference("m_idImageHolder", 14), new("m_flags", 4), Reference("m_viewId", 14),
@@ -2600,9 +2668,11 @@ public sealed class SetParameterTests : IDisposable
         schema.Top(new("Ceiling", new Back(20), 1, ownerFields, [])); // 90
         schema.Top(new("CompoundCeilingType", new Back(20), 1, ownerFields, [])); // 91
         schema.Top(new("LevelAttributes", new Back(20), 1, ownerFields, [])); // 92
-        schema.Top(new("Grid", new Back(20), 1, ownerFields, [])); // 93
+        schema.Top(new("Grid", new Back(datumNames ? 74 : 20), 1,
+            datumNames ? [new("m_pGridChainMembershipCell", 14, 1)] : ownerFields, [])); // 93
         schema.Top(new("GridAttributes", new Back(20), 1, ownerFields, [])); // 94
-        schema.Top(new("GridChain", new Back(20), 1, ownerFields, [])); // 95
+        schema.Top(new("GridChain", new Back(20), 1,
+            datumNames ? [new("commonText", 8), Reference("m_curveTagToGridsInChain", 76, 0x50)] : ownerFields, [])); // 95
         for (int i = 96; i < tags.ContentKey; i++)
             Add("Filler" + i);
         foreach (string marker in new[] { "ContentKey", "ContentMarker", "SegmentMarker", "SegmentCheckback", "SignatureMarker" })
@@ -2650,6 +2720,8 @@ public sealed class SetParameterTests : IDisposable
             if (globalFormulas is not null)
                 owners = globalFormulas.Consumer ? [..owners, BindingId, GlobalFormulaResultId, GlobalFormulaConsumerId]
                     : [..owners, BindingId, GlobalFormulaResultId];
+            if (datumNames)
+                owners = [.. owners, DatumLevelId, DatumLineId, DatumChainId, DatumFirstMemberId, DatumSecondMemberId];
             Array.Sort(owners);
             byte[] table = new byte[6 + owners.Length * 28];
             table[0] = 17;
@@ -2799,7 +2871,34 @@ public sealed class SetParameterTests : IDisposable
                         writer.Write(GlobalFormulaResultId);
                     })));
             }
+            if (datumNames)
+            {
+                records.Add((DatumLevelId, 77, DatumBody(DatumLevelId, 77, "Level A")[2..]));
+                records.Add((DatumLineId, 93, DatumBody(DatumLineId, 93, "Grid A")[2..]));
+                records.Add((DatumChainId, 95, DatumBody(DatumChainId, 95, "Chain A")[2..]));
+                records.Add((DatumFirstMemberId, 93, DatumBody(DatumFirstMemberId, 93, "Chain A", DatumChainId)[2..]));
+                records.Add((DatumSecondMemberId, 93, DatumBody(DatumSecondMemberId, 93, "Chain A",
+                    omitDatumMemberLink ? 0 : DatumChainId)[2..]));
+            }
             var block = PartitionStreamEditorTests.MakeStandardBlock(4, keyed: false, records.ToArray());
+            if (datumNames)
+            {
+                var headers = block.Chains[0].Records;
+                foreach (var (id, datumCategory) in new[]
+                {
+                    (DatumLevelId, BuiltInCategory.OST_Levels), (DatumLineId, BuiltInCategory.OST_Grids),
+                    (DatumChainId, BuiltInCategory.OST_GridChains), (DatumFirstMemberId, BuiltInCategory.OST_Grids),
+                    (DatumSecondMemberId, BuiltInCategory.OST_Grids),
+                })
+                {
+                    byte[] header = new byte[22];
+                    BinaryPrimitives.WriteUInt16LittleEndian(header, 48);
+                    BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(6), (int)datumCategory);
+                    BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(18), -1);
+                    int index = Array.FindIndex(headers, entry => entry.Owner == (ulong)id);
+                    headers[index] = new((ulong)id, header);
+                }
+            }
             if (user is not null || family is not null || builtIn is not null || association is not null || image is not null)
             {
                 byte[] header = new byte[22];
@@ -3398,6 +3497,29 @@ public sealed class SetParameterTests : IDisposable
         if (material)
             WritePointer(writer, elementIdStore ? 54 : 0);
     }
+
+    private const int DatumLevelId = 50001, DatumLineId = 50002, DatumChainId = 50003, DatumFirstMemberId = 50004, DatumSecondMemberId = 50005;
+
+    private static byte[] DatumBody(int id, ushort tag, string name, int chain = 0) => Pack(writer =>
+    {
+        writer.Write(tag);
+        WriteEmptyElement(writer, id);
+        WriteText(writer, name);
+        if (tag == 95)
+        {
+            writer.Write(2);
+            writer.Write(0);
+            writer.Write(DatumFirstMemberId);
+            writer.Write(1);
+            writer.Write(DatumSecondMemberId);
+        }
+        if (tag == 93)
+        {
+            WritePointer(writer, chain == 0 ? 0 : 75);
+            if (chain != 0)
+                writer.Write(chain);
+        }
+    });
 
     private static byte[] GlobalBody(GlobalFixture parameter, string value = "0", int id = DefinitionId, GlobalBinary? binary = null,
         bool conditional = false, int function = 0, int release = 2022) => Pack(writer =>
