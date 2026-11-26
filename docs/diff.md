@@ -14,6 +14,7 @@
 5. **Partial Decoding & Unavailable Data**:
    - When `ElemTableIsExact == false` or `Diagnostics.LimitHits` / failed streams exist on a side, missing elements on the incomplete side are reported in `Unavailable` (`partial-decode-prevents-deletion-confirmation` / `partial-decode-prevents-addition-confirmation`) instead of confirmed removals or additions.
    - When one revision has `WideLayoutNotRewritten` / `GeometryUndecoded` (`R22Layout = false` on Revit 2023+ wide schema) and no geometry, missing geometry is marked `RvtDiffAvailability.Unavailable` rather than deleted.
+   - When faces were left untriangulated or placed symbols were unresolved, geometry is marked `Partial` even if all decoded faces match. Availability alone does not imply a semantic change.
    - Incomplete parameter stores (`!NativeParameterStoresComplete`) mark missing parameters as unavailable rather than deleted.
 
 ## Units, Coordinate Frames, and Tolerances
@@ -21,13 +22,15 @@
 - **Internal Units**: All numeric parameter values, transforms, location curves, and geometry coordinates are compared in Revit internal units (feet, square feet, cubic feet, radians) regardless of project display unit settings. By default (`IncludeDisplayFormattingDifferences = false`), changes solely to display formatting (`UnitSymbol`, `ConversionFactor`, `AsValueString`) do not trigger false parameter changes.
 - **Local vs. World Coordinates**:
   - `LocationCurve`, `InstanceTransform`, `Geometry.Transform`, and `Element.DecodedBox` are compared in document world coordinates (feet).
-  - Pure rigid translation of a placed instance reports a `PlacementChange` (`TranslationFeet`, `TranslationDistanceFeet`, `RotationDeltaDegrees`, `MirroredChanged`) and shifts the comparison bounding box/face origins back so moved family instances do not produce false shape diffs unless dimensions, solid counts, face areas, openings, sketch loops, or compound layers also changed.
+  - Pure rigid translation of a placed instance reports a `PlacementChange` (`TranslationFeet`, `TranslationDistanceFeet`, `RotationDeltaDegrees`, `MirroredChanged`). Bounding boxes, face origins, and contours are compared after compensating for that translation.
   - Shared `FamilySymbol` geometry stays in family-local coordinates; modifying a symbol/type records a `RvtDiffTypeImpact` linked to every affected placed instance (`AffectedInstances` and `AffectedByTypeIdentityKeys`).
 - **Default Tolerances (`RvtDiffOptions`)**:
   - `LinearToleranceFeet`: `1e-4` ft (~`0.03048` mm)
   - `AngleToleranceRadians`: `1e-5` rad (~`0.00057` deg)
   - `AreaToleranceSquareFeet`: `1e-4` ft² (~`9.3` mm²)
   - `NumericParameterTolerance`: `1e-6`
+
+Face and trim-loop order, the start vertex of a contour, and contour winding do not affect the comparison. The geometry diff reports changes to decoded contours and to the position or size of openings in extruded solids. Tolerances must be finite and non-negative.
 
 ## Version Upgrades (Revit 2020–2027)
 
@@ -40,6 +43,8 @@ rvtio diff rev1.rvt rev2.rvt
 rvtio diff rev1.rvt rev2.rvt --json diff.json
 rvtio diff rev1.rvt rev2.rvt --category OST_Walls --linear-tol 0.001 --redact
 ```
+
+`--redact` scrubs recognized personal identifiers and sensitive paths in the report and in read and write diagnostics.
 
 ```csharp
 var report = RvtRevisionDiffer.Compare("rev1.rvt", "rev2.rvt", new RvtDiffOptions

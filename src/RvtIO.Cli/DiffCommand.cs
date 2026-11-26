@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text;
 using RvtIO.Diff;
 using RvtIO.Internal;
+using RvtIO.Parsing;
 
 namespace RvtIO.Cli;
 
@@ -79,14 +80,14 @@ internal static class DiffCommand
                     }
                     else if (arg == "--linear-tol")
                     {
-                        if (!double.TryParse(val, NumberStyles.Float, Inv, out double tol) || tol < 0)
-                            return Usage(error, "--linear-tol requires a non-negative number (feet).");
+                        if (!double.TryParse(val, NumberStyles.Float, Inv, out double tol) || !double.IsFinite(tol) || tol < 0)
+                            return Usage(error, "--linear-tol requires a finite, non-negative number (feet).");
                         options.LinearToleranceFeet = tol;
                     }
                     else if (arg == "--angle-tol")
                     {
-                        if (!double.TryParse(val, NumberStyles.Float, Inv, out double tol) || tol < 0)
-                            return Usage(error, "--angle-tol requires a non-negative number (radians).");
+                        if (!double.TryParse(val, NumberStyles.Float, Inv, out double tol) || !double.IsFinite(tol) || tol < 0)
+                            return Usage(error, "--angle-tol requires a finite, non-negative number (radians).");
                         options.AngleToleranceRadians = tol;
                     }
                     else if (arg == "--limit")
@@ -118,6 +119,14 @@ internal static class DiffCommand
         if (categories.Count > 0) options.Categories = categories;
         if (elements.Count > 0) options.Elements = elements;
 
+        void WriteDiagnostic(string message)
+        {
+            if (options.RedactPersonalData)
+                message = RvtPiiRedactor.RedactText(message,
+                    extraTokens: RvtPiiRedactor.CollectSensitiveTokens(leftPath, rightPath, outputPath))!;
+            error.WriteLine(message);
+        }
+
         var sw = Stopwatch.StartNew();
         RvtRevisionDiffResult result;
         try
@@ -126,12 +135,12 @@ internal static class DiffCommand
         }
         catch (RvtInputException ex)
         {
-            error.WriteLine($"Cannot read Revit file: {ex.Message}");
+            WriteDiagnostic($"Cannot read Revit file: {ex.Message}");
             return RvtExitCodes.InputError;
         }
         catch (RvtLimitException ex)
         {
-            error.WriteLine($"Cannot read Revit file: reader limit exceeded ({ex.Hit.Limit} = {ex.Hit.Value}).");
+            WriteDiagnostic($"Cannot read Revit file: reader limit exceeded ({ex.Hit.Limit} = {ex.Hit.Value}).");
             return RvtExitCodes.LimitExceeded;
         }
         sw.Stop();
@@ -157,7 +166,7 @@ internal static class DiffCommand
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
                 {
                     if (File.Exists(tmp)) File.Delete(tmp);
-                    error.WriteLine($"Cannot write {outputPath}: {ex.Message}");
+                    WriteDiagnostic($"Cannot write {outputPath}: {ex.Message}");
                     return RvtExitCodes.Usage;
                 }
             }

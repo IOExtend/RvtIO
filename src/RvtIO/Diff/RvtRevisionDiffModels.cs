@@ -274,6 +274,11 @@ public sealed class RvtDiffModifiedElement
     public IReadOnlyList<string> AffectedByTypeIdentityKeys { get; init; } = [];
     /// <summary>Aspects marked unavailable due to partial decoding.</summary>
     public IReadOnlyList<string> UnavailableAspects { get; init; } = [];
+
+    internal bool HasGeometryChange => GeometryChange is { Availability: not RvtDiffAvailability.Unavailable, ChangedAspects.Count: > 0 };
+
+    internal bool HasSemanticChange => TypeChange != null || PlacementChange != null || HasGeometryChange
+        || RelationshipChanges.Count > 0 || ParameterChanges.Count > 0;
 }
 
 /// <summary>Type modification or type reassignment linked to every affected instance in the compared scope.</summary>
@@ -396,7 +401,7 @@ public sealed class RvtRevisionDiffResult
     public bool HasSemanticChanges =>
         Added.Count > 0
         || Removed.Count > 0
-        || Modified.Count > 0
+        || Modified.Any(item => item.HasSemanticChange)
         || TypeImpacts.Count > 0
         || ExternalLinkChanges.Count > 0;
 

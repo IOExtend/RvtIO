@@ -99,6 +99,179 @@ public class RevisionDiffTests
         return RvtDocument.FromInfo(info);
     }
 
+    private static List<double[]> Square(double x, double y, double size) =>
+        [[x, y, 0], [x + size, y, 0], [x + size, y + size, 0], [x, y + size, 0]];
+
+    private static GeoFace PlanFace() => new()
+    {
+        Area = 96, Origin = [0, 0, 0], Normal = [0, 0, 1], XVector = [1, 0, 0], YVector = [0, 1, 0],
+        Envelope = [0, 0, 10, 10], OuterVertices = Square(0, 0, 10),
+    };
+
+    private static RvtDocument GeometryDoc(GeometryData geometry, double offsetX = 0) => BuildDoc(ProjectGuidA,
+    [
+        new Element
+        {
+            Id = 100, UniqueId = "uid-face-owner", BoundingBox = [offsetX, 0, 0, offsetX + 10, 10, 0], Geometry = geometry,
+        },
+    ]);
+
+    [Theory]
+    [InlineData("source-loops")]
+    [InlineData("inner-vertices")]
+    [InlineData("inner-envelopes")]
+    [InlineData("unprojected-envelopes")]
+    public void MovingAnEqualSizedBrepCutoutIsAGeometryChange(string representation)
+    {
+        RvtDocument Revision(double x)
+        {
+            var face = PlanFace();
+            switch (representation)
+            {
+                case "source-loops": face.SourceLoops = [face.OuterVertices!, Square(x, 2, 2)]; break;
+                case "inner-vertices": face.InnerVertices = [Square(x, 2, 2)]; break;
+                case "unprojected-envelopes":
+                    face.XVector = face.YVector = new double[3];
+                    goto case "inner-envelopes";
+                case "inner-envelopes": face.InnerLoops = [[x, 2, x + 2, 4]]; break;
+            }
+            return GeometryDoc(new GeometryData { Faces = [face], BrepSolids = [new GeoBrepSolid { FaceIndices = [0] }] });
+        }
+
+        var diff = RvtRevisionDiffer.Compare(Revision(2), Revision(6));
+
+        var geometry = Assert.Single(diff.Modified).GeometryChange!;
+        Assert.Equal(RvtDiffAvailability.Confirmed, geometry.Availability);
+        Assert.Equal(["faces"], geometry.ChangedAspects);
+        Assert.Equal(96, geometry.Old.TotalFaceAreaSquareFeet);
+        Assert.Equal(geometry.Old.TotalFaceAreaSquareFeet, geometry.New.TotalFaceAreaSquareFeet);
+    }
+
+    [Fact]
+    public void ReorderedFacesAndCyclicReversedContoursProduceNoChange()
+    {
+        var horizontal = PlanFace();
+        horizontal.InnerVertices = [Square(2, 2, 2), Square(6, 6, 2)];
+        var reordered = PlanFace();
+        reordered.OuterVertices = horizontal.OuterVertices!.Skip(1).Append(horizontal.OuterVertices![0]).Reverse().ToList();
+        reordered.InnerVertices = horizontal.InnerVertices.Select(r => r.AsEnumerable().Reverse().ToList()).Reverse().ToList();
+        var vertical = new GeoFace { Area = 96, Normal = [1, 0, 0] };
+
+        var diff = RvtRevisionDiffer.Compare(GeometryDoc(new GeometryData { Faces = [horizontal, vertical] }),
+            GeometryDoc(new GeometryData { Faces = [vertical, reordered] }));
+
+        Assert.Equal(1, diff.UnchangedCount);
+        Assert.Empty(diff.Modified);
+    }
+
+    [Fact]
+    public void TranslatingTheWholeFaceDoesNotChangeItsContourGeometry()
+    {
+        RvtDocument Revision(double x)
+        {
+            var face = PlanFace();
+            face.Origin = [x, 0, 0];
+            face.OuterVertices = Square(x, 0, 10);
+            face.InnerVertices = [Square(x + 2, 2, 2)];
+            return GeometryDoc(new GeometryData { Faces = [face],
+                Transform = [1, 0, 0, x, 0, 1, 0, 0, 0, 0, 1, 0] }, x);
+        }
+
+        var change = Assert.Single(RvtRevisionDiffer.Compare(Revision(0), Revision(5)).Modified);
+
+        Assert.Equal(5, change.PlacementChange!.TranslationFeet.X);
+        Assert.Null(change.GeometryChange);
+    }
+
+    [Fact]
+    public void FaceMatchingCanReviseAnEarlierPairWithinTolerance()
+    {
+        RvtDocument Revision(params double[] origins) => GeometryDoc(new GeometryData
+        {
+            Faces = origins.Select(x => new GeoFace { Origin = [x, 0, 0], Normal = [0, 0, 1], Area = 10 }).ToList(),
+        });
+
+        var diff = RvtRevisionDiffer.Compare(Revision(0.000075, 0), Revision(0.00005, 0.00016));
+
+        Assert.Equal(1, diff.UnchangedCount);
+    }
+
+    [Fact]
+    public void MovingAnEqualSizedExtrusionOpeningIsAGeometryChange()
+    {
+        RvtDocument Revision(double x) => GeometryDoc(new GeometryData
+        {
+            Solids = [new GeoSolid { ProfileWidth = 10, ProfileDepth = 1, ExtrusionHeight = 10,
+                Openings = [new GeoOpening { Position = [x, 0, 2], Width = 2, Height = 2 }] }],
+        });
+
+        var diff = RvtRevisionDiffer.Compare(Revision(2), Revision(6));
+
+        Assert.Equal(["solids"], Assert.Single(diff.Modified).GeometryChange!.ChangedAspects);
+    }
+
+    [Fact]
+    public void ChangedFaceIsDetectedAboveFiveHundredFaces()
+    {
+        RvtDocument Revision(bool changed) => GeometryDoc(new GeometryData
+        {
+            Faces = Enumerable.Range(0, 501).Select(i => new GeoFace
+            {
+                Origin = [i, 0, 0], Normal = i == 500 && changed ? [0, 1, 0] : [0, 0, 1], Area = 1,
+            }).ToList(),
+        });
+
+        var diff = RvtRevisionDiffer.Compare(Revision(false), Revision(true));
+
+        Assert.Equal(["faces"], Assert.Single(diff.Modified).GeometryChange!.ChangedAspects);
+    }
+
+    [Fact]
+    public void EqualDecodedFacesDoNotConfirmIncompleteGeometry()
+    {
+        var left = GeometryDoc(new GeometryData { Faces = [PlanFace()] });
+        var right = GeometryDoc(new GeometryData { Faces = [PlanFace()], UntriangulatedFaces = 1 });
+
+        var diff = RvtRevisionDiffer.Compare(left, right);
+
+        Assert.Equal(0, diff.UnchangedCount);
+        Assert.False(diff.HasSemanticChanges);
+        var result = Assert.Single(diff.Modified);
+        Assert.Contains("geometry", result.UnavailableAspects);
+        Assert.Equal(RvtDiffAvailability.Partial, result.GeometryChange!.Availability);
+        Assert.Empty(result.GeometryChange.ChangedAspects);
+    }
+
+    [Fact]
+    public void RedactedDiffHidesEmailInReadDiagnostics()
+    {
+        var folder = Directory.CreateTempSubdirectory("rvtio-diff-diagnostic-");
+        try
+        {
+            const string email = "probe.author@example.test";
+            string path = Path.Combine(folder.FullName, email + ".rvt");
+            File.WriteAllText(path, "Invalid compound file");
+            using var error = new StringWriter();
+
+            int exit = DiffCommand.Run([path, path, "--redact", "--json"], TextWriter.Null, error);
+
+            Assert.Equal(RvtExitCodes.InputError, exit);
+            Assert.Contains("<redacted>", error.ToString());
+            Assert.DoesNotContain(email, error.ToString(), StringComparison.OrdinalIgnoreCase);
+        }
+        finally { folder.Delete(recursive: true); }
+    }
+
+    [Theory]
+    [InlineData("--linear-tol", "NaN")]
+    [InlineData("--angle-tol", "Infinity")]
+    public void DiffRejectsNonFiniteTolerances(string option, string value)
+    {
+        using var error = new StringWriter();
+        Assert.Equal(RvtExitCodes.Usage, DiffCommand.Run(["left.rvt", "right.rvt", option, value], TextWriter.Null, error));
+        Assert.Contains("finite", error.ToString());
+    }
+
     [Fact]
     public void ResavedModelWithRenumberedIdsReorderedFacesAndDisplayUnitUpgrade_ProducesEmptyDiff()
     {

@@ -65,8 +65,6 @@ internal static partial class Program
           --sketch-owner-dump <path.csv>    write the closed sketch loops of every sketch-owning element
           --inspect-batch <ids-file> <out.csv>    inspect many ids in one pass (ids: one per line or comma separated)
           --list-category <categoryId> <out.csv>  list the elements of one category
-          coverage <file.rvt> [--report <report.json>] [--top <n>]
-                                            check own-schema partition coverage
           info <file-or-dir> [output] [--format text|json|jsonl|csv] [--csv|--jsonl|--json] [--output <path>] [--no-recursive] [--redact]
                                             inspect metadata without reading geometry or Partitions (single file or recursive folder inventory)
           diff <left.rvt> <right.rvt> [output.json] [--json [path]] [--output <path>] [--category <name|id>] [--element <uniqueId|id>] [--redact]

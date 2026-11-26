@@ -9,7 +9,7 @@ namespace RvtIO.Diff;
 /// Compares two revisions of a Revit project and produces a deterministic report of additions, removals,
 /// parameter/type/placement/geometry/relationship modifications, ambiguous matches, and partial-decode limits.
 /// </summary>
-public static class RvtRevisionDiffer
+public static partial class RvtRevisionDiffer
 {
     /// <summary>Opens <paramref name="leftPath"/> and <paramref name="rightPath"/> and compares them.</summary>
     public static RvtRevisionDiffResult Compare(string leftPath, string rightPath, RvtDiffOptions? options = null)
@@ -17,6 +17,7 @@ public static class RvtRevisionDiffer
         ArgumentNullException.ThrowIfNull(leftPath);
         ArgumentNullException.ThrowIfNull(rightPath);
         options ??= new RvtDiffOptions();
+        ValidateTolerances(options);
 
         var leftDiag = options.LeftDiagnostics ?? new RvtReadDiagnostics();
         var rightDiag = options.RightDiagnostics ?? new RvtReadDiagnostics();
@@ -60,6 +61,7 @@ public static class RvtRevisionDiffer
         ArgumentNullException.ThrowIfNull(left);
         ArgumentNullException.ThrowIfNull(right);
         options ??= new RvtDiffOptions();
+        ValidateTolerances(options);
 
         var warnings = new List<string>();
         bool leftPartial = IsPartialDocument(left.RawData, options.LeftDiagnostics, out int leftLimitHits, out int leftFailedStreams);
@@ -348,7 +350,16 @@ public static class RvtRevisionDiffer
             Warnings = warnings,
         };
 
-        return options.RedactPersonalData ? RedactDiffResult(result) : result;
+        return options.RedactPersonalData ? RedactDiffResult(result, left.SourcePath, right.SourcePath) : result;
+    }
+
+    private static void ValidateTolerances(RvtDiffOptions options)
+    {
+        if (!ValidTolerance(options.LinearToleranceFeet) || !ValidTolerance(options.AngleToleranceRadians)
+            || !ValidTolerance(options.AreaToleranceSquareFeet) || !ValidTolerance(options.NumericParameterTolerance))
+            throw new ArgumentOutOfRangeException(nameof(options), "Diff tolerances must be finite and non-negative.");
+
+        static bool ValidTolerance(double value) => double.IsFinite(value) && value >= 0;
     }
 
     private static RvtDiffModifiedElement? CompareMatchedElement(
@@ -637,10 +648,7 @@ public static class RvtRevisionDiffer
         if (lBox is { Length: >= 6 } && rBox is { Length: >= 6 })
         {
             double shiftX = 0, shiftY = 0, shiftZ = 0;
-            bool pureTranslation = placementChange != null
-                && !placementChange.MirroredChanged
-                && (placementChange.RotationDeltaDegrees ?? 0) <= options.AngleToleranceRadians * (180.0 / Math.PI) * 10.0;
-            if (pureTranslation)
+            if (IsPureTranslation(placementChange, options))
             {
                 shiftX = placementChange!.TranslationFeet.X;
                 shiftY = placementChange.TranslationFeet.Y;
@@ -697,11 +705,7 @@ public static class RvtRevisionDiffer
         }
 
         if (changedAspects.Count == 0 && !isPartial) return null;
-        if (changedAspects.Count == 0 && isPartial)
-        {
-            // Both sides agree within decoded faces despite partial warning.
-            return null;
-        }
+        isUnavailable = isPartial;
 
         return new RvtDiffGeometryChange
         {
@@ -942,7 +946,7 @@ public static class RvtRevisionDiffer
                 if (hasFilteredInstance)
                     typeMod = CompareMatchedElement(uid, RvtDiffMatchKind.UniqueId, lType, rType, leftDoc, rightDoc, leftLookup, rightLookup, options);
             }
-            if (typeMod == null) continue;
+            if (typeMod == null || !typeMod.HasSemanticChange) continue;
 
             var typeRef = CreateRef(rType, rightDoc, rightLookup);
             var affected = new Dictionary<string, RvtDiffElementRef>(StringComparer.OrdinalIgnoreCase);
@@ -965,7 +969,7 @@ public static class RvtRevisionDiffer
             entry.Kinds.Add("type-modified");
             entry.Params.AddRange(typeMod.ParameterChanges);
             bool layerChanged = typeMod.GeometryChange?.ChangedAspects.Contains("layers") == true;
-            bool geomChanged = typeMod.GeometryChange != null;
+            bool geomChanged = typeMod.HasGeometryChange;
             var mergedInstances = affected.Values.ToList();
             var seenSet = new HashSet<string>(mergedInstances.Select(x => x.IdentityKey), StringComparer.OrdinalIgnoreCase);
             impacts[typeRef.IdentityKey] = (typeRef, entry.Kinds, entry.Params, geomChanged, layerChanged, mergedInstances, seenSet);
@@ -1467,24 +1471,6 @@ public static class RvtRevisionDiffer
         return 0.5 * Math.Sqrt(ax * ax + ay * ay + az * az);
     }
 
-    private static bool SolidsDiffer(List<GeoSolid>? left, List<GeoSolid>? right, double tol)
-    {
-        int lc = left?.Count ?? 0, rc = right?.Count ?? 0;
-        if (lc != rc) return true;
-        if (lc == 0) return false;
-        var ls = left!.OrderBy(s => s.ProfileWidth).ThenBy(s => s.ProfileDepth).ThenBy(s => s.ExtrusionHeight).ToList();
-        var rs = right!.OrderBy(s => s.ProfileWidth).ThenBy(s => s.ProfileDepth).ThenBy(s => s.ExtrusionHeight).ToList();
-        for (int i = 0; i < lc; i++)
-        {
-            if (Math.Abs(ls[i].ProfileWidth - rs[i].ProfileWidth) > tol
-                || Math.Abs(ls[i].ProfileDepth - rs[i].ProfileDepth) > tol
-                || Math.Abs(ls[i].ExtrusionHeight - rs[i].ExtrusionHeight) > tol
-                || (ls[i].Openings?.Count ?? 0) != (rs[i].Openings?.Count ?? 0))
-                return true;
-        }
-        return false;
-    }
-
     private static bool SymbolListsEqual(IReadOnlyList<string> a, IReadOnlyList<string> b)
     {
         if (a.Count != b.Count) return false;
@@ -1547,52 +1533,6 @@ public static class RvtRevisionDiffer
         return false;
     }
 
-    private static bool FacesDiffer(
-        List<GeoFace>? left,
-        List<GeoFace>? right,
-        RvtDiffPlacementChange? placementChange,
-        RvtDiffOptions options)
-    {
-        if (left == null || right == null || left.Count != right.Count) return left?.Count != right?.Count;
-        if (left.Count > 500) return false; // Large freeforms covered by bbox + area + face/solid counts above.
-
-        double shiftX = 0, shiftY = 0, shiftZ = 0;
-        if (placementChange != null && !placementChange.MirroredChanged && (placementChange.RotationDeltaDegrees ?? 0) <= 0.01)
-        {
-            shiftX = placementChange.TranslationFeet.X;
-            shiftY = placementChange.TranslationFeet.Y;
-            shiftZ = placementChange.TranslationFeet.Z;
-        }
-
-        static (double Area, double Ox, double Oy, double Oz, double Nx, double Ny, double Nz) KeyOf(GeoFace f, double sx, double sy, double sz) =>
-            (f.Area ?? PolygonAreaEstimate(f.OuterVertices),
-             (f.Origin.Length >= 3 ? f.Origin[0] : 0) + sx,
-             (f.Origin.Length >= 3 ? f.Origin[1] : 0) + sy,
-             (f.Origin.Length >= 3 ? f.Origin[2] : 0) + sz,
-             f.Normal.Length >= 3 ? f.Normal[0] : 0,
-             f.Normal.Length >= 3 ? f.Normal[1] : 0,
-             f.Normal.Length >= 3 ? f.Normal[2] : 0);
-
-        var lKeys = left.Select(f => KeyOf(f, shiftX, shiftY, shiftZ))
-            .OrderBy(k => k.Area).ThenBy(k => k.Ox).ThenBy(k => k.Oy).ThenBy(k => k.Oz).ToList();
-        var rKeys = right.Select(f => KeyOf(f, 0, 0, 0))
-            .OrderBy(k => k.Area).ThenBy(k => k.Ox).ThenBy(k => k.Oy).ThenBy(k => k.Oz).ToList();
-
-        for (int i = 0; i < lKeys.Count; i++)
-        {
-            var a = lKeys[i];
-            var b = rKeys[i];
-            if (Math.Abs(a.Area - b.Area) > options.AreaToleranceSquareFeet) return true;
-            if (Math.Abs(a.Ox - b.Ox) > options.LinearToleranceFeet
-                || Math.Abs(a.Oy - b.Oy) > options.LinearToleranceFeet
-                || Math.Abs(a.Oz - b.Oz) > options.LinearToleranceFeet) return true;
-            if (Math.Abs(a.Nx - b.Nx) > options.AngleToleranceRadians
-                || Math.Abs(a.Ny - b.Ny) > options.AngleToleranceRadians
-                || Math.Abs(a.Nz - b.Nz) > options.AngleToleranceRadians) return true;
-        }
-        return false;
-    }
-
     private sealed class ElementFilter
     {
         private readonly HashSet<string>? _categories;
@@ -1643,26 +1583,10 @@ public static class RvtRevisionDiffer
         }
     }
 
-    private static RvtRevisionDiffResult RedactDiffResult(RvtRevisionDiffResult result)
+    private static RvtRevisionDiffResult RedactDiffResult(RvtRevisionDiffResult result, string? leftPath, string? rightPath)
     {
-        static string? RedactText(string? value)
-        {
-            if (string.IsNullOrEmpty(value)) return value;
-            string s = System.Text.RegularExpressions.Regex.Replace(
-                value,
-                @"(?i)([A-Za-z]:)?([\\/](?:Users|Documents and Settings)|/(?:Users|home))[\\/][^\\/\r\n'""]+",
-                m =>
-                {
-                    string drive = m.Groups[1].Value;
-                    string root = m.Groups[2].Value;
-                    char sep = root.Length > 0 && (root[0] == '\\' || root.Contains('\\')) ? '\\' : '/';
-                    return $"{drive}{root}{sep}<redacted>";
-                });
-            s = System.Text.RegularExpressions.Regex.Replace(s, @"(?i)(OneDrive\s*-\s*)[^\\/\r\n'""]+", "$1<redacted>");
-            s = System.Text.RegularExpressions.Regex.Replace(s, @"(?<!:)(\\\\|//)[^\\/\r\n\s'""]+", "$1<redacted>");
-            s = System.Text.RegularExpressions.Regex.Replace(s, @"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", "<redacted>");
-            return s;
-        }
+        var tokens = RvtPiiRedactor.CollectSensitiveTokens(leftPath, rightPath);
+        string? RedactText(string? value) => RvtPiiRedactor.RedactText(value, extraTokens: tokens);
 
         string RedactStr(string? s) => RedactText(s) ?? "";
 
