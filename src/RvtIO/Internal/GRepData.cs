@@ -126,8 +126,12 @@ internal sealed record ModelFacePattern(int PatternId, double[] Origin, double[]
 internal sealed record ViewFacingLine(double[] Start, double[] End, double[] Axis, int StyleId,
     (int Comparison, int Level)? DetailCondition = null);
 
+internal sealed record SurfaceMaterialRegion(int MaterialId, List<double[]> Outer, List<List<double[]>> Holes);
+
 internal record GRepFace
 {
+    public List<SurfaceMaterialRegion>? SurfaceRegions { get; set; }
+
     public bool ExcludedFromTopPlan { get; init; }
 
     /// <summary>GFace.m_renderStyleId: the material element of the face; absent when not read.</summary>

@@ -3649,6 +3649,33 @@ internal static partial class GRepParserV2
                         && !chainFaces.Contains(edge.FaceA) && !chainFaces.Contains(edge.FaceB))
                 .Select(edge => (edge.FaceA, edge.FaceB))));
 
+        // Paint regions carry material and trim loops. Keep them with the parent without adding shell faces.
+        if (regionFaces.Count > 0)
+        {
+            for (int index = 0; index < c.QueueLinks.Count; index++)
+            {
+                if (c.QueueLinks[index] is not (>= 0 and int parentIndex, "m_faceRegions")
+                    || c.Queue[index] is not (1589, > 0 and int handle)
+                    || c.Queue[parentIndex] is not (1589, > 0 and int parent)
+                    || deadFaces.Contains((uint)handle)
+                    || !faceIndicesByHandle.TryGetValue((uint)parent, out var indices)
+                    || c.FaceRenderStyle.GetValueOrDefault((uint)handle) is not (> 0 and int material)
+                    || !c.DirectSurfaceByFace.TryGetValue((uint)handle, out var surface) || surface.Kind != SurfKind.Plane
+                    || !loopsByFace.TryGetValue((uint)handle, out var loops)
+                    || TryOrderLoopRings(c, (uint)handle, loops, edgeByHandle ??= EdgesByHandle(c),
+                        ToPlane(surface), [], []) is not { } rings) continue;
+
+                var regions = ClassifyCoplanarRings(rings)
+                    .Select(region => new SurfaceMaterialRegion(material, region.Outer, region.Holes)).ToList();
+                foreach (int faceIndex in indices)
+                {
+                    var face = gd.Faces[faceIndex];
+                    if (face.PlaneSurface && regions.Count > 0)
+                        (face.SurfaceRegions ??= []).AddRange(regions);
+                }
+            }
+        }
+
         int polyMeshFaceCount = AppendPolyMeshes(gd, c);
         gd.BoundingBox = authoritativeBounds is { Length: 6 }
             ? (double[])authoritativeBounds.Clone()

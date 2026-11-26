@@ -848,6 +848,7 @@ internal static partial class ElementBuilder
                     SourceLoops = fp.SourceLoops,
                     RenderStyleId = fp.RenderStyleId,
                     ModelPattern = fp.ModelPattern,
+                    SurfaceRegions = fp.SurfaceRegions,
                     GeometryNode = fp.GeometryNode,
                     NodeOrder = fp.NodeOrder,
                     GeometryStyle = fp.GeometryStyle,

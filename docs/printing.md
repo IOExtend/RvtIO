@@ -304,7 +304,9 @@ view origin, and the face clips the combined vector fill. This keeps line positi
 reader's repeated-cell placement. Dense patterns and detail windows use a reusable PDF tile. Regular fine
 sections use the saved widths for supported surface pattern pen categories at the view scale.
 Nearer faces cover patterns behind them. The sample's Stair Section and Main Stair Detail use the
-wood cladding's 3 mm vertical grid. The Stair Section also draws its nested Main Stair Detail callout using
+wood cladding's 3 mm vertical grid. On an otherwise unpatterned planar wall face, a saved paint region
+can carry its own continuous drafting grid. Its boundary and the face openings trim that grid, while the
+full parent face supplies the solid geometry. The Stair Section also draws its nested Main Stair Detail callout using
 the saved boundary, head and sheet reference.
 Elevations and sections that show surface patterns also project a supported roof's continuous model grid
 using its saved face axes and origin. Skylight holes interrupt the grid. Parallel opposite faces of a closed

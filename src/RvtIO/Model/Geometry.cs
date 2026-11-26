@@ -125,6 +125,7 @@ namespace RvtIO.Model
         [System.Text.Json.Serialization.JsonIgnore]
         internal int? RenderStyleId { get; set; }
         internal RvtIO.Internal.ModelFacePattern? ModelPattern { get; set; }
+        internal IReadOnlyList<RvtIO.Internal.SurfaceMaterialRegion>? SurfaceRegions { get; set; }
 
         /// <summary>Plane origin [x, y, z] in feet.</summary>
         public double[] Origin { get; set; } = new double[3];

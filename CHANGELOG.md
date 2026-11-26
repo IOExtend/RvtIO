@@ -8,6 +8,7 @@ API between minor releases.
 
 ### Fixed
 
+- Elevations and sections print supported drafting patterns on saved planar wall paint regions.
 - Fine section callouts include screen-space ambient shadows from glazed curtain panels onto visible walls.
 - Fine section callouts retain the contour of closed furniture meshes with saved cylindrical facets.
 - Opaque fine section callouts clip upright wall and railing strokes behind nearer slab sides facing the view.

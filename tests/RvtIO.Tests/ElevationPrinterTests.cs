@@ -1161,6 +1161,51 @@ public class ElevationPrinterTests
         }
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Collect_UsesTheSavedPaintRegionForTheWallPattern(bool patterns)
+    {
+        var view = SectionView(900, [0, 0, 0]);
+        var wall = QuadWall(902, [[-4, 0, 0], [-4, 4, 0], [-4, 4, 3], [-4, 0, 3]], [1, 0, 0]);
+        var face = wall.Geometry!.Faces[0];
+        face.PlaneSurface = true;
+        face.RenderStyleId = 199;
+        face.SurfaceRegions =
+        [
+            new(198, [[-4, 2, 0], [-4, 4, 0], [-4, 4, 3], [-4, 2, 3]],
+                [[[-4, 2.5, 1], [-4, 3, 1], [-4, 3, 2], [-4, 2.5, 2]]]),
+        ];
+        var document = Document(view, wall);
+        document.RawData.OpaquePlanViews = new HashSet<int> { view.Id };
+        if (patterns) document.RawData.OpaqueViewsWithSurfacePatterns = new HashSet<int> { view.Id };
+        var grid = new TfBlockDeserializer.PatternGrid(Math.PI / 2, 0, 0, 0, 0.01, [], Target: 0, Orientation: 0);
+        document.RawData.MaterialPatterns = new Dictionary<int, (int, int, int?)>
+            { [198] = (-1, 201, 0), [199] = (-1, -1, null) };
+        document.RawData.FillPatterns = new Dictionary<int, (string, IReadOnlyList<TfBlockDeserializer.PatternGrid>)>
+            { [201] = ("Vertical", [grid]) };
+
+        var content = ElevationPrinter.Collect(document, "section", planeView: view)!;
+
+        var projected = Assert.Single(content.Faces);
+        if (patterns)
+        {
+            var hatches = Assert.IsType<ElevationPrinter.SurfaceHatches>(content.Hatch);
+            var (owner, regions) = Assert.Single(hatches.Regions!);
+            Assert.Same(projected.Points, owner);
+            Assert.Empty(hatches.Faces);
+            var region = Assert.Single(regions);
+            Assert.Same(grid, region.Grid);
+            Assert.Single(region.Holes);
+            Assert.Equal(2 * FeetToMillimetres, region.Outer.Min(point => point.X), 6);
+            Assert.Equal(4 * FeetToMillimetres, region.Outer.Max(point => point.X), 6);
+        }
+        else
+        {
+            Assert.Null(content.Hatch);
+        }
+    }
+
     [SkippableFact]
     public void SampleFile_StairDetailWindowFramesTheStair()
     {

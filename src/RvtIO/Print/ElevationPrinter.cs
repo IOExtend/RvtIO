@@ -128,7 +128,11 @@ public static partial class ElevationPrinter
     internal sealed record SurfaceHatches(double AnchorX, double AnchorY,
         IReadOnlyDictionary<List<(double X, double Y)>, (Parsing.TfBlockDeserializer.PatternGrid Grid, double Width)> Faces,
         IReadOnlyDictionary<List<(double X, double Y)>, IReadOnlyList<Parsing.TfBlockDeserializer.PatternGrid>> DashedFaces,
-        bool UseClippedLines);
+        bool UseClippedLines,
+        IReadOnlyDictionary<List<(double X, double Y)>, List<SurfaceHatchRegion>>? Regions = null);
+
+    internal sealed record SurfaceHatchRegion(Parsing.TfBlockDeserializer.PatternGrid Grid,
+        List<(double X, double Y)> Outer, List<List<(double X, double Y)>> Holes);
 
     internal sealed record ModelHatch(IReadOnlyList<FillHatch.ModelGrid> Grids,
         IReadOnlyList<List<(double X, double Y)>> Holes);
@@ -298,6 +302,7 @@ public static partial class ElevationPrinter
         var surfacePatterns = new Dictionary<List<(double X, double Y)>,
             (Parsing.TfBlockDeserializer.PatternGrid Grid, double Width)>();
         var modelHatches = new Dictionary<List<(double X, double Y)>, ModelHatch>();
+        Dictionary<List<(double X, double Y)>, List<SurfaceHatchRegion>>? regionHatches = null;
         var faceFills = new Dictionary<List<(double X, double Y)>, double?>();
         var exteriorWallTones = new Dictionary<List<(double X, double Y)>, (double BaseY, double Light)>();
         var roundShaftFaces = new HashSet<int>();
@@ -1113,6 +1118,25 @@ public static partial class ElevationPrinter
                         && PenWidths.TryGetWidth(document, patternCategory, false, viewportScale ?? viewScale, out double savedWidth)
                         ? savedWidth : 0.1;
                     surfacePatterns.Add(points, (grid, width));
+                }
+                if (outline && showSurfacePatterns && face.PlaneSurface
+                    && categoryId == (int)BuiltInCategory.OST_Walls && Project(face.Normal, D, 1) < 0
+                    && face.SurfaceRegions is { Count: > 0 }
+                    && document.RawData.MaterialPatterns?.GetValueOrDefault(face.RenderStyleId ?? -1).SurfacePatternId is not > 0)
+                {
+                    foreach (var region in face.SurfaceRegions)
+                    {
+                        if (document.RawData.MaterialPatterns?.GetValueOrDefault(region.MaterialId) is not { SurfacePatternColor: 0 } paint
+                            || document.RawData.FillPatterns?.GetValueOrDefault(paint.SurfacePatternId).Grids
+                                is not [{ Target: 0, Orientation: 0, Segments.Length: 0, Offset: > 0 } paintGrid])
+                            continue;
+                        var outer = ProjectRing(region.Outer);
+                        if (outer.Count < 3 || Math.Abs(PlanPrinter.SignedArea(outer)) <= 1e-6) continue;
+                        var regionHoles = region.Holes.Select(ProjectRing).Where(ring => ring.Count >= 3).ToList();
+                        regionHatches ??= [];
+                        if (!regionHatches.TryGetValue(points, out var hatches)) regionHatches.Add(points, hatches = []);
+                        hatches.Add(new(paintGrid, outer, regionHoles));
+                    }
                 }
                 bool glazedFace = outline && Project(face.Normal, D, 1) < 0
                     && categoryId is ((int)BuiltInCategory.OST_CurtainWallPanels or
@@ -2006,10 +2030,11 @@ public static partial class ElevationPrinter
         if (grids.Count > 0) maxY += 4500;
         var detailBreaks = isDetail && cropWindow != null && planeView != null
             ? DetailAnnotations.BreakLines(document, planeView.Id, H, V) : null;
-        var surfaceHatches = surfacePatterns.Count == 0 && dashedSurfacePatterns.Count == 0 ? null : new SurfaceHatches(
+        var surfaceHatches = surfacePatterns.Count == 0 && dashedSurfacePatterns.Count == 0 && regionHatches == null
+            ? null : new SurfaceHatches(
             planeOrigin[0] * H[0] + planeOrigin[1] * H[1] + planeOrigin[2] * H[2],
             planeOrigin[0] * V[0] + planeOrigin[1] * V[1] + planeOrigin[2] * V[2], surfacePatterns, dashedSurfacePatterns,
-            UseClippedLines: opaqueFineSection && !detailPath);
+            UseClippedLines: opaqueFineSection && !detailPath, Regions: regionHatches);
         // shortcut: use wholly nearer masks for site meshes until their edges carry per-point depths.
         foreach (var group in viewLines.GroupBy(edge => edge.NearDepth))
             edges.AddRange(VisibleTerrainEdges(group, plantMasks.Where(mask => mask.Far < group.Key).Select(mask => mask.Points), []));
@@ -4125,6 +4150,19 @@ public static partial class ElevationPrinter
                     page.FillWithClippedParallelLines(rings ?? [polygon], spacing, grid.Angle, anchorX, anchorY, width);
                 else
                     page.FillWithParallelLines(rings ?? [polygon], spacing, grid.Angle, anchorX, anchorY, width);
+            }
+            if (surfaceHatches?.Regions?.TryGetValue(points, out var regions) == true)
+            {
+                page.BeginPolygonClip(rings ?? [polygon]);
+                foreach (var region in regions)
+                {
+                    var grid = region.Grid;
+                    var regionRings = FaceRings(ToPage(region.Outer), region.Holes);
+                    page.FillWithClippedParallelLines(regionRings, grid.Offset * FeetToMillimetres,
+                        grid.Angle, ToX(surfaceHatches.AnchorX) + grid.OriginX * FeetToMillimetres,
+                        ToY(surfaceHatches.AnchorY) + grid.OriginY * FeetToMillimetres, 0.1);
+                }
+                page.EndClip();
             }
             if (surfaceHatches?.DashedFaces.TryGetValue(points, out var grids) == true)
             {
