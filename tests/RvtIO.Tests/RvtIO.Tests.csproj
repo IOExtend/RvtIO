@@ -30,6 +30,7 @@
     <Compile Include="..\..\tools\RootProbe\StairBoundaryProbe.cs" Link="RootProbe\StairBoundaryProbe.cs" />
     <Compile Include="..\..\tools\RootProbe\UnitOptionsProbe.cs" Link="RootProbe\UnitOptionsProbe.cs" />
     <Compile Include="..\..\tools\RootProbe\ExactStreamProbe.cs" Link="RootProbe\ExactStreamProbe.cs" />
+    <Compile Include="..\..\tools\RootProbe\PageTailProbe.cs" Link="RootProbe\PageTailProbe.cs" />
     <Compile Include="..\..\tools\RootProbe\DeferredFieldProbe.cs" Link="RootProbe\DeferredFieldProbe.cs" />
     <Compile Include="..\..\tools\RootProbe\ParameterInputProbe.cs" Link="RootProbe\ParameterInputProbe.cs" />
     <!-- The command line option parser of the CLI, compiled here to test it without starting the tool. -->

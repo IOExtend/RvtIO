@@ -10,6 +10,7 @@ bool modelExport = args.Length > 0 && args[0] is "model-type-names-export" or "m
     || args.Length == 5 && args[0] == "model-elements";
 if (args.Length != (modelExport ? 5 : 4))
 {
+    Console.Error.WriteLine("RootProbe stream-tail <rvt-or-rfa> <storage/stream> <out.json>");
     Console.Error.WriteLine("RootProbe document-manager-prefix <rvt> - <out.json>: named manager prefix, not current units");
     Console.Error.WriteLine("RootProbe document-units-link|model-current-units|model-current-units-full <rvt> - <out.json>: own current units, no numeric conversion");
     Console.Error.WriteLine("RootProbe document-schemas|model-document-schemas|model-document-schemas-full <rvt> - <out.json>: own verbatim schema maps, no numeric evaluation");
@@ -21,6 +22,11 @@ if (args.Length != (modelExport ? 5 : 4))
     return 2;
 }
 string mode = args[0];
+if (mode == "stream-tail")
+{
+    File.WriteAllText(args[3], JsonSerializer.Serialize(PageTailProbe.Read(args[1], args[2])));
+    return 0;
+}
 if (mode == "model-family-cutout-inputs")
 {
     var reader = new RvtIO.RvtFileReader(new() { DiagnosticOutput = Console.Error });
@@ -1099,7 +1105,8 @@ static object ReadCurrentDocumentUnits(string path, bool full, bool schemaMaps =
     if (ifcPlan)
     {
         var current = state.OwnDocumentUnitOptions ?? throw new InvalidDataException("Own current document options unavailable");
-        var values = state.OwnDocumentIfcNumericUnitPlan ?? throw new InvalidDataException("Own IFC length/thermal plan unavailable");
+        var values = RvtIO.Ifc.IfcNumericUnitPlan.Create(current.Value, state.OwnDocumentUnitConversions, out var failure)
+            ?? throw new InvalidDataException(failure);
         return new { pipeline = full ? "public Read" : "ReadWithState (shortened)",
             ownerId = state.OwnDocumentUnitsElemId, options = current, numericIfcUnitPlan = IfcUnitPlanBits(values),
             ownSchemaEntries = state.OwnDocumentSchemas?.Units.Entries.Length };
@@ -1297,8 +1304,8 @@ static object Guids(string path, JsonElement refs)
     Console.Error.WriteLine($"episodes={episodes.Guids.Count}/{episodes.X}, records={records?.Count.ToString() ?? "unavailable"}");
     var exportIds = new Dictionary<uint, Guid>();
     foreach (var (id, record) in records ?? new())
-        if (ElementExportIds.EpisodeGuid(record, episodes.Guids, episodes.X) is Guid episode)
-            exportIds[id] = ElementExportIds.ExportId(episode, record.OriginalElementId);
+        if (record.OriginalElementId >= 0 && ElementExportIds.EpisodeGuid(record, episodes.Guids, episodes.X) is Guid episode)
+            exportIds[id] = ElementExportIds.ExportId(episode, (ulong)record.OriginalElementId);
     var byIfcGuid = new Dictionary<string, (uint Id, int Index)>();
     foreach (var (id, exportId) in exportIds)
     {
