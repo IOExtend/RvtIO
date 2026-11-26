@@ -55,6 +55,7 @@ readable project record for the element and a verified source for the parameter 
 | Basic wall type or verified loaded Door type | `FIRE_RATING` (also named `DOOR_FIRE_RATING`, the same parameter ID). |
 | Straight wall (`SWall`), basic wall type (`BasicWallType`), room (`RoomElem`) | Project and shared parameters of supported types with a verified definition and a matching instance or type binding. |
 | Floor, footprint roof, or ceiling and their verified types | Project-bound Text, Integer, Yes/No, Length, Currency, and Material. The category and binding must agree with the stored class (`Floor`, `FloorAttributes`, `ProfileRoof`, `RoofAttributes`, `Ceiling`, or `CompoundCeilingType`). |
+| Levels, straight and radial grids, multi-segment grids and their member grids, and verified level and grid types | Project-bound Text, Integer, Yes/No, Length, Currency, and Material. Levels and level types use `OST_Levels` (`Level`, `LevelAttributes`). Grids, including members, and grid types use `OST_Grids` (`Grid`, `GridAttributes`). The multi-segment grid itself uses an instance binding to `OST_GridChains` (`GridChain`). |
 | Straight wall, basic wall type, room, or loaded family instance or type | **Family Type** parameters supplied by a verified project binding. Assign a matching nested type reference, a verified material ID, or `"-1"`. Shared definitions also accept the verified local element and active primary type references described below. A shared definition with `HideWhenNoValue` supports clearing. |
 | Top-level loaded family instance (`FamilyInstance`) or primary family type (`FamilySymbol`) | Family and family-shared parameters of supported types. The loaded family must mark the parameter as independent of geometry. |
 | Top-level loaded family instance or primary loaded family type | Family and family-shared **Family Type** parameters with a verified geometry-independent declaration. Assign a matching local nested type reference, a verified local material ID, or the explicit value `"-1"`. Primary type assignments also update verified derived copies. |
@@ -584,6 +585,16 @@ replacement, clearing the verified shared values, ordered batches, and updating 
 an existing global association. The 48 edited projects matched the Revit API values, presence flags, associations,
 and element bounds after Save As and reopening without Audit in Revit 2020–2025 and 2027. Revit 2027 checked the
 2026 format after upgrade. All 40 refused batches left the source bytes intact and produced no output.
+
+The level and grid checks used instance and type bindings for shared Text, Integer, Yes/No, Length, and Material
+and non-shared Text and Currency. They covered levels and level types, straight and radial grids and their type,
+and the owner and members of a multi-segment grid. The Revit API writes a bound instance value independently on
+the multi-segment grid and on each member. The cases covered first values including empty text and zero,
+replacement, clearing the verified shared values, an ordered batch, and changing initialized Length values through
+an existing global association. The 40 edited projects matched API values, presence flags, associations, level
+elevations, grid curves, and grid membership after Save As and reopening without Audit in Revit 2020–2025 and 2027.
+Revit 2027 checked the 2026 format after upgrade. All 40 refused batches preserved the source bytes and created
+no output.
 
 Empty-text checks covered walls, basic wall types, and rooms with non-shared definitions and shared definitions
 with either setting of `HideWhenNoValue`. A first empty assignment and a new empty assignment after clearing

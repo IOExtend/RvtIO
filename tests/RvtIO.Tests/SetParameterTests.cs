@@ -1441,6 +1441,14 @@ public sealed class SetParameterTests : IDisposable
     [InlineData(OwnerKind.Floor, 2, false)]
     [InlineData(OwnerKind.RoofType, 1, false)]
     [InlineData(OwnerKind.Ceiling, 2, false)]
+    [InlineData(OwnerKind.Level, 1, true)]
+    [InlineData(OwnerKind.LevelType, 2, true)]
+    [InlineData(OwnerKind.Grid, 1, true)]
+    [InlineData(OwnerKind.GridType, 2, true)]
+    [InlineData(OwnerKind.GridChain, 1, true)]
+    [InlineData(OwnerKind.Level, 2, false)]
+    [InlineData(OwnerKind.GridType, 1, false)]
+    [InlineData(OwnerKind.GridChain, 2, false)]
     public void FirstValueRequiresTheRightBindingForTheOwner(OwnerKind owner, int binding, bool writable)
     {
         var parameter = new UserParameter(Kind.Text, false, Binding: binding, Store: StoreState.NullPointer, Owner: owner);
@@ -1456,6 +1464,24 @@ public sealed class SetParameterTests : IDisposable
         RvtWriter.SetParameter(source, Output, ProjectId, DefinitionId, "First");
         using var root = RootStorage.OpenRead(Output);
         Assert.Equal(UserBody(parameter, "First"), ReadBody(root));
+    }
+
+    [Theory]
+    [InlineData(OwnerKind.Grid, BuiltInCategory.OST_GridChains)]
+    [InlineData(OwnerKind.GridChain, BuiltInCategory.OST_Grids)]
+    public void RefusesBindingsForTheOtherGridCategory(OwnerKind owner, BuiltInCategory bindingCategory)
+    {
+        var parameter = new UserParameter(Kind.Text, false, Store: StoreState.NullPointer, Owner: owner,
+            BindingCategory: bindingCategory);
+        string source = CreateSource(wall: true, user: parameter);
+        byte[] original = File.ReadAllBytes(source);
+
+        var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetParameter(source, Output, ProjectId, DefinitionId, "First"));
+
+        Assert.Equal("unverified-parameter-storage", error.Kind);
+        Assert.Contains("no unique applicable parameter binding", error.Message);
+        Assert.Equal(original, File.ReadAllBytes(source));
+        Assert.False(File.Exists(Output));
     }
 
     [Theory]
@@ -1508,12 +1534,14 @@ public sealed class SetParameterTests : IDisposable
     public enum Kind { Text, Integer, YesNo, Number, Material, FamilyType }
     public enum OwnerKind : ushort
     {
-        Wall = 22, WallType = 50, Room = 51, Floor = 86, FloorType = 87, Roof = 88, RoofType = 89, Ceiling = 90, CeilingType = 91,
+        Wall = 22, WallType = 50, Room = 51, Level = 77,
+        Floor = 86, FloorType = 87, Roof = 88, RoofType = 89, Ceiling = 90, CeilingType = 91,
+        LevelType = 92, Grid = 93, GridType = 94, GridChain = 95,
     }
     private enum StoreState { Value, NullPointer, Neighbour, Unsorted }
     private sealed record UserParameter(Kind Kind, bool Shared, bool ReadOnly = false, int Binding = 1, bool Measured = false,
         bool IdFirst = false, StoreState Store = StoreState.Value, OwnerKind Owner = OwnerKind.Wall, bool HideWhenNoValue = false,
-        bool Currency = false, (UnitType Legacy, string Forge)? DefinitionSpec = null);
+        bool Currency = false, (UnitType Legacy, string Forge)? DefinitionSpec = null, BuiltInCategory? BindingCategory = null);
     private sealed record ProjectImage(OwnerKind Owner, int? Stored = null, bool BrokenHolder = false, int DesignOption = -1,
         string? LinkedPath = null, string PathType = "Relative to Central Model");
     private sealed record GlobalFixture(Kind Kind, bool Formula = false, bool Reporting = false, bool Consumer = false, string? InitialValue = null,
@@ -2551,7 +2579,7 @@ public sealed class SetParameterTests : IDisposable
         Add("ElementIdPlusIndex", Reference("m_elementId", 14), new("m_index", 4)); // 74
         Add("ElementIdIndexPairSet", Reference("m_data", 74, 0x50)); // 75
         schema.Top(new("SpecializedFamilySymbol", new Back(46), 1, [], [])); // 76
-        schema.Top(new("Level", new Back(20), 1, [], [])); // 77
+        schema.Top(new("Level", new Back(20), 1, user?.Owner == OwnerKind.Level ? ownerFields : [], [])); // 77
         Add("SymbolInfo", new Fld("m_name", 8)); // 78
         schema.Top(new("Symbol", new Back(20), 1, [new Fld("m_symbolInfo", 14, 1)], [])); // 79
         var imageFields = new Fld[] { Reference("m_idImageHolder", 14), new("m_flags", 4), Reference("m_viewId", 14),
@@ -2571,7 +2599,11 @@ public sealed class SetParameterTests : IDisposable
         schema.Top(new("RoofAttributes", new Back(20), 1, ownerFields, [])); // 89
         schema.Top(new("Ceiling", new Back(20), 1, ownerFields, [])); // 90
         schema.Top(new("CompoundCeilingType", new Back(20), 1, ownerFields, [])); // 91
-        for (int i = 92; i < tags.ContentKey; i++)
+        schema.Top(new("LevelAttributes", new Back(20), 1, ownerFields, [])); // 92
+        schema.Top(new("Grid", new Back(20), 1, ownerFields, [])); // 93
+        schema.Top(new("GridAttributes", new Back(20), 1, ownerFields, [])); // 94
+        schema.Top(new("GridChain", new Back(20), 1, ownerFields, [])); // 95
+        for (int i = 96; i < tags.ContentKey; i++)
             Add("Filler" + i);
         foreach (string marker in new[] { "ContentKey", "ContentMarker", "SegmentMarker", "SegmentCheckback", "SignatureMarker" })
             Add(marker);
@@ -2634,6 +2666,9 @@ public sealed class SetParameterTests : IDisposable
                 OwnerKind.Floor or OwnerKind.FloorType => BuiltInCategory.OST_Floors,
                 OwnerKind.Roof or OwnerKind.RoofType => BuiltInCategory.OST_Roofs,
                 OwnerKind.Ceiling or OwnerKind.CeilingType => BuiltInCategory.OST_Ceilings,
+                OwnerKind.Level or OwnerKind.LevelType => BuiltInCategory.OST_Levels,
+                OwnerKind.Grid or OwnerKind.GridType => BuiltInCategory.OST_Grids,
+                OwnerKind.GridChain => BuiltInCategory.OST_GridChains,
                 _ => BuiltInCategory.OST_Walls,
             };
             ushort ownerTag = user is not null ? (ushort)user.Owner : wall ? (ushort)22 : (ushort)21;
@@ -2655,7 +2690,7 @@ public sealed class SetParameterTests : IDisposable
                 {
                     WriteEmptyElement(writer, BindingId, material);
                     writer.Write(DefinitionId);
-                    writer.Write((int)category);
+                    writer.Write((int)(user.BindingCategory ?? category));
                     writer.Write(user.Binding);
                 })));
             }
