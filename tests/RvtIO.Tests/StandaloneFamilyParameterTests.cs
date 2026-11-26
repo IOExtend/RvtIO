@@ -65,6 +65,39 @@ public sealed class StandaloneFamilyParameterTests : IDisposable
     public void Dispose() => Directory.Delete(_folder, recursive: true);
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ValidatesFractionalLengthMetadataBeforePublishingABatch(bool staleMetadata)
+    {
+        var length = BuiltInNumber.CustomLength with
+        {
+            Unit = null, A = 0, B = 1, UnitId = "autodesk.unit.unit:feetFractionalInches-1.0.0", Accuracy = 1.0 / 96,
+            Text = value => value == 0 ? "0' - 0\"" : staleMetadata ? "2' - 0\"" : "1' - 0\"",
+        };
+        string source = CreateSource(number: length);
+        byte[] hash = SHA256.HashData(File.ReadAllBytes(source));
+        RvtFamilyParameterEdit[] edits = [new("A", ParameterId, "1.125 ft"), new("B", ParameterId, "-2.375 ft")];
+        if (staleMetadata)
+        {
+            var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetFamilyParameters(source, Output, edits));
+            Assert.Equal("unverified-parameter-storage", error.Kind);
+            Assert.False(File.Exists(Output));
+        }
+        else
+        {
+            RvtWriter.SetFamilyParameters(source, Output, edits);
+            using var root = RootStorage.OpenRead(Output);
+            Assert.Equal(PartitionStreamEditorTests.TaggedBody(FamilyClass,
+                FamilyBody("", "", "", number: (ParameterId, 1.125, -2.375))), ReadFamilyBody(root, 2022));
+            using var atom = root.OpenStream("PartAtom");
+            var entries = XDocument.Load(atom).Descendants().Where(e => e.Name.LocalName == "Proof");
+            Assert.Equal(["1' - 1 1/2\"", "-2' - 4 1/2\""], entries.Select(e => e.Value));
+            Assert.All(entries, entry => Assert.Null(entry.Attribute("units")));
+        }
+        Assert.Equal(hash, SHA256.HashData(File.ReadAllBytes(source)));
+    }
+
+    [Theory]
     [InlineData("A", "Новое & longer", "Original B", "Новое & longer", "Original B")]
     [InlineData("B", "New active", "New active", "Original A", "New active")]
     [InlineData("A", "Original A", "Original B", "Original A", "Original B")]

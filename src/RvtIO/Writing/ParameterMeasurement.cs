@@ -12,9 +12,11 @@ internal static class ParameterMeasurement
     private const string SpecPrefix = "autodesk.spec.aec:";
     private const string UnitPrefix = "autodesk.unit.unit:";
     private const string SymbolPrefix = "autodesk.unit.symbol:";
+    private const string FeetFractionalInches = "feetFractionalInches";
+    private const string FractionalInches = "fractionalInches";
     private static readonly NumberFormatInfo DecimalComma = NumberFormatInfo.ReadOnly(new() { NumberDecimalSeparator = "," });
     internal const string LegacyFormats = WideBlockWalker.AllItemsKeyPrefix + "legacy-unit-options";
-    private sealed record Unit(UnitType Spec, string Input, string Forge, DisplayUnitType? Legacy, string Atom, double ToInternal,
+    private sealed record Unit(UnitType Spec, string? Input, string Forge, DisplayUnitType? Legacy, string? Atom, double ToInternal,
         string? AlternateAtom = null);
     private sealed record MeasurableSpec(UnitType Unit, string Forge, string Atom);
 
@@ -35,6 +37,8 @@ internal static class ParameterMeasurement
         new(UnitType.UT_Length, "m", "meters", DisplayUnitType.DUT_METERS, "m", 1 / MetresPerFoot),
         new(UnitType.UT_Length, "ft", "feet", DisplayUnitType.DUT_DECIMAL_FEET, "'", 1, "ft"),
         new(UnitType.UT_Length, "in", "inches", DisplayUnitType.DUT_DECIMAL_INCHES, "\"", InternalFeetPerInch, "in"),
+        new(UnitType.UT_Length, null, FeetFractionalInches, DisplayUnitType.DUT_FEET_FRACTIONAL_INCHES, null, 1),
+        new(UnitType.UT_Length, null, FractionalInches, DisplayUnitType.DUT_FRACTIONAL_INCHES, "\"", InternalFeetPerInch),
         new(UnitType.UT_Area, "m2", "squareMeters", DisplayUnitType.DUT_SQUARE_METERS, "m²", 1 / (MetresPerFoot * MetresPerFoot)),
         new(UnitType.UT_Area, "ft2", "squareFeet", DisplayUnitType.DUT_SQUARE_FEET, "SF", 1, "ft²"),
         new(UnitType.UT_Volume, "m3", "cubicMeters", DisplayUnitType.DUT_CUBIC_METERS, "m³", 1 / (MetresPerFoot * MetresPerFoot * MetresPerFoot)),
@@ -109,11 +113,16 @@ internal static class ParameterMeasurement
     }
 
     internal readonly record struct DisplayValue(string Type, string? Unit, string Symbol, double Before, string After,
-        NumberFormatInfo Format, string? AlternateUnit = null, string? GroupedBefore = null)
+        NumberFormatInfo Format, string? AlternateUnit = null, string? ExactBefore = null, bool InchSuffixWithoutUnit = false)
     {
         internal bool MatchesUnit(string? unit) => unit == Unit || (AlternateUnit is not null && unit == AlternateUnit);
 
-        internal bool Matches(string text) => GroupedBefore is not null ? text == GroupedBefore
+        // Older fractional-inch entries carry the quote in the value instead of the units attribute.
+        internal DisplayValue ForStoredUnit(string? unit) => InchSuffixWithoutUnit && unit is null
+            ? this with { Unit = null, ExactBefore = ExactBefore + "\"", After = After + "\"", InchSuffixWithoutUnit = false }
+            : this;
+
+        internal bool Matches(string text) => ExactBefore is not null ? text == ExactBefore
             : text.EndsWith(Symbol, StringComparison.Ordinal) && ReadNumber(text.AsSpan(0, text.Length - Symbol.Length), Format) == Before;
 
         internal string CurrencyZero => 0d.ToString("F2", Format) + Symbol;
@@ -138,10 +147,13 @@ internal static class ParameterMeasurement
         double accuracy;
         string symbol;
         bool grouping;
-        bool suppressZeros;
+        bool suppressLeadingZeros;
+        bool suppressTrailingZeros;
         bool suppressSpaces;
+        bool validFractionalFlags = true;
         var additional = AdditionalSpecs.SingleOrDefault(entry => entry.Unit == spec);
-        if (WideDocument.UnitOptions(records) is { } modern)
+        var modern = WideDocument.UnitOptions(records);
+        if (modern is not null)
         {
             string specName = additional?.Forge ?? (spec == UnitType.UT_Currency ? "autodesk.spec.measurable:currency"
                 : SpecPrefix + spec.ToString()[3..].ToLowerInvariant());
@@ -152,7 +164,8 @@ internal static class ParameterMeasurement
             accuracy = option.Accuracy;
             symbol = UnitSchemaEvaluator.DisplayNameKey(option.Symbol);
             grouping = option.UseGrouping != 0;
-            suppressZeros = option.SuppressLeadingZeros != 0 || option.SuppressTrailingZeros != 0;
+            suppressLeadingZeros = option.SuppressLeadingZeros != 0;
+            suppressTrailingZeros = option.SuppressTrailingZeros != 0;
             suppressSpaces = option.SuppressSpaces != 0;
         }
         else
@@ -181,11 +194,29 @@ internal static class ParameterMeasurement
                 _ => "unsupported",
             };
             grouping = option.GetValueOrDefault("m_bUseGrouping") is 1L;
-            suppressZeros = option.GetValueOrDefault("m_bSuppressLeadingZeros") is not 0L ||
-                option.GetValueOrDefault("m_bSuppressTrailingZeros") is not 0L;
-            suppressSpaces = option.GetValueOrDefault("m_bSuppressSpaces") is not 0L;
+            object? leading = option.GetValueOrDefault("m_bSuppressLeadingZeros");
+            object? trailing = option.GetValueOrDefault("m_bSuppressTrailingZeros");
+            object? spaces = option.GetValueOrDefault("m_bSuppressSpaces");
+            suppressLeadingZeros = leading is not 0L;
+            suppressTrailingZeros = trailing is not 0L;
+            suppressSpaces = spaces is not 0L;
+            validFractionalFlags = leading is 0L or 1L && trailing is 0L or 1L && spaces is 0L or 1L;
         }
-        if (unit is null || (suppressZeros && (spec == UnitType.UT_Currency || additional is not null || unit.AlternateAtom is not null)))
+        if (unit is null)
+            return null;
+        if (unit.Forge is FeetFractionalInches or FractionalInches)
+        {
+            bool inchesOnly = unit.Forge == FractionalInches;
+            if (!validFractionalFlags || grouping || suppressTrailingZeros
+                || (symbol != "" && !(inchesOnly && modern is not null && symbol == SymbolPrefix + "inchDoubleQuote"))
+                || (inchesOnly && (suppressLeadingZeros || suppressSpaces)))
+                return null;
+            string inchSuffix = inchesOnly && symbol == "" ? "" : "\"";
+            return DisplayFractionalLength(before, after, accuracy, inchesOnly, suppressLeadingZeros, suppressSpaces,
+                modern is null ? null : unit.Atom, format, inchSuffix);
+        }
+        if ((suppressLeadingZeros || suppressTrailingZeros)
+            && (spec == UnitType.UT_Currency || additional is not null || unit.AlternateAtom is not null))
             return null;
         string? suffix = (unit.Input, symbol) switch
         {
@@ -221,6 +252,57 @@ internal static class ParameterMeasurement
         string Render(double value) => (normalizeZero && value == 0 ? 0 : value).ToString(pattern, format) + suffix;
         return new(additional?.Atom ?? spec.ToString()[3..], unit.Atom, suffix, oldValue, Render(newValue), format,
             symbol == "" ? unit.AlternateAtom : null, grouping ? Render(oldValue) : null);
+    }
+
+    private static DisplayValue? DisplayFractionalLength(double before, double after, double accuracy, bool inchesOnly,
+        bool suppressLeadingZeros, bool suppressSpaces, string? atomUnit, NumberFormatInfo format, string inchSuffix)
+    {
+        const int InchesPerFoot = 12;
+        // Revit stores fractional accuracy in display units, to a resolution of 1/2^20 inch.
+        double inverseAccuracy = 1 / (inchesOnly ? accuracy : accuracy * InchesPerFoot);
+        if (!double.IsFinite(inverseAccuracy) || inverseAccuracy is < 1 or > (1 << 20))
+            return null;
+        int denominator = (int)inverseAccuracy;
+        if (inverseAccuracy != denominator || (denominator & (denominator - 1)) != 0)
+            return null;
+
+        string? oldText = Render(before), newText = Render(after);
+        return oldText is not null && newText is not null
+            ? new("Length", atomUnit, "", 0, newText, format, ExactBefore: oldText, InchSuffixWithoutUnit: inchesOnly && inchSuffix == "")
+            : null;
+
+        string? Render(double feetValue)
+        {
+            double displayValue = Math.Abs(feetValue) * (inchesOnly ? InchesPerFoot : 1);
+            double steps = displayValue / accuracy;
+            if (displayValue > int.MaxValue || steps >= (1L << 52))
+                return null;
+            // The same midpoint tolerance as the Revit fractional display reader.
+            long ticks = (long)Math.Floor(steps + 0.5 + 1e-9);
+            long wholeInches = ticks / denominator;
+            long feet = inchesOnly ? 0 : wholeInches / InchesPerFoot;
+            long inches = inchesOnly ? wholeInches : wholeInches % InchesPerFoot;
+            bool showFeet = !inchesOnly && (feet != 0 || !suppressLeadingZeros);
+            long numerator = ticks % denominator;
+            string text = feetValue < 0 && ticks != 0 ? "-" : "";
+            if (showFeet)
+                text += feet.ToString(CultureInfo.InvariantCulture) + (suppressSpaces ? "'-" : "' - ");
+            if (showFeet || inches != 0 || numerator == 0)
+                text += inches.ToString(CultureInfo.InvariantCulture);
+            if (numerator != 0)
+            {
+                int reducedDenominator = denominator;
+                while ((numerator & 1) == 0)
+                {
+                    numerator /= 2;
+                    reducedDenominator /= 2;
+                }
+                if (showFeet || inches != 0)
+                    text += " ";
+                text += FormattableString.Invariant($"{numerator}/{reducedDenominator}");
+            }
+            return text + inchSuffix;
+        }
     }
 
     private static NumberFormatInfo? GroupedFormat(Dictionary<string, object?> units, NumberFormatInfo format)

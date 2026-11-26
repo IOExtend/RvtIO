@@ -43,6 +43,49 @@ public sealed class ParameterMeasurementTests
     }
 
     [Theory]
+    [InlineData(false, false, false, 1.0 / 96, -0.005208333333333333, "-0' - 0 1/8\"", 0.9973958333333334, "1' - 0\"")]
+    [InlineData(false, false, true, 1.0 / 192, 0.046875, "9/16\"", -0.000125, "0\"")]
+    [InlineData(true, false, false, 0.125, -0.005208333333333334, "-1/8", 0.9947916666666667, "12")]
+    [InlineData(true, true, false, 0.125, -0.005208333333333334, "-1/8\"", 0.9947916666666667, "12\"")]
+    public void FormatsFractionalLengthsInFamilyMetadata(bool inches, bool symbol, bool compactFeet, double accuracy,
+        double before, string oldText, double after, string newText)
+    {
+        foreach (bool legacy in symbol ? new[] { false } : new[] { false, true })
+        {
+            var layout = FractionalLayout(inches, symbol, legacy, accuracy);
+            var options = Assert.Single(layout.Records, record => record.ClassId == FormatClass).Values;
+            options["m_bSuppressLeadingZeros"] = compactFeet ? 1L : 0L;
+            options["m_bSuppressSpaces"] = compactFeet ? 1L : 0L;
+            var display = ParameterMeasurement.Display(UnitType.UT_Length, Walker, layout, before, after);
+            Assert.True(display.HasValue);
+            foreach (string? unit in inches && !legacy && !symbol ? new string?[] { "\"", null }
+                         : new[] { inches && !legacy ? "\"" : null })
+            {
+                string suffix = inches && unit is null ? "\"" : "";
+                var stored = display.Value.ForStoredUnit(unit);
+                Assert.True(stored.MatchesUnit(unit));
+                Assert.False(stored.MatchesUnit("in"));
+                Assert.True(stored.Matches(oldText + suffix));
+                Assert.False(stored.Matches(oldText + suffix + " "));
+                Assert.Equal(newText + suffix, stored.After);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(0, "m_bUseGrouping", 0L)]
+    [InlineData(0.375, "m_bUseGrouping", 0L)]
+    [InlineData(0.125, "m_bUseGrouping", 1L)]
+    [InlineData(0.125, "m_bSuppressTrailingZeros", 1L)]
+    [InlineData(0.125, "m_bSuppressSpaces", 2L)]
+    public void RefusesUnverifiedFractionalOptions(double accuracy, string field, long value)
+    {
+        var layout = FractionalLayout(inches: true, symbol: false, legacy: true, accuracy);
+        Assert.Single(layout.Records, record => record.ClassId == FormatClass).Values[field] = value;
+        Assert.Null(ParameterMeasurement.Display(UnitType.UT_Length, Walker, layout, 1, 2));
+    }
+
+    [Theory]
     [InlineData("1.125 in", 0.09375000000000001)]
     [InlineData("8.5 in", 0.7083333333333334)]
     [InlineData("-2.375 in", -0.19791666666666669)]
@@ -195,6 +238,15 @@ public sealed class ParameterMeasurementTests
         units["m_digitGroupingSymbol"] = groupSymbol;
         units["m_digitGroupingAmount"] = groupSize;
         Assert.Single(layout.Records, record => record.ClassId == FormatClass).Values["m_bUseGrouping"] = 1L;
+    }
+
+    private static WideBlockWalker.Walk FractionalLayout(bool inches, bool symbol, bool legacy, double accuracy)
+    {
+        var layout = DisplayUnits(UnitType.UT_Length, inches ? "fractionalInches" : "feetFractionalInches",
+            inches ? DisplayUnitType.DUT_FRACTIONAL_INCHES : DisplayUnitType.DUT_FEET_FRACTIONAL_INCHES,
+            symbol ? "inchDoubleQuote" : "", UnitSymbolType.UST_NONE, legacy);
+        Assert.Single(layout.Records, record => record.ClassId == FormatClass).Values["m_accuracy"] = accuracy;
+        return layout;
     }
 
     private static WideBlockWalker.Walk DisplayUnits(UnitType spec, string unitId, DisplayUnitType legacyUnit, string symbol,

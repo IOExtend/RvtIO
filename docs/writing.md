@@ -273,9 +273,15 @@ chains, measured values, Yes/No conditions, and text results.
 The writer updates the selected type and its current-value copy if it is the active type. It also updates matching `PartAtom`
 metadata and adds the missing entry when filling an empty, visible user text parameter. User and shared parameters must
 have a stored row for the selected type. The source, any existing destination, and the active type selection are preserved.
-For measured type parameters, a matching `PartAtom` entry requires a verified decimal display format. Decimal feet,
+For measured type parameters, a matching `PartAtom` entry requires a verified display format. Decimal feet,
 decimal inches, square feet, and cubic feet use the labels `'`, `"`, `SF`, and `CF`. RvtIO also handles the matching
 format symbols when they appear in the displayed value. Use `ft`, `in`, `ft2`, and `ft3` in edit requests.
+For Length, RvtIO also supports the `Feet and fractional inches` and `Fractional inches` display formats. Edit requests take decimal
+quantities such as `1.125 ft` or `13.5 in`. RvtIO preserves the unit label already in `PartAtom` and writes the
+rounded fraction there. The stored length retains its full precision. The supported fractional formats round to
+a power-of-two fraction of an inch, up to one whole inch. Feet with fractional inches can suppress leading zeros
+and spaces. Fractional inches use a double quote in the value in older saves. Newer saves put the unit label in
+the `units` attribute and include the quote in the value when the double-quote symbol is selected.
 Family metadata follows the document's decimal point or comma. The verified grouping options use commas, dots,
 spaces, or apostrophes, with groups of three digits or with two-digit groups to the left of the final three digits.
 Unitless Number values use the document's decimal separator without digit grouping. Numeric edit requests still use
@@ -306,7 +312,7 @@ the default two-decimal currency format with `$` in the family metadata. A Cost 
 comparison tolerance is refused.
 
 In Generic Model families, `FAMILY_FREEINST_DEFAULT_ELEVATION` takes a length with an explicit unit. The type table must contain the parameter
-and the family must use a verified decimal length format for the matching `PartAtom` value.
+and the family must use a verified length display format for the matching `PartAtom` value.
 `ALL_MODEL_TYPE_IMAGE` takes the positive ID of a verified raster image already imported into the same family.
 An explicit `-1` sets it to None. On first assignment the other types receive None, and the imported image data is preserved.
 Revit accepts imported images in family documents. [Autodesk ImageTypeOptions reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/47f3832b-9cf5-4628-214d-7e7e7d705393.htm)
@@ -542,6 +548,13 @@ Six project files also verified assignments in inches to Length globals and load
 in Revit 2020 and 2025. The affected records and formula results matched native writes and survived Save As and
 reopening without Audit.
 
+Fractional Length checks used 1/8-inch and 1/16-inch accuracy. They covered first edits from the defaults,
+replacements on active and inactive family types, ordered batches, midpoint rounding, and carry to a whole inch
+or foot. User-defined Length, dependent formula results, and Default Elevation matched the Revit API after
+Save As and reopening without Audit. The family records in 96 files matched native Revit 2020–2025 and 2027
+writes byte for byte. The 16 files in the 2026 format passed after upgrade in Revit 2027. Eighty-four invalid
+batches preserved the source bytes and created no output.
+
 Decimal separators and digit grouping were verified in 144 edited standalone family files. The tests compared
 first assignments, replacements on active and inactive types, and ordered batches for Length, Area, Volume, Angle,
 Currency, and Number, including dependent formulas, Default Elevation, and Cost. Family records in 126 files matched
@@ -755,7 +768,7 @@ sample from Autodesk and controlled project and family fixtures converted to the
 | User Currency parameters in standalone families | RvtIO supports verified type values, instance defaults, and formula dependencies. Additional Currency display formats still require coverage. |
 | Family-declared Currency parameters in projects | RvtIO supports the verified primary type and top-level instance assignments, exact type formula inverses, and existing global associations described above. Other formula paths and geometry dependencies still require coverage. |
 | Project-bound Currency parameters | RvtIO supports verified shared values on walls, basic wall types, rooms, and loaded family types and instances. Non-shared bindings and other owner classes still require coverage. |
-| Additional measurable specs and units | RvtIO supports the input units, display formats, and formula combinations listed above. Further measurable specs and combinations still require coverage. Feet and fractional inches, identical decimal and grouping separators, and other display symbols in standalone family metadata also require verification. |
+| Additional measurable specs and units | RvtIO supports the input units, display formats, and formula combinations listed above. Further measurable specs and combinations still require coverage. Fractional accuracies other than power-of-two fractions of an inch, digit grouping in fractional formats, identical decimal and grouping separators, and other display symbols in standalone family metadata also require verification. |
 | Invalid standalone image references | Revit 2022 and 2027 rejected a missing element ID and an existing family element that was outside the image class. RvtIO requires a local imported image with a verified raster record, or the explicit None value. |
 | Standalone instance and shared Image definitions | The Revit API prohibits creating instance Image parameters. Revit 2025 also rejected the tested attempt to create a shared type definition. RvtIO supports the non-shared type scope described above. [Autodesk FamilyManager.AddParameter reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/3ac89d60-4b71-694f-002f-125d2e6565fc.htm) |
 | Linked images in standalone families | Revit 2025 rejected `ImageTypeSource.Link` when creating an image in a family document. The verified standalone Image path uses imported images. [Autodesk ImageType.Create reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/31bb13e3-e8f5-cb66-18d0-619578d56cde.htm) |
