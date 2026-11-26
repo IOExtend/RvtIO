@@ -1,0 +1,102 @@
+{
+  "schema": "rvtio-re1-manifest/1",
+  "description": "Pinned redistributable RE1 reference models and Autodesk Revit IFC2X3 exports for reproducible two-revision comparison.",
+  "rules": {
+    "hashAlgorithm": "sha256",
+    "verifyHashesBeforeExport": true,
+    "exportFlags": [
+      "--strict",
+      "--ifc-timestamp",
+      "2026-01-01T00:00:00Z"
+    ],
+    "requireCompleteExportReport": true,
+    "comparableGroups": {
+      "elements": "IfcElement subtypes excluding IfcOpeningElement and IfcVirtualElement, paired by Tag (source Revit ElementId)",
+      "spaces": "IfcSpace entities paired by GlobalId",
+      "storeys": "IfcBuildingStorey entities paired by Name (with GlobalId equality checked alongside normalized elevation)",
+      "spatialRoots": "IfcProject, IfcSite, and IfcBuilding entities matched by GlobalId"
+    },
+    "coordinateSystem": "World coordinates normalized to SI metres using each IFC file's IfcUnitAssignment LENGTHUNIT",
+    "tolerances": {
+      "worldBboxMeters": 0.01,
+      "storeyElevationMeters": 0.005
+    },
+    "failConditions": [
+      "Artifact download fails after retries",
+      "Downloaded or cached file size or SHA-256 differs from pinned manifest",
+      "RvtIO CLI exits non-zero or export report status is not 'complete' (or issues/limits.hit is non-empty)",
+      "Required element geometry cannot be bounded cleanly in strict comparison mode",
+      "Control perturbation check fails to detect removed or shifted element, or negative failure gates pass unexpectedly"
+    ]
+  },
+  "models": [
+    {
+      "id": "re1-architecture",
+      "name": "RE1 Architecture",
+      "license": "MIT",
+      "redistributable": true,
+      "rvt": {
+        "fileName": "RE1-Architecture.rvt",
+        "source": "Drshelden/IFC-ECS data/RE1/RE1-Architecture.rvt",
+        "url": "https://raw.githubusercontent.com/Drshelden/IFC-ECS/main/data/RE1/RE1-Architecture.rvt",
+        "sha256": "4a78bdd68e7f4dd7806060db07c222da9a810e20b3f303c17a443294b91c8ce4",
+        "bytes": 6627328,
+        "authoredBy": "Autodesk Revit 2025",
+        "revitRelease": 2025
+      },
+      "referenceIfc": {
+        "fileName": "RE1-Architecture.ifc",
+        "source": "Drshelden/IFC-ECS data/RE1/RE1-Architecture.ifc",
+        "url": "https://raw.githubusercontent.com/Drshelden/IFC-ECS/main/data/RE1/RE1-Architecture.ifc",
+        "sha256": "a9b5d36677aa6a8bb91b77d8bc354ed9028a7ca3e9e2491a47ba14cfd8e26200",
+        "bytes": 1677715,
+        "via": "autodesk-revit-exporter",
+        "schema": "IFC2X3",
+        "mvd": "CoordinationView_V2.0",
+        "application": "Autodesk Revit 26.2.0.20 (ENU)",
+        "coordinateMode": "shared coordinates",
+        "lengthUnit": "MILLIMETRE",
+        "exportSettingsNote": "IFC2X3 CoordinationView_V2.0, Autodesk Revit 26.2.0.20 (ENU), shared coordinates"
+      },
+      "expectedSummary": {
+        "storeys": 2,
+        "taggedElements": 73,
+        "spaces": 11
+      }
+    },
+    {
+      "id": "re1-mechanical",
+      "name": "RE1 Mechanical",
+      "license": "MIT",
+      "redistributable": true,
+      "rvt": {
+        "fileName": "RE1-Mechanical.rvt",
+        "source": "Drshelden/IFC-ECS data/RE1/RE1-Mechanical.rvt",
+        "url": "https://raw.githubusercontent.com/Drshelden/IFC-ECS/main/data/RE1/RE1-Mechanical.rvt",
+        "sha256": "d559720177aa0ec435133f804e7c45d60da2deb9d5585bb3d55f4830139c014b",
+        "bytes": 3379200,
+        "authoredBy": "Autodesk Revit 2025",
+        "revitRelease": 2025
+      },
+      "referenceIfc": {
+        "fileName": "RE1-Mechanical.ifc",
+        "source": "Drshelden/IFC-ECS data/RE1/RE1-Mechanical.ifc",
+        "url": "https://raw.githubusercontent.com/Drshelden/IFC-ECS/main/data/RE1/RE1-Mechanical.ifc",
+        "sha256": "9e56cf7246ce86ef73646dd588a1efb8a4756e5e102b30e28b3b58577a454db0",
+        "bytes": 220068,
+        "via": "autodesk-revit-exporter",
+        "schema": "IFC2X3",
+        "mvd": "CoordinationView_V2.0",
+        "application": "Autodesk Revit 26.2.0.20 (ENU)",
+        "coordinateMode": "shared coordinates",
+        "lengthUnit": "MILLIMETRE",
+        "exportSettingsNote": "IFC2X3 CoordinationView_V2.0, Autodesk Revit 26.2.0.20 (ENU), shared coordinates"
+      },
+      "expectedSummary": {
+        "storeys": 2,
+        "taggedElements": 74,
+        "spaces": 0
+      }
+    }
+  ]
+}

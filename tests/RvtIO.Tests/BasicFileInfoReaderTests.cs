@@ -47,6 +47,20 @@ public class BasicFileInfoReaderTests
         Assert.Equal("RUS", result["Locale when saved"]);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void NarrowCrLfStartsTheLabelledBlock(int padding)
+    {
+        byte[] bytes = [.. Stream(null), .. new byte[padding], .. Encoding.Unicode.GetBytes("Autodesk Revit Application"),
+            0x0D, 0x0A, .. Encoding.Unicode.GetBytes("Worksharing: Not enabled\r\nUsername: Before\U0001F600After\r\n")];
+
+        var result = BasicFileInfoReader.Parse(bytes);
+
+        Assert.Equal("Not enabled", result["Worksharing"]);
+        Assert.Equal("Before\U0001F600After", result["Username"]);
+    }
+
     [Fact]
     public void SingleYearStringIsUnchanged()
     {

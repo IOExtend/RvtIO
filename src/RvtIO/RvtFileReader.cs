@@ -83,6 +83,8 @@ public partial class RvtFileReader
 
         var projectInfo = ProjectInfoReader.Read(root);
         diag?.WriteLine($"ProjectInfo: {projectInfo.Count} fields");
+        bool isStandaloneFamily = root.TryOpenStream("PartAtom", out var partAtom);
+        partAtom?.Dispose();
 
         var transmissionData = TransmissionDataReader.Read(root);
         diag?.WriteLine($"TransmissionData: {transmissionData?.ExternalReferences.Count ?? 0} external refs");
@@ -123,6 +125,7 @@ public partial class RvtFileReader
                 r22View: false, partitionStreams, framedStreams, wideSchema, elemTable, elemWorksets, fileMetadata,
                 projectInfo, transmissionData, episodeTable, elemRecHistories, elemRecOwners, tfSchemas, ownPartitionWallParts,
                 staleCopiesRemoved, routing, elemTableIsExact, previewBase64, previewMime, diag, LogPhase, ids);
+            wideInfo.IsStandaloneFamily = isStandaloneFamily;
             WideModel = wideInfo;
             WideState = wideState;
         }
@@ -144,6 +147,7 @@ public partial class RvtFileReader
             r22View, partitionStreams, framedStreams, wideSchema, elemTable, elemWorksets, fileMetadata,
             projectInfo, transmissionData, episodeTable, elemRecHistories, elemRecOwners, tfSchemas, ownPartitionWallParts,
             staleCopiesRemoved, routing, elemTableIsExact, previewBase64, previewMime, diag, LogPhase, ids, progress);
+        rvtInfo.IsStandaloneFamily = isStandaloneFamily;
         ExtensibleStorageReader.Apply(root, rvtInfo, framedStreams);
         LastParsingState = state;
         progress?.Report(new("complete", 1, 1));

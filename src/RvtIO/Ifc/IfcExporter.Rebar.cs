@@ -105,15 +105,27 @@ public partial class IfcExporter
     {
         var items = new List<string>();
         double firstBarLengthFt = 0;
+        double radiusMm = data.ModelDiameter / 2 * FeetToMillimetres;
         foreach (var bar in data.Bars)
         {
             double lengthFt;
-            items.Add(R(WriteSweptDisk(w, bar, data.ModelDiameter / 2 * FeetToMillimetres, out lengthFt)));
+            if (_resolvedConfig.EffectiveModelView == IfcModelView.ReferenceView12)
+                lengthFt = WriteIndexedSweptDisks(w, bar, radiusMm, items);
+            else
+                items.Add(R(WriteSweptDisk(w, bar, radiusMm, out lengthFt)));
             if (firstBarLengthFt == 0) firstBarLengthFt = lengthFt;
         }
-        int representationId = w.Add("IFCSHAPEREPRESENTATION",
-            $"{R(bodySubCtxId)},{S("Body")},{S("AdvancedSweptSolid")},{StepWriter.List(items)}");
-        int shapeId = w.Add("IFCPRODUCTDEFINITIONSHAPE", $"{S("")},{S("")},{StepWriter.List(R(representationId))}");
+        string shape = "$";
+        if (items.Count > 0)
+        {
+            int representationId = w.Add("IFCSHAPEREPRESENTATION",
+                $"{R(bodySubCtxId)},{S("Body")},{S("AdvancedSweptSolid")},{StepWriter.List(items)}");
+            shape = R(w.Add("IFCPRODUCTDEFINITIONSHAPE", $"{S("")},{S("")},{StepWriter.List(R(representationId))}"));
+        }
+        else
+        {
+            _diag?.WriteLine($"IFC4 reinforcement {elem.Id}: no non-degenerate centre line to export.");
+        }
         int placementId = w.Add("IFCLOCALPLACEMENT", $"{R(parentPlacementId)},{R(axisId)}");
 
         // BarLength: the stored length of a shape driven bar, else the length of the first bar, rounded as the document says
@@ -126,7 +138,7 @@ public partial class IfcExporter
 
         string globalId = ResolveExactElementGlobalId(globalIdOf ?? elem, _usedExportIds, subElementIndex, CurrentProfile) ?? fallbackGlobalId ?? IfcGuid.FromElementId(elem.Id);
         return w.Add("IFCREINFORCINGBAR",
-            $"{S(globalId)},{R(ownerHistId)},{S(elemName)},{S("")},{S(objectType)},{R(placementId)},{R(shapeId)},{S(elem.Id.ToString(CultureInfo.InvariantCulture))},"
+            $"{S(globalId)},{R(ownerHistId)},{S(elemName)},{S("")},{S(objectType)},{R(placementId)},{shape},{S(elem.Id.ToString(CultureInfo.InvariantCulture))},"
             + $"{S("")},{D(nominalMm)},{D(area)},{D(barLengthMm)},.NOTDEFINED.,$");
     }
 
@@ -220,6 +232,90 @@ public partial class IfcExporter
             R(w.Add("IFCCOMPOSITECURVESEGMENT", $"{(i == curves.Count - 1 ? ".DISCONTINUOUS." : ".CONTINUOUS.")},.T.,{R(curve)}"))).ToList();
         int composite = w.Add("IFCCOMPOSITECURVE", $"{StepWriter.List(segments)},.F.");
         return w.Add("IFCSWEPTDISKSOLID", $"{R(composite)},{D(radiusMm)},$,0.,{D(endParameter)}");
+    }
+
+    // Reference View requires an indexed directrix. A gap starts a new solid because indexed segments must be consecutive.
+    private static double WriteIndexedSweptDisks(StepWriter w, IReadOnlyList<RebarSegment> pieces, double radiusMm, List<string> items)
+    {
+        var points = new List<(double X, double Y, double Z)>();
+        var segments = new List<string>();
+        int endIndex = 0;
+        double lengthFt = 0;
+
+        void FinishSweep()
+        {
+            if (segments.Count == 0) return;
+            int pointList = w.Add("IFCCARTESIANPOINTLIST3D",
+                StepWriter.List(points.Select(p => $"({D(p.X)},{D(p.Y)},{D(p.Z)})")));
+            int directrix = w.Add("IFCINDEXEDPOLYCURVE", $"{R(pointList)},{StepWriter.List(segments)},$");
+            items.Add(R(w.Add("IFCSWEPTDISKSOLID", $"{R(directrix)},{D(radiusMm)},$,$,$")));
+            points.Clear();
+            segments.Clear();
+        }
+
+        int AddEnd((double X, double Y, double Z) point)
+        {
+            if (Coincides(points[0], point)) return 1;
+            points.Add(point);
+            return points.Count;
+        }
+
+        foreach (var piece in pieces)
+        {
+            double span = Math.Abs(piece.End - piece.Start);
+            var start = PointAt(piece, piece.Start);
+            var end = PointAt(piece, piece.End);
+            if ((!piece.IsArc || span <= Math.PI) && Coincides(start, end)) continue;
+            if (points.Count == 0 || !Coincides(points[endIndex - 1], start))
+            {
+                FinishSweep();
+                points.Add(start);
+                endIndex = 1;
+            }
+
+            if (piece.IsArc)
+            {
+                // Splitting long arcs also represents a full circle with non-coincident arc endpoints.
+                int subdivisions = span > Math.PI ? 2 : 1;
+                double from = piece.Start;
+                for (int i = 1; i <= subdivisions; i++)
+                {
+                    double to = i == subdivisions ? piece.End : piece.Start + (piece.End - piece.Start) / subdivisions;
+                    int startIndex = endIndex;
+                    points.Add(PointAt(piece, from + (to - from) / 2));
+                    int midpointIndex = points.Count;
+                    endIndex = AddEnd(i == subdivisions ? end : PointAt(piece, to));
+                    segments.Add(FormattableString.Invariant($"IFCARCINDEX(({startIndex},{midpointIndex},{endIndex}))"));
+                    from = to;
+                }
+                lengthFt += span * piece.Radius;
+            }
+            else
+            {
+                int startIndex = endIndex;
+                endIndex = AddEnd(end);
+                segments.Add(FormattableString.Invariant($"IFCLINEINDEX(({startIndex},{endIndex}))"));
+                lengthFt += span;
+            }
+        }
+
+        FinishSweep();
+        return lengthFt;
+
+        static (double X, double Y, double Z) PointAt(RebarSegment piece, double parameter)
+        {
+            double x = piece.IsArc ? piece.Radius * Math.Cos(parameter) : parameter;
+            double y = piece.IsArc ? piece.Radius * Math.Sin(parameter) : 0;
+            return ((piece.Origin[0] + piece.Axis[0] * x + piece.Axis2[0] * y) * FeetToMetres,
+                (piece.Origin[1] + piece.Axis[1] * x + piece.Axis2[1] * y) * FeetToMetres,
+                (piece.Origin[2] + piece.Axis[2] * x + piece.Axis2[2] * y) * FeetToMetres);
+        }
+
+        static bool Coincides((double X, double Y, double Z) a, (double X, double Y, double Z) b)
+        {
+            double x = a.X - b.X, y = a.Y - b.Y, z = a.Z - b.Z;
+            return x * x + y * y + z * z <= IfcDeclaredPrecisionMetres * IfcDeclaredPrecisionMetres;
+        }
     }
 
     /// <summary>The IfcGroup of every RebarSystem and every RebarContainer that has bars, with the IfcRelAssignsToGroup that relates them.</summary>

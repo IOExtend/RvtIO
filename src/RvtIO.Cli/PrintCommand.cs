@@ -8,8 +8,8 @@ using RvtIO.Sheets;
 namespace RvtIO.Cli;
 
 /// <summary>
-/// <c>rvtio print &lt;file.rvt&gt; &lt;out.pdf&gt; [--level &lt;id|name&gt;] [--view &lt;id|name&gt;] [--sheet &lt;id|number&gt;] [--where FILTER] [--scale &lt;n&gt;]
-/// [--paper A4|A3|A2|A1|A0]</c>: renders the plan of one level, or one or more plan views at their own scales, to a PDF
+/// <c>rvtio print &lt;file.rvt&gt; &lt;out.pdf|out.svg&gt; [--level &lt;id|name&gt;] [--view &lt;id|name&gt;] [--sheet &lt;id|number&gt;] [--where FILTER] [--scale &lt;n&gt;]
+/// [--paper A4|A3|A2|A1|A0]</c>: renders the plan of one level to PDF or SVG (<c>.svg</c>), or one or more plan views or sheets at their own scales to PDF
 /// (see <see cref="PlanPrinter"/>). <c>--list-levels</c> and <c>--list-views</c> print what can be printed instead.
 /// <c>--where NAME=VALUE</c> (also <c>!=</c> and <c>~</c> for contains, <c>*</c> and <c>?</c> wildcards, repeatable) keeps
 /// only the sheets whose parameters match; it needs <c>--sheet</c>, <c>--all-sheets</c> or <c>--list-sheets</c>.
@@ -89,7 +89,10 @@ internal static class PrintCommand
         if (whereFilters.Count > 0 && sheetTexts.Count == 0 && !allSheets && !listSheets)
             return Usage(error, "--where selects sheets; it needs --sheet, --all-sheets or --list-sheets.");
         bool listing = listLevels || listViews || listSheets;
-        if (!listing && outputPath == null) return Usage(error, "print requires the output PDF path.");
+        if (!listing && outputPath == null) return Usage(error, "print requires the output PDF path (or .svg for a level plan).");
+        bool svgOutput = outputPath != null && outputPath.EndsWith(".svg", StringComparison.OrdinalIgnoreCase);
+        if (svgOutput && (allSheets || allViews || sheetTexts.Count > 0 || viewTexts.Count > 0 || whereFilters.Count > 0))
+            return Usage(error, "SVG output supports level plan rendering only (--level, --scale, --paper); use a .pdf path for views and sheets.");
         // File identity also catches when a link in the output path points to the input model.
         if (outputPath != null && FileIdentity.SameFile(outputPath, file))
         {
@@ -194,6 +197,39 @@ internal static class PrintCommand
 
         try
         {
+            if (svgOutput)
+            {
+                if (levels.Count == 0)
+                {
+                    error.WriteLine("No level with a wall or column was found; nothing to print.");
+                    return RvtExitCodes.DecodeError;
+                }
+                int? levelId = ResolveLevelId(levelText, levels);
+                if (levelText != null && levelId == null)
+                {
+                    error.WriteLine($"No printable level is named or numbered '{levelText}'. --list-levels shows them.");
+                    return RvtExitCodes.Usage;
+                }
+
+                PdfPageSize svgPaper;
+                double effectiveScale;
+                string temporarySvg = outputPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                try
+                {
+                    using (var fs = File.Create(temporarySvg))
+                        PlanPrinter.WriteSvg(document, fs, levelId, scale, new PlanPrintOptions { PaperSize = paper },
+                            out svgPaper, out effectiveScale);
+                    File.Move(temporarySvg, outputPath!, overwrite: true);
+                }
+                catch
+                {
+                    if (File.Exists(temporarySvg)) File.Delete(temporarySvg);
+                    throw;
+                }
+                error.WriteLine($"[print] 1 page(s), first {svgPaper.WidthMillimetres:0} x {svgPaper.HeightMillimetres:0} mm (1:{effectiveScale:0}) -> {outputPath}");
+                return RvtExitCodes.Success;
+            }
+
             PdfDocument pdf;
             if (allSheets)
             {
@@ -277,22 +313,11 @@ internal static class PrintCommand
                     error.WriteLine("No level with a wall or column was found; nothing to print.");
                     return RvtExitCodes.DecodeError;
                 }
-                int? levelId = null;
-                if (levelText != null)
+                int? levelId = ResolveLevelId(levelText, levels);
+                if (levelText != null && levelId == null)
                 {
-                    foreach (PlanLevel level in levels)
-                    {
-                        if (int.TryParse(levelText, NumberStyles.None, CultureInfo.InvariantCulture, out int id) && id == level.LevelId)
-                            levelId = level.LevelId;
-                        else if (string.Equals(level.Name, levelText, StringComparison.OrdinalIgnoreCase))
-                            levelId = level.LevelId;
-                        if (levelId != null) break;
-                    }
-                    if (levelId == null)
-                    {
-                        error.WriteLine($"No printable level is named or numbered '{levelText}'. --list-levels shows them.");
-                        return RvtExitCodes.Usage;
-                    }
+                    error.WriteLine($"No printable level is named or numbered '{levelText}'. --list-levels shows them.");
+                    return RvtExitCodes.Usage;
                 }
                 pdf = PlanPrinter.Render(document, levelId, scale, new PlanPrintOptions { PaperSize = paper });
             }
@@ -406,10 +431,22 @@ internal static class PrintCommand
         return new ExplicitSheetSelection(sheetIds, composedIds, null);
     }
 
+    private static int? ResolveLevelId(string? levelText, IReadOnlyList<PlanLevel> levels)
+    {
+        if (levelText == null) return null;
+        bool byId = int.TryParse(levelText, NumberStyles.None, CultureInfo.InvariantCulture, out int id);
+        foreach (PlanLevel level in levels)
+        {
+            if ((byId && id == level.LevelId) || string.Equals(level.Name, levelText, StringComparison.OrdinalIgnoreCase))
+                return level.LevelId;
+        }
+        return null;
+    }
+
     private static int Usage(TextWriter error, string problem)
     {
         error.WriteLine(problem);
-        error.WriteLine("Usage: rvtio print <file.rvt> <out.pdf> [--level <id|name>] [--view <id|name>] [--sheet <id|number>] "
+        error.WriteLine("Usage: rvtio print <file.rvt> <out.pdf|out.svg> [--level <id|name>] [--view <id|name>] [--sheet <id|number>] "
             + "[--where FILTER] [--all-views] [--all-sheets] [--scale <n>] [--paper A4|A3|A2|A1|A0] "
             + "[--list-levels] [--list-views] [--list-sheets]");
         return RvtExitCodes.Usage;

@@ -7,15 +7,17 @@ using RvtIO.Ifc;
 internal static partial class Program
 {
     private const string UsageText = """
-        Usage: rvtio <file.rvt|file.rfa> [output.ifc|output.json] [options]
+        Usage: rvtio <file.rvt|file.rfa> [output.ifc|output.json|output.glb] [options]
                rvtio --help | --version
 
-        Reads a Revit file and writes IFC, JSON, or an IOScene scene. A .ifc output path writes IFC; any other path
-        writes JSON (default output.json). Pass multiple output options (--ifc, --scene, --compact-json, --full-json)
-        to write several formats from a single file read. Diagnostics go to standard error.
+        Reads a Revit file and writes IFC, GLB, JSON, or an IOScene scene. A .ifc output path writes IFC and a .glb
+        output path writes binary glTF 2.0 (GLB); any other path writes JSON (default output.json). Pass multiple output
+        options (--ifc, --glb, --scene, --compact-json, --full-json) to write several formats from a single file read.
+        Diagnostics go to standard error.
 
         Export options:
           --ifc <file.ifc>                  write IFC output to the specified path
+          --glb <file.glb>                  write binary glTF 2.0 (.glb) output to the specified path
           --scene <file.json>               write IOScene scene JSON to the specified path
           --compact-json [file.json]        write compact JSON (optionally to the specified path)
           --full-json <file.json>           write the full JSON dump to the specified path
@@ -63,12 +65,16 @@ internal static partial class Program
           --sketch-owner-dump <path.csv>    write the closed sketch loops of every sketch-owning element
           --inspect-batch <ids-file> <out.csv>    inspect many ids in one pass (ids: one per line or comma separated)
           --list-category <categoryId> <out.csv>  list the elements of one category
+          info <file-or-dir> [output] [--format text|json|jsonl|csv] [--csv|--jsonl|--json] [--output <path>] [--no-recursive] [--redact]
+                                            inspect metadata without reading geometry or Partitions (single file or recursive folder inventory)
+          diff <left.rvt> <right.rvt> [output.json] [--json [path]] [--output <path>] [--category <name|id>] [--element <uniqueId|id>] [--redact]
+                                            compare two Revit revisions (additions, removals, parameters, types, placement, geometry, links)
           sheets <file.rvt|file.rfa> [output.json] [--r22-layout] [--where FILTER] [--params] [--csv] [--json]
                                             write the sheet catalog (sheets, viewports, parameters, limits not decoded) as JSON
-          print <file.rvt> <out.pdf> [--level <id|name>] [--view <id|name>] [--sheet <id|number>] [--where FILTER] [--scale <n>]
+          print <file.rvt> <out.pdf|out.svg> [--level <id|name>] [--view <id|name>] [--sheet <id|number>] [--where FILTER] [--scale <n>]
                                             [--all-views] [--all-sheets] [--paper A4|A3|A2|A1|A0]
                                             [--list-levels] [--list-views] [--list-sheets]
-                                            render the plan of one level, one or more views (plans and elevations) or all of
+                                            render the plan of one level (to PDF or SVG), one or more views (plans and elevations) or all of
                                             them, or one or more sheets, to PDF
 
         Developer options (measurement and comparison dumps, not a stable interface):
@@ -117,8 +123,15 @@ internal static partial class Program
     // Options that take one value, and options that take two; every other option starting with "--" is a switch.
     private static readonly HashSet<string> OneValueOptions =
     [
-        "--ifc", "--scene", "--full-json", "--json",
-        "--ifc-profile", "--ifc-phase", "--ifc-room-phase", RvtIO.Cli.IfcLengthUnitOption.Name, RvtIO.Cli.IfcTimestampOption.Name, "--json-class-prefix", "--revit-localization", "--inspect", "--diag-dump", "--find-str",
+        "--ifc", "--glb", "--scene", "--full-json", "--json",
+        "--ifc-profile", "--ifc-phase", "--ifc-room-phase",
+        RvtIO.Cli.IfcConfigurationOptions.SchemaOption,
+        RvtIO.Cli.IfcConfigurationOptions.ModelViewOption,
+        RvtIO.Cli.IfcConfigurationOptions.ModelViewAliasOption,
+        RvtIO.Cli.IfcConfigurationOptions.PresetOption,
+        RvtIO.Cli.IfcConfigurationOptions.ConfigOption,
+        RvtIO.Cli.IfcConfigurationOptions.SaveConfigOption,
+        RvtIO.Cli.IfcLengthUnitOption.Name, RvtIO.Cli.IfcTimestampOption.Name, "--json-class-prefix", "--revit-localization", "--inspect", "--diag-dump", "--find-str",
         "--sketch-owner-dump", "--dev-external-dump", "--dev-external-dump-prefix", "--dev-candidates", "--dev-trace", "--dev-facts",
         "--dev-fact-names", "--dev-user-params", "--dev-collisions", "--dev-solids", "--dev-native", "--class-census", "--episode-check",
         "--test-decoders", "--dump-chunks", "--block-dump", "--search-global", "--hex-search", "--chunk-dump", "--block-scan", "--rec-dump",
@@ -129,7 +142,9 @@ internal static partial class Program
 
     private static readonly HashSet<string> SwitchOptions =
     [
-        "--json-full", "--compact-json", "--ifc-revit-parameters", "--ifc-revit-parameter-groups", "--ifc-no-base-quantities", ..RvtIO.Cli.OpeningAxesOption.Names, "--r22-layout",
+        "--json-full", "--compact-json", "--ifc-revit-parameters", "--ifc-revit-parameter-groups", "--ifc-no-base-quantities",
+        RvtIO.Cli.IfcConfigurationOptions.NoSpacesOption, RvtIO.Cli.IfcConfigurationOptions.CapabilitiesOption,
+        ..RvtIO.Cli.OpeningAxesOption.Names, "--r22-layout",
         "--no-r22-layout", ..RvtIO.Cli.CurrentCopiesOption.Names, "--allow-partial", "--strict", "--raise-limits", "--api-demo", "--dev-solids-only", "--elemtable-diag", "--tf-calibrate", "--name-scan", "--typemap", "--block-map",
         "--decode-blocks", "--decode-catc", "--wide", "--blocks", "--no-recover", "--no-d64", "--trim", "--dump-partial",
     ];
@@ -166,6 +181,8 @@ internal static partial class Program
         if (args[0] == "set-family-parameter") return RvtIO.Cli.SetParameterCommand.Run(args[1..], Console.Out, Console.Error, familyFile: true);
         if (args[0] == "edit-parameters") return RvtIO.Cli.SetParameterCommand.RunBatch(args[1..], Console.Out, Console.Error);
         if (args[0] == "coverage") return RvtIO.Cli.CoverageCommand.Run(args[1..], Console.Out, Console.Error);
+        if (args[0] == "info") return RvtIO.Cli.InfoCommand.Run(args[1..], Console.Out, Console.Error);
+        if (args[0] == "diff") return RvtIO.Cli.DiffCommand.Run(args[1..], Console.Out, Console.Error);
         if (args[0] == "sheets") return RvtIO.Cli.SheetsCommand.Run(args[1..], Console.Out, Console.Error);
         if (args[0] == "print") return RvtIO.Cli.PrintCommand.Run(args[1..], Console.Out, Console.Error);
         if (args[0] == "--rebar-dump") return RvtIO.RebarDump.Run(args[1..]);
@@ -186,6 +203,7 @@ internal static partial class Program
         }
 
         string? ifcPath = null;
+        string? glbPath = null;
         string? scenePath = null;
         string? fullJsonPath = null;
         string? explicitJsonPath = null;
@@ -195,7 +213,7 @@ internal static partial class Program
         for (int i = 1; i < args.Length; i++)
         {
             string arg = args[i];
-            if (arg is "--ifc" or "--scene" or "--full-json" or "--json")
+            if (arg is "--ifc" or "--glb" or "--scene" or "--full-json" or "--json")
             {
                 if (i + 1 >= args.Length || args[i + 1].StartsWith("--", StringComparison.Ordinal) || string.IsNullOrWhiteSpace(args[i + 1]))
                 {
@@ -204,6 +222,7 @@ internal static partial class Program
                 }
                 string path = args[++i];
                 if (arg == "--ifc") ifcPath = path;
+                else if (arg == "--glb") glbPath = path;
                 else if (arg == "--scene") scenePath = path;
                 else if (arg == "--full-json") fullJsonPath = path;
                 else if (arg == "--json") explicitJsonPath = path;
@@ -237,11 +256,19 @@ internal static partial class Program
             else compactJsonPath ??= explicitJsonPath;
         }
 
+        static bool IsNonJsonPositionalExtension(string path) =>
+            path.EndsWith(".ifc", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".glb", StringComparison.OrdinalIgnoreCase);
+
         if (positionalOutput != null)
         {
             if (positionalOutput.EndsWith(".ifc", StringComparison.OrdinalIgnoreCase))
             {
                 ifcPath ??= positionalOutput;
+            }
+            else if (positionalOutput.EndsWith(".glb", StringComparison.OrdinalIgnoreCase))
+            {
+                glbPath ??= positionalOutput;
             }
             else
             {
@@ -252,12 +279,12 @@ internal static partial class Program
 
         if (hasCompactJsonOption && compactJsonPath == null)
         {
-            compactJsonPath = (positionalOutput != null && !positionalOutput.EndsWith(".ifc", StringComparison.OrdinalIgnoreCase))
+            compactJsonPath = (positionalOutput != null && !IsNonJsonPositionalExtension(positionalOutput))
                 ? positionalOutput
                 : "output.json";
         }
 
-        bool anyExplicitOutput = ifcPath != null || scenePath != null || compactJsonPath != null || fullJsonPath != null;
+        bool anyExplicitOutput = ifcPath != null || glbPath != null || scenePath != null || compactJsonPath != null || fullJsonPath != null;
         if (!anyExplicitOutput)
         {
             if (jsonFull) fullJsonPath = "output.json";
@@ -325,10 +352,20 @@ internal static partial class Program
             Console.Error.WriteLine(ifcLengthUnitError);
             return 1;
         }
-        bool hasIfcOutput = ifcPath != null;
-        if ((jsonFull || hasCompactJsonOption) && positionalOutput != null && positionalOutput.EndsWith(".ifc", StringComparison.OrdinalIgnoreCase) && compactJsonPath == null && fullJsonPath == null)
+        if (!RvtIO.Cli.IfcConfigurationOptions.TryParse(args, out var cliIfcOptions, out string? ifcConfigCliError))
         {
-            Console.Error.WriteLine("--compact-json and --json-full write JSON: use a non-.ifc output path.");
+            Console.Error.WriteLine(ifcConfigCliError);
+            return 1;
+        }
+        if (cliIfcOptions.ShowCapabilities)
+        {
+            RvtIO.Cli.IfcConfigurationOptions.WriteCapabilities(Console.Out);
+            return 0;
+        }
+        bool hasIfcOutput = ifcPath != null;
+        if ((jsonFull || hasCompactJsonOption) && positionalOutput != null && IsNonJsonPositionalExtension(positionalOutput) && compactJsonPath == null && fullJsonPath == null)
+        {
+            Console.Error.WriteLine("--compact-json and --json-full write JSON: use a non-.ifc/.glb output path.");
             return 1;
         }
         if (exportPhaseOption != null && !hasIfcOutput)
@@ -351,6 +388,48 @@ internal static partial class Program
             Console.Error.WriteLine("--ifc-length-unit requires IFC output.");
             return 1;
         }
+        if ((cliIfcOptions.Schema.HasValue || cliIfcOptions.ModelView.HasValue || cliIfcOptions.Preset.HasValue || cliIfcOptions.ConfigPath != null || cliIfcOptions.NoSpaces) && !hasIfcOutput && cliIfcOptions.SaveConfigPath == null)
+        {
+            Console.Error.WriteLine("IFC schema, model view, preset, config, and space options require IFC output.");
+            return 1;
+        }
+
+        if (cliIfcOptions.SaveConfigPath is { } saveConfigPath
+            && !RvtIO.Cli.IfcConfigurationOptions.CanSaveConfiguration(
+                saveConfigPath, hasIfcOutput || !rvtPath.StartsWith("--", StringComparison.Ordinal) ? rvtPath : null,
+                cliIfcOptions.ConfigPath, hasIfcOutput ? [
+                    ifcPath, glbPath, compactJsonPath, fullJsonPath, scenePath, ValueOf(args, "--report"), ValueOf(args, "--dev-external-dump"),
+                    ..RvtIO.Cli.ReportPathOption.DumpOptions.Select(option => ValueOf(args, option)),
+                ] : []))
+            return 1;
+
+        if (!RvtIO.Cli.IfcConfigurationOptions.TryBuildConfiguration(
+                cliIfcOptions,
+                profile,
+                profileWasExplicit: args.Contains("--ifc-profile"),
+                revitParameters: includeIfcRevitParameters,
+                revitParameterGroups: revitParameterGroups,
+                baseQuantities: baseQuantities,
+                baseQuantitiesWasExplicit: args.Contains("--ifc-no-base-quantities"),
+                openingQuantitiesSwapped: openingLegacyAxes,
+                openingQuantitiesWasExplicit: args.Any(a => RvtIO.Cli.OpeningAxesOption.Names.Contains(a)),
+                exportPhaseId: int.TryParse(exportPhaseOption, out int parsedExportPhase) ? parsedExportPhase : null,
+                exportAllPhases: string.Equals(exportPhaseOption, "all", StringComparison.OrdinalIgnoreCase),
+                exportPhaseWasExplicit: exportPhaseOption != null,
+                roomExportPhaseId: int.TryParse(roomPhaseOption, out int parsedRoomPhase) ? parsedRoomPhase : null,
+                exportRoomsOfAllPhases: string.Equals(roomPhaseOption, "all", StringComparison.OrdinalIgnoreCase),
+                roomPhaseWasExplicit: roomPhaseOption != null,
+                lengthUnit: ifcLengthUnit,
+                timestamp: ifcTimestamp,
+                out var mergedIfcConfiguration,
+                out var resolvedIfcConfiguration,
+                out string? ifcConfigValidationError))
+        {
+            Console.Error.WriteLine(ifcConfigValidationError);
+            return 1;
+        }
+        if (cliIfcOptions.SaveConfigPath != null && !hasIfcOutput)
+            return RvtIO.Cli.IfcConfigurationOptions.SaveConfiguration(cliIfcOptions.SaveConfigPath, mergedIfcConfiguration) ? 0 : 1;
         for (int i = 0; i < args.Length - 1; i++)
         {
             if (args[i] == "--dev-external-dump") externalDumpPath = args[i + 1];
@@ -416,9 +495,9 @@ internal static partial class Program
         if (inspectBatchIdsFile != null && inspectBatchOutPath != null) return InspectBatch(rvtPath, inspectBatchIdsFile, inspectBatchOutPath);
         if (listCategoryOutPath != null) return ListCategory(rvtPath, listCategoryId, listCategoryOutPath);
 
-        return Export(new ExportArguments(args, rvtPath, ifcPath, compactJsonPath, fullJsonPath, scenePath,
-            externalDumpPath, externalDumpClassPrefix, profile,
-            exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, openingLegacyAxes, ifcTimestamp, ifcLengthUnit));
+        return Export(new ExportArguments(args, rvtPath, ifcPath, glbPath, compactJsonPath, fullJsonPath, scenePath,
+            externalDumpPath, externalDumpClassPrefix, resolvedIfcConfiguration.Profile,
+            jsonClassPrefix, mergedIfcConfiguration, cliIfcOptions.SaveConfigPath));
     }
 
     /// <summary>The value after the last occurrence of <paramref name="option"/>, null when the option is absent or ends the arguments.</summary>

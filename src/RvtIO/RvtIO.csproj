@@ -16,7 +16,7 @@
   </PropertyGroup>
 
   <ItemGroup Condition="'$(BuildNativeCoreOnly)' == 'true'">
-    <Compile Remove="Compact/**/*.cs;Export/**/*.cs;Ifc/**/*.cs;Pdf/**/*.cs;Print/**/*.cs" />
+    <Compile Remove="Compact/**/*.cs;Export/**/*.cs;Gltf/**/*.cs;Ifc/**/*.cs;Pdf/**/*.cs;Print/**/*.cs" />
   </ItemGroup>
 
   <ItemGroup>

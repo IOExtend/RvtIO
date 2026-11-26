@@ -1,0 +1,101 @@
+name: Measure RE1
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: "Base git ref or commit SHA"
+        required: true
+        default: "main"
+        type: string
+      head_ref:
+        description: "Head git ref or commit SHA (leave empty to use current workflow ref)"
+        required: false
+        default: ""
+        type: string
+      models:
+        description: "Comma-separated model IDs from tools/measure/re1-manifest.json"
+        required: true
+        default: "re1-architecture,re1-mechanical"
+        type: string
+      world_bbox_tol_m:
+        description: "World bounding box tolerance in metres"
+        required: true
+        default: "0.01"
+        type: string
+      control_check:
+        description: "Run controlled element removal/shift and negative gate checks"
+        required: true
+        default: true
+        type: boolean
+      fail_on_regression:
+        description: "Fail on comparison regressions or unverified geometry"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  measure-re1:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+          dotnet-version: |
+            8.0.x
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run RE1 unit & control tests
+        run: python3 -m unittest discover -s tools/measure -p "test_*.py" -v
+
+      - name: Run reproducible RE1 comparison
+        shell: bash
+        env:
+          BASE_REF: ${{ inputs.base_ref }}
+          HEAD_REF: ${{ inputs.head_ref || github.sha }}
+          MODELS: ${{ inputs.models }}
+          WORLD_BBOX_TOL_M: ${{ inputs.world_bbox_tol_m }}
+          CONTROL_CHECK: ${{ inputs.control_check }}
+          FAIL_ON_REGRESSION: ${{ inputs.fail_on_regression }}
+        run: |
+          ARGS=(
+            tools/measure/measure_re1.py
+            --base="$BASE_REF"
+            --head="$HEAD_REF"
+            --models="$MODELS"
+            --bbox-tol="$WORLD_BBOX_TOL_M"
+          )
+          if [ "$CONTROL_CHECK" != "true" ]; then
+            ARGS+=(--no-control-check)
+          fi
+          if [ "$FAIL_ON_REGRESSION" = "true" ]; then
+            ARGS+=(--fail-on-regression)
+          fi
+          python3 "${ARGS[@]}"
+
+      - name: Publish workflow step summary
+        if: always() && hashFiles('_measure_out/summary.md') != ''
+        shell: bash
+        run: cat _measure_out/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: re1-measure-results
+          path: |
+            _measure_out/summary.json
+            _measure_out/summary.md
+            _measure_out/*/*.compare.json
+            _measure_out/*/*.report.json
+            _measure_out/*/*.ifc
+          if-no-files-found: ignore
