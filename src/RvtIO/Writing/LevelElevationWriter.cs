@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using OpenMcdf;
 using RvtIO.BuiltIns;
+using RvtIO.Model;
 using RvtIO.Parsing;
 
 namespace RvtIO.Writing;
@@ -21,7 +22,7 @@ internal static partial class LevelElevationWriter
             "Element" or "Level" or "LevelAttributes" or "DatumPlane" or "Face" or "Plane" or "Instance"
                 or "Trf" or "ActiveGeoLocationTrackingElement" or "DBView" or "DBViewPlan" or "PlanViewRange" or "PlanViewRange2"
                 or "GenericPlaneCutter" or "SketchPlane" or "SketchGrid" or "OneElementMovablePlaneRef" or "SunAndShadowSettings"
-                or "EnergyDataSettings" or "OpeningBase" => All + type.Name + "." + field.Name,
+                or "EnergyDataSettings" or "OpeningBase" or "ParamValueElementId" => All + type.Name + "." + field.Name,
             _ => GlobalParameterWriter.CaptureKey(type, field),
         }, []);
         var headerWalker = new WideBlockWalker(schema, (type, field) => type.Name is
@@ -131,6 +132,7 @@ internal static partial class LevelElevationWriter
             throw ParameterWriter.Unverified("The level's saved plane and face disagree.");
         bool retain = surface.Real == destination || IsRetainedElevation(surface.Real - origin, elevation);
         var wallDependents = dependents.Where(walls.Contains).ToHashSet();
+        var openingHosts = new HashSet<long>();
         var openings = new HashSet<long>();
         foreach (var (id, record) in planRecords)
         {
@@ -140,20 +142,27 @@ internal static partial class LevelElevationWriter
             if (!dependents.Contains(id) && !header.Parents.Any(wallDependents.Contains))
                 continue;
             var opening = Read(record.Body, "SWallRectOpening", id);
-            if (Integer(opening, "OpeningBase.m_hostId") is not long host || !wallDependents.Contains(host)
+            if (Integer(opening, "OpeningBase.m_hostId") is not long host || !walls.Contains(host)
+                || (!wallDependents.Contains(host) && !HasOpeningConstraint(opening, id))
                 || header.Category != (int)BuiltInCategory.OST_SWallRectOpening || header.Partition != record.Partition
                 || !header.Parents.Contains(host)
                 || headers.Any(pair => pair.Key != id && pair.Key != host && pair.Value.Parents.Contains(id)))
                 throw ParameterWriter.Unverified("The level has an opening with unverified host or dependencies.");
+            openingHosts.Add(host);
             openings.Add(id);
         }
+
+        bool HasOpeningConstraint(WideBlockWalker.Walk opening, long id) =>
+            ParameterWriter.FindValue(walker, opening, new(id, (int)BuiltInParameter.WALL_BASE_CONSTRAINT, null), StorageType.ElementId)?.Value.Integer == edit.ElementId
+            || ParameterWriter.FindValue(walker, opening, new(id, (int)BuiltInParameter.WALL_HEIGHT_TYPE, null), StorageType.ElementId)?.Value.Integer == edit.ElementId;
+
         long[] nonWallDependents = dependents.Where(id => !wallDependents.Contains(id) && !openings.Contains(id)).ToArray();
         double nextElevation = retain ? surface.Real : destination;
         var related = nonWallDependents.Length != 0
             ? PlanViews(nonWallDependents, headers, planRecords, geometryPartitions, hasAnalyticalGeometry, edit.ElementId,
                 surface.Real, nextElevation, Class, Read, Target, PlaneElevations)
             : [];
-        foreach (long wall in wallDependents)
+        foreach (long wall in wallDependents.Union(openingHosts))
         {
             var move = new WallHeightWriter.LevelMove(edit.ElementId, surface.Real, nextElevation);
             if (WallHeightWriter.Plan(root, tags, idWidth, schema, elementIds, edit with { ElementId = wall }, pending, move) is { } plan)

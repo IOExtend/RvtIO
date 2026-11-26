@@ -49,8 +49,9 @@ readable project record for the element and a verified source for the parameter 
 | Straight wall, room, or top-level loaded Generic Model, Door, Window, or Furniture instance | `ALL_MODEL_IMAGE` (Image). |
 | Verified straight basic wall with an unconnected top | `WALL_USER_HEIGHT_PARAM` (Unconnected Height). Pass a length with units, such as `"3200 mm"`. |
 | Verified straight basic wall with level constraints | `WALL_BASE_OFFSET` (Base Offset), and `WALL_TOP_OFFSET` (Top Offset) when the top is constrained to a level. Pass a signed length with units, such as `"-150 mm"`. |
+| Verified interior rectangular opening in a straight basic wall | `WALL_BASE_OFFSET` and `WALL_TOP_OFFSET` take signed lengths with units. `WALL_BASE_CONSTRAINT` and `WALL_HEIGHT_TYPE` take the ID of a local project level. |
 | Level, straight or radial grid, or multi-segment grid in the main model | `DATUM_TEXT` (Name). A multi-segment grid assignment updates the name on the grid and all verified member records. |
-| Level in the main model without dependent elements or with verified plan, sketch plane, or straight basic wall dependencies | `LEVEL_ELEV` (Elevation). Pass a signed length with units. RvtIO uses the level type's selected elevation base and updates the stored datum planes and affected plan, wall, and verified rectangular opening geometry in project coordinates. |
+| Level in the main model without dependent elements or with verified plan, sketch plane, straight basic wall, or interior rectangular opening dependencies | `LEVEL_ELEV` (Elevation). Pass a signed length with units. RvtIO uses the level type's selected elevation base and updates the stored datum planes and affected plan, wall, and verified rectangular opening geometry in project coordinates. |
 | Basic wall type | `ALL_MODEL_TYPE_IMAGE` (Type Image). |
 | Basic wall type, primary or directly linked derived family symbol | `ALL_MODEL_TYPE_MARK` (Type Mark). Pass the ID of the type or symbol whose value you want to write. |
 | Basic wall type or verified loaded family type | `ALL_MODEL_TYPE_COMMENTS`, `ALL_MODEL_DESCRIPTION`, `ALL_MODEL_MANUFACTURER`, `ALL_MODEL_MODEL`, `ALL_MODEL_URL`, and `ALL_MODEL_COST`. Cost takes a finite invariant number with no currency symbol; a change that Revit can suppress within its numeric comparison tolerance is refused. |
@@ -654,9 +655,20 @@ All 40 edited projects matched the Revit API after Save As and reopening without
 the source bytes and created no output. Revit 2025 reported the opening's Unconnected Height as read-only.
 This height follows the position of both edges.
 
-Revit 2025 accepted direct assignments to both opening offsets and both opening level references.
-Changing an opening level reference kept its offset and moved the corresponding edge. Direct
-assignments and edits to levels that constrain only an opening still require RvtIO coverage.
+For direct rectangular opening edits, RvtIO updates the opening bounds, the solid, and the wall cut.
+A level reference assignment also updates the opening's saved dependencies. Changing the constraint
+keeps that edge's offset. An opening can follow a level that does not constrain its host wall.
+The opening's Unconnected Height is read-only and follows the two edges.
+In Revit 2020–2022, moving the host's base level translates the opening when both edges use other levels.
+RvtIO preserves this displacement when the host moves again. Changing an opening parameter or one
+of its own levels recalculates both edges from the saved constraints and offsets.
+In Revit 2023–2027, an opening with independent constraints keeps its elevation when the host's base level moves.
+
+The main matrix covered 64 projects with direct assignments and 32 batches that changed levels after reassigning
+opening constraints. Thirty further checks in Revit 2020–2022 covered repeated host motion and edits after
+a host translation. All 126 edited projects matched the Revit API after Save As and reopening without
+Audit in Revit 2020–2025 and 2027. Revit 2027 checked the 2026 format after upgrade. All 80 refused
+batches preserved the original bytes and created no output.
 
 Empty-text checks covered walls, basic wall types, and rooms with non-shared definitions and shared definitions
 with either setting of `HideWhenNoValue`. A first empty assignment and a new empty assignment after clearing
@@ -1050,6 +1062,7 @@ each case the source bytes stayed intact and no output was created.
 | Additional writable RVT built-ins and element classes | The RVT parameter writer supports the combinations in the table above. Other built-in fields, loaded family categories, and layouts beyond verified directly linked derived symbols still require coverage. |
 | Datum names | Revit exposes `DATUM_TEXT` as read-only on individual multi-segment grid members. The tested level and grid type name parameter (`SYMBOL_NAME_PARAM`) is read-only through `Parameter.Set`, and the tested levels expose their writable name as `DATUM_TEXT`. Grouped elements, design options, other datum classes, and renaming corresponding views with a level still require RvtIO coverage. |
 | Level elevation with dependents | RvtIO supports the verified plan, sketch plane, and straight basic wall dependencies described above. Verified rectangular openings must remain inside the wall and follow its saved level constraints. Changes that alter the cut topology and cuts with unverified face or edge links still require coverage. So do joined walls and other model geometry. Plans with templates, plan regions, underlays, or other unverified range layouts also require coverage. The API property `Level.ProjectElevation` is read-only. [Autodesk project elevation reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/895ef506-bfea-cc4e-31f8-aad2af6672e4.htm) |
+| Direct rectangular opening edits | Revit can change the cut topology when an opening crosses a wall's top or base. Direct edits currently require the opening to remain entirely inside a verified wall, with clearance from other wall cuts. Joined walls and unverified opening dependencies still require coverage. |
 | Additional built-ins in standalone families | The verified Generic Model, Door, Window, and Furniture fields are listed above. Other built-ins, other family categories, and selecting an unnamed family type still require coverage. |
 | User Currency parameters in standalone families | RvtIO supports verified type values, instance defaults, and formula dependencies. Additional Currency display formats still require coverage. |
 | Family-declared Currency parameters in projects | RvtIO supports the verified primary type and top-level instance assignments, exact type formula inverses, and existing global associations described above. Other formula paths and geometry dependencies still require coverage. |

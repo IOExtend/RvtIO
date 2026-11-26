@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using OpenMcdf;
 using RvtIO.BuiltIns;
 using RvtIO.Model;
@@ -7,11 +8,36 @@ namespace RvtIO.Writing;
 
 internal static partial class WallHeightWriter
 {
+    private static long? FindOpeningHost(RootStorage root, PartitionFraming.Tags tags, int idWidth,
+        WideBlockWalker walker, ParameterWriter.Edit edit, ParameterWriter.Pending pending)
+    {
+        byte[]? body = null;
+        ParameterWriter.ScanPartitions(root, tags, idWidth, (_, record) =>
+        {
+            if (record.Block != 0 || record.Channel != ElementChannel || record.Owner != (ulong)edit.ElementId)
+                return;
+            if (body is not null)
+                throw Layout();
+            body = record.Body.ToArray();
+        }, pending);
+        if (body is not { Length: >= sizeof(ushort) })
+            return null;
+        int tag = BinaryPrimitives.ReadUInt16LittleEndian(body);
+        if (walker.Class(tag)?.Name != "SWallRectOpening")
+            return null;
+        var walk = walker.Run(body, 0, body.Length, tag);
+        var opening = new Archive(body, walk, walker);
+        if (!walk.Exact || walk.EmptyEntityAt >= 0 || opening.Integer(-1, "Element.m_id") != edit.ElementId)
+            throw Layout();
+        return opening.Integer(-1, "OpeningBase.m_hostId");
+    }
+
     private static (HeightInterval Height, Dictionary<int, HeightInterval>? FaceHeights, List<RvtPartitionRecordEdit> Edits)
-        MoveLevelOpenings(
+        MoveOpenings(
         RootStorage root, PartitionFraming.Tags tags, int idWidth, ParameterWriter.Pending pending,
         Archive wall, WideBlockWalker walker, HeightInterval wallHeight, IReadOnlyList<OpeningInterval> openings,
-        LevelMove move, Func<byte[], string, bool, Archive> read, Func<long, double> levelElevation)
+        LevelMove? move, ParameterWriter.Edit? openingEdit, long? openingLevel,
+        Func<byte[], string, bool, Archive> read, Func<long, double> levelElevation)
     {
         var owners = openings.ToDictionary(o => wall.Integer(o.Step, "WallCutoutGStepBase.m_instId"));
         var records = new Dictionary<(long Id, int Channel), (int Partition, byte[] Body)>();
@@ -26,9 +52,15 @@ internal static partial class WallHeightWriter
             throw Layout();
 
         long wallBaseLevel = wall.Integer(-1, "Element.m_assocLevelId");
-        long wallTopLevel = wall.Integer(-1, "VWall.m_upToLevelId");
+        long wallId = wall.Integer(-1, "Element.m_id");
+        double wallDatum = levelElevation(wallBaseLevel);
+        double nextWallDatum = Destination(wallBaseLevel, wallDatum);
+        int? savedRelease = SchemaRelease.Saved(BasicFileInfoReader.Read(root).GetValueOrDefault("RevitVersion"));
+        if (savedRelease is not (>= 2020 and <= 2027))
+            throw ParameterWriter.Unverified("The saving release is needed to verify rectangular opening movement.");
+        bool translatesWithHost = savedRelease <= 2022;
         var elevations = new Dictionary<double, double>();
-        var openingHeights = new List<(int Step, double PreviousBottom, double PreviousTop, double Bottom, double Top)>();
+        var openingHeights = new List<(OpeningInterval Before, OpeningInterval After)>();
         bool sharedElevationMovesApart = false;
         var edits = new List<RvtPartitionRecordEdit>();
         foreach (var (id, cut) in owners)
@@ -49,50 +81,101 @@ internal static partial class WallHeightWriter
                 || header.Integer(-1, "ElementHeader.m_categroryId") != (int)BuiltInCategory.OST_SWallRectOpening
                 || !GElementArchiveHandles.IsCanonical(geometry.Walk)
                 || geometry.Integer(-1, idWidth == sizeof(long) ? "GRep.m_elementId" : "GInfo.m_tag") != id)
-                throw ParameterWriter.Unverified("The level's rectangular opening has unverified geometry or dependencies.");
+                throw ParameterWriter.Unverified("The rectangular opening has unverified geometry or dependencies.");
 
-            long lowerLevel = Value(opening, id, BuiltInParameter.WALL_BASE_CONSTRAINT, StorageType.ElementId).Integer;
-            long upperLevel = Value(opening, id, BuiltInParameter.WALL_HEIGHT_TYPE, StorageType.ElementId).Integer;
-            if (lowerLevel != wallBaseLevel || upperLevel != (wallTopLevel > 0 ? wallTopLevel : wallBaseLevel))
-                throw ParameterWriter.Unverified("The opening's constraints do not match the verified wall levels.");
+            var lowerReference = Value(opening, id, BuiltInParameter.WALL_BASE_CONSTRAINT, StorageType.ElementId);
+            var upperReference = Value(opening, id, BuiltInParameter.WALL_HEIGHT_TYPE, StorageType.ElementId);
+            var associatedLevel = opening.Field(-1, "Element.m_assocLevelId");
+            long lowerLevel = lowerReference.Integer, upperLevel = upperReference.Integer;
+            if (associatedLevel.Integer != lowerLevel)
+                throw Layout();
 
+            var lowerOffset = Value(opening, id, BuiltInParameter.WALL_BASE_OFFSET, StorageType.Double);
+            var upperOffset = Value(opening, id, BuiltInParameter.WALL_TOP_OFFSET, StorageType.Double);
+            long nextLowerLevel = lowerLevel, nextUpperLevel = upperLevel;
+            double nextLowerOffset = lowerOffset.Real, nextUpperOffset = upperOffset.Real;
+            if (openingEdit is { } edit && edit.ElementId == id)
+            {
+                if (edit.Parameter == BuiltInParameter.WALL_BASE_CONSTRAINT)
+                    nextLowerLevel = openingLevel ?? throw Layout();
+                else if (edit.Parameter == BuiltInParameter.WALL_HEIGHT_TYPE)
+                    nextUpperLevel = openingLevel ?? throw Layout();
+                else if (ParameterMeasurement.Parse(UnitType.UT_Length, edit.Value!) is not double measurement)
+                    throw new RvtWriteRefusedException("invalid-parameter-value", "An opening offset requires a finite length with an explicit unit.");
+                else if (edit.Parameter == BuiltInParameter.WALL_BASE_OFFSET)
+                    nextLowerOffset = measurement;
+                else if (edit.Parameter == BuiltInParameter.WALL_TOP_OFFSET)
+                    nextUpperOffset = measurement;
+                else
+                    throw Layout();
+            }
+
+            bool constraintChanged = nextLowerLevel != lowerLevel || nextUpperLevel != upperLevel;
+            bool propertyChanged = constraintChanged || nextLowerOffset != lowerOffset.Real || nextUpperOffset != upperOffset.Real;
+            bool constraintMoved = move is { } linked && linked.Previous != linked.Destination
+                && (linked.Id == lowerLevel || linked.Id == upperLevel);
             double lowerDatum = levelElevation(lowerLevel), upperDatum = levelElevation(upperLevel);
-            double lowerOffset = Value(opening, id, BuiltInParameter.WALL_BASE_OFFSET, StorageType.Double).Real;
-            double upperOffset = Value(opening, id, BuiltInParameter.WALL_TOP_OFFSET, StorageType.Double).Real;
-            double nextLowerDatum = Destination(lowerLevel, lowerDatum);
-            double bottom = nextLowerDatum + lowerOffset;
-            double top = Destination(upperLevel, upperDatum) + upperOffset;
+            double bottom = Destination(nextLowerLevel, levelElevation(nextLowerLevel)) + nextLowerOffset;
+            double top = Destination(nextUpperLevel, levelElevation(nextUpperLevel)) + nextUpperOffset;
+            // Revit 2020-2022 translate both edges with the host until an opening constraint regenerates them.
+            if (translatesWithHost && !propertyChanged && !constraintMoved)
+            {
+                bottom = cut.Bottom + (nextWallDatum - wallDatum);
+                top = cut.Top + (nextWallDatum - wallDatum);
+            }
             int outline = header.Target(-1, "ElementHeader.m_pBBox", "Outline");
             int rectangle = opening.Target(-1, "OpeningBase.m_oRectOpeningData", "RectOpeningData");
             var savedHeight = Value(opening, id, BuiltInParameter.WALL_USER_HEIGHT_PARAM, StorageType.Double);
             var interval = new HeightInterval(cut.Bottom, savedHeight.Real, top - bottom) { NewBase = bottom };
-            if (lowerDatum + lowerOffset != cut.Bottom || upperDatum + upperOffset != cut.Top
+            double savedSillShift = cut.Bottom - (lowerDatum + lowerOffset.Real);
+            double savedHeadShift = cut.Top - (upperDatum + upperOffset.Real);
+            if (savedSillShift != savedHeadShift || (!translatesWithHost && savedSillShift != 0)
                 || opening.Real(rectangle, "RectOpeningData.m_aPoint@0/2") != cut.Bottom
                 || opening.Real(rectangle, "RectOpeningData.m_aPoint@1/2") != cut.Top
-                || opening.Real(rectangle, "RectOpeningData.m_lowerLeftCorner@1") != cut.Bottom - lowerDatum
-                || opening.Real(rectangle, "RectOpeningData.m_upperRightCorner@1") != cut.Top - lowerDatum
+                || opening.Real(rectangle, "RectOpeningData.m_lowerLeftCorner@1") != cut.Bottom - wallDatum
+                || opening.Real(rectangle, "RectOpeningData.m_upperRightCorner@1") != cut.Top - wallDatum
                 || interval.Top != cut.Top || interval.NewTop != top
                 || header.Real(outline, "Outline.m_minmax@0/2") != interval.BoundsBase
                 || header.Real(outline, "Outline.m_minmax@1/2") != cut.Top)
                 throw Layout();
-            if (!double.IsFinite(bottom) || !double.IsFinite(top) || top <= bottom
+            if (!double.IsFinite(bottom) || !double.IsFinite(top) || top - bottom <= VertexTolerance
                 || CutAt(wallHeight.NewBase, wallHeight.NewTop, bottom, top) != OpeningCut.Interior)
-                throw ParameterWriter.Unverified("Moving the level would take a rectangular opening outside its verified interior cut.");
+                throw ParameterWriter.Unverified("Changing the rectangular opening would take it outside its verified interior cut.");
 
             sharedElevationMovesApart |= !AddElevation(cut.Bottom, bottom);
             sharedElevationMovesApart |= !AddElevation(cut.Top, top);
-            openingHeights.Add((cut.Step, cut.Bottom, cut.Top, bottom, top));
+            var resized = cut with { Bottom = bottom, Top = top };
+            if (openingHeights.Any(other => !OpeningCutsRemainSeparate(other.After, resized)))
+                throw ParameterWriter.Unverified("Changing the rectangular opening would merge or touch another wall cut.");
+            openingHeights.Add((cut, resized));
             _ = ResizeGeometry(geometry, interval, [], openingSolid: true);
-            if (bottom == cut.Bottom && top == cut.Top && nextLowerDatum == lowerDatum)
+            if (!propertyChanged && bottom == cut.Bottom && top == cut.Top && nextWallDatum == wallDatum)
                 continue;
 
+            if (nextLowerOffset != lowerOffset.Real)
+                opening.Write(lowerOffset, nextLowerOffset);
+            if (nextUpperOffset != upperOffset.Real)
+                opening.Write(upperOffset, nextUpperOffset);
+            if (nextLowerLevel != lowerLevel)
+            {
+                opening.WriteId(associatedLevel, nextLowerLevel, idWidth);
+                opening.WriteId(lowerReference, nextLowerLevel, idWidth);
+            }
+            if (nextUpperLevel != upperLevel)
+                opening.WriteId(upperReference, nextUpperLevel, idWidth);
             opening.Write(rectangle, "RectOpeningData.m_aPoint@0/2", bottom);
             opening.Write(rectangle, "RectOpeningData.m_aPoint@1/2", top);
-            opening.Write(rectangle, "RectOpeningData.m_lowerLeftCorner@1", bottom - nextLowerDatum);
-            opening.Write(rectangle, "RectOpeningData.m_upperRightCorner@1", top - nextLowerDatum);
+            // The rectangle is relative to the host's base level, even when the opening has its own levels.
+            opening.Write(rectangle, "RectOpeningData.m_lowerLeftCorner@1", bottom - nextWallDatum);
+            opening.Write(rectangle, "RectOpeningData.m_upperRightCorner@1", top - nextWallDatum);
             opening.Write(savedHeight, interval.After);
             header.Write(outline, "Outline.m_minmax@0/2", interval.NewBoundsBase);
             header.Write(outline, "Outline.m_minmax@1/2", top);
+            if (openingEdit?.ElementId == id)
+            {
+                headerBody = UpdateOpeningParents(header, opening, id, wallId, lowerLevel, upperLevel, nextLowerLevel, nextUpperLevel, idWidth);
+                _ = read(headerBody, "ElementHeader", false);
+            }
             _ = read(body, "SWallRectOpening", false);
             _ = read(geometryBody, "GElement", true);
             edits.AddRange([new(partition, HeaderChannel, (ulong)id, headerBody),
@@ -104,15 +187,15 @@ internal static partial class WallHeightWriter
         // Shared elevations have to be resolved through the original cutting faces.
         wallHeight = wallHeight with { OpeningElevationsRequiringOwner = elevations.Keys.ToHashSet() };
         var cuttingFaces = new Dictionary<int, HeightInterval>();
-        foreach (var (step, previousBottom, previousTop, bottom, top) in openingHeights)
+        foreach (var (before, after) in openingHeights)
         {
             var height = wallHeight with
             {
-                OpeningElevations = new Dictionary<double, double> { [previousBottom] = bottom, [previousTop] = top },
+                OpeningElevations = new Dictionary<double, double> { [before.Bottom] = after.Bottom, [before.Top] = after.Top },
             };
             for (int side = 0; side < 4; side++)
             {
-                long tag = wall.Integer(step, $"WallRectOpeningGStep.m_OpeningFacesIds@{side}");
+                long tag = wall.Integer(before.Step, $"WallRectOpeningGStep.m_OpeningFacesIds@{side}");
                 if (tag <= 0 || tag >= int.MaxValue || !cuttingFaces.TryAdd((int)tag, height))
                     throw Layout();
             }
@@ -125,11 +208,52 @@ internal static partial class WallHeightWriter
         WideBlockWalker.Capture Value(Archive opening, long id, BuiltInParameter parameter, StorageType type) =>
             ParameterWriter.FindValue(walker, opening.Walk, new(id, (int)parameter, null), type)?.Value ?? throw Layout();
 
-        double Destination(long id, double previous) => id != move.Id ? previous
-            : previous == move.Previous ? move.Destination : throw Layout();
+        double Destination(long id, double previous) => move is not { } movement || id != movement.Id ? previous
+            : previous == movement.Previous ? movement.Destination : throw Layout();
 
         bool AddElevation(double before, double after) =>
             elevations.TryAdd(before, after) || elevations[before] == after;
+    }
+
+    internal static bool OpeningCutsRemainSeparate(OpeningInterval first, OpeningInterval second) =>
+        second.Left - first.Right > VertexTolerance || first.Left - second.Right > VertexTolerance
+        || second.Bottom - first.Top > VertexTolerance || first.Bottom - second.Top > VertexTolerance;
+
+    private static byte[] UpdateOpeningParents(Archive header, Archive opening, long id, long wall,
+        long lower, long upper, long nextLower, long nextUpper, int idWidth)
+    {
+        int parents = header.Target(-1, "ElementHeader.m_parents", "ElementParents");
+        long phase = opening.Integer(-1, "Element.m_createdPhaseId");
+        if (phase <= 0 || opening.Integer(-1, "Element.m_demolishedPhaseId") != -1
+            || header.Walk.Captures.Any(c => c.QueueIndex == parents && c.DeclaringClass == "ElementParents"
+                && c.Key.EndsWith('#') && c.Integer != 0 && c.Field is not ("m_deletion" or "m_appearanceParents"))
+            || header.Walk.Captures.Any(c => c.DeclaringClass == "ElementRegenerationInfo" && c.Field == "m_otherElementId" && c.Integer > 0))
+            throw Layout();
+
+        long[] original = ParentIds(lower, upper);
+        int start = header.Field(parents, "ElementParents.m_deletion#").ValueOffset;
+        int end = header.Field(parents, "ElementParents.m_regenOnly#").ValueOffset;
+        if (header.Integer(parents, "ElementParents.m_appearanceParents#") != 1
+            || header.Integer(parents, "ElementParents.m_appearanceParents@0") != lower
+            || !header.Matches(start, end, EncodeParents(original)))
+            throw Layout();
+
+        if (lower == nextLower && upper == nextUpper)
+            return header.Body;
+        if (lower != nextLower)
+            header.WriteId(header.Field(parents, "ElementParents.m_appearanceParents@0"), nextLower, idWidth);
+        return ParameterWriter.ReplaceValue(header.Body, start, end - start, EncodeParents(ParentIds(nextLower, nextUpper)));
+
+        long[] ParentIds(long bottom, long top) => new[] { phase, wall, id, bottom, top }.Distinct().Order().ToArray();
+
+        byte[] EncodeParents(long[] values)
+        {
+            byte[] encoded = new byte[sizeof(uint) + values.Length * idWidth];
+            BinaryPrimitives.WriteUInt32LittleEndian(encoded, (uint)values.Length);
+            for (int i = 0; i < values.Length; i++)
+                UserParameterWriter.EncodeElementId(values[i], idWidth).CopyTo(encoded.AsSpan(sizeof(uint) + i * idWidth));
+            return encoded;
+        }
     }
 
     private static (Dictionary<uint, HeightInterval> Faces, Dictionary<int, HeightInterval> Edges) FindOpeningGeometry(

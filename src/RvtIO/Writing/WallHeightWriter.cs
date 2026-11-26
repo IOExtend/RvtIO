@@ -22,8 +22,12 @@ internal static partial class WallHeightWriter
     private const double GeometryCoordinateTolerance = 1e-9;
     private const string All = WideBlockWalker.AllItemsKeyPrefix;
 
-    internal static bool IsWallDimension(BuiltInParameter parameter) =>
-        parameter is BuiltInParameter.WALL_USER_HEIGHT_PARAM or BuiltInParameter.WALL_BASE_OFFSET or BuiltInParameter.WALL_TOP_OFFSET;
+    internal static bool IsWallOrOpeningParameter(BuiltInParameter parameter) =>
+        parameter is BuiltInParameter.WALL_USER_HEIGHT_PARAM or BuiltInParameter.WALL_BASE_OFFSET or BuiltInParameter.WALL_TOP_OFFSET
+        || IsOpeningConstraint(parameter);
+
+    private static bool IsOpeningConstraint(BuiltInParameter parameter) =>
+        parameter is BuiltInParameter.WALL_BASE_CONSTRAINT or BuiltInParameter.WALL_HEIGHT_TYPE;
 
     internal readonly record struct LevelMove(long Id, double Previous, double Destination);
 
@@ -32,6 +36,21 @@ internal static partial class WallHeightWriter
         LevelMove? levelMove = null)
     {
         var walker = new WideBlockWalker(schema, CaptureKey, []);
+        ParameterWriter.Edit? openingEdit = null;
+        if (levelMove is null)
+        {
+            if (FindOpeningHost(root, tags, idWidth, walker, edit, pending) is long host)
+            {
+                if (edit.Parameter == BuiltInParameter.WALL_USER_HEIGHT_PARAM)
+                    throw new RvtWriteRefusedException("read-only-parameter", "Revit computes the height of a rectangular wall opening.");
+                if (!elementIds.Contains(host) || host == edit.ElementId)
+                    throw Layout();
+                openingEdit = edit;
+                edit = edit with { ElementId = host };
+            }
+            else if (IsOpeningConstraint(edit.Parameter))
+                throw new RvtWriteRefusedException("unsupported-parameter", "This level constraint is supported on verified rectangular wall openings.");
+        }
         var headerWalker = new WideBlockWalker(schema, (c, f) =>
             c.Name is "ElementParents" or "ElementRegenerationInfo" or "ClassDefinitionRef"
             || (c.Name, f.Name) is ("ElementHeader", "m_categroryId") ? CaptureKey(c, f) : null, []);
@@ -45,6 +64,7 @@ internal static partial class WallHeightWriter
         var globals = new HashSet<long>();
         var wallTypes = new HashSet<long>();
         var related = new HashSet<ulong>();
+        bool hasOpeningDependents = false;
         var warnings = new List<byte[]>();
         ulong highestStoredOwner = 0;
         bool incompleteDependencies = false;
@@ -79,10 +99,15 @@ internal static partial class WallHeightWriter
                         hasOtherWall |= elementClass is not (>= 0 and <= ushort.MaxValue and long tag)
                             || !walker.IsA((int)tag, "WallType");
                     }
-                    if (header.Captures.Any(c => c.Kind == WideBlockWalker.CaptureKind.Integer && c.Integer == edit.ElementId
+                    foreach (var parent in header.Captures.Where(c => c.Kind == WideBlockWalker.CaptureKind.Integer
                         && (c.DeclaringClass == "ElementParents" && c.Key.Contains('@')
                             || c.DeclaringClass == "ElementRegenerationInfo" && c.Field == "m_otherElementId")))
-                        related.Add(record.Owner);
+                    {
+                        if (parent.Integer == edit.ElementId)
+                            related.Add(record.Owner);
+                        if (openingEdit is { } opened && record.Owner != (ulong)opened.ElementId && parent.Integer == opened.ElementId)
+                            hasOpeningDependents = true;
+                    }
                 }
             }
             if (record.Channel == ElementChannel)
@@ -120,11 +145,16 @@ internal static partial class WallHeightWriter
             throw ParameterWriter.Unverified("The element is outside the verified basic wall context.");
 
         long topConstraint = wall.Integer(-1, "VWall.m_upToLevelId");
-        if (!offsetEdit && topConstraint > 0)
-            throw new RvtWriteRefusedException("read-only-parameter", "A level constrains the top of the wall.");
-        if (edit.Parameter == BuiltInParameter.WALL_TOP_OFFSET && topConstraint == -1)
-            throw new RvtWriteRefusedException("read-only-parameter", "The top of the wall has no level constraint.");
-        GlobalParameterWriter.VerifyElementParameter(walker, wall.Walk, idWidth, elementIds, globals, edit.ParameterId);
+        if (openingEdit is null)
+        {
+            if (!offsetEdit && topConstraint > 0)
+                throw new RvtWriteRefusedException("read-only-parameter", "A level constrains the top of the wall.");
+            if (edit.Parameter == BuiltInParameter.WALL_TOP_OFFSET && topConstraint == -1)
+                throw new RvtWriteRefusedException("read-only-parameter", "The top of the wall has no level constraint.");
+            GlobalParameterWriter.VerifyElementParameter(walker, wall.Walk, idWidth, elementIds, globals, edit.ParameterId);
+        }
+        if (hasOpeningDependents)
+            throw ParameterWriter.Unverified("The rectangular wall opening has unverified dependent elements.");
         long roomBounding = wall.Integer(-1, "HostObj.m_roomBounding");
         if (topConstraint is 0 or < -1 || wall.Walk.Queue.Any(tag => walker.IsA(tag, "GroupMembership"))
             || roomBounding is not (0 or 1) || (roomBounding == 1 && hasSpatialContext)
@@ -138,9 +168,17 @@ internal static partial class WallHeightWriter
             || headerRecord.Integer(parents, "ElementParents.m_nonDetermRegenChildren#") != 0)
             throw ParameterWriter.Unverified("The wall can regenerate unverified dependent elements.");
 
+        long? openingLevel = null;
+        if (openingEdit is { } constraint && IsOpeningConstraint(constraint.Parameter))
+        {
+            openingLevel = UserParameterWriter.ReferenceId(constraint.Value);
+            if (openingLevel is not long level || !levels.TryGetValue(level, out var record) || record is null)
+                throw new RvtWriteRefusedException("invalid-parameter-value", "An opening constraint requires the ID of a project level.");
+        }
+
         double? value = null;
         WideBlockWalker.Capture? original = null;
-        if (levelMove is null)
+        if (levelMove is null && openingEdit is null)
         {
             value = ParameterMeasurement.Parse(UnitType.UT_Length, edit.Value!) is double measured
                 && (offsetEdit || measured >= MinimumVerifiedHeight)
@@ -153,8 +191,7 @@ internal static partial class WallHeightWriter
         var mirror = ParameterWriter.FindValue(walker, wall.Walk, edit with { ParameterId = ComputedWallHeight }, StorageType.Double)?.Value
             ?? throw Layout();
         long baseConstraint = wall.Integer(-1, "Element.m_assocLevelId");
-        if (levelMove is { } moved && moved.Id != baseConstraint && moved.Id != topConstraint)
-            throw Layout();
+        bool openingOnlyLevel = levelMove is { } moved && moved.Id != baseConstraint && moved.Id != topConstraint;
         int outline = headerRecord.Target(-1, "ElementHeader.m_pBBox", "Outline");
         var interval = PlanInterval(wall, walker, edit, baseConstraint, topConstraint, value, mirror, LevelElevation, levelMove);
         if (!double.IsFinite(interval.Top) || interval.Top <= interval.Base
@@ -164,6 +201,8 @@ internal static partial class WallHeightWriter
         int extendedReference = -1;
         if (!SameCoordinate(boundsTop, interval.Top))
         {
+            if (openingEdit is not null || openingOnlyLevel)
+                throw Layout();
             int reference = wall.Target(-1, "VWall.m_pRefFaces@3", "Face");
             extendedReference = wall.Target(reference, "Face.m_pSurf", "Plane");
             if (!MatchesAuxiliaryTop(interval.Base, interval.Before, boundsTop,
@@ -178,20 +217,26 @@ internal static partial class WallHeightWriter
         if (interval.After < MinimumVerifiedHeight || interval.NewTop <= interval.NewBase || x * x + y * y + z * z > ModelRadius * ModelRadius)
             throw new RvtWriteRefusedException("invalid-parameter-value", "The wall would extend beyond the verified model coordinate range.");
 
-        var openings = ReadOpenings(wall, walker, interval, edit.ElementId, related, openingRecords, levelMove is not null);
+        bool moveOpenings = levelMove is not null || openingEdit is not null;
+        var openings = ReadOpenings(wall, walker, interval, edit.ElementId, related, openingRecords, moveOpenings);
+        if ((openingOnlyLevel && openings.Count == 0)
+            || (openingEdit is { } target && !openings.Any(o => OpeningId(o) == target.ElementId)))
+            throw Layout();
         List<RvtPartitionRecordEdit> openingEdits = [];
         Dictionary<int, HeightInterval>? openingFaceHeights = null;
-        if (levelMove is { } openingMove && openings.Count != 0)
+        if (moveOpenings && openings.Count != 0)
         {
-            var openingPlan = MoveLevelOpenings(root, tags, idWidth, pending, wall, walker, interval, openings,
-                openingMove, ReadBody, LevelElevation);
+            var openingPlan = MoveOpenings(root, tags, idWidth, pending, wall, walker, interval, openings,
+                levelMove, openingEdit, openingLevel, ReadBody, LevelElevation);
             interval = openingPlan.Height;
             openingFaceHeights = openingPlan.FaceHeights;
             openingEdits = openingPlan.Edits;
         }
         var changes = openings.Where(o => o.Cut != o.Destination).ToArray();
         bool rebuildCut = changes.Length != 0 || openings.Any(o => IsAtBoundary(o.Cut) || IsAtBaseBoundary(o.Cut));
-        bool changed = levelMove is { } move ? move.Previous != move.Destination : value != original?.Real;
+        bool onlyOpeningChanges = openingEdit is not null || openingOnlyLevel;
+        bool changed = onlyOpeningChanges ? openingEdits.Count != 0
+            : levelMove is { } move ? move.Previous != move.Destination : value != original?.Real;
         bool bottomTransition = CanChangeBottomOpening(openings);
         bool removesCuts = CanRemoveOpeningCuts(openings);
         bool activatesCuts = CanActivateOpeningCuts(openings);
@@ -233,6 +278,9 @@ internal static partial class WallHeightWriter
                 throw ParameterWriter.Unverified("The wall face topology does not match the cached solid.");
             tables[i] = (start.ValueOffset, end.ValueOffset);
         }
+        if (onlyOpeningChanges)
+            return changed ? new([Updated(GeometryChannel), .. openingEdits], null) : null;
+
         if (original is { } editable && value is double requested)
             wall.Write(editable, requested);
         wall.Write(mirror, interval.After);
@@ -367,9 +415,11 @@ internal static partial class WallHeightWriter
             double newTopOffset = edit.Parameter == BuiltInParameter.WALL_TOP_OFFSET ? value ?? topOffset : topOffset;
             originalHeight = ConstrainedHeight(datum, baseOffset.Real, topDatum, topOffset);
             // A previously regenerated wall can store the difference between its two saved endpoints.
-            if (levelMove is not null && computedHeight.Real == topDatum + topOffset - originalBase)
+            if (value is null && computedHeight.Real == topDatum + topOffset - originalBase)
                 originalHeight = computedHeight.Real;
-            newHeight = ConstrainedHeight(newDatum, newBaseOffset, Destination(topConstraint, topDatum), newTopOffset);
+            double newTopDatum = Destination(topConstraint, topDatum);
+            newHeight = newDatum == datum && newBaseOffset == baseOffset.Real && newTopDatum == topDatum && newTopOffset == topOffset
+                ? originalHeight : ConstrainedHeight(newDatum, newBaseOffset, newTopDatum, newTopOffset);
         }
         if (originalHeight != computedHeight.Real)
             throw Layout();
@@ -390,7 +440,7 @@ internal static partial class WallHeightWriter
         topElevation + topOffset - baseOffset - baseElevation;
 
     private static IReadOnlyList<OpeningInterval> ReadOpenings(Archive wall, WideBlockWalker walker, HeightInterval height,
-        long owner, IReadOnlySet<ulong> related, IReadOnlyDictionary<long, byte[]?> openingRecords, bool moveWithLevel)
+        long owner, IReadOnlySet<ulong> related, IReadOnlyDictionary<long, byte[]?> openingRecords, bool moveOpenings)
     {
         int[] steps = wall.Nodes("WallRectOpeningGStep").ToArray();
         var cutOwners = steps.Select(step => (ulong)wall.Integer(step, "WallCutoutGStepBase.m_instId")).ToHashSet();
@@ -435,7 +485,7 @@ internal static partial class WallHeightWriter
             double bottom = Math.Min(z0, z1);
             double top = Math.Max(z0, z1);
             var cut = CutAt(height.Base, height.Top, bottom, top);
-            var destination = moveWithLevel ? cut : CutAt(height.NewBase, height.NewTop, bottom, top);
+            var destination = moveOpenings ? cut : CutAt(height.NewBase, height.NewTop, bottom, top);
             if (opening.Integer(rectangle, "RectOpeningData.m_nUvFaceId") != 0 || left <= leftLimit || right >= rightLimit
                 || right <= left || cut == OpeningCut.Unverified || destination == OpeningCut.Unverified)
                 throw ParameterWriter.Unverified("The opening may change topology at the requested height.");
@@ -1231,6 +1281,15 @@ internal static partial class WallHeightWriter
                 || walker.Class((int)field.Integer)?.Name != expectedClass)
                 throw Layout();
             return field.QueuePosition;
+        }
+
+        internal void WriteId(WideBlockWalker.Capture field, long value, int idWidth)
+        {
+            if (field.Kind != WideBlockWalker.CaptureKind.Integer || field.ValueOffset < sizeof(ushort)
+                || field.ValueOffset > body.Length - idWidth
+                || !body.AsSpan(field.ValueOffset, idWidth).SequenceEqual(UserParameterWriter.EncodeElementId(field.Integer, idWidth)))
+                throw Layout();
+            UserParameterWriter.EncodeElementId(value, idWidth).CopyTo(body.AsSpan(field.ValueOffset, idWidth));
         }
 
         internal void Write(int queue, string key, double value) => Write(Field(queue, key), value);

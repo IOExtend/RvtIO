@@ -1206,6 +1206,8 @@ public sealed partial class SetParameterTests : IDisposable
     [InlineData(BuiltInParameter.WALL_USER_HEIGHT_PARAM, "12.75 ft", "unverified-parameter-storage")]
     [InlineData(BuiltInParameter.WALL_BASE_OFFSET, "-2 ft", "unverified-parameter-storage")]
     [InlineData(BuiltInParameter.WALL_TOP_OFFSET, "2 ft", "unverified-parameter-storage")]
+    [InlineData(BuiltInParameter.WALL_BASE_CONSTRAINT, "181", "unsupported-parameter")]
+    [InlineData(BuiltInParameter.WALL_HEIGHT_TYPE, "181", "unsupported-parameter")]
     [InlineData(BuiltInParameter.WALL_USER_HEIGHT_PARAM, null, "unsupported-parameter-clear")]
     [InlineData(BuiltInParameter.WALL_BASE_OFFSET, null, "unsupported-parameter-clear")]
     [InlineData(BuiltInParameter.WALL_TOP_OFFSET, null, "unsupported-parameter-clear")]

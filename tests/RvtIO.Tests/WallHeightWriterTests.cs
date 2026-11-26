@@ -28,6 +28,21 @@ public class WallHeightWriterTests
         Assert.Equal(newBoundsBase, interval.NewBoundsBase);
     }
 
+    [Theory]
+    [InlineData(8, 3, true)]
+    [InlineData(5, 6, true)]
+    [InlineData(5, 5, false)]
+    [InlineData(7, 5.0001, false)]
+    [InlineData(5, 4, false)]
+    public void DistinguishesSeparateOpeningCutsFromTouchingOrOverlappingCuts(double left, double bottom, bool expected)
+    {
+        var first = new WallHeightWriter.OpeningInterval(0, 3, 7, 2, 5,
+            WallHeightWriter.OpeningCut.Interior, WallHeightWriter.OpeningCut.Interior);
+        var second = first with { Step = 1, Left = left, Right = left + 2, Bottom = bottom, Top = bottom + 2 };
+        Assert.Equal(expected, WallHeightWriter.OpeningCutsRemainSeparate(first, second));
+        Assert.Equal(expected, WallHeightWriter.OpeningCutsRemainSeparate(second, first));
+    }
+
     [Fact]
     public void MatchesAnOpeningElevationInTheFaceCoordinates()
     {

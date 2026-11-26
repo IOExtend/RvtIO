@@ -118,8 +118,25 @@ public sealed partial class SetParameterTests
         Assert.False(File.Exists(Output));
     }
 
+    [Fact]
+    public void RefusesTheComputedOpeningHeightAfterAnEarlierValidEdit()
+    {
+        string source = CreateElevationSource(0, rectangularOpening: true);
+        byte[] original = File.ReadAllBytes(source);
+
+        var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetParameters(source, Output,
+        [
+            new(ElevationLevelId, (int)BuiltInParameter.LEVEL_ELEV, "3.25 ft"),
+            new(ElevationDependentId, (int)BuiltInParameter.WALL_USER_HEIGHT_PARAM, "4 ft"),
+        ]));
+
+        Assert.Equal("read-only-parameter", error.Kind);
+        Assert.Equal(original, File.ReadAllBytes(source));
+        Assert.False(File.Exists(Output));
+    }
+
     private string CreateElevationSource(int elevationBase, bool dependent = false, bool differentFace = false,
-        bool? renamedRangeFields = null, bool dependentWall = false)
+        bool? renamedRangeFields = null, bool dependentWall = false, bool rectangularOpening = false)
     {
         var tags = Tags(2022);
         var schema = new SchemaStreamEditorTests.Writer();
@@ -148,7 +165,13 @@ public sealed partial class SetParameterTests
         schema.Top(new("ActiveGeoLocationTrackingElement", new Back(18), 1,
             [R("m_activeGeoLocationId", 14), R("m_projectGeoLocationId", 14)], [])); // 30
         Add("SerializedDummy"); // 31
-        schema.Top(new(dependentWall ? "SWall" : "Dependent", new Back(18), 1, [], [])); // 32
+        if (rectangularOpening)
+        {
+            schema.Top(new("OpeningBase", new Back(18), 1, [R("m_hostId", 14)], [])); // 32
+            schema.Top(new("SWallRectOpening", new Back(32), 1, [], [])); // 33
+        }
+        else
+            schema.Top(new(dependentWall ? "SWall" : "Dependent", new Back(18), 1, [], [])); // 32
         if (renamedRangeFields.HasValue)
         {
             schema.Top(new("DBView", new Back(18), 1,
@@ -164,7 +187,7 @@ public sealed partial class SetParameterTests
                  new("m_pCutter", 14, 1), new("m_pPlanViewRange", 14, 1), new("m_pPlanViewRange2", 14, 1), new("m_pViewDepthCutter", 14, 1),
                  new("m_cutPlaneElev", 7), new("m_topClipElev", 7), new("m_bottomClipElev", 7), new("m_levelBelowElev", 7)], [])); // 37
         }
-        for (int tag = renamedRangeFields.HasValue ? 38 : 33; tag < tags.ContentKey; tag++)
+        for (int tag = renamedRangeFields.HasValue ? 38 : rectangularOpening ? 34 : 33; tag < tags.ContentKey; tag++)
             Add("Filler" + tag);
         foreach (string name in new[] { "ContentKey", "ContentMarker", "SegmentMarker", "SegmentCheckback", "SignatureMarker" })
             Add(name);
@@ -180,6 +203,12 @@ public sealed partial class SetParameterTests
         if (renamedRangeFields.HasValue)
             records = [.. records, (ElevationDependentId, (ushort)37, ElevationPlanBody(10)[2..]),
                 (ElevationOtherLevelId, (ushort)24, ElevationLevelBody(0, 0, ElevationOtherLevelId)[2..])];
+        else if (rectangularOpening)
+            records = [.. records, (ElevationDependentId, (ushort)33, Pack(w =>
+            {
+                Element(w, ElevationDependentId);
+                w.Write(ElevationTypeId);
+            }))];
         else if (dependent || dependentWall)
             records = [.. records, (ElevationDependentId, (ushort)32, Pack(w => Element(w, ElevationDependentId)))];
         if (dependentWall)
@@ -212,12 +241,13 @@ public sealed partial class SetParameterTests
                     ElevationLevelId or ElevationOtherLevelId => (int)BuiltInCategory.OST_Levels,
                     ElevationDependentId when renamedRangeFields.HasValue => (int)BuiltInCategory.OST_Views,
                     ElevationDependentId when dependentWall => (int)BuiltInCategory.OST_Walls,
+                    ElevationDependentId when rectangularOpening => (int)BuiltInCategory.OST_SWallRectOpening,
                     _ => 0,
                 });
                 w.Write(-1);
                 WritePointer(w, 0);
-                WritePointer(w, owner == ElevationDependentId ? 19 : 0);
-                if (owner == ElevationDependentId)
+                WritePointer(w, owner == ElevationDependentId && !rectangularOpening ? 19 : 0);
+                if (owner == ElevationDependentId && !rectangularOpening)
                 {
                     w.Write(1);
                     w.Write(ElevationLevelId);
