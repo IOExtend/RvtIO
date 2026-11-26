@@ -97,6 +97,16 @@ List the sheets and the viewports placed on them:
 rvtio sheets project.rvt sheets.json
 ```
 
+Inspect file metadata or inventory a folder recursively without reading geometry or `Partitions`:
+
+```sh
+rvtio info project.rvt
+rvtio info projects/ --csv --output inventory.csv --redact
+rvtio info projects/ --jsonl --no-recursive
+```
+
+`rvtio info` supports `.rvt`, `.rfa`, `.rte`, and `.rft` files (including templates and `.NNNN` backup files), reports Revit release/build, file type, worksharing state, and available save fields, keeps missing fields unknown (`null` in JSON/JSONL, empty in CSV), emits error rows with a non-zero exit code when any file in a folder is damaged, and redacts usernames and sensitive path segments across all report fields when `--redact` is passed.
+
 The catalog has the sheet number, name, issue date, by-lines and scale, the viewports of each sheet and the elements each sheet owns, plus the text and whole-number project/shared parameters of each sheet (`--params`, `--csv`, `--where NAME=VALUE` with `!=`/`~` and `*`/`?` wildcards). Page size, view placement, the displayed view and 2D content are not decoded; every limit is reported in the catalog itself. See [sheets and viewports](docs/sheets.md).
 
 Print the plan of a level to PDF — walls with their stored width, column footprints and grids, on the smallest paper that holds the drawing at the scale:

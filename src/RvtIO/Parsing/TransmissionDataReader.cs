@@ -14,6 +14,15 @@ internal static class TransmissionDataReader
             using var stream = root.OpenStream("TransmissionData");
             var data = new byte[stream.Length];
             stream.ReadExactly(data);
+            return Parse(data);
+        }
+        catch (Exception ex) when (MalformedInput.Is(ex)) { return null; } // missing or malformed transmission data
+    }
+
+    internal static TransmissionInfo? Parse(byte[] data)
+    {
+        try
+        {
             if (data.Length < 8) return null;
 
             // Format: [charCount:i32][UTF-16LE XML: charCount*2 bytes]

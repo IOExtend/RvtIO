@@ -32,12 +32,12 @@ internal static partial class BasicFileInfoReader
                 && data[pos + 5] == 0 && data[pos + 4] >= 0x20)
             {
                 string val = Encoding.Unicode.GetString(data, pos + 4, charCount * 2);
-                if (val.Contains(":\\") || val.Contains(":/"))
-                    result["LastSavePath"] = val;
+                if (val.Contains(":\\") || val.Contains(":/") || val.StartsWith("\\\\", StringComparison.Ordinal))
+                    result.TryAdd("LastSavePath", val);
                 else if (val.Length == 4 && val.All(char.IsDigit))
                     result.TryAdd("RevitVersion", val);
                 else if (val.Length > 8 && (val.Contains("(x64)") || val.Contains("(x86)")))
-                    result["Build"] = val;
+                    result.TryAdd("Build", val);
                 pos += 4 + charCount * 2;
             }
             else
@@ -50,45 +50,69 @@ internal static partial class BasicFileInfoReader
             int runStart = -1;
             for (int i = parity; i < data.Length - 1; i += 2)
             {
-                byte lo = data[i], hi = data[i + 1];
-                bool isText = (hi == 0 && lo >= 0x20 && lo <= 0x7E) || (hi == 0 && (lo == 0x09 || lo == 0x0A || lo == 0x0D));
+                char ch = (char)(data[i] | (data[i + 1] << 8));
+                bool isText = ch is '\t' or '\r' or '\n'
+                    || (ch >= 0x20 && ch < 0xFFFE && !char.IsControl(ch) && !char.IsSurrogate(ch));
                 if (isText) { if (runStart < 0) runStart = i; }
                 else
                 {
                     if (runStart >= 0 && i - runStart >= 8)
-                    {
-                        var sb = new StringBuilder();
-                        for (int j = runStart; j < i; j += 2) sb.Append((char)data[j]);
-                        string run = sb.ToString();
-                        bool anyKv = false;
-                        foreach (var lineRaw in run.Split('\r', '\n'))
-                        {
-                            string line = lineRaw.Trim();
-                            int ci = line.IndexOf(":\t");
-                            if (ci < 0) ci = line.IndexOf(": ");
-                            if (ci > 0 && ci < 60)
-                            {
-                                string key = line[..ci].Trim();
-                                string val = line[(ci + 2)..].Trim();
-                                if (key.Length > 0 && val.Length > 0 && !result.ContainsKey(key))
-                                { result[key] = val; anyKv = true; }
-                            }
-                        }
-                        if (!anyKv && run.Contains("Revit") && !result.ContainsKey("FullBuild"))
-                            result["FullBuild"] = run.Trim();
-                    }
+                        ParseTextRun(data, runStart, i, result);
                     runStart = -1;
                 }
             }
+            if (runStart >= 0 && data.Length - 1 - runStart >= 8)
+                ParseTextRun(data, runStart, data.Length - ((data.Length - runStart) & 1), result);
         }
         ReadCloudModel(data, result);
         if (result.TryGetValue("Revit Build", out string? labelledBuild)) result.TryAdd("Build", labelledBuild);
+        if (result.TryGetValue("Last Save Path", out string? labelledPath)) result.TryAdd("LastSavePath", labelledPath);
         if (result.TryGetValue("Format", out string? format)
             && format.Length == 4 && format.All(char.IsDigit))
             result["RevitVersion"] = format;
         if (!result.ContainsKey("RevitVersion") && ReleaseOfBuild(result) is { } release)
             result["RevitVersion"] = release;
         return result;
+    }
+
+    private static void ParseTextRun(byte[] data, int runStart, int runEnd, Dictionary<string, string> result)
+    {
+        string run = Encoding.Unicode.GetString(data, runStart, runEnd - runStart);
+        bool anyKv = false;
+        foreach (var lineRaw in run.Split('\r', '\n'))
+        {
+            string line = lineRaw.Trim();
+            int ci = line.IndexOf(":\t", StringComparison.Ordinal);
+            if (ci < 0) ci = line.IndexOf(": ", StringComparison.Ordinal);
+            if (ci > 0 && ci < 60)
+            {
+                string key = line[..ci].Trim();
+                string val = line[(ci + 2)..].Trim();
+                if (IsValidFieldKey(key) && val.Length > 0)
+                {
+                    if (key == CloudModelKey && !val.Equals("True", StringComparison.Ordinal) && !val.Equals("False", StringComparison.Ordinal))
+                        continue;
+                    result.TryAdd(key, val);
+                    anyKv = true;
+                }
+            }
+        }
+        if (!anyKv && run.Contains("Revit", StringComparison.Ordinal) && run.All(c => c < 0x80) && !result.ContainsKey("FullBuild"))
+            result["FullBuild"] = run.Trim();
+    }
+
+    private static bool IsValidFieldKey(string key)
+    {
+        if (key.Length == 0) return false;
+        bool hasLetter = false;
+        foreach (char c in key)
+        {
+            if (c > 0x7E || c < 0x20) return false;
+            if (char.IsLetter(c)) { hasLetter = true; continue; }
+            if (char.IsDigit(c) || c is ' ' or '\'' or '.' or '_' or '(' or ')' or '-') continue;
+            return false;
+        }
+        return hasLetter;
     }
     private static void ReadCloudModel(byte[] data, Dictionary<string, string> result)
     {
