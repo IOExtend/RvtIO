@@ -13,7 +13,8 @@ internal static partial class Program
     private sealed record ExportArguments(string[] Args, string RvtPath, string? IfcPath, string? CompactJsonPath, string? FullJsonPath, string? ScenePath,
         string? ExternalDumpPath, string? ExternalDumpClassPrefix,
         IfcProfile Profile, string? ExportPhaseOption, string? RoomPhaseOption, bool IncludeIfcRevitParameters, bool RevitParameterGroups, bool BaseQuantities,
-        string JsonClassPrefix, bool OpeningLegacyAxes, DateTimeOffset? IfcTimestamp, IfcUnitFamily? IfcLengthUnit);
+        string JsonClassPrefix, bool OpeningLegacyAxes, DateTimeOffset? IfcTimestamp, IfcUnitFamily? IfcLengthUnit,
+        IfcExportConfiguration MergedIfcConfiguration, string? SaveIfcConfigPath);
 
     private sealed record ExportInput(RevitFileInfo Geometry, RevitFileInfo Json, JsonReadFacts GeometryNames,
         JsonReadFacts JsonFacts, ParsingState? QuantityState, IReadOnlyCollection<uint> TableRows);
@@ -34,7 +35,7 @@ internal static partial class Program
     // The export: reads the file and writes the IFC, the compact JSON or the full JSON dump.
     private static int Export(ExportArguments arguments)
     {
-        var (args, rvtPath, ifcPath, compactJsonPath, fullJsonPath, scenePath, externalDumpPath, externalDumpClassPrefix, profile, exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, openingLegacyAxes, ifcTimestamp, ifcLengthUnit) = arguments;
+        var (args, rvtPath, ifcPath, compactJsonPath, fullJsonPath, scenePath, externalDumpPath, externalDumpClassPrefix, profile, exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, openingLegacyAxes, ifcTimestamp, ifcLengthUnit, mergedIfcConfig, saveIfcConfigPath) = arguments;
         WarnIfRevitLocalization(args);
 
         var exportOutputs = new List<(string Option, string Path)>();
@@ -206,8 +207,24 @@ internal static partial class Program
             // A 64-bit-id file has no scanned fallback names: the exporter reads the validated ones, as the JSON dump does.
             if (ifcModel.GeometryUndecoded)
                 RvtIO.Export.ValidatedElementNames.Apply(ifcModel, input.GeometryNames);
+
+            // Apply runtime-resolved numeric phase ids (from "last") back onto the unified configuration.
+            var finalConfig = mergedIfcConfig.Merge(new IfcExportConfiguration
+            {
+                Phases = new IfcPhaseConfiguration
+                {
+                    PhaseId = exportPhase ?? mergedIfcConfig.Phases.PhaseId,
+                    RoomPhaseId = roomPhase ?? mergedIfcConfig.Phases.RoomPhaseId,
+                },
+            });
+            if (saveIfcConfigPath != null)
+            {
+                File.WriteAllText(saveIfcConfigPath, finalConfig.ToJson() + Environment.NewLine, System.Text.Encoding.UTF8);
+                Console.Error.WriteLine($"IFC configuration written to {saveIfcConfigPath}");
+            }
+
             var skipLog = new SkipLog();
-            var exporter = new IfcExporter(Console.Error, includeIfcRevitParameters) { SkipLog = skipLog, ExportPhaseId = exportPhase, ExportAllPhases = exportPhaseOption == "all", RoomExportPhaseId = roomPhase, ExportRoomsOfAllPhases = roomPhaseOption == "all", RevitParameterGroups = revitParameterGroups, Profile = profile, BaseQuantities = baseQuantities, OpeningQuantitiesSwapped = openingLegacyAxes, Timestamp = ifcTimestamp, LengthUnit = ifcLengthUnit };
+            var exporter = new IfcExporter(finalConfig, Console.Error) { SkipLog = skipLog };
             var swExport = System.Diagnostics.Stopwatch.StartNew();
             exporter.Export(ifcModel, ifcPath);
             Console.Error.WriteLine($"Timing: export {swExport.Elapsed.TotalSeconds:F1}s");

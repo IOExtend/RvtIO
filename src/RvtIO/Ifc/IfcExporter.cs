@@ -225,42 +225,91 @@ public partial class IfcExporter
     private static readonly Guid HostedOpeningDepthParameterGuid =
         Guid.Parse("e140a591-7a59-4036-b7e4-074fbd8222ff");
 
+    private int? _exportPhaseId;
+    private bool? _exportAllPhases;
+    private int? _roomExportPhaseId;
+    private bool? _exportRoomsOfAllPhases;
+    private IfcProfile? _profile;
+    private bool? _revitParameterGroups;
+    private DateTimeOffset? _timestamp;
+    private IfcUnitFamily? _lengthUnit;
+    private IfcSchema? _schema;
+    private IfcModelView? _modelView;
+    private bool? _exportRoomsAsSpaces;
+    private readonly bool _revitPropertySetsExplicit;
+    private ResolvedIfcExportConfiguration _resolvedConfig = new IfcExportConfiguration().Resolve();
+
+    /// <summary>Creates an exporter driven by a unified <see cref="IfcExportConfiguration"/>.</summary>
+    public IfcExporter(IfcExportConfiguration configuration, TextWriter? diagnosticOutput = null)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        _diag = diagnosticOutput;
+        Configuration = configuration;
+    }
+
     /// <summary>Creates an exporter that writes diagnostics to <paramref name="diagnosticOutput"/> (null for none) and, with <paramref name="includeRevitPropertySets"/>, the Revit parameters as property sets.</summary>
     public IfcExporter(TextWriter? diagnosticOutput = null, bool includeRevitPropertySets = false)
     {
         _diag = diagnosticOutput;
         _includeRevitPropertySets = includeRevitPropertySets;
+        _revitPropertySetsExplicit = includeRevitPropertySets;
     }
 
     /// <summary>Receives the diagnostic messages of the export and of the parsers it runs; null (the default) is silent.</summary>
     public TextWriter? DiagnosticOutput { get => _diag; set => _diag = value; }
 
+    /// <summary>Optional unified configuration preset or serialized setup.</summary>
+    public IfcExportConfiguration? Configuration { get; init; }
+
+    /// <summary>Target IFC schema release (<see cref="IfcSchema.Ifc2x3"/> by default).</summary>
+    public IfcSchema Schema
+    {
+        get => _schema ?? Configuration?.Schema.Schema ?? (Configuration?.Preset is { } p && Enum.IsDefined(p) ? IfcExportConfiguration.FromPreset(p).Schema.Schema : null) ?? IfcSchema.Ifc2x3;
+        init => _schema = value;
+    }
+
+    /// <summary>Target IFC Model View Definition (<see cref="IfcModelView.Default"/> by default).</summary>
+    public IfcModelView ModelView
+    {
+        get => _modelView ?? Configuration?.Schema.ModelView ?? (Configuration?.Preset is { } p && Enum.IsDefined(p) ? IfcExportConfiguration.FromPreset(p).Schema.ModelView : null) ?? IfcModelView.Default;
+        init => _modelView = value;
+    }
+
+    /// <summary>Optional override controlling whether rooms export as <c>IfcSpace</c>.</summary>
+    public bool? ExportRoomsAsSpaces { get => _exportRoomsAsSpaces; init => _exportRoomsAsSpaces = value; }
+
     /// <summary>The phase whose state is exported: a project phase ID of the known phase order. Elements demolished at or before it, or
     /// created after it, are left out, and rooms follow it unless <see cref="RoomExportPhaseId"/> names another one. Null keeps the
     /// default of the profile: the last phase of the project for <see cref="IfcProfile.Current"/> (see <see cref="ResolveActivePhase"/>),
     /// no phase selection for <see cref="IfcProfile.Legacy"/>.</summary>
-    public int? ExportPhaseId { get; init; }
+    public int? ExportPhaseId { get => _exportPhaseId ?? _resolvedConfig.ExportPhaseId; init => _exportPhaseId = value; }
 
     /// <summary>Exports the elements and the rooms of every phase, whatever the default of the profile (the elements of a demolished
     /// phase included). Ignored when <see cref="ExportPhaseId"/> is set.</summary>
-    public bool ExportAllPhases { get; init; }
+    public bool ExportAllPhases { get => _exportAllPhases ?? (_resolvedConfig.PhaseScope == IfcPhaseScope.AllPhases); init => _exportAllPhases = value; }
 
     /// <summary>Optional native project phase ID for room selection only.</summary>
-    public int? RoomExportPhaseId { get; init; }
+    public int? RoomExportPhaseId { get => _roomExportPhaseId ?? _resolvedConfig.RoomExportPhaseId; init => _roomExportPhaseId = value; }
 
     /// <summary>
     /// Keeps the rooms of every phase for the current profile, whose default is the rooms of the
     /// last phase of the project (see <see cref="ResolveActiveRoomPhase"/>).
     /// </summary>
-    public bool ExportRoomsOfAllPhases { get; init; }
+    public bool ExportRoomsOfAllPhases { get => _exportRoomsOfAllPhases ?? (_resolvedConfig.RoomPhaseScope == IfcRoomPhaseScope.AllPhases); init => _exportRoomsOfAllPhases = value; }
 
     /// <summary>
     /// The IFC output dialect (see <see cref="IfcProfile"/>); <see cref="IfcProfile.Current"/> is
     /// the default and the primary target.
     /// </summary>
-    public IfcProfile Profile { get; init; } = IfcProfile.Current;
+    public IfcProfile Profile
+    {
+        get => _profile ?? Configuration?.Schema.Profile ?? (Configuration?.Preset is { } p && Enum.IsDefined(p) ? IfcExportConfiguration.FromPreset(p).Schema.Profile : null) ?? IfcProfile.Current;
+        init => _profile = value;
+    }
 
     private bool CurrentProfile => Profile == IfcProfile.Current;
+
+    private bool EffectiveIncludeRevitPropertySets => _revitPropertySetsExplicit || (_resolvedConfig.ExportRevitPropertySets || Configuration?.PropertySets.ExportRevitPropertySets == true || Configuration?.PropertySets.GroupRevitParametersByGroup == true);
 
     /// <summary>
     /// RVTIO_X_FBSM=0 keeps the IfcShellBasedSurfaceModel of open shells in the current profile.
@@ -272,7 +321,71 @@ public partial class IfcExporter
     /// Definition.Name in one property set per parameter group instead of the single
     /// RevitParameters set.
     /// </summary>
-    public bool RevitParameterGroups { get; init; }
+    public bool RevitParameterGroups { get => _revitParameterGroups ?? _resolvedConfig.RevitParameterGroups; init => _revitParameterGroups = value; }
+
+    private ResolvedIfcExportConfiguration BuildEffectiveConfiguration()
+    {
+        IfcExportConfiguration baseConfig = Configuration ?? new IfcExportConfiguration();
+        IfcPhaseScope? phaseScope = _exportPhaseId.HasValue
+            ? IfcPhaseScope.SpecificPhase
+            : _exportAllPhases == true ? IfcPhaseScope.AllPhases : null;
+        IfcRoomPhaseScope? roomScope = _roomExportPhaseId.HasValue
+            ? IfcRoomPhaseScope.SpecificPhase
+            : _exportRoomsOfAllPhases == true ? IfcRoomPhaseScope.AllPhases : null;
+
+        var apiOverrides = new IfcExportConfiguration
+        {
+            Schema = new IfcSchemaConfiguration
+            {
+                Schema = _schema,
+                ModelView = _modelView,
+                Profile = _profile,
+            },
+            Phases = new IfcPhaseConfiguration
+            {
+                Scope = phaseScope,
+                PhaseId = _exportPhaseId,
+                RoomScope = roomScope,
+                RoomPhaseId = _roomExportPhaseId,
+            },
+            UnitsAndCoordinates = new IfcCoordinateAndUnitConfiguration
+            {
+                LengthUnit = _lengthUnit,
+                HeaderTimestamp = _timestamp,
+            },
+            Spatial = new IfcSpatialAndRoomConfiguration
+            {
+                ExportRoomsAsSpaces = _exportRoomsAsSpaces,
+            },
+            Quantities = new IfcQuantityConfiguration
+            {
+                ExportBaseQuantities = _baseQuantities,
+                OpeningQuantityFrame = _openingQuantitiesSwapped.HasValue
+                    ? (_openingQuantitiesSwapped.Value ? IfcOpeningQuantityFrame.LegacyOpeningAxes : IfcOpeningQuantityFrame.HostAxes)
+                    : null,
+            },
+            PropertySets = new IfcPropertySetConfiguration
+            {
+                ExportRevitPropertySets = _revitPropertySetsExplicit ? true : null,
+                GroupRevitParametersByGroup = _revitParameterGroups,
+            },
+        };
+
+        return baseConfig.Merge(apiOverrides).Resolve();
+    }
+
+    private void ValidateExplicitApiOverrides(RevitFileInfo info)
+    {
+        if (_lengthUnit is { } explicitUnit && !Enum.IsDefined(explicitUnit))
+            throw new ArgumentOutOfRangeException(nameof(LengthUnit), explicitUnit, "Unsupported IFC length unit family.");
+        if (_exportPhaseId != null && info.SerializedProjectPhaseIds?.Contains(_exportPhaseId.Value) != true)
+            throw new InvalidOperationException("The requested export phase is not in a validated project phase order.");
+        if (_roomExportPhaseId == null) return;
+        if (_roomExportPhaseId < 0)
+            throw new ArgumentOutOfRangeException(nameof(RoomExportPhaseId), "A room export phase ID must not be negative.");
+        if (info.SerializedProjectPhaseIds?.Contains(_roomExportPhaseId.Value) != true)
+            throw new InvalidOperationException("The requested room export phase is not in a validated project phase order.");
+    }
 
     private void ValidateRoomExportPhase(RevitFileInfo info)
     {
@@ -289,12 +402,12 @@ public partial class IfcExporter
     public SkipLog? SkipLog { get; init; }
 
     /// <summary>UTC timestamp written into the STEP <c>FILE_NAME</c> header (<c>yyyy-MM-ddTHH:mm:ss</c>). Null (the default) uses the current UTC time.</summary>
-    public DateTimeOffset? Timestamp { get; init; }
+    public DateTimeOffset? Timestamp { get => _timestamp ?? _resolvedConfig.HeaderTimestamp; init => _timestamp = value; }
 
     /// <summary>The length unit family written to the IFC file. Null keeps the stored-unit mapping in
     /// <see cref="IfcProfile.Current"/> and millimetres in <see cref="IfcProfile.Legacy"/>.
     /// Centimetres and inches are only selected explicitly.</summary>
-    public IfcUnitFamily? LengthUnit { get; init; }
+    public IfcUnitFamily? LengthUnit { get => _lengthUnit ?? _resolvedConfig.LengthUnit; init => _lengthUnit = value; }
 
     /// <summary>Products written by the last export, as counted in the "IFC export:" diagnostic line.</summary>
     public int ExportedProducts { get; private set; }
@@ -308,6 +421,8 @@ public partial class IfcExporter
     /// <summary>Writes the IFC file for <paramref name="info"/> to <paramref name="outputPath"/>.</summary>
     public void Export(RevitFileInfo info, string outputPath)
     {
+        ValidateExplicitApiOverrides(info);
+        _resolvedConfig = BuildEffectiveConfiguration();
         ValidateRoomExportPhase(info); // Reject invalid options before touching an existing output.
         using var fs = new StreamWriter(outputPath, false, System.Text.Encoding.ASCII);
         Export(info, fs);
@@ -318,6 +433,9 @@ public partial class IfcExporter
     /// <summary>Writes the IFC file for <paramref name="info"/> to <paramref name="output"/>.</summary>
     public void Export(RevitFileInfo info, TextWriter output)
     {
+        ValidateExplicitApiOverrides(info);
+        _resolvedConfig = BuildEffectiveConfiguration();
+        ValidateRoomExportPhase(info);
         using var diagnosticScope = DiagnosticSink.Use(_diag);
         s_keepNonPlanarPolygons = CurrentProfile && GRepParserV2.MeshEnabled;
         Parameter.ResolveZeroElementIds(info);
@@ -1800,10 +1918,11 @@ public partial class IfcExporter
                     ? "IFCWALL"
                 : CurrentProfile && elem.CategoryId == RampCategoryId
                     ? "IFCRAMP"
-                : MapCategoryToIfcType(elem.CategoryId)
+                : MapCategoryToIfcTypeForSchema(elem.CategoryId, _resolvedConfig.Schema)
                     ?? (elem.CategoryId == null && elem.Transform != null && elem.TypeId > 0
                         ? "IFCBUILDINGELEMENTPROXY"
                         : null);
+            ifcType = NormalizeIfcClassForSchema(ifcType, _resolvedConfig.Schema);
             if (ifcType == "IFCBEAM")
                 ifcType = elem.NativeStructuralType switch
                 {
@@ -5006,7 +5125,7 @@ public partial class IfcExporter
             }
 
             // Raw Revit parameters are intentionally opt-in.
-            if (_includeRevitPropertySets && elem.Parameters.Count > 0)
+            if (EffectiveIncludeRevitPropertySets && elem.Parameters.Count > 0)
             {
                 ExportPropertySets(w, elem, elemEntityId, ownerHistId, elemById);
             }
@@ -5136,7 +5255,7 @@ public partial class IfcExporter
                 ExportQuantityTakeOffPropertySet(w, parent, entity, ownerHistId, quantityReference, propertySingleValueIds);
                 ExportCurtainWallCommonPropertySet(w, parent, type, entity, ownerHistId, propertySingleValueIds);
             }
-            if (_includeRevitPropertySets && parent.Parameters.Count > 0)
+            if (EffectiveIncludeRevitPropertySets && parent.Parameters.Count > 0)
                 ExportPropertySets(w, parent, entity, ownerHistId, elemById);
             if (pending.CountedSuppressed)
             {
@@ -6509,10 +6628,12 @@ public partial class IfcExporter
         int storeyRelIdx = 0;
         var spaceEntityIdByRoomId = new Dictionary<int, int>();
         var storeySpaceEntityIds = new Dictionary<int, List<int>>();
-        var spaceTypeGuids = WriteSpaces(
-            w, ownerHistId, exportableElements, storeyIds, storeyPlacements,
-            storeyElevationsMetres, bodySubCtxId, propertySingleValueIds, ResolveActiveRoomPhase(info), spaceEntityIdByRoomId,
-            storeySpaceEntityIds);
+        var spaceTypeGuids = _resolvedConfig.ExportRoomsAsSpaces
+            ? WriteSpaces(
+                w, ownerHistId, exportableElements, storeyIds, storeyPlacements,
+                storeyElevationsMetres, bodySubCtxId, propertySingleValueIds, ResolveActiveRoomPhase(info), spaceEntityIdByRoomId,
+                storeySpaceEntityIds)
+            : [];
         // A space is styled like any family body: each solid of its boundary takes its best
         // material.
         var mepSpaceEntities = spaceEntityIdByRoomId
@@ -6629,9 +6750,9 @@ public partial class IfcExporter
             foreach (var (stairId, bodyEntityId) in stairBodyParts)
                 typedProducts[-stairId] = (bodyEntityId, 0, "IFCSTAIR");
         }
-        var exactTypeGuids = WriteTypeObjectsAndRelDefinesByTypeCore(
+        var exactTypeGuids = WriteTypeObjectsAndRelDefinesByTypeCoreForSchema(
             w, ownerHistId, elemById, typedProducts, propertySingleValueIds,
-            registeredTypeCommonValues, CurrentProfile);
+            registeredTypeCommonValues, CurrentProfile, _resolvedConfig.Schema);
         // The sub-elements of a curtain wall are exported inside the call of the wall
         // (the curtain-wall export), in the order of its grid, and share the material state of the
         // body export.
@@ -6655,7 +6776,7 @@ public partial class IfcExporter
                 typeOnlyMaterialProducts.Values.SelectMany(products => products).ToHashSet()) : null,
             CurrentProfile ? directRelationByRelating : null);
         _diag?.WriteLine($"Timing: relations and types done at {exportClock.Elapsed.TotalSeconds:F1}s");
-        var systemMembers = WriteDistributionPorts(w, ownerHistId, elemById, exportedIfcElements, CurrentProfile);
+        var systemMembers = WriteDistributionPortsForSchema(w, ownerHistId, elemById, exportedIfcElements, CurrentProfile, _resolvedConfig.Schema, _diag);
         if (CurrentProfile) AddCircuitBaseEquipment(elemById, exportedIfcElements, systemMembers);
         WriteMepSystems(w, ownerHistId, buildingId, elemById, systemMembers);
         if (CurrentProfile) WriteHvacZones(w, ownerHistId, elemById, spaceEntityIdByRoomId, propertySingleValueIds);
@@ -6666,11 +6787,8 @@ public partial class IfcExporter
         foreach (var (typeId, globalId) in spaceTypeGuids)
             exactTypeGuids.Add(typeId, globalId);
 
-        // Write output The current profile (initHeader): Coordination View 2.0, with the take-off
-        // add-on view when base quantities are exported; the file is named after the project number
-        // and the organization is the project's.
-        string desc = CurrentProfile ? $"ViewDefinition [CoordinationView_V2.0{(BaseQuantities ? ", QuantityTakeOffAddOnView" : "")}]"
-            : "ViewDefinition [CoordinationView]";
+        // Write output header and Model View Declaration.
+        string desc = FormatFileDescription(_resolvedConfig);
         string headerFileName = CurrentProfile && ProjectInformationTextCurrent(info, ProjectNumberParameterId, info.ProjectInfo?.Number) is { Length: > 0 } projectNumberText
             ? projectNumberText : "output.ifc";
         string headerOrganization = CurrentProfile ? ProjectInformationTextCurrent(info, ProjectOrganizationNameParameterId, info.ProjectInfo?.OrganizationName) ?? "" : "";
@@ -6706,7 +6824,7 @@ public partial class IfcExporter
             WriteThermalDiagCurrent(thermalDiag, elemById);
         int exactPropertySets = ApplyPropertySetGlobalIds(w, exactGlobalIds);
         _diag?.WriteLine($"Property set GlobalIds from exact product GlobalIds: {exactPropertySets}");
-        var exactTypes = ApplyTypeGlobalIds(w, exactTypeGuids);
+        var exactTypes = ApplyTypeGlobalIdsForSchema(w, exactTypeGuids, allowSharedSegmentGuids: _resolvedConfig.Schema != IfcSchema.Ifc4);
         _diag?.WriteLine($"Type GlobalIds from validated native sources: {exactTypes.Types}; exact type relationship GlobalIds: {exactTypes.Relationships}");
         int exactTypePropertySets = ApplyTypePropertySetGlobalIds(w, exactTypeGuids);
         _diag?.WriteLine($"Type property set GlobalIds from exact written type GlobalIds: {exactTypePropertySets}");
@@ -6772,7 +6890,20 @@ public partial class IfcExporter
             FinalizeUnitAssignmentCurrent(w, unitsCurrent!);
         }
         if (CurrentProfile) ApplyCurrentOpeningOrder(w, openingOrderKeys);
-        w.RewriteArguments(IfcLengthUnit.Converter(_unitFamily, CurrentProfile));
+        if (_resolvedConfig.Schema == IfcSchema.Ifc4)
+        {
+            ApplyIfc4SchemaAndMvdCompliance(w, _resolvedConfig, out var ifc4Summary);
+            _diag?.WriteLine($"IFC4 compliance ({FormatModelView(_resolvedConfig.EffectiveModelView)}): updated={ifc4Summary.UpdatedEntities}, tessellated={ifc4Summary.TessellatedItems}, downgradedWalls={ifc4Summary.DowngradedWalls}, suppressedSpaceMaterials={ifc4Summary.SuppressedSpaceMaterials}, prunedOrphanShapes={ifc4Summary.PrunedOrphanShapes}");
+        }
+        var unitConverter = IfcLengthUnit.Converter(_unitFamily, CurrentProfile);
+        if (_resolvedConfig.Schema == IfcSchema.Ifc4)
+        {
+            var baseConverter = unitConverter;
+            unitConverter = (entityType, entityArgs) => entityType == "IFCCARTESIANPOINTLIST3D"
+                ? ConvertCartesianPointList3D(entityArgs, _unitFamily)
+                : baseConverter(entityType, entityArgs);
+        }
+        w.RewriteArguments(unitConverter);
         if (sourceProductTags != null)
         {
             for (int i = 0; i < w.EntityCount; i++)
@@ -6785,7 +6916,7 @@ public partial class IfcExporter
                 w.ReplaceArgs(i, string.Join(",", attributes));
             }
         }
-        w.WriteTo(output, headerFileName, "IFC2X3", desc, appName, headerOrganization, Timestamp);
+        w.WriteTo(output, headerFileName, FormatIfcSchemaName(_resolvedConfig.Schema), desc, appName, headerOrganization, Timestamp);
 
         ExportedProducts = exportedCount;
         _diag?.WriteLine($"IFC export: {exportedCount} elements exported, {skippedCount} skipped (faces:{withFaces}, bbox:{withBbox}, no-geom:{noGeom})");
@@ -64066,7 +64197,8 @@ public partial class IfcExporter
         "IFCDOOR", "IFCWINDOW", "IFCBUILDINGELEMENTPROXY", "IFCRAILING", "IFCCOVERING",
         "IFCSTAIR", "IFCSTAIRFLIGHT", "IFCRAMP", "IFCCOLUMN", "IFCBEAM", "IFCMEMBER", "IFCPLATE",
         "IFCFURNISHINGELEMENT", "IFCFLOWSEGMENT", "IFCFLOWTERMINAL", "IFCFLOWFITTING",
-        "IFCFLOWCONTROLLER", "IFCDISTRIBUTIONFLOWELEMENT", "IFCSITE", "IFCREINFORCINGMESH",
+        "IFCFLOWCONTROLLER", "IFCDISTRIBUTIONFLOWELEMENT", "IFCELECTRICDISTRIBUTIONBOARD",
+        "IFCOUTLET", "IFCSWITCHINGDEVICE", "IFCSITE", "IFCREINFORCINGMESH",
     };
 
     /// <summary>
@@ -64229,7 +64361,12 @@ public partial class IfcExporter
     /// collisions keep legacy IDs.
     /// </summary>
     internal static (int Types, int Relationships) ApplyTypeGlobalIds(
-        StepWriter w, IReadOnlyDictionary<int, string> exactTypeGuids)
+        StepWriter w, IReadOnlyDictionary<int, string> exactTypeGuids) =>
+        ApplyTypeGlobalIdsForSchema(w, exactTypeGuids, allowSharedSegmentGuids: true);
+
+    internal static (int Types, int Relationships) ApplyTypeGlobalIdsForSchema(
+        StepWriter w, IReadOnlyDictionary<int, string> exactTypeGuids,
+        bool allowSharedSegmentGuids)
     {
         if (exactTypeGuids.Count == 0) return (0, 0);
         var globalIdCounts = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -64261,10 +64398,12 @@ public partial class IfcExporter
 
         var typeClasses = TypeClassByProductClass.Values.ToHashSet(StringComparer.Ordinal);
         typeClasses.UnionWith(CategoryRefinedTypeClasses);
-        var sharedSegmentGuids = exactTypeGuids.GroupBy(pair => pair.Value, StringComparer.Ordinal)
-            .Where(group => group.Count() > 1 && group.All(pair =>
-                typeClassById.GetValueOrDefault(pair.Key) is "IFCPIPESEGMENTTYPE" or "IFCDUCTSEGMENTTYPE" or "IFCTYPEPRODUCT"))
-            .Select(group => group.Key).ToHashSet(StringComparer.Ordinal);
+        var sharedSegmentGuids = allowSharedSegmentGuids
+            ? exactTypeGuids.GroupBy(pair => pair.Value, StringComparer.Ordinal)
+                .Where(group => group.Count() > 1 && group.All(pair =>
+                    typeClassById.GetValueOrDefault(pair.Key) is "IFCPIPESEGMENTTYPE" or "IFCDUCTSEGMENTTYPE" or "IFCTYPEPRODUCT"))
+                .Select(group => group.Key).ToHashSet(StringComparer.Ordinal)
+            : new HashSet<string>(StringComparer.Ordinal);
         var rewrites = new List<(int TypeIndex, int RelationIndex, string TypeGuid, string RelationGuid)>();
         foreach (var (typeId, typeGlobalId) in exactTypeGuids)
         {
@@ -66526,10 +66665,11 @@ public partial class IfcExporter
     [
         "IFCWALLTYPE", "IFCSLABTYPE", "IFCMEMBERTYPE", "IFCPLATETYPE", "IFCCOLUMNTYPE",
         "IFCBEAMTYPE", "IFCCOVERINGTYPE", "IFCRAILINGTYPE", "IFCCURTAINWALLTYPE",
-        "IFCBUILDINGELEMENTPROXYTYPE", "IFCSTAIRFLIGHTTYPE", "IFCLIGHTFIXTURETYPE",
-        "IFCDUCTSEGMENTTYPE", "IFCPIPESEGMENTTYPE", "IFCCABLECARRIERSEGMENTTYPE", "IFCPIPEFITTINGTYPE",
+        "IFCBUILDINGELEMENTPROXYTYPE", "IFCSTAIRFLIGHTTYPE", "IFCSTAIRTYPE", "IFCRAMPTYPE", "IFCROOFTYPE",
+        "IFCLIGHTFIXTURETYPE", "IFCDUCTSEGMENTTYPE", "IFCPIPESEGMENTTYPE", "IFCCABLECARRIERSEGMENTTYPE", "IFCPIPEFITTINGTYPE",
         "IFCCABLECARRIERFITTINGTYPE", "IFCVALVETYPE", "IFCDUCTFITTINGTYPE", "IFCAIRTERMINALTYPE",
         "IFCELECTRICAPPLIANCETYPE", "IFCFIRESUPPRESSIONTERMINALTYPE",
+        "IFCELECTRICDISTRIBUTIONBOARDTYPE", "IFCOUTLETTYPE", "IFCSWITCHINGDEVICETYPE", "IFCUNITARYEQUIPMENTTYPE",
     ];
 
     /// <summary>The subtype takes the place of the legacy IfcDistributionElementType fallback.</summary>
@@ -66547,6 +66687,8 @@ public partial class IfcExporter
     private static readonly string[] CategoryRefinedTypeClasses =
     [
         "IFCSPACETYPE", "IFCLIGHTFIXTURETYPE", "IFCDUCTSEGMENTTYPE", "IFCSYSTEMFURNITUREELEMENTTYPE", "IFCTYPEPRODUCT",
+        "IFCDOORTYPE", "IFCWINDOWTYPE", "IFCSTAIRTYPE", "IFCRAMPTYPE", "IFCROOFTYPE",
+        "IFCELECTRICDISTRIBUTIONBOARDTYPE", "IFCOUTLETTYPE", "IFCSWITCHINGDEVICETYPE",
         .. MepTypeClassesByCategory,
     ];
 
@@ -66881,7 +67023,13 @@ public partial class IfcExporter
     /// <summary>Writes the distribution ports of the MEP hosts.</summary>
     private static SortedDictionary<int, SortedSet<int>> WriteDistributionPorts(
         StepWriter w, int ownerHistId, IReadOnlyDictionary<int, Element> elemById,
-        IReadOnlyDictionary<int, (int entityId, int placementId, string ifcType)> products, bool currentProfile)
+        IReadOnlyDictionary<int, (int entityId, int placementId, string ifcType)> products, bool currentProfile) =>
+        WriteDistributionPortsForSchema(w, ownerHistId, elemById, products, currentProfile, IfcSchema.Ifc2x3, null);
+
+    private static SortedDictionary<int, SortedSet<int>> WriteDistributionPortsForSchema(
+        StepWriter w, int ownerHistId, IReadOnlyDictionary<int, Element> elemById,
+        IReadOnlyDictionary<int, (int entityId, int placementId, string ifcType)> products, bool currentProfile,
+        IfcSchema schema, TextWriter? diag)
     {
         var hostEntityIds = products.Values.Select(product => product.entityId).ToHashSet();
         var hostGlobalIds = new Dictionary<int, string>();
@@ -66889,7 +67037,7 @@ public partial class IfcExporter
             if (w.EntityAt(index) is var entity && hostEntityIds.Contains(entity.Id)
                 && SplitStepArguments(entity.Args)[0] is { Length: > 2 } hostGlobalId)
                 hostGlobalIds[entity.Id] = hostGlobalId[1..^1];
-        if (currentProfile) return WriteConnectorGraphPorts(w, ownerHistId, elemById, products, hostGlobalIds);
+        if (currentProfile) return WriteConnectorGraphPortsForSchema(w, ownerHistId, elemById, products, hostGlobalIds, schema, diag);
         // The flow direction is a property of the family type's connector.
         static (string prefix, string flow)? PortKind(int direction, int systemType) => (direction, systemType) switch
         {
@@ -66906,6 +67054,7 @@ public partial class IfcExporter
                 foreach (var (index, direction, systemType) in typedConnectors)
                     if (PortKind(direction, systemType) is { } known)
                         portKindByTypeAndIndex.TryAdd((typed.FamilyTypeId, index), known);
+        int skippedLegacyPorts = 0;
         foreach (var (id, product) in products.OrderBy(pair => pair.Key))
         {
             // Only products of the MEP exporters get ports; furnishing elements with connectors do
@@ -66913,6 +67062,11 @@ public partial class IfcExporter
             if (product.ifcType is "IFCFURNISHINGELEMENT"
                 || !elemById.TryGetValue(id, out var elem) || elem.SerializedMepConnectors is not { Count: > 0 } connectors)
                 continue;
+            if (schema == IfcSchema.Ifc4 && !IsIfc4DistributionElementClass(product.ifcType))
+            {
+                skippedLegacyPorts += connectors.Count;
+                continue;
+            }
             foreach (var (index, direction, systemType) in connectors)
             {
                 (string prefix, string flow)? kind = PortKind(direction, systemType)
@@ -66932,6 +67086,8 @@ public partial class IfcExporter
                     + $"{S($"{id.ToString(CultureInfo.InvariantCulture)}|{(currentProfile ? relGuid : portGuid)}")},{S("Flow")},{R(portId)},{R(product.entityId)}");
             }
         }
+        if (skippedLegacyPorts > 0)
+            diag?.WriteLine($"IFC4 port filter skipped {skippedLegacyPorts} legacy distribution port(s) on non-IfcDistributionElement hosts.");
         return [];
     }
 
@@ -66940,6 +67096,7 @@ public partial class IfcExporter
         "IFCDISTRIBUTIONELEMENT", "IFCDISTRIBUTIONCONTROLELEMENT", "IFCDISTRIBUTIONFLOWELEMENT", "IFCDISTRIBUTIONCHAMBERELEMENT",
         "IFCENERGYCONVERSIONDEVICE", "IFCFLOWCONTROLLER", "IFCFLOWFITTING", "IFCFLOWMOVINGDEVICE", "IFCFLOWSEGMENT",
         "IFCFLOWSTORAGEDEVICE", "IFCFLOWTERMINAL", "IFCFLOWTREATMENTDEVICE", "IFCELECTRICDISTRIBUTIONPOINT",
+        "IFCELECTRICDISTRIBUTIONBOARD", "IFCOUTLET", "IFCSWITCHINGDEVICE", "IFCSENSOR", "IFCUNITARYEQUIPMENT",
         "IFCBUILDINGELEMENTPROXY",
     };
 
@@ -66971,17 +67128,31 @@ public partial class IfcExporter
     private static SortedDictionary<int, SortedSet<int>> WriteConnectorGraphPorts(
         StepWriter w, int ownerHistId, IReadOnlyDictionary<int, Element> elemById,
         IReadOnlyDictionary<int, (int entityId, int placementId, string ifcType)> products,
-        IReadOnlyDictionary<int, string> hostGlobalIds)
+        IReadOnlyDictionary<int, string> hostGlobalIds) =>
+        WriteConnectorGraphPortsForSchema(w, ownerHistId, elemById, products, hostGlobalIds, IfcSchema.Ifc2x3, null);
+
+    private static SortedDictionary<int, SortedSet<int>> WriteConnectorGraphPortsForSchema(
+        StepWriter w, int ownerHistId, IReadOnlyDictionary<int, Element> elemById,
+        IReadOnlyDictionary<int, (int entityId, int placementId, string ifcType)> products,
+        IReadOnlyDictionary<int, string> hostGlobalIds,
+        IfcSchema schema,
+        TextWriter? diag)
     {
         var graph = new SortedDictionary<int, List<(int Index, int Direction, int System, List<(int Id, int Index, int Type)> Refs)>>();
         if (Environment.GetEnvironmentVariable("RVTIO_PORT_GRAPH_DUMP") is { Length: > 0 } dumpPath)
             DumpConnectorGraph(dumpPath, elemById, products);
+        int skippedIfc4NonDistributionHosts = 0;
         foreach (var (id, product) in products)
             if (PortHostClasses.Contains(product.ifcType)
                 && elemById.TryGetValue(id, out var host) && !host.IsDiscovered
                 && host.SerializedConnectorGraph is { Count: > 0 } connectors
                 && hostGlobalIds.ContainsKey(product.entityId))
             {
+                if (schema == IfcSchema.Ifc4 && !IsIfc4DistributionElementClass(product.ifcType))
+                {
+                    skippedIfc4NonDistributionHosts++;
+                    continue;
+                }
                 // Only the connectors of mode 1 and 2 get ports (connectors of mode 4, 16 and 32 get no port in the reference output);
                 // a walk that does not know the mode keeps every connector.
                 var exported = connectors.Select((connector, position) => (connector, position))
@@ -67169,6 +67340,8 @@ public partial class IfcExporter
             }
         foreach (var (host, index, direction, system) in unpaired)
             if (!withPort.Contains((host, index))) Standalone(host, index, direction, system);
+        if (skippedIfc4NonDistributionHosts > 0)
+            diag?.WriteLine($"IFC4 port compliance: skipped connector graph ports on {skippedIfc4NonDistributionHosts} non-IfcDistributionElement product(s)");
         return systemMembers;
     }
 
@@ -67177,14 +67350,23 @@ public partial class IfcExporter
         Dictionary<int, (int entityId, int placementId, string ifcType)> exportedProducts,
         Dictionary<(string PropertyName, string ValueExpr), int> propertySingleValueIds,
         IReadOnlyDictionary<int, bool?> componentTypeIsExternalValues) =>
-        WriteTypeObjectsAndRelDefinesByTypeCore(w, ownerHistId, elemById, exportedProducts,
-            propertySingleValueIds, componentTypeIsExternalValues, currentProfile: false);
+        WriteTypeObjectsAndRelDefinesByTypeCoreForSchema(w, ownerHistId, elemById, exportedProducts,
+            propertySingleValueIds, componentTypeIsExternalValues, currentProfile: false, schema: IfcSchema.Ifc2x3);
 
     private static Dictionary<int, string> WriteTypeObjectsAndRelDefinesByTypeCore(
         StepWriter w, int ownerHistId, Dictionary<int, Element> elemById,
         Dictionary<int, (int entityId, int placementId, string ifcType)> exportedProducts,
         Dictionary<(string PropertyName, string ValueExpr), int> propertySingleValueIds,
-        IReadOnlyDictionary<int, bool?> componentTypeIsExternalValues, bool currentProfile)
+        IReadOnlyDictionary<int, bool?> componentTypeIsExternalValues, bool currentProfile) =>
+        WriteTypeObjectsAndRelDefinesByTypeCoreForSchema(w, ownerHistId, elemById, exportedProducts,
+            propertySingleValueIds, componentTypeIsExternalValues, currentProfile, schema: IfcSchema.Ifc2x3);
+
+    private static Dictionary<int, string> WriteTypeObjectsAndRelDefinesByTypeCoreForSchema(
+        StepWriter w, int ownerHistId, Dictionary<int, Element> elemById,
+        Dictionary<int, (int entityId, int placementId, string ifcType)> exportedProducts,
+        Dictionary<(string PropertyName, string ValueExpr), int> propertySingleValueIds,
+        IReadOnlyDictionary<int, bool?> componentTypeIsExternalValues, bool currentProfile,
+        IfcSchema schema)
     {
         var exactTypeGuids = new Dictionary<int, string>();
         var firstInstanceIfcType = new Dictionary<(int typeId, int symbolId, string typeClass, int ownerId, int systemTypeId), string>();
@@ -67213,10 +67395,22 @@ public partial class IfcExporter
                 && instElem.Geometry?.Faces is not { Count: > 0 }
                 && (instElem.DecodedBox ?? instElem.Geometry?.BoundingBox) is not { Length: >= 6 };
             string? typeClass = null;
-            if (roofContainer) typeClass = "IFCCURTAINWALLTYPE";
-            // IFC2X3 has no IfcStairType: the current profile types a stair by the generic
-            // IfcTypeProduct.
-            else if (currentProfile && product.ifcType is "IFCSTAIR" or "IFCRAMP") typeClass = "IFCTYPEPRODUCT";
+            if (roofContainer) typeClass = schema == IfcSchema.Ifc4 ? "IFCROOFTYPE" : "IFCCURTAINWALLTYPE";
+            // IFC2X3 has no IfcStairType/IfcRampType: the current profile types a stair or ramp by IfcTypeProduct; IFC4 requires IfcStairType / IfcRampType.
+            else if (product.ifcType == "IFCSTAIR" && (schema == IfcSchema.Ifc4 || currentProfile))
+                typeClass = schema == IfcSchema.Ifc4 ? "IFCSTAIRTYPE" : "IFCTYPEPRODUCT";
+            else if (product.ifcType == "IFCRAMP" && (schema == IfcSchema.Ifc4 || currentProfile))
+                typeClass = schema == IfcSchema.Ifc4 ? "IFCRAMPTYPE" : "IFCTYPEPRODUCT";
+            else if (product.ifcType == "IFCROOF" && schema == IfcSchema.Ifc4)
+                typeClass = "IFCROOFTYPE";
+            else if (product.ifcType == "IFCELECTRICDISTRIBUTIONBOARD" && schema == IfcSchema.Ifc4)
+                typeClass = "IFCELECTRICDISTRIBUTIONBOARDTYPE";
+            else if (product.ifcType == "IFCOUTLET" && schema == IfcSchema.Ifc4)
+                typeClass = "IFCOUTLETTYPE";
+            else if (product.ifcType == "IFCSWITCHINGDEVICE" && schema == IfcSchema.Ifc4)
+                typeClass = "IFCSWITCHINGDEVICETYPE";
+            else if (product.ifcType == "IFCDISTRIBUTIONFLOWELEMENT" && schema == IfcSchema.Ifc4)
+                typeClass = "IFCDISTRIBUTIONELEMENTTYPE";
             else if (!TypeClassByProductClass.TryGetValue(product.ifcType, out typeClass)
                 && product.ifcType is not ("IFCFLOWFITTING" or "IFCFLOWCONTROLLER"))
                 continue;
@@ -68320,19 +68514,23 @@ public partial class IfcExporter
     private const int AreaSchemeIdParam = -1012704;      // RoomElem.m_areaSchemeId
 
     /// <summary>The phase whose rooms the current profile exports.</summary>
-    private int? ResolveActiveRoomPhase(RevitFileInfo info)
+    private int? ResolveActiveRoomPhase(RevitFileInfo info) => _resolvedConfig.RoomPhaseScope switch
     {
-        if (RoomExportPhaseId != null) return RoomExportPhaseId;
-        return ExportRoomsOfAllPhases ? null : ResolveActivePhase(info);
-    }
+        IfcRoomPhaseScope.SpecificPhase => _resolvedConfig.RoomExportPhaseId,
+        IfcRoomPhaseScope.AllPhases => null,
+        IfcRoomPhaseScope.LastPhase => ProductRules.LastProjectPhase(info),
+        _ => ResolveActivePhase(info),
+    };
 
     /// <summary>The export phase of the elements: <see cref="ExportPhaseId"/>, else (current profile without <see cref="ExportAllPhases"/>)
     /// the last project phase that is a phase element of the document.</summary>
-    private int? ResolveActivePhase(RevitFileInfo info)
+    private int? ResolveActivePhase(RevitFileInfo info) => _resolvedConfig.PhaseScope switch
     {
-        if (ExportPhaseId != null) return ExportPhaseId;
-        return CurrentProfile && !ExportAllPhases ? ProductRules.LastProjectPhase(info) : null;
-    }
+        IfcPhaseScope.SpecificPhase => _resolvedConfig.ExportPhaseId,
+        IfcPhaseScope.AllPhases => null,
+        IfcPhaseScope.LastPhase => ProductRules.LastProjectPhase(info),
+        _ => CurrentProfile ? ProductRules.LastProjectPhase(info) : null,
+    };
 
     private void WriteAreaSchemeGroups(
         StepWriter w, int ownerHistId, List<Element> allElements, SortedDictionary<int, List<int>> areaSchemeSpaces)

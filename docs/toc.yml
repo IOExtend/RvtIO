@@ -5,6 +5,8 @@
   items:
     - name: Public API
       href: public-api.md
+    - name: IFC export and configuration
+      href: ifc-export.md
     - name: Sheets and viewports
       href: sheets.md
     - name: Printing a plan

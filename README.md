@@ -8,7 +8,7 @@ RvtIO is a .NET library and command line tool that reads Autodesk Revit projects
 
 - Reads elements, parameters, geometry, file metadata and project information.
 - Queries elements through `FilteredElementCollector`.
-- Exports IFC2X3 coordination view, with optional Revit parameters as property sets.
+- Exports IFC2X3 coordination view (default) and IFC4 (ISO 16739-1:2018 / ADD2 TC1; `ReferenceView_V1.2` and `DesignTransferView_V1.0`), with shared JSON/API configuration presets and optional Revit parameters as property sets.
 - Writes compact JSON or a full JSON dump with every parameter and geometry.
 - Returns the triangle meshes of the model elements, with one shared mesh per family symbol for repeated instances (`ElementMeshes`).
 - Lists the sheets of a file and the viewports placed on them (`SheetCatalog`), with the sheet number, name, issue date, by-lines, the viewports of each sheet and the elements each sheet owns. Page size, view placement and 2D content are not decoded yet; the catalog reports each limit.
@@ -65,6 +65,16 @@ Export IFC with Revit parameters as property sets:
 ```sh
 rvtio project.rvt project.parameters.ifc --ifc-revit-parameters
 ```
+
+Export IFC4 (`ReferenceView_V1.2` by default, or `DesignTransferView_V1.0`) independently of `Current`/`Legacy` profiles, or drive exports through a shared JSON configuration preset (`--ifc-preset`, `--ifc-config`, `--ifc-save-config`, `--ifc-capabilities`):
+
+```sh
+rvtio project.rvt project-rv12.ifc --ifc-schema ifc4
+rvtio project.rvt project-dtv.ifc --ifc-schema ifc4 --ifc-mvd design-transfer-view-1.0 --ifc-profile legacy
+rvtio --ifc-capabilities
+```
+
+See [IFC export and configuration](docs/ifc-export.md) for the exact IFC4 edition details, supported MVD exchange scenarios, precedence rules, validation checks, and capability matrix.
 
 Export multiple formats in a single read:
 
@@ -232,7 +242,7 @@ Wide creation IDs are available as `Element.OriginalElementId`. The Revit Unique
 - Geometry coverage is partial for some element kinds.
 - Revit 2027 support is partial.
 - Parameter editing supports single assignments and atomic batches of verified assignments and clears in local Revit 2020–2027 projects and standalone families. See the [writing guide](docs/writing.md).
-- IFC output is limited to IFC2X3 coordination view.
+- IFC output supports IFC2X3 coordination view (default) and IFC4 (`ReferenceView_V1.2` and `DesignTransferView_V1.0`); see [IFC export and configuration](docs/ifc-export.md) for declared schema/MVD coverage and unsupported options.
 - Output was compared with an independent reference exporter on the tested samples. Byte equality with Revit's own IFC export is not claimed.
 
 ## Build from source and tests

@@ -118,7 +118,14 @@ internal static partial class Program
     private static readonly HashSet<string> OneValueOptions =
     [
         "--ifc", "--scene", "--full-json", "--json",
-        "--ifc-profile", "--ifc-phase", "--ifc-room-phase", RvtIO.Cli.IfcLengthUnitOption.Name, RvtIO.Cli.IfcTimestampOption.Name, "--json-class-prefix", "--revit-localization", "--inspect", "--diag-dump", "--find-str",
+        "--ifc-profile", "--ifc-phase", "--ifc-room-phase",
+        RvtIO.Cli.IfcConfigurationOptions.SchemaOption,
+        RvtIO.Cli.IfcConfigurationOptions.ModelViewOption,
+        RvtIO.Cli.IfcConfigurationOptions.ModelViewAliasOption,
+        RvtIO.Cli.IfcConfigurationOptions.PresetOption,
+        RvtIO.Cli.IfcConfigurationOptions.ConfigOption,
+        RvtIO.Cli.IfcConfigurationOptions.SaveConfigOption,
+        RvtIO.Cli.IfcLengthUnitOption.Name, RvtIO.Cli.IfcTimestampOption.Name, "--json-class-prefix", "--revit-localization", "--inspect", "--diag-dump", "--find-str",
         "--sketch-owner-dump", "--dev-external-dump", "--dev-external-dump-prefix", "--dev-candidates", "--dev-trace", "--dev-facts",
         "--dev-fact-names", "--dev-user-params", "--dev-collisions", "--dev-solids", "--dev-native", "--class-census", "--episode-check",
         "--test-decoders", "--dump-chunks", "--block-dump", "--search-global", "--hex-search", "--chunk-dump", "--block-scan", "--rec-dump",
@@ -129,7 +136,9 @@ internal static partial class Program
 
     private static readonly HashSet<string> SwitchOptions =
     [
-        "--json-full", "--compact-json", "--ifc-revit-parameters", "--ifc-revit-parameter-groups", "--ifc-no-base-quantities", ..RvtIO.Cli.OpeningAxesOption.Names, "--r22-layout",
+        "--json-full", "--compact-json", "--ifc-revit-parameters", "--ifc-revit-parameter-groups", "--ifc-no-base-quantities",
+        RvtIO.Cli.IfcConfigurationOptions.NoSpacesOption, RvtIO.Cli.IfcConfigurationOptions.CapabilitiesOption,
+        ..RvtIO.Cli.OpeningAxesOption.Names, "--r22-layout",
         "--no-r22-layout", ..RvtIO.Cli.CurrentCopiesOption.Names, "--allow-partial", "--strict", "--raise-limits", "--api-demo", "--dev-solids-only", "--elemtable-diag", "--tf-calibrate", "--name-scan", "--typemap", "--block-map",
         "--decode-blocks", "--decode-catc", "--wide", "--blocks", "--no-recover", "--no-d64", "--trim", "--dump-partial",
     ];
@@ -325,6 +334,16 @@ internal static partial class Program
             Console.Error.WriteLine(ifcLengthUnitError);
             return 1;
         }
+        if (!RvtIO.Cli.IfcConfigurationOptions.TryParse(args, out var cliIfcOptions, out string? ifcConfigCliError))
+        {
+            Console.Error.WriteLine(ifcConfigCliError);
+            return 1;
+        }
+        if (cliIfcOptions.ShowCapabilities)
+        {
+            RvtIO.Cli.IfcConfigurationOptions.WriteCapabilities(Console.Out);
+            return 0;
+        }
         bool hasIfcOutput = ifcPath != null;
         if ((jsonFull || hasCompactJsonOption) && positionalOutput != null && positionalOutput.EndsWith(".ifc", StringComparison.OrdinalIgnoreCase) && compactJsonPath == null && fullJsonPath == null)
         {
@@ -351,6 +370,44 @@ internal static partial class Program
             Console.Error.WriteLine("--ifc-length-unit requires IFC output.");
             return 1;
         }
+        if ((cliIfcOptions.Schema.HasValue || cliIfcOptions.ModelView.HasValue || cliIfcOptions.Preset.HasValue || cliIfcOptions.ConfigPath != null || cliIfcOptions.NoSpaces) && !hasIfcOutput && cliIfcOptions.SaveConfigPath == null)
+        {
+            Console.Error.WriteLine("IFC schema, model view, preset, config, and space options require IFC output.");
+            return 1;
+        }
+
+        if (!RvtIO.Cli.IfcConfigurationOptions.TryBuildConfiguration(
+                cliIfcOptions,
+                profile,
+                profileWasExplicit: args.Contains("--ifc-profile"),
+                revitParameters: includeIfcRevitParameters,
+                revitParameterGroups: revitParameterGroups,
+                baseQuantities: baseQuantities,
+                baseQuantitiesWasExplicit: args.Contains("--ifc-no-base-quantities"),
+                openingQuantitiesSwapped: openingLegacyAxes,
+                openingQuantitiesWasExplicit: args.Any(a => RvtIO.Cli.OpeningAxesOption.Names.Contains(a)),
+                exportPhaseId: int.TryParse(exportPhaseOption, out int parsedExportPhase) ? parsedExportPhase : null,
+                exportAllPhases: string.Equals(exportPhaseOption, "all", StringComparison.OrdinalIgnoreCase),
+                exportPhaseWasExplicit: exportPhaseOption != null,
+                roomExportPhaseId: int.TryParse(roomPhaseOption, out int parsedRoomPhase) ? parsedRoomPhase : null,
+                exportRoomsOfAllPhases: string.Equals(roomPhaseOption, "all", StringComparison.OrdinalIgnoreCase),
+                roomPhaseWasExplicit: roomPhaseOption != null,
+                lengthUnit: ifcLengthUnit,
+                timestamp: ifcTimestamp,
+                out var mergedIfcConfiguration,
+                out var resolvedIfcConfiguration,
+                out string? ifcConfigValidationError))
+        {
+            Console.Error.WriteLine(ifcConfigValidationError);
+            return 1;
+        }
+        if (cliIfcOptions.SaveConfigPath != null && !hasIfcOutput)
+        {
+            File.WriteAllText(cliIfcOptions.SaveConfigPath, mergedIfcConfiguration.ToJson() + Environment.NewLine, System.Text.Encoding.UTF8);
+            Console.Error.WriteLine($"IFC configuration written to {cliIfcOptions.SaveConfigPath}");
+            return 0;
+        }
+        _ = resolvedIfcConfiguration;
         for (int i = 0; i < args.Length - 1; i++)
         {
             if (args[i] == "--dev-external-dump") externalDumpPath = args[i + 1];
@@ -418,7 +475,8 @@ internal static partial class Program
 
         return Export(new ExportArguments(args, rvtPath, ifcPath, compactJsonPath, fullJsonPath, scenePath,
             externalDumpPath, externalDumpClassPrefix, profile,
-            exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, openingLegacyAxes, ifcTimestamp, ifcLengthUnit));
+            exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, openingLegacyAxes, ifcTimestamp, ifcLengthUnit,
+            mergedIfcConfiguration, cliIfcOptions.SaveConfigPath));
     }
 
     /// <summary>The value after the last occurrence of <paramref name="option"/>, null when the option is absent or ends the arguments.</summary>
