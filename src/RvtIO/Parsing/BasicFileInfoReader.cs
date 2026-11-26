@@ -58,8 +58,9 @@ internal static partial class BasicFileInfoReader
                     i += 2;
                     continue;
                 }
+                // BasicFileInfo separates some UTF-16 fields with the single-byte sequence CR LF.
                 bool isText = ch is '\t' or '\r' or '\n'
-                    || (ch >= 0x20 && ch < 0xFFFE && !char.IsControl(ch) && !char.IsSurrogate(ch));
+                    || (ch >= 0x20 && ch < 0xFFFE && ch != '\u0A0D' && !char.IsControl(ch) && !char.IsSurrogate(ch));
                 if (isText) { if (runStart < 0) runStart = i; }
                 else
                 {
