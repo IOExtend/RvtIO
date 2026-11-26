@@ -19,6 +19,7 @@ internal static partial class WallHeightWriter
     private const double VertexTolerance = 0.0005233832795;
     private const double MinimumNotchGap = VertexTolerance / 0.9;
     private const double ModelRadius = 10 * 5280;
+    private const double GeometryCoordinateTolerance = 1e-9;
     private const string All = WideBlockWalker.AllItemsKeyPrefix;
 
     internal static bool IsWallDimension(BuiltInParameter parameter) =>
@@ -147,9 +148,18 @@ internal static partial class WallHeightWriter
         var interval = offsetEdit ? PlanOffset(wall, walker, edit, topConstraint, value, mirror, LevelElevation)
             : new HeightInterval(headerRecord.Real(outline, "Outline.m_minmax@0/2"), original.Real, value);
         if (mirror.Real != interval.Before || !double.IsFinite(interval.Top) || interval.Top <= interval.Base
-            || headerRecord.Real(outline, "Outline.m_minmax@0/2") != interval.BoundsBase
-            || !SameCoordinate(headerRecord.Real(outline, "Outline.m_minmax@1/2"), interval.Top))
+            || headerRecord.Real(outline, "Outline.m_minmax@0/2") != interval.BoundsBase)
             throw Layout();
+        double boundsTop = headerRecord.Real(outline, "Outline.m_minmax@1/2");
+        int extendedReference = -1;
+        if (!SameCoordinate(boundsTop, interval.Top))
+        {
+            int reference = wall.Target(-1, "VWall.m_pRefFaces@3", "Face");
+            extendedReference = wall.Target(reference, "Face.m_pSurf", "Plane");
+            if (!MatchesAuxiliaryTop(interval.Base, interval.Before, boundsTop,
+                    wall.Real(extendedReference, "Envelope.m_corners@1/1")))
+                throw Layout();
+        }
         double x = Math.Max(Math.Abs(headerRecord.Real(outline, "Outline.m_minmax@0/0")),
             Math.Abs(headerRecord.Real(outline, "Outline.m_minmax@1/0")));
         double y = Math.Max(Math.Abs(headerRecord.Real(outline, "Outline.m_minmax@0/1")),
@@ -181,7 +191,12 @@ internal static partial class WallHeightWriter
             throw Layout();
         if (geometry.Integer(-1, idWidth == sizeof(long) ? "GRep.m_elementId" : "GInfo.m_tag") != edit.ElementId)
             throw Layout();
-        ResizeReferencePlanes(wall, interval, openings.Count, hasOtherWall);
+        if (extendedReference >= 0)
+        {
+            NormalizeAuxiliaryTop(wall, geometry, interval, extendedReference, boundsTop);
+            geometry = ReadBody(geometry.Body, "GElement", true);
+        }
+        ResizeReferencePlanes(wall, interval, openings.Count, hasOtherWall, extendedReference);
         byte[] faceTopology = ResizeGeometry(geometry, interval, openings);
         int[] topologyNodes = wall.Nodes("GeometryTopology").ToArray();
         if (topologyNodes.Length != 2)
@@ -534,7 +549,7 @@ internal static partial class WallHeightWriter
         return UserParameterWriter.Integer(walk, All + "PlanTopologies.m_set#", set) == 0;
     }
 
-    private static void ResizeReferencePlanes(Archive wall, HeightInterval height, int openingCount, bool hasOtherWall)
+    private static void ResizeReferencePlanes(Archive wall, HeightInterval height, int openingCount, bool hasOtherWall, int extendedReference)
     {
         int driver = wall.Target(-1, "VWall.m_pCurveDriver", "VWallDriver");
         _ = wall.Target(driver, "CurveDriver.m_pCrv", "GLine");
@@ -578,12 +593,80 @@ internal static partial class WallHeightWriter
             var frame = ReadPlane(wall, plane, height, []);
             if (!planes.Add(plane) || frame != new PlaneFrame(1, 1, height.Base))
                 throw Layout();
-            ResizeEnvelope(wall, plane, frame, height, []);
+            if (plane == extendedReference)
+                wall.Write(plane, "Envelope.m_corners@1/1", height.After);
+            else
+                ResizeEnvelope(wall, plane, frame, height, []);
             if (height.NewBase != height.Base)
                 wall.Write(plane, "Plane.m_origin@2", height.NewBase);
         }
         if (!planes.SetEquals(wall.Nodes("Plane")))
             throw Layout();
+    }
+
+    internal static bool MatchesAuxiliaryTop(double wallBase, double height, double boundsTop, double auxiliaryHeight) =>
+        auxiliaryHeight > height && auxiliaryHeight - height < GeometryCoordinateTolerance
+        && boundsTop > wallBase + height && boundsTop == wallBase + auxiliaryHeight;
+
+    private static void NormalizeAuxiliaryTop(Archive wall, Archive geometry, HeightInterval height, int reference, double boundsTop)
+    {
+        // The fourth reference plane is saved again as the first auxiliary rectangle.
+        int group = geometry.Target(-1, "GGroup.m_subNodes@0", "GGroup");
+        int solid = geometry.Target(group, "GGroup.m_subNodes@0", "Geometry");
+        int face = geometry.Target(solid, "GBRep.m_pFaces@0", "Face");
+        int plane = geometry.Target(face, "Face.m_pSurf", "Plane");
+        int loop = geometry.Target(face, "GFace.m_pFirstLoop", "EdgeLoop");
+        if (geometry.Real(-1, "GRep.m_bBox@1/2") != boundsTop
+            || geometry.Integer(group, "GGroup.m_subNodes#") != 1 || geometry.Integer(solid, "GBRep.m_pFaces#") != 1
+            || geometry.Integer(solid, "Geometry.m_pEdges#") != 4 || geometry.Integer(loop, "GEdgeLoop.m_nextLoop") != 0)
+            throw Layout();
+
+        foreach (string field in new[] { "origin", "xVec", "yVec" })
+            for (int axis = 0; axis < 3; axis++)
+                RequireReferenceCoordinate($"Plane.m_{field}@{axis}");
+        RequireReferenceCoordinate("Envelope.m_corners@0/0");
+        RequireReferenceCoordinate("Envelope.m_corners@1/0");
+        RequireReferenceCoordinate("Envelope.m_corners@0/1");
+        RequireReferenceCoordinate("Envelope.m_corners@1/1");
+
+        double lower = wall.Real(reference, "Envelope.m_corners@0/0");
+        double upper = wall.Real(reference, "Envelope.m_corners@1/0");
+        double rise = wall.Real(reference, "Envelope.m_corners@1/1");
+        if (lower >= upper || wall.Real(reference, "Envelope.m_corners@0/1") != 0
+            || geometry.Real(loop, "Envelope.m_corners@0/0") != lower || geometry.Real(loop, "Envelope.m_corners@1/0") != upper
+            || geometry.Real(loop, "Envelope.m_corners@0/1") != 0 || geometry.Real(loop, "Envelope.m_corners@1/1") != rise)
+            throw Layout();
+
+        uint faceHandle = geometry.Handle(solid, "GBRep.m_pFaces@0");
+        (double U, double V)[] corners = [(lower, 0), (upper, 0), (upper, rise), (lower, rise)];
+        for (int i = 0; i < corners.Length; i++)
+        {
+            int edge = geometry.Target(solid, $"Geometry.m_pEdges@{i}", "Edge");
+            if (geometry.BackReference(edge, "GEdge.m_pFace@0") != faceHandle || geometry.BackReference(edge, "GEdge.m_pFace@1") != 0
+                || geometry.Values(edge, "EdgePnt.uv@0/0").ToArray() is not [var u0, var u1]
+                || geometry.Values(edge, "EdgePnt.uv@0/1").ToArray() is not [var v0, var v1])
+                throw Layout();
+            CheckCorner(u0, v0, corners[i]);
+            CheckCorner(u1, v1, corners[(i + 1) % corners.Length]);
+        }
+        geometry.Write(plane, "Envelope.m_corners@1/1", height.Before);
+        geometry.Write(loop, "Envelope.m_corners@1/1", height.Before);
+        geometry.Write(-1, "GRep.m_bBox@1/2", height.Top);
+
+        void RequireReferenceCoordinate(string field)
+        {
+            if (geometry.Real(plane, field) != wall.Real(reference, field))
+                throw Layout();
+        }
+
+        void CheckCorner(WideBlockWalker.Capture u, WideBlockWalker.Capture v, (double U, double V) expected)
+        {
+            if (u.Kind != WideBlockWalker.CaptureKind.Real || v.Kind != WideBlockWalker.CaptureKind.Real
+                || u.Real != expected.U || v.Real != expected.V)
+                throw Layout();
+            if (v.Real == rise)
+                geometry.Write(v, height.Before);
+        }
     }
 
     private static byte[] ResizeGeometry(Archive geometry, HeightInterval height, IReadOnlyList<OpeningInterval> openings)

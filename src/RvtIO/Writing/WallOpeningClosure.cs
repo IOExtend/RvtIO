@@ -403,7 +403,8 @@ internal static partial class WallHeightWriter
             internal Point Scale(double s) => new(X * s, Y * s, Z * s);
             internal Point WithZ(double z) => this with { Z = z };
             // The topology is determined by semantic tags. This bound checks the floating-point plane projections.
-            internal bool Near(Point p) => Math.Abs(X - p.X) < 1e-9 && Math.Abs(Y - p.Y) < 1e-9 && Math.Abs(Z - p.Z) < 1e-9;
+            internal bool Near(Point p) => Math.Abs(X - p.X) < GeometryCoordinateTolerance
+                && Math.Abs(Y - p.Y) < GeometryCoordinateTolerance && Math.Abs(Z - p.Z) < GeometryCoordinateTolerance;
         }
 
         private readonly record struct Segment(Point First, Point Last)

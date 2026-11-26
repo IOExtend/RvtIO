@@ -273,7 +273,9 @@ tolerance limits, combined cuts outside these layouts, and unverified vertex pro
 
 Fractional offsets can retain or rebuild the verified cuts when the writer can identify the wall endpoints and fixed
 opening elevations in the stored face coordinates. The writer preserves the opening elevations when it reprojects
-vertices onto the moved wall faces.
+vertices onto the moved wall faces. A saved upper bound slightly above the solid is supported when the fourth wall
+reference plane and the matching auxiliary rectangle account for the extension. The writer verifies the tight bounds
+of the solid independently and resizes the auxiliary rectangle with the reference plane.
 
 ## Editing a standalone family
 
@@ -925,8 +927,13 @@ after opening, saving and reopening without Audit in Revit 2020–2025 and 2027.
 after upgrade in Revit 2027. Further checks in Revit 2024 and 2027 covered oblique and level-constrained walls,
 two openings, and replacements starting from native and offline files. Revit 2027 also checked Top Offset cut
 transitions and an ordered batch. The offsets matched exactly and the vertical bounds differed by at most four
-floating-point steps. One native Top Offset control left an auxiliary face extending above the solid's top.
-Further edits of that saved layout still require coverage.
+floating-point steps.
+
+The extended-bound checks started from native files where the auxiliary rectangle extended above the solid. Revit
+2020–2025 and 2027 confirmed a Base Offset replacement and three Top Offset replacements after saving and reopening
+without Audit. This included reactivating the rectangular cut. Revit 2027 checked the 2026-format files after upgrade.
+An inconsistent header, reference plane, solid bound, auxiliary loop, or auxiliary vertex caused the entire batch
+to be rejected in the tested files.
 
 ## Remaining parameter coverage
 

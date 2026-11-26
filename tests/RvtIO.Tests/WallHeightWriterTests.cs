@@ -28,6 +28,16 @@ public class WallHeightWriterTests
     }
 
     [Fact]
+    public void VerifiesAnAuxiliaryTopAgainstTheExactSavedReferenceHeight()
+    {
+        const double height = 0.9127000000000003, saved = 0.912700000000001, upper = 1.612700000000001;
+        Assert.True(WallHeightWriter.MatchesAuxiliaryTop(0.7, height, upper, saved));
+        Assert.False(WallHeightWriter.MatchesAuxiliaryTop(0.7, height, Math.BitIncrement(upper), saved));
+        Assert.False(WallHeightWriter.MatchesAuxiliaryTop(0.7, height, 1.613, 0.913));
+        Assert.False(WallHeightWriter.MatchesAuxiliaryTop(0.7, height, upper, height));
+    }
+
+    [Fact]
     public void ClassifiesARectangularOpeningCrossingTheWallBase()
     {
         Assert.Equal(WallHeightWriter.OpeningCut.Interior, WallHeightWriter.CutAt(0, 8, 2, 5));
