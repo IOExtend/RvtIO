@@ -107,7 +107,7 @@ public sealed class ParameterMeasurementTests
 
     [Theory]
     [InlineData(1e-13, "m_bUseGrouping", 0L)]
-    [InlineData(1.0 / 3600, "m_bUseGrouping", 1L)]
+    [InlineData(1.0 / 3600, "m_bUseGrouping", 2L)]
     [InlineData(1.0 / 3600, "m_bSuppressSpaces", 1L)]
     public void RefusesUnverifiedDegreesMinutesOptions(double accuracy, string field, long value)
     {
@@ -117,6 +117,43 @@ public sealed class ParameterMeasurementTests
         options["m_accuracy"] = accuracy;
         options[field] = value;
         Assert.Null(ParameterMeasurement.Display(UnitType.UT_Angle, Walker, layout, 1, 2));
+    }
+
+    [Fact]
+    public void DegreesMinutesAndSecondsKeepAnUngroupedDegreeCount()
+    {
+        var layout = DisplayUnits(UnitType.UT_Angle, "degreesMinutes", DisplayUnitType.DUT_DEGREES_AND_MINUTES,
+            "", UnitSymbolType.UST_NONE, legacy: false);
+        Assert.Single(layout.Records, record => record.ClassId == FormatClass).Values["m_accuracy"] = 1.0 / 3600;
+        SetGrouping(layout, decimalSymbol: 1, groupSymbol: 2, groupSize: 1);
+        var display = ParameterMeasurement.Display(UnitType.UT_Angle, Walker, layout,
+            ParameterMeasurement.Parse(UnitType.UT_Angle, "12345.625 deg")!.Value,
+            ParameterMeasurement.Parse(UnitType.UT_Angle, "999.9998611111112 deg")!.Value);
+        Assert.True(display.HasValue);
+        Assert.True(display.Value.Matches("12345° 37' 30\""));
+        Assert.False(display.Value.Matches("12 345° 37' 30\""));
+        Assert.Equal("1000° 00' 00\"", display.Value.After);
+    }
+
+    [Theory]
+    [InlineData(false, false, "1.13", "10.00", "0.00")]
+    [InlineData(true, false, "1.13 rad", "10.00 rad", "0.00 rad")]
+    [InlineData(true, true, "1.13 rad", "10 rad", "0 rad")]
+    public void FormatsRadiansInLegacyAndModernFamilyMetadata(bool showSymbol, bool trim, string previous,
+        string rounded, string zero)
+    {
+        foreach (bool legacy in new[] { false, true })
+        {
+            var layout = DisplayUnits(UnitType.UT_Angle, "radians", DisplayUnitType.DUT_RADIANS,
+                showSymbol ? "rad" : "", showSymbol ? UnitSymbolType.UST_RAD : UnitSymbolType.UST_NONE, legacy);
+            Assert.Single(layout.Records, record => record.ClassId == FormatClass).Values["m_bSuppressTrailingZeros"] = trim ? 1L : 0L;
+            var display = ParameterMeasurement.Display(UnitType.UT_Angle, Walker, layout, 1.125, 9.995);
+            Assert.True(display.HasValue);
+            Assert.True(display.Value.MatchesUnit("rad"));
+            Assert.True(display.Value.Matches(previous));
+            Assert.Equal(rounded, display.Value.After);
+            Assert.Equal(zero, ParameterMeasurement.Display(UnitType.UT_Angle, Walker, layout, 1.125, -0.00125)?.After);
+        }
     }
 
     [Theory]

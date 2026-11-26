@@ -286,7 +286,11 @@ the `units` attribute and include the quote in the value when the double-quote s
 The degrees, minutes, and seconds display format for Angle stores the marks in the `PartAtom` value, such as
 `22° 07' 30"`. Edit requests use decimal quantities with `deg` or `rad`. The saved Angle value retains the
 assigned precision. Its displayed seconds follow the family's decimal separator and verified rounding step.
-The verified layout uses the default marks and spacing.
+The verified layout uses the default marks and spacing. Revit accepts digit grouping for this format and
+still writes an ungrouped degree count in `PartAtom`. Its API disallows suppressing spaces, leading zeros,
+and trailing zeros for this display.
+Radian displays use the `rad` metadata unit in both legacy and current formats. The displayed value uses a
+` rad` suffix when that symbol is configured and drops trailing decimal zeros when suppression is selected.
 Family metadata follows the document's decimal point or comma. The verified grouping options use commas, dots,
 spaces, or apostrophes, with groups of three digits or with two-digit groups to the left of the final three digits.
 Grouping applies to the whole-foot and whole-inch parts of fractional lengths. If the decimal and grouping
@@ -591,6 +595,14 @@ They compared stored Angle values, dependent formulas, and `PartAtom` after Save
 The family records in 112 files matched native Revit 2020–2025 and 2027 writes byte for byte. The 16 files in the
 2026 format passed after upgrade in Revit 2027. All 98 refused batches preserved the source bytes and created no
 output, including edits with stale angle metadata or a mismatched decimal separator.
+
+Further Angle checks covered digit grouping with degrees, minutes, and seconds and radian displays with
+the suffix and trailing-zero suppression options. They compared first edits, replacements, ordered batches,
+and signed rounding boundaries, including a radian value of 9.995 and a negative value that displays as zero.
+The family records in 112 files matched native Revit 2020–2025 and 2027 writes byte for byte. The 16 files in
+the 2026 format passed after upgrade in Revit 2027. API values, formulas, and `PartAtom` entries matched after
+Save As and reopening without Audit. All 98 invalid batches preserved the source bytes and created no output,
+including edits with a wrong radian suffix or stale display text.
 
 Global assignments to loaded family parameters matched 240 Revit API assignments across the eight formats.
 The fixtures included shared family definitions, empty text, unitless and measured values, links to recalculated

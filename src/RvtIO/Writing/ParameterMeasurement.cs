@@ -46,7 +46,7 @@ internal static class ParameterMeasurement
         new(UnitType.UT_Volume, "ft3", "cubicFeet", DisplayUnitType.DUT_CUBIC_FEET, "CF", 1, "ft³"),
         new(UnitType.UT_Angle, "deg", "degrees", DisplayUnitType.DUT_DECIMAL_DEGREES, "°", RadiansPerDegree),
         new(UnitType.UT_Angle, null, DegreesMinutes, DisplayUnitType.DUT_DEGREES_AND_MINUTES, null, RadiansPerDegree),
-        new(UnitType.UT_Angle, "rad", "radians", null, "rad", 1),
+        new(UnitType.UT_Angle, "rad", "radians", DisplayUnitType.DUT_RADIANS, "rad", 1),
         new(UnitType.UT_Currency, "", "currency", DisplayUnitType.DUT_CURRENCY, "$", 1),
         new(UnitType.UT_Mass, "kg", "kilograms", DisplayUnitType.DUT_KILOGRAMS_MASS, "kg", 1),
         new(UnitType.UT_Force, "kN", "kilonewtons", DisplayUnitType.DUT_KILONEWTONS, "kN", 1000 / MetresPerFoot),
@@ -189,6 +189,7 @@ internal static class ParameterMeasurement
             {
                 0 => "",
                 (int)UnitSymbolType.UST_DEGREE_SYMBOL => SymbolPrefix + "degree",
+                (int)UnitSymbolType.UST_RAD => SymbolPrefix + "rad",
                 (int)UnitSymbolType.UST_FOOT_SINGLE_QUOTE => SymbolPrefix + "footSingleQuote",
                 (int)UnitSymbolType.UST_INCH_DOUBLE_QUOTE => SymbolPrefix + "inchDoubleQuote",
                 (int)UnitSymbolType.UST_SF => SymbolPrefix + "sf",
@@ -224,9 +225,12 @@ internal static class ParameterMeasurement
                 modern is null ? null : unit.Atom, format, inchSuffix, grouping);
         }
         if (unit.Forge == DegreesMinutes)
-            return validDisplayFlags && symbol == "" && !grouping && !suppressLeadingZeros && !suppressTrailingZeros && !suppressSpaces
+            return validDisplayFlags && symbol == "" && !suppressLeadingZeros && !suppressTrailingZeros && !suppressSpaces
                 ? DisplayDegreesMinutes(before, after, accuracy, format)
                 : null;
+        bool radians = unit.Input == "rad";
+        if (radians && (!validDisplayFlags || suppressLeadingZeros || suppressSpaces))
+            return null;
         if ((suppressLeadingZeros || suppressTrailingZeros)
             && (spec == UnitType.UT_Currency || additional is not null || unit.AlternateAtom is not null))
             return null;
@@ -234,6 +238,7 @@ internal static class ParameterMeasurement
         {
             (_, "") => "",
             ("deg", SymbolPrefix + "degree") => "°",
+            ("rad", SymbolPrefix + "rad") => " rad",
             ("ft", SymbolPrefix + "footSingleQuote") => "'",
             ("in", SymbolPrefix + "inchDoubleQuote") => "\"",
             ("ft2", SymbolPrefix + "sf") => " SF",
@@ -249,15 +254,25 @@ internal static class ParameterMeasurement
             digits++;
         if (digits > 8)
             return null;
-        double Round(double number) => Math.Round(number / unit.ToInternal, digits, MidpointRounding.AwayFromZero);
+        double Round(double number)
+        {
+            double displayValue = number / unit.ToInternal;
+            if (!radians)
+                return Math.Round(displayValue, digits, MidpointRounding.AwayFromZero);
+            return RoundedTicks(Math.Abs(displayValue), accuracy, 1, 1L << 52) is long steps
+                ? Math.CopySign(steps * accuracy, displayValue)
+                : double.NaN;
+        }
         double oldValue = Round(before), newValue = Round(after);
         if (!double.IsFinite(oldValue) || !double.IsFinite(newValue))
             return null;
         string pattern = $"{(grouping ? 'N' : 'F')}{digits}";
-        bool normalizeZero = grouping || format == DecimalComma || spec == UnitType.UT_Currency || unit.AlternateAtom is not null;
+        if (radians && suppressTrailingZeros)
+            pattern = (grouping ? "#,0" : "0") + (digits == 0 ? "" : "." + new string('#', digits));
+        bool normalizeZero = radians || grouping || format == DecimalComma || spec == UnitType.UT_Currency || unit.AlternateAtom is not null;
         string Render(double value) => (normalizeZero && value == 0 ? 0 : value).ToString(pattern, format) + suffix;
         return new(additional?.Atom ?? spec.ToString()[3..], unit.Atom, suffix, oldValue, Render(newValue), format,
-            symbol == "" ? unit.AlternateAtom : null, grouping ? Render(oldValue) : null);
+            symbol == "" ? unit.AlternateAtom : null, radians || grouping ? Render(oldValue) : null);
     }
 
     private static DisplayValue? DisplayFractionalLength(double before, double after, double accuracy, bool inchesOnly,
