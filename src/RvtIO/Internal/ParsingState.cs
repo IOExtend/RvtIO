@@ -124,6 +124,9 @@ internal class ParsingState : JsonReadFacts
     /// instead of scanning the partition chunks.</summary>
     internal bool ReadsFramedRecords => (WideSchema == null || R22View) && FramedPartitions is { Count: > 0 } framed && framed.All(f => f is { IdWidth: 4 });
 
+    /// <summary>Owners whose retained project records agree on a class without an element type.</summary>
+    public Dictionary<uint, ushort> FramedUntypedElementClasses { get; } = new();
+
     /// <summary>The bars of the reinforcement elements (Rebar, RebarInSystem) by element id, read by <see cref="Parsing.RebarReader"/>.</summary>
     public Dictionary<uint, Parsing.RebarBars> RebarBars { get; } = new();
 

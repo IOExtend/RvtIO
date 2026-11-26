@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using RvtIO.BuiltIns;
+using RvtIO.Ifc;
 using RvtIO.Internal;
 using RvtIO.Meshes;
 using RvtIO.Model;
@@ -684,6 +685,38 @@ public class ElementMeshesTests
         var set = ElementMeshes.Extract(Document(placed, groupTerrain, groupMember, groupType));
 
         Assert.Equal([1, 3], set.Elements.Select(element => element.ElementId));
+    }
+
+    [Theory]
+    [InlineData(IfcProfile.Current)]
+    [InlineData(IfcProfile.Legacy)]
+    public void StackedWallCategory_WithVerifiedTypeIsOmittedFromMeshesAndIfc(IfcProfile profile)
+    {
+        var geometry = new GeometryData
+        {
+            Faces = BoxFaces([0, 0, 0], [2, 1, 3]).Select(f => Face(f.Ring, f.Normal)).ToList(),
+            BoundingBox = [0, 0, 0, 2, 1, 3],
+        };
+        Element Wall(int id, int typeId)
+        {
+            var wall = Product(id, geometry);
+            wall.BoundingBox = geometry.BoundingBox;
+            wall.CategoryId = (int)BuiltInCategory.OST_StackedWalls;
+            wall.Category = nameof(BuiltInCategory.OST_StackedWalls);
+            wall.TypeId = typeId;
+            wall.Parameters.Add(new Parameter { Id = -1002050, Definition = new Definition { Name = "ELEM_TYPE_PARAM" },
+                StorageType = StorageType.ElementId, Value = typeId });
+            return wall;
+        }
+        var type = new Element { Id = 100, CategoryId = (int)BuiltInCategory.OST_StackedWalls, IsSerializedStackedWallType = true };
+        var document = Document(Wall(1, 100), Wall(2, 101), type);
+        Assert.Equal(2, Assert.Single(ElementMeshes.Extract(document).Elements).ElementId);
+
+        using var output = new StringWriter();
+        var skipped = new SkipLog();
+        new IfcExporter { Profile = profile, SkipLog = skipped }.Export(document.RawData, output);
+        Assert.Contains(skipped.Groups(), group => group.Reason == "stacked-wall-container" && group.Examples.Contains(1));
+        Assert.Contains("'2'", Assert.Single(output.ToString().Split('\n'), line => line.Contains("=IFCBUILDINGELEMENTPROXY(")));
     }
 
     [Fact]

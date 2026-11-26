@@ -796,6 +796,7 @@ When rewriting data, `RvtWriter` enforces the following invariants:
    keep their exact 8-byte header prefix before the gzip member. Every rewritten paged stream is sealed with cyclic Hamming
    parity pages (`64,896` payload bytes + `353` parity bytes per full page) and read back through both the parity verifier and
    gzip decoder before being written.
+   The final page can use a shorter code. See [the measured final-page layout](#final-page-layout).
 3. **Untouched blocks, chains, and opaque payloads stay byte-for-byte identical.** Inside an edited `Partitions/<n>` stream:
    - Untouched content blocks (including every keyed block belonging to a loaded family document) are copied verbatim with their
      original deflate payloads and `SignatureMarker` intact.
@@ -815,6 +816,41 @@ When rewriting data, `RvtWriter` enforces the following invariants:
    matrix when edits were applied, read back from disk to verify every storage's directory-entry metadata and every stream's
    declared length and SHA-256 hash, and moved to the destination with `overwrite: false`. Existing files (including the source
    file itself) are never overwritten, and any failure deletes the temporary file while leaving the source untouched.
+
+### Final-page layout
+
+The final pages measured in `Formats/*`, `Global/*` and `Partitions/*` store interleaved cyclic codes.
+Number bits from the least significant bit of the first byte. With `D` lanes, bit `j` belongs to lane
+`j mod D`. A lane with `R` stored bits and generator degree `m` holds `R − m` data bits followed by
+`m` parity bits. The physical length is `ceil(D × R / 8)` bytes. The high alignment bits of the last byte are zero.
+
+| Degree `m` | Generator polynomial |
+| ---: | --- |
+| 3 | x³ + x + 1 |
+| 4 | x⁴ + x³ + 1 |
+| 5 | x⁵ + x³ + 1 |
+| 6 | x⁶ + x⁵ + 1 |
+| 7 | x⁷ + x⁶ + 1 |
+| 9 | x⁹ + x⁵ + 1 |
+| 11 | x¹¹ + x⁹ + 1 |
+
+Full-length codes in the corpus have `R = 2ᵐ − 1` and an odd lane count. Shortened codes observed in
+these streams have 65 lanes. Read the first data bit in each lane as coefficient x⁰ of a polynomial `A`.
+The parity polynomial is the remainder of `A × x^(2ᵐ − 1 − R + m)` divided by the generator over GF(2).
+The exponent accounts for zero coefficients omitted from a shortened lane. The low coefficient of the
+remainder occupies the first parity bit in that lane.
+
+The final `w = max(4, m − 2)` **data** bits can store the number of whole padding bytes, least
+significant bit first. With `B = D × (R − m)` data bits and a stored count `c`, the resulting content
+length in the final page is `floor((B − w) / 8) − c` bytes. The gap between the content and the count
+is zero-filled. This length matched the independently decoded gzip trailer or partition terminal in
+6,676 stream occurrences. Another 72 occurrences in repacked files had zero in the count field despite
+additional padding. Readers must use the gzip trailer or partition terminal to resolve that case.
+These observations cover the original 2013 family sample and the tested 2020–2027 corpus.
+To inspect a stream, run `dotnet run --project tools/RootProbe -- stream-tail model.rvt Global/Latest tail.json`.
+The report gives the physical offset and length of the last page and every measured layout whose parity
+and alignment match. `ContentBytesIfCounted` is relative to the start of that page and assumes that the
+writer populated the count field. A null value means the count or the intervening bits contradict that assumption.
 
 ## Refusal codes
 

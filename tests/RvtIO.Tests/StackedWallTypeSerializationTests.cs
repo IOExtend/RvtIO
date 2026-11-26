@@ -75,6 +75,8 @@ public class StackedWallTypeSerializationTests
     [InlineData("category", false)] [InlineData("type_category", false)]
     [InlineData("no_validation", false)] [InlineData("missing_type", false)]
     [InlineData("mismatched_id", false)]
+    [InlineData("stacked_category", true)] [InlineData("stacked_without_type", false)]
+    [InlineData("stacked_type_itself", false)]
     public void ExportSelection_RequiresCanonicalOwnType(string mutation, bool expected)
     {
         var wall = new Element { Id = 1, CategoryId = -2000011, TypeId = 100,
@@ -90,6 +92,9 @@ public class StackedWallTypeSerializationTests
             case "no_validation": type.IsSerializedStackedWallType = false; break;
             case "missing_type": types.Clear(); break;
             case "mismatched_id": type.Id = 101; break;
+            case "stacked_category": wall.CategoryId = -2003500; break;
+            case "stacked_without_type": wall.CategoryId = -2003500; type.IsSerializedStackedWallType = false; break;
+            case "stacked_type_itself": wall.CategoryId = -2003500; wall.Id = type.Id; break;
         }
         Assert.Equal(expected, IfcExporter.IsValidatedStackedWallContainer(wall, types));
     }

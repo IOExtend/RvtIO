@@ -89,11 +89,15 @@ internal static class ProductRules
 
     /// <summary>A StackedWall parent, whose member walls are the products; not its source record or children.</summary>
     internal static bool IsValidatedStackedWallContainer(
-        Element element, IReadOnlyDictionary<int, Element> elementsById) =>
-        element.CategoryId == -2000011 && element.FamilyTypeId > 0
-        && elementsById.TryGetValue(element.FamilyTypeId, out var type)
-        && type.Id == element.FamilyTypeId && type.CategoryId == -2003500
-        && type.IsSerializedStackedWallType;
+        Element element, IReadOnlyDictionary<int, Element> elementsById)
+    {
+        if (element.CategoryId is not ((int)BuiltInCategory.OST_Walls or (int)BuiltInCategory.OST_StackedWalls))
+            return false;
+        int typeId = element.FamilyTypeId;
+        return typeId > 0 && typeId != element.Id && elementsById.TryGetValue(typeId, out var type)
+            && type.Id == typeId && type.CategoryId == (int)BuiltInCategory.OST_StackedWalls
+            && type.IsSerializedStackedWallType;
+    }
 
     /// <summary>The last project phase of the authored phase order that is a phase element of the document, null when there is none.</summary>
     internal static int? LastProjectPhase(RevitFileInfo info)

@@ -501,6 +501,9 @@ namespace RvtIO.Model
         [JsonIgnore]
         internal string? ValidatedStairOccurrenceName { get; set; }
 
+        [JsonIgnore]
+        internal string? ValidatedCurveName { get; set; }
+
         /// <summary>Own complete parameter-store scope for native instance naming;
         /// null is unvalidated, an empty list is validated absence. Never public heuristics.</summary>
         [JsonIgnore]

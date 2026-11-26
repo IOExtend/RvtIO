@@ -1975,7 +1975,8 @@ public partial class IfcExporter
                     elem.SerializedRoomId?.ToString(CultureInfo.InvariantCulture) ?? "-",
                     elem.NativeRootClassName ?? "-", elem.NativeStructuralType?.ToString(CultureInfo.InvariantCulture) ?? "-") + "\n");
 
-            if (ifcType is "IFCWALL" or "IFCWALLSTANDARDCASE" or "IFCCURTAINWALL"
+            if ((ifcType is "IFCWALL" or "IFCWALLSTANDARDCASE" or "IFCCURTAINWALL"
+                    || ifcType == "IFCBUILDINGELEMENTPROXY" && elem.CategoryId == (int)BuiltIns.BuiltInCategory.OST_StackedWalls)
                 && IsValidatedStackedWallContainer(elem, elemById))
             { Skip(elem, "stacked-wall-container"); continue; }
 
