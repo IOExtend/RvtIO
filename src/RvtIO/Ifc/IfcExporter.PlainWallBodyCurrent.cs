@@ -4,7 +4,7 @@ namespace RvtIO.Ifc;
 
 public partial class IfcExporter
 {
-    /// <summary>Closed pieces that cover both ends of the authored line with a full-height gap between them.</summary>
+    /// <summary>Closed pieces along a straight wall's authored line with full-height gaps between them.</summary>
     private static bool HasSeparatedFullHeightWallPieces(Element wall)
     {
         if (wall.Geometry is not { BrepSolids: { Count: > 1 } solids } geometry
@@ -47,8 +47,9 @@ public partial class IfcExporter
             spans.Add((points.Min(Along), points.Max(Along)));
         }
         spans.Sort((a, b) => a.Start.CompareTo(b.Start));
+        // End joins can shorten the decoded body inside the authored axis.
         if (usedFaces.Count != geometry.Faces.Count
-            || Math.Abs(spans[0].Start) > toleranceFt || Math.Abs(spans[^1].End - length) > toleranceFt)
+            || spans[0].Start < -toleranceFt || spans[^1].End > length + toleranceFt)
             return false;
         for (int i = 1; i < spans.Count; i++)
             if (spans[i].Start - spans[i - 1].End <= toleranceFt)

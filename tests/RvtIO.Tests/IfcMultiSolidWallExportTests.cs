@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using RvtIO.Geometry;
 using RvtIO.Ifc;
 using RvtIO.Model;
 using Xunit;
@@ -98,33 +99,45 @@ public class IfcMultiSolidWallExportTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void FullHeightGap_ExportsBothWallPieces(bool reverseSolidOrder)
+    [InlineData(false, 0, 0)]
+    [InlineData(true, 0, 0)]
+    [InlineData(false, 0, 0.005)]
+    [InlineData(true, 0.005, 0.005)]
+    public void FullHeightGap_ExportsBothWallPieces(bool reverseSolidOrder, double startInsetFeet, double endInsetFeet)
     {
-        var end = Box(0, 0.2, 14);
-        var other = Box(8, 20, 14);
+        // A world coordinate adds the rounded placement and the rounded local coordinate.
+        const double toleranceMm = FacetedShell.IfcGeometryPrecisionMetres * 1000;
+        double bodyEndFeet = 20 - endInsetFeet;
+        var end = Box(startInsetFeet, 0.2, 14);
+        var other = Box(8, bodyEndFeet, 14);
         var wall = reverseSolidOrder ? Wall(other, end) : Wall(end, other);
         wall.Location!.EndPoint = [20, 0.25, 0];
         wall.Location.Length = 20;
-        wall.BoundingBox = wall.Geometry!.BoundingBox = [0, 0, 0, 20, 0.5, 14];
-        wall.OwnWallTrimmedAxis = reverseSolidOrder ? [[8, 0.25, 0], [20, 0.25, 0]] : [[0, 0.25, 0], [0.2, 0.25, 0]];
+        wall.BoundingBox = wall.Geometry!.BoundingBox = [startInsetFeet, 0, 0, bodyEndFeet, 0.5, 14];
+        wall.OwnWallTrimmedAxis = reverseSolidOrder
+            ? [[8, 0.25, 0], [bodyEndFeet, 0.25, 0]]
+            : [[startInsetFeet, 0.25, 0], [0.2, 0.25, 0]];
 
         string ifc = Export(wall);
         var entities = ByReference(ifc);
         var occurrence = Args(Assert.Single(Entities(ifc, "IFCWALL")));
+        var placement = Args(entities[occurrence[5]]);
+        var frame = Args(entities[placement[1]]);
+        double originX = Number(Args(entities[frame[0]])[0].Trim('(', ')').Split(',')[0]);
+        Assert.Equal(startInsetFeet * 304.8, originX, tolerance: toleranceMm);
         var reps = Args(entities[occurrence[6]])[2].Trim('(', ')').Split(',').Select(id => Args(entities[id])).ToList();
         var body = Assert.Single(reps, rep => rep[1] == "'Body'");
         Assert.Equal("'Brep'", body[2]);
         var axis = Assert.Single(reps, rep => rep[1] == "'Axis'");
         var trim = Args(entities[axis[3].Trim('(', ')')]);
-        Assert.Equal(20 * 304.8, Number(Args(entities[trim[2].Trim('(', ')')])[0].Trim('(', ')').Split(',')[0]), 6);
+        double axisEndX = Number(Args(entities[trim[2].Trim('(', ')')])[0].Trim('(', ')').Split(',')[0]);
+        Assert.Equal(bodyEndFeet * 304.8, originX + axisEndX, tolerance: toleranceMm);
         var pieces = body[3].Trim('(', ')').Split(',').Select(AlongExtent).OrderBy(bounds => bounds.Min).ToArray();
         Assert.Equal(2, pieces.Length);
-        Assert.Equal(0, pieces[0].Min, 6);
-        Assert.Equal(0.2 * 304.8, pieces[0].Max, 6);
-        Assert.Equal(8 * 304.8, pieces[1].Min, 6);
-        Assert.Equal(20 * 304.8, pieces[1].Max, 6);
+        Assert.Equal(startInsetFeet * 304.8, pieces[0].Min, tolerance: toleranceMm);
+        Assert.Equal(0.2 * 304.8, pieces[0].Max, tolerance: toleranceMm);
+        Assert.Equal(8 * 304.8, pieces[1].Min, tolerance: toleranceMm);
+        Assert.Equal(bodyEndFeet * 304.8, pieces[1].Max, tolerance: toleranceMm);
 
         (double Min, double Max) AlongExtent(string brep)
         {
@@ -133,7 +146,7 @@ public class IfcMultiSolidWallExportTests
                 .Select(bound => Args(entities[bound])[0])
                 .SelectMany(loop => Args(entities[loop])[0].Trim('(', ')').Split(','))
                 .Select(point => Number(Args(entities[point])[0].Trim('(', ')').Split(',')[0])).ToArray();
-            return (xCoordinates.Min(), xCoordinates.Max());
+            return (originX + xCoordinates.Min(), originX + xCoordinates.Max());
         }
     }
 
