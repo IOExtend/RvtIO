@@ -282,7 +282,7 @@ internal class ParsingState
 
     /// <summary>Material element id -> the cut and surface fill pattern ids of its Material record (-1 when the
     /// material has no pattern of that kind), for the blocks that decoded exactly once.</summary>
-    public Dictionary<uint, (int BlockCount, int CutPatternId, int SurfacePatternId, int? SurfacePatternColor)> MaterialPatterns { get; } = new();
+    public Dictionary<uint, (int BlockCount, int CutPatternId, int SurfacePatternId, int? SurfacePatternColor, int? CutPatternColor)> MaterialPatterns { get; } = new();
 
     public (double BaseFeet, int MaterialId)? SiteCutGraphics { get; set; }
     public int SiteCutGraphicsCount { get; set; }

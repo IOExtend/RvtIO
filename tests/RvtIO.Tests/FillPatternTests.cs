@@ -41,6 +41,32 @@ public class FillPatternTests
         Assert.Equal(valid ? new FillHatch.ModelGrid(7, 5, 0, 4) : null, grid);
     }
 
+    [Theory]
+    [InlineData(0, 0, true)]
+    [InlineData(1, 0, false)]
+    [InlineData(0, 1, false)]
+    public void DraftingCutProjectsTheMaterialGridOntoTheFace(int target, int orientation, bool supported)
+    {
+        var grid = new TfBlockDeserializer.PatternGrid(0, 0, 0, 0, 0.02, [0.02, 0.02],
+            Target: target, Orientation: orientation);
+        var doc = DocumentWithPattern(grid);
+        doc.RawData.MaterialPatterns = new Dictionary<int, (int, int, int?)> { [10] = (8, -1, null) };
+        doc.RawData.MaterialCutPatternColors = new Dictionary<int, int> { [10] = 0x124fd0 };
+
+        var pattern = ViewportSurfacePattern.CreateDraftingCut(doc, 10, (20, 15), (304.8, 120), (0, 152.4), 0.1);
+
+        if (!supported)
+        {
+            Assert.Null(pattern);
+            return;
+        }
+        Assert.NotNull(pattern);
+        Assert.Equal(0x124fd0, pattern.Color);
+        Assert.True(pattern.Coverage(23.048, 16.2, 0.05, 0.05) > 0.99);
+        Assert.Equal(0, pattern.Coverage(29.144, 18.6, 0.05, 0.05), 8);
+        Assert.Equal(0, pattern.Coverage(23.048, 17.7, 0.05, 0.05), 8);
+    }
+
     private static RvtDocument DocumentWithPattern(params TfBlockDeserializer.PatternGrid[] grids)
     {
         var doc = RvtDocument.FromInfo(new RevitFileInfo());
@@ -268,6 +294,20 @@ public class FillPatternTests
         Assert.Equal(0.006667, pattern.Grids[0].Offset, 6);
         Assert.Equal(12, pattern.Grids[0].Segments.Length);
         Assert.Equal(0.0011, pattern.Grids[0].Segments[0], 6);
+    }
+
+    [SkippableFact]
+    public void SampleFile_DecodesTheTerrainCutPatternColor()
+    {
+        string? path = TestFiles.TryFind("Test_2022.rvt") ?? TestFiles.TryFind("rac_basic_sample_project.rvt");
+        if (path == null) throw new SkipException("The Revit basic sample is not available.");
+        var document = RvtDocument.Open(path);
+        var (baseElevation, materialId) = document.RawData.SiteCutGraphics!.Value;
+        var material = document.RawData.MaterialPatterns![materialId];
+
+        Assert.True(double.IsFinite(baseElevation));
+        Assert.Equal("Earth", document.RawData.FillPatterns![material.CutPatternId].Name);
+        Assert.Equal(0, document.RawData.MaterialCutPatternColors![materialId]);
     }
 
     [SkippableFact]

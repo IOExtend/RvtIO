@@ -117,6 +117,7 @@ public class ScheduleTableTests
         Assert.Equal(["Level", "Topic", "What view", "Reviewed?"], body.Header);
         Assert.Equal(41, body.BodyRows);
         Assert.Equal(41, body.LeadingEmpty);
+        Assert.Equal(new TfBlockDeserializer.ScheduleTextStyle(12, 0, 0, "Arial", 1), body.UniformBodyStyle);
 
         // The planting schedule: Type Mark / Common Name / Count.
         Assert.True(tables.ContainsKey(959491), "Planting table 959491 did not decode.");

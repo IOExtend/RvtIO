@@ -1855,12 +1855,15 @@ public partial class RvtFileReader
             ? (old.BlockCount + 1, null)
             : (1, name);
         int cutPatternId = -1, surfacePatternId = -1;
-        int? surfacePatternColor = null;
+        int? surfacePatternColor = null, cutPatternColor = null;
         bool patterns = framed && TfBlockDeserializer.TryExtractMaterialPatterns(
-            data, start, size, classId, out cutPatternId, out surfacePatternId, out surfacePatternColor);
+            data, start, size, classId, out cutPatternId, out surfacePatternId, out surfacePatternColor,
+            out cutPatternColor);
         state.MaterialPatterns[owner] = state.MaterialPatterns.TryGetValue(owner, out var oldPatterns)
-            ? (oldPatterns.BlockCount + 1, oldPatterns.CutPatternId, oldPatterns.SurfacePatternId, oldPatterns.SurfacePatternColor)
-            : (1, patterns ? cutPatternId : -1, patterns ? surfacePatternId : -1, surfacePatternColor);
+            ? (oldPatterns.BlockCount + 1, oldPatterns.CutPatternId, oldPatterns.SurfacePatternId,
+                oldPatterns.SurfacePatternColor, oldPatterns.CutPatternColor)
+            : (1, patterns ? cutPatternId : -1, patterns ? surfacePatternId : -1, surfacePatternColor,
+                patterns ? cutPatternColor : null);
     }
 
     internal static void RecordFillPattern(

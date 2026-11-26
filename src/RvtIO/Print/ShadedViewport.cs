@@ -124,6 +124,16 @@ internal static class ShadedViewport
             ? planes.Where(plane => plane.Index < 4 && Math.Abs(plane.Outward[2]) < 1e-8
                 && Dot(plane.Outward[0], plane.Outward[1], plane.Outward[2], camera.Look) < -1e-8).ToArray()
             : [];
+        var terrainPatterns = showPatterns && terrainSides.Length > 0
+            ? terrainSides.ToDictionary(side => side.Index, side =>
+            {
+                var outward = side.Outward;
+                var origin = Project([outward[0] * side.Offset, outward[1] * side.Offset, 0]);
+                // Drafting dimensions are paper sizes before the cut plane is foreshortened by the camera.
+                var u = ProjectVector([-outward[1] * scale, outward[0] * scale, 0]);
+                var v = ProjectVector([0, 0, scale]);
+                return ViewportSurfacePattern.CreateDraftingCut(document, cutMaterial, (origin.X, origin.Y), u, v, 0.1);
+            }) : null;
         foreach (var element in document.Elements)
         {
             if (element.Geometry is not { Faces.Count: > 0 } geometry || element.IsDiscovered
@@ -169,13 +179,14 @@ internal static class ShadedViewport
                 {
                     var a = clipped[i].Point;
                     var b = clipped[(i + 1) % clipped.Count].Point;
-                    foreach (var (_, outward, offset) in terrainSides)
+                    foreach (var (index, outward, offset) in terrainSides)
                     {
                         if (Math.Abs(Distance(a, outward, offset)) >= 1e-7
                             || Math.Abs(Distance(b, outward, offset)) >= 1e-7) continue;
                         AddSurface([[Project(a), Project(b), Project([b[0], b[1], terrainBase]),
                             Project([a[0], a[1], terrainBase])]], outward,
-                            Dot(outward[0], outward[1], outward[2], camera.Look), soil);
+                            Dot(outward[0], outward[1], outward[2], camera.Look), soil,
+                            pattern: terrainPatterns?.GetValueOrDefault(index));
                     }
                 }
             }

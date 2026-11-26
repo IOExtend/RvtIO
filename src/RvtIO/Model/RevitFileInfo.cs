@@ -129,6 +129,7 @@ namespace RvtIO.Model
         /// has no pattern of that kind), for the materials whose block decoded exactly once.</summary>
         [System.Text.Json.Serialization.JsonIgnore]
         internal IReadOnlyDictionary<int, (int CutPatternId, int SurfacePatternId, int? SurfacePatternColor)>? MaterialPatterns { get; set; }
+        internal IReadOnlyDictionary<int, int>? MaterialCutPatternColors { get; set; }
 
         /// <summary>Fill pattern element id -> its name and line families (angle, origin, shift/offset, dash list
         /// in the pattern's own feet), for the patterns whose block decoded exactly once.</summary>

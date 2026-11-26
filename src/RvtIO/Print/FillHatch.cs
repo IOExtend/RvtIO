@@ -40,10 +40,14 @@ internal static class FillHatch
 
     private static ModelGrid? ProjectGrid(RvtIO.Internal.ModelFacePattern placement,
         TfBlockDeserializer.PatternGrid grid, Func<double[], (double X, double Y)> inView)
+        => ProjectGrid(grid, inView(placement.Origin), inView(placement.U), inView(placement.V));
+
+    internal static ModelGrid? ProjectGrid(TfBlockDeserializer.PatternGrid grid,
+        (double X, double Y) origin, (double X, double Y) u, (double X, double Y) v)
     {
-        var (ax, ay) = inView(placement.Origin);
-        var (ux, uy) = inView(placement.U);
-        var (vx, vy) = inView(placement.V);
+        var (ax, ay) = origin;
+        var (ux, uy) = u;
+        var (vx, vy) = v;
         double cos = Math.Cos(grid.Angle), sin = Math.Sin(grid.Angle);
         double dx = cos * ux + sin * vx, dy = cos * uy + sin * vy;
         double length = Math.Sqrt(dx * dx + dy * dy);

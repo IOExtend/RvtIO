@@ -3689,10 +3689,10 @@ internal static partial class TfBlockDeserializer
     /// fails to decode.</summary>
     internal static bool TryExtractMaterialPatterns(
         byte[] d, int blockStart, uint dataSize, ushort classId, out int cutPatternId, out int surfacePatternId,
-        out int? surfacePatternColor)
+        out int? surfacePatternColor, out int? cutPatternColor)
     {
         cutPatternId = surfacePatternId = -1;
-        surfacePatternColor = null;
+        surfacePatternColor = cutPatternColor = null;
         if (classId != 2486
             || blockStart < 0
             || dataSize > int.MaxValue
@@ -3742,6 +3742,11 @@ internal static partial class TfBlockDeserializer
                 if (field is { Declaring: 2479, Name: "m_cutPatternId", Type: 14, Mods: 0, Ref: 20 })
                 {
                     cutPatternId = ReadI32(cur);
+                    continue;
+                }
+                if (field is { Declaring: 2479, Name: "m_cutPatternColor", Type: 5, Mods: 0 })
+                {
+                    cutPatternColor = ReadI32(cur);
                     continue;
                 }
                 if (field is { Declaring: 2479, Name: "m_surfacePatternId", Type: 14, Mods: 0, Ref: 20 })
@@ -4345,6 +4350,7 @@ internal static partial class TfBlockDeserializer
     {
         internal IReadOnlyList<ScheduleTextStyle>? HeaderStyles { get; init; }
         internal IReadOnlyList<int>? BodyAlignment { get; init; }
+        internal ScheduleTextStyle? UniformBodyStyle { get; init; }
     }
     internal readonly record struct ScheduleTextStyle(double CapHeightPixels, int HorizontalAlignment,
         int VerticalAlignment, string? FontName = null, int Flags = 0);
@@ -5030,8 +5036,22 @@ internal static partial class TfBlockDeserializer
                         if (styles[col].CapHeightPixels <= 0 || styles[col].HorizontalAlignment != bodyAlignment[col])
                             bodyAlignment[col] = -1;
             }
+            // Evaluated rows need the style even when the saved cells have no text.
+            ScheduleTextStyle? uniformBodyStyle = null;
+            if (header.Count > 0 && section.CellQis.Count > 1
+                && StylesAt(1) is { Length: > 0 } firstBodyStyles
+                && firstBodyStyles[0] is { CapHeightPixels: > 0 } firstStyle
+                && Enumerable.Range(1, section.CellQis.Count - 1).All(row =>
+                    StylesAt(row) is { } styles && styles.Length == header.Count
+                    && styles.All(style => style == firstStyle)))
+                uniformBodyStyle = firstStyle;
+
             bodySections.Add(new ScheduleBodySection(header, leadingEmpty, bodyRows)
-                { HeaderStyles = headerStyles, BodyAlignment = bodyAlignment });
+            {
+                HeaderStyles = headerStyles,
+                BodyAlignment = bodyAlignment,
+                UniformBodyStyle = uniformBodyStyle,
+            });
         }
     }
 

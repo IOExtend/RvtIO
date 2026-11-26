@@ -89,7 +89,10 @@ for axis-aligned placements. The constructed title block strip keeps its existin
 A regular 3D view prints as an isometric projection of the model with white faces and outlines. An analysis view
 with a decoded orthographic camera and an active model section box prints the model at its saved sheet position
 and scale, using the RVT material colours. The view's saved category visibility controls which model geometry
-appears and casts shadows. The section box clips the geometry in model space.
+appears and casts shadows. The section box clips the geometry in model space. With patterns enabled,
+its vertical terrain cuts use the soil material's drafting hatch and colour. The camera foreshortens
+the saved paper-sized grid on each cut plane. The grid starts from the model origin projected onto
+that plane.
 For a multi-day study with fixed hours, the saved study settings supply the compass size, ground level, dates,
 time range and active frame. The compass follows true north from the active project location. The latitude,
 longitude and time zone drive the solar band and dates. Hourly studies show the active sun and its time,
@@ -738,7 +741,9 @@ come from the RVT family and view. The annotation crop uses the saved paper offs
   The title, merged instruction bands and ordinary column headings use supported saved cell styles. The styles
   store cap height in logical pixels at 96 dpi. The printer uses the embedded font's cap height to convert to
   half-point sizes and applies the stored horizontal and vertical alignment.
-  Evaluated rows use a column's horizontal alignment when all of its stored data rows agree.
+  Evaluated rows use a column's horizontal alignment when all of its stored data rows agree. The regular Arial
+  12-pixel body style retains its print row pitch and baseline when the saved cells share that style, including
+  schedules that fill otherwise empty stored cells from evaluated values.
   Every per-sheet schedule instance prints at its instance origin with its decoded columns, show flags, grid and outline
   pens (the negative category ids they name, resolved against the Object Styles), title bands and body grid; revision
   rows come from the model revisions explicitly present on that sheet and pad to the fixed height stored in

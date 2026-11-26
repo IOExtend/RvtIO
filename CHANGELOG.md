@@ -8,6 +8,8 @@ API between minor releases.
 
 ### Fixed
 
+- Orthographic shaded views print the saved soil cut hatch and colour on the section box's terrain faces.
+- Evaluated schedule rows with a supported uniform Arial style print with their Revit row pitch and text baseline.
 - Elevations and sections print supported drafting patterns on saved planar wall paint regions.
 - Fine section callouts include screen-space ambient shadows from glazed curtain panels onto visible walls.
 - Fine section callouts retain the contour of closed furniture meshes with saved cylindrical facets.

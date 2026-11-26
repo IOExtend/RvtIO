@@ -6028,6 +6028,9 @@ internal static partial class ElementBuilder
             .Where(pair => pair.Value is { SurfacePatternId: not -1 } or { CutPatternId: not -1 })
             .ToDictionary(pair => (int)pair.Key,
                 pair => (pair.Value.CutPatternId, pair.Value.SurfacePatternId, pair.Value.SurfacePatternColor));
+        rvtInfo.MaterialCutPatternColors = state?.MaterialPatterns
+            .Where(pair => pair.Value is { BlockCount: 1, CutPatternId: > 0, CutPatternColor: >= 0 and <= 0xffffff })
+            .ToDictionary(pair => (int)pair.Key, pair => pair.Value.CutPatternColor!.Value);
         rvtInfo.FillPatterns = state?.FillPatterns
             .Where(pair => pair.Value is { Name: not null, Grids: not null })
             .ToDictionary(pair => (int)pair.Key,

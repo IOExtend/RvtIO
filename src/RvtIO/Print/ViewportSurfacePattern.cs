@@ -30,6 +30,22 @@ internal sealed class ViewportSurfacePattern
         return new(grids.Select(grid => grid with { X = grid.X + offsetX, Y = grid.Y + offsetY }), width, color);
     }
 
+    internal static ViewportSurfacePattern? CreateDraftingCut(RvtDocument document, int materialId,
+        (double X, double Y) origin, (double X, double Y) u, (double X, double Y) v, double width)
+    {
+        if (document.RawData.MaterialPatterns?.TryGetValue(materialId, out var material) != true
+            || document.RawData.FillPatterns?.TryGetValue(material.CutPatternId, out var pattern) != true
+            || pattern.Grids.Count == 0
+            || !pattern.Grids.All(grid => grid is { Target: 0, Orientation: 0 })) return null;
+        var grids = new List<FillHatch.ModelGrid>(pattern.Grids.Count);
+        foreach (var grid in pattern.Grids)
+        {
+            if (FillHatch.ProjectGrid(grid, origin, u, v) is not { } projected) return null;
+            grids.Add(projected);
+        }
+        return new(grids, width, document.RawData.MaterialCutPatternColors?.GetValueOrDefault(materialId) ?? 0);
+    }
+
     internal double Coverage(double x, double y, double stepX, double stepY)
     {
         double uncovered = 1;

@@ -1113,6 +1113,14 @@ public static partial class SheetComposer
         double extraHeaderLineMm = 14.55 * PtToMm;
         foreach (var (header, body, layout) in sections)
         {
+            bool styledBody = authoredRows != null && layout?.UniformBodyStyle is
+                { CapHeightPixels: 12, HorizontalAlignment: 0, VerticalAlignment: 0, Flags: 1 } bodyStyle
+                && string.Equals(bodyStyle.FontName, "Arial", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(page.Owner.Font?.Name, bodyStyle.FontName, StringComparison.OrdinalIgnoreCase);
+            // Plain Arial at 12 cap-height pixels uses the print layout's 23-pixel row and 16.8-pixel baseline.
+            double rowHeight = styledBody ? 23 * pixelMm : bodyH;
+            double styledBaseline = 16.8 * pixelMm;
+            double styledInset = 3.6 * pixelMm;
             if (schedule.ShowHeaders)
             {
                 // The header top rule is the title-area rule above, drawn where nothing stands over it.
@@ -1128,7 +1136,7 @@ public static partial class SheetComposer
                     headers[i] = (revision ? [text] : Wrap(text, widths[i], size ?? headPt * PtToMm), size, style);
                 }
                 int headerLines = Math.Max(1, headers.Max(cell => cell.Lines.Count));
-                double headerH = revision ? headH : bodyH + (headerLines - 1) * extraHeaderLineMm;
+                double headerH = revision ? headH : rowHeight + (headerLines - 1) * extraHeaderLineMm;
                 for (int i = 0; i < widths.Length; i++)
                 {
                     var (lines, size, style) = headers[i];
@@ -1139,6 +1147,13 @@ public static partial class SheetComposer
                             // The supported Arial revision heading baseline sits 1.42 caps below the top rule.
                             page.DrawText(lines[0], (edges[i] + edges[i + 1]) / 2,
                                 y - revisionHeaderCapMm * 1.42, nativeSize, PdfTextAlignment.Center);
+                        }
+                        else if (styledBody && headerLines == 1 && style is
+                            { CapHeightPixels: 12, HorizontalAlignment: 1, VerticalAlignment: 8, Flags: 1 }
+                            && string.Equals(style.FontName, "Arial", StringComparison.OrdinalIgnoreCase))
+                        {
+                            page.DrawText(lines[0], (edges[i] + edges[i + 1]) / 2,
+                                y - styledBaseline, nativeSize, PdfTextAlignment.Center);
                         }
                         else DrawCellText(lines, headerH, nativeSize, style, edges[i], edges[i + 1]);
                         continue;
@@ -1173,13 +1188,15 @@ public static partial class SheetComposer
                     if (cell.Length == 0) continue;
                     double sizeMm = bodyPt * PtToMm;
                     int alignment = layout?.BodyAlignment is { } saved && saved.Count == widths.Length ? saved[i] : -1;
-                    if (alignment == 0 || alignment != 1 && (revision || authoredRows != null || i == 0))
-                        page.DrawText(cell, edges[i] + insetMm, y - bodyH / 2 - 0.35 * sizeMm, sizeMm);
+                    if (styledBody)
+                        page.DrawText(cell, edges[i] + styledInset, y - styledBaseline, sizeMm);
+                    else if (alignment == 0 || alignment != 1 && (revision || authoredRows != null || i == 0))
+                        page.DrawText(cell, edges[i] + insetMm, y - rowHeight / 2 - 0.35 * sizeMm, sizeMm);
                     else
-                        page.DrawText(cell, (edges[i] + edges[i + 1]) / 2, y - bodyH / 2 - 0.35 * sizeMm, sizeMm,
+                        page.DrawText(cell, (edges[i] + edges[i + 1]) / 2, y - rowHeight / 2 - 0.35 * sizeMm, sizeMm,
                             PdfTextAlignment.Center);
                 }
-                y -= bodyH;
+                y -= rowHeight;
                 if (schedule.ShowGridLines)
                     page.DrawLine(edges[0], y, edges[^1], y, gridMm);
             }
