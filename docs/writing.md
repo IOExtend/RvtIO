@@ -622,7 +622,7 @@ updates the stored clip elevations and cutter planes for each verified range ref
 associated sketch planes when the plan's generating level moves. A floor plan with a top plane referencing
 a different level was verified for edits to either level and for both edits in one batch. The 40 edited
 projects matched the Revit API for level elevations, plan range references and offsets, and sketch planes
-after Save As and reopening without Audit in Revit 2020–2025 and 2027. Revit 2027 checked the 2026 format
+after Save As and reopening without Audit in Revit 2020â€“2025 and 2027. Revit 2027 checked the 2026 format
 after upgrade. All 32 refused batches preserved the source bytes and created no output.
 [Autodesk PlanViewRange reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/7edc5f13-a5fa-5c7a-9a03-ac6cbed1f005.htm)
 
@@ -632,7 +632,7 @@ level with the same height. With a level-constrained top, the writer recomputes 
 both offsets. The tests covered moving either constraint, moving both in one batch, and a level that also
 has dependent plans. The 48 edited projects matched the API for elevations, wall constraints and offsets,
 location curves, bounds, area, volume, and plan ranges after Save As and reopening without Audit in
-Revit 2020–2025 and 2027. Revit 2027 checked the 2026 format after upgrade. All 32 refused batches preserved
+Revit 2020â€“2025 and 2027. Revit 2027 checked the 2026 format after upgrade. All 32 refused batches preserved
 the source bytes and created no output.
 Three further Revit 2025 checks with fractional elevations matched all parameter values and wall location lines.
 One upper bounding-box coordinate differed by one floating-point step after reopening.
@@ -642,7 +642,7 @@ two openings on a wall constrained at both ends. Each opening edge follows its s
 keeps the opening offsets and regenerates its rectangle, opening solid, and wall cut. Moving either
 constraint, moving both in one batch, and lowering a previously raised level were checked. The 56 edited
 projects matched the Revit API for opening bounds and dimensions, wall location and quantities, and level
-elevations after Save As and reopening without Audit in Revit 2020–2025 and 2027. Revit 2027 checked the
+elevations after Save As and reopening without Audit in Revit 2020â€“2025 and 2027. Revit 2027 checked the
 2026 format after upgrade. All 32 refused batches preserved the source bytes and created no output.
 [Autodesk Opening class reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/720de864-9f4e-c606-c7f4-2e7a0b2da46f.htm)
 
@@ -650,7 +650,7 @@ Shared-elevation checks covered walls with two or three rectangular openings who
 coincided in height. RvtIO follows the saved cutting faces and edge loops to identify the opening for
 each edge. The checks moved the base or top level separately and moved both levels in either batch order.
 All 40 edited projects matched the Revit API after Save As and reopening without Audit in Revit
-2020–2025 and 2027. Revit 2027 checked the 2026 format after upgrade. The 32 refused batches preserved
+2020â€“2025 and 2027. Revit 2027 checked the 2026 format after upgrade. The 32 refused batches preserved
 the source bytes and created no output. Revit 2025 reported the opening's Unconnected Height as read-only.
 This height follows the position of both edges.
 
