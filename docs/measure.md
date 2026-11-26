@@ -2,7 +2,7 @@
 
 RvtIO includes a deterministic, self-verifying pipeline that compares two RvtIO revisions (`base` and `head`) against the same pinned Autodesk Revit reference IFC exports without committing external binaries or models into the repository.
 
-Both local runs and manual CI workflows execute [tools/measure/measure_re1.py](../tools/measure/measure_re1.py) against [tools/measure/re1-manifest.json](../tools/measure/re1-manifest.json) with identical flags, SHA-256 verification, and scoring tolerances.
+Both local runs and manual CI workflows execute [tools/measure/measure_re1.py](https://github.com/IOExtend/RvtIO/blob/main/tools/measure/measure_re1.py) against [tools/measure/re1-manifest.json](https://github.com/IOExtend/RvtIO/blob/main/tools/measure/re1-manifest.json) with identical flags, SHA-256 verification, and scoring tolerances.
 
 ## Pinned Reference Models (`RE1`)
 
@@ -17,7 +17,7 @@ All initial models come from the public MIT-licensed `Drshelden/IFC-ECS` reposit
 | `re1-mechanical` | `RE1-Mechanical.rvt` | `Drshelden/IFC-ECS data/RE1/RE1-Mechanical.rvt` (MIT) | Autodesk Revit 2025 | 3,379,200 | `d559720177aa0ec435133f804e7c45d60da2deb9d5585bb3d55f4830139c014b` |
 | `re1-mechanical` | `RE1-Mechanical.ifc` | `Drshelden/IFC-ECS data/RE1/RE1-Mechanical.ifc` (MIT) | `IFC2X3 CoordinationView_V2.0`, Autodesk Revit `26.2.0.20 (ENU)`, `shared coordinates`, length unit `MILLIMETRE` | 220,068 | `9e56cf7246ce86ef73646dd588a1efb8a4756e5e102b30e28b3b58577a454db0` |
 
-Exact download URLs are pinned in [tools/measure/re1-manifest.json](../tools/measure/re1-manifest.json):
+Exact download URLs are pinned in [tools/measure/re1-manifest.json](https://github.com/IOExtend/RvtIO/blob/main/tools/measure/re1-manifest.json):
 - `https://raw.githubusercontent.com/Drshelden/IFC-ECS/main/data/RE1/RE1-Architecture.rvt`
 - `https://raw.githubusercontent.com/Drshelden/IFC-ECS/main/data/RE1/RE1-Architecture.ifc`
 - `https://raw.githubusercontent.com/Drshelden/IFC-ECS/main/data/RE1/RE1-Mechanical.rvt`
@@ -34,6 +34,7 @@ Exact download URLs are pinned in [tools/measure/re1-manifest.json](../tools/mea
    - **Spatial roots**: `IfcProject`, `IfcSite`, `IfcBuilding` matched by `GlobalId`.
 4. **Coordinate normalization & tolerances**:
    - Coordinates, world bounding boxes, and storey elevations are normalized to SI metres using each file's `IfcUnitAssignment` (`LENGTHUNIT`).
+   - Bounds are computed after composing product placement and representation transforms. Reports count pairs that use estimated bounds and matches with missing bounds on either side. `unverifiedBoxTags` lists elements for which neither side has a box and at least one side has unsupported geometry.
    - Default tolerances: `worldBboxMeters = 0.01` m (10 mm max corner delta across all 6 AABB coordinates) and `storeyElevationMeters = 0.005` m (5 mm). Both tolerances and comparable group definitions are emitted in every machine-readable JSON report (`summary.json` and `*.compare.json`).
 5. **Control check**: on each run (unless `--no-control-check` is passed), a synthetic perturbation copy of an exported IFC deletes one tagged element and shifts another element's placement by +0.50 m (+500 mm), verifying that both are caught cleanly, and verifies that bad SHA-256 hashes and `"status": "partial"` export reports are rejected.
 
@@ -46,6 +47,8 @@ Compare any two commits (defaults to `origin/main` vs `HEAD`):
 ```sh
 python tools/measure/measure_re1.py --base origin/main --head HEAD
 ```
+
+Add `--fail-on-regression` to fail after writing reports when the head loses previously matched tags, exact IFC class or same-storey matches for individual tags, introduces bounding-box regressions, or has `unverifiedBoxTags`. Pairs with no applicable representation in either file are counted as missing boxes.
 
 Compare prebuilt `RvtIO.Cli.dll` binaries (without rebuilding git worktrees):
 
@@ -68,7 +71,7 @@ python -m unittest discover -s tools/measure -p "test_*.py" -v
 
 ## Manual CI Execution
 
-Dispatch [Measure RE1](../.github/workflows/measure.yml) (`workflow_dispatch`) from GitHub Actions or via `gh`:
+Dispatch [Measure RE1](https://github.com/IOExtend/RvtIO/blob/main/.github/workflows/measure.yml) (`workflow_dispatch`) from GitHub Actions or via `gh`:
 
 ```sh
 gh workflow run measure.yml -f base_ref=main -f head_ref=my-branch -f models=re1-architecture,re1-mechanical

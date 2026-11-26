@@ -14,6 +14,7 @@ No third-party dependencies are required.
 from __future__ import annotations
 
 import collections
+from collections.abc import Iterator
 import math
 import re
 from pathlib import Path
@@ -84,38 +85,24 @@ CONVERSION_TO_METRES = {
 
 IDENT = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (0.0, 0.0, 0.0))
 
-ENTITY_RE = re.compile(r"#(\d+)\s*=\s*([A-Z0-9_]+)\s*\((.*?)\)\s*;", re.S)
+ENTITY_RE = re.compile(r"#(\d+)\s*=\s*([A-Z0-9_]+)\s*\((.*)\)\s*;", re.S)
 SCHEMA_RE = re.compile(r"FILE_SCHEMA\s*\(\s*\(\s*'([^']+)'", re.I)
+STEP_TOKEN_RE = re.compile(r"'(?:[^']|'')*'|(?P<comment>/\*.*?\*/)|;", re.S)
 
 
-def strip_step_comments(data: str) -> str:
-    """Remove STEP /* ... */ block comments outside single-quoted strings."""
-    out: list[str] = []
-    i = 0
-    n = len(data)
-    instr = False
-    while i < n:
-        c = data[i]
-        if instr:
-            out.append(c)
-            if c == "'":
-                if i + 1 < n and data[i + 1] == "'":
-                    out.append("'")
-                    i += 2
-                    continue
-                instr = False
-            i += 1
-        elif c == "'":
-            instr = True
-            out.append(c)
-            i += 1
-        elif c == "/" and i + 1 < n and data[i + 1] == "*":
-            end = data.find("*/", i + 2)
-            i = n if end == -1 else end + 2
-        else:
-            out.append(c)
-            i += 1
-    return "".join(out)
+def step_statements(text: str) -> Iterator[tuple[int, int, str]]:
+    """Yield each STEP statement without comments and its span in the source."""
+    start = fragment = 0
+    parts: list[str] = []
+    for token in STEP_TOKEN_RE.finditer(text):
+        if token.lastgroup == "comment":
+            parts.extend((text[fragment:token.start()], " "))
+            fragment = token.end()
+        elif token.group() == ";":
+            parts.append(text[fragment:token.end()])
+            yield start, token.end(), "".join(parts).strip()
+            start = fragment = token.end()
+            parts.clear()
 
 
 def tokenize_args(s: str) -> list[str]:
@@ -295,9 +282,10 @@ def union_aabb(a: list[float] | None, b: list[float] | None) -> list[float] | No
     ]
 
 
-def aabb_from_points(pts: list[tuple[float, float, float]]) -> list[float] | None:
+def aabb_from_points(pts: list[tuple[float, float, float]], transform: tuple) -> list[float] | None:
     if not pts:
         return None
+    pts = [apply_mat(transform, p) for p in pts]
     xs = [p[0] for p in pts]
     ys = [p[1] for p in pts]
     zs = [p[2] for p in pts]
@@ -311,8 +299,7 @@ def transform_aabb(aabb: list[float], m: tuple) -> list[float]:
         for y in (aabb[1], aabb[4])
         for z in (aabb[2], aabb[5])
     ]
-    pts = [apply_mat(m, c) for c in corners]
-    res = aabb_from_points(pts)
+    res = aabb_from_points(corners, m)
     assert res is not None
     return res
 
@@ -326,26 +313,37 @@ class StepModel:
 
     def __init__(self, path: Path):
         self.path = path
-        text = path.read_text(encoding="utf-8", errors="replace")
-        schema_match = SCHEMA_RE.search(text)
-        self.schema = schema_match.group(1) if schema_match else "UNKNOWN"
-        data_idx = text.find("DATA;")
-        end_idx = text.rfind("ENDSEC;")
-        if data_idx == -1 or end_idx == -1 or end_idx <= data_idx:
-            raise ValueError(f"Invalid STEP file (missing DATA;/ENDSEC;): {path}")
-        data = strip_step_comments(text[data_idx + 5 : end_idx])
+        self.text = path.read_text(encoding="utf-8-sig", errors="replace")
+        self.schema = "UNKNOWN"
         self.ent: dict[int, tuple[str, str]] = {}
+        self.record_spans: dict[int, tuple[int, int]] = {}
         self.by_type_map: dict[str, list[int]] = collections.defaultdict(list)
-        for m in ENTITY_RE.finditer(data):
+        in_data = False
+        for start, end, statement in step_statements(self.text):
+            if not in_data:
+                schema_match = SCHEMA_RE.match(statement)
+                if schema_match:
+                    self.schema = schema_match.group(1)
+                in_data = statement == "DATA;"
+                continue
+            if statement == "ENDSEC;":
+                self.data_end = start
+                break
+            m = ENTITY_RE.fullmatch(statement)
+            if m is None:
+                raise ValueError(f"Invalid STEP entity at character {start}: {path}")
             eid = int(m.group(1))
             etype = m.group(2).upper()
             self.ent[eid] = (etype, m.group(3))
+            self.record_spans[eid] = (start, end)
             self.by_type_map[etype].append(eid)
+        else:
+            raise ValueError(f"Invalid STEP file (missing DATA;/ENDSEC;): {path}")
         self._args_cache: dict[int, list[str]] = {}
         self._point_cache: dict[int, tuple[float, float, float]] = {}
         self._dir_cache: dict[int, tuple[float, float, float]] = {}
         self._placement_cache: dict[int, tuple] = {}
-        self._geom_cache: dict[int, tuple[list[float] | None, bool]] = {}
+        self._geom_cache: dict[tuple[int, tuple], tuple[list[float] | None, bool]] = {}
         self.length_scale_to_metres = self._resolve_length_unit_scale()
         self.warnings: list[str] = []
 
@@ -510,19 +508,19 @@ class StepModel:
             origin,
         )
 
-    def curve_2d_points(self, eid: int) -> list[tuple[float, float]]:
+    def curve_2d_points(self, eid: int) -> tuple[list[tuple[float, float]], bool]:
         et = self.type_of(eid)
         if et == "IFCPOLYLINE":
             pts: list[tuple[float, float]] = []
             for p_ref in parse_ref_list(self.args(eid)[0]):
                 p = self.cartesian_point(p_ref)
                 pts.append((p[0], p[1]))
-            return pts
+            return pts, True
         if et == "IFCINDEXEDPOLYCURVE":
             a = self.args(eid)
             pl_ref = parse_ref(a[0])
             if pl_ref is None:
-                return []
+                return [], False
             pts_raw = parse_nested_num_list(self.args(pl_ref)[0])
             raw_2d = [(row[0], row[1]) for row in pts_raw if len(row) >= 2]
             if len(a) > 1 and a[1].startswith("("):
@@ -533,13 +531,13 @@ class StepModel:
                         idx = int(idx_tok.strip()) - 1
                         if 0 <= idx < len(raw_2d):
                             seg_pts.append(raw_2d[idx])
-                return seg_pts or raw_2d
-            return raw_2d
+                return seg_pts or raw_2d, bool(seg_pts) and not re.search(r"IFCARCINDEX\b", a[1])
+            return raw_2d, True
         if et == "IFCTRIMMEDCURVE":
             a = self.args(eid)
             basis_ref = parse_ref(a[0])
             if basis_ref is None:
-                return []
+                return [], False
             bt = self.type_of(basis_ref)
             # Fast extraction for line/circle trimmed curves and point trims
             pts_trim: list[tuple[float, float]] = []
@@ -557,27 +555,31 @@ class StepModel:
                     ang = 2.0 * math.pi * k / 16.0
                     wp = apply_mat(pos, (radius * math.cos(ang), radius * math.sin(ang), 0.0))
                     sampled.append((wp[0], wp[1]))
-                return sampled
+                return sampled, False
             if pts_trim:
-                return pts_trim
+                return pts_trim, bt == "IFCLINE" and len(pts_trim) == 2
             if bt == "IFCLINE":
                 l_args = self.args(basis_ref)
                 p = self.cartesian_point(parse_ref(l_args[0])) if l_args else (0.0, 0.0, 0.0)
-                return [(p[0], p[1])]
-            return []
+                return [(p[0], p[1])], False
+            return [], False
         if et == "IFCCOMPOSITECURVE":
             a = self.args(eid)
             all_pts: list[tuple[float, float]] = []
+            exact = True
             for seg_ref in parse_ref_list(a[0]):
-                if self.type_of(seg_ref) == "IFCCOMPOSITECURVESEGMENT":
-                    s_args = self.args(seg_ref)
-                    parent_curve = parse_ref(s_args[2]) if len(s_args) > 2 else None
-                    if parent_curve:
-                        all_pts.extend(self.curve_2d_points(parent_curve))
-            return all_pts
-        return []
+                s_args = self.args(seg_ref)
+                parent_curve = parse_ref(s_args[2]) if len(s_args) > 2 else None
+                if self.type_of(seg_ref) != "IFCCOMPOSITECURVESEGMENT" or parent_curve is None:
+                    exact = False
+                    continue
+                points, segment_exact = self.curve_2d_points(parent_curve)
+                all_pts.extend(points)
+                exact = exact and bool(points) and segment_exact
+            return all_pts, exact
+        return [], False
 
-    def profile_2d_points(self, eid: int) -> list[tuple[float, float]] | None:
+    def profile_2d_points(self, eid: int) -> tuple[list[tuple[float, float]], bool]:
         et = self.type_of(eid)
         a = self.args(eid)
         if et in ("IFCRECTANGLEPROFILEDEF", "IFCRECTANGLEHOLLOWPROFILEDEF"):
@@ -589,7 +591,7 @@ class StepModel:
             for lx, ly in [(-hx, -hy), (hx, -hy), (hx, hy), (-hx, hy)]:
                 wp = apply_mat(pos, (lx, ly, 0.0))
                 pts.append((wp[0], wp[1]))
-            return pts
+            return pts, True
         if et in ("IFCCIRCLEPROFILEDEF", "IFCCIRCLEHOLLOWPROFILEDEF"):
             pos = self.axis2placement3d(parse_ref(a[2])) if len(a) > 2 else IDENT
             radius = parse_num(a[3]) or 0.0 if len(a) > 3 else 0.0
@@ -597,37 +599,41 @@ class StepModel:
             for lx, ly in [(-radius, -radius), (radius, -radius), (radius, radius), (-radius, radius)]:
                 wp = apply_mat(pos, (lx, ly, 0.0))
                 pts.append((wp[0], wp[1]))
-            return pts
+            return pts, False
         if et == "IFCELLIPSEPROFILEDEF":
             pos = self.axis2placement3d(parse_ref(a[2])) if len(a) > 2 else IDENT
             rx = parse_num(a[3]) or 0.0 if len(a) > 3 else 0.0
             ry = parse_num(a[4]) or 0.0 if len(a) > 4 else 0.0
-            return [(wp[0], wp[1]) for lx, ly in [(-rx, -ry), (rx, -ry), (rx, ry), (-rx, ry)] for wp in [apply_mat(pos, (lx, ly, 0.0))]]
+            return [(wp[0], wp[1]) for lx, ly in [(-rx, -ry), (rx, -ry), (rx, ry), (-rx, ry)] for wp in [apply_mat(pos, (lx, ly, 0.0))]], False
         if et in ("IFCARBITRARYCLOSEDPROFILEDEF", "IFCARBITRARYPROFILEDEFWITHVOIDS"):
             curve_ref = parse_ref(a[2]) if len(a) > 2 else None
-            return self.curve_2d_points(curve_ref) if curve_ref else None
+            return self.curve_2d_points(curve_ref) if curve_ref else ([], False)
         if et == "IFCCOMPOSITEPROFILEDEF":
             sub_refs = parse_ref_list(a[2]) if len(a) > 2 else []
             pts_all: list[tuple[float, float]] = []
+            exact = True
             for sr in sub_refs:
-                sub = self.profile_2d_points(sr)
-                if sub:
-                    pts_all.extend(sub)
-            return pts_all or None
+                points, sub_exact = self.profile_2d_points(sr)
+                pts_all.extend(points)
+                exact = exact and bool(points) and sub_exact
+            return pts_all, exact
         if et in ("IFCISHAPEPROFILEDEF", "IFCLSHAPEPROFILEDEF", "IFCTSHAPEPROFILEDEF", "IFCUSHAPEPROFILEDEF", "IFCZSHAPEPROFILEDEF"):
             pos = self.axis2placement3d(parse_ref(a[2])) if len(a) > 2 else IDENT
             w = parse_num(a[3]) or 0.0 if len(a) > 3 else 0.0
             h = parse_num(a[4]) or 0.0 if len(a) > 4 else 0.0
             hx, hy = w * 0.5, h * 0.5
-            return [(wp[0], wp[1]) for lx, ly in [(-hx, -hy), (hx, -hy), (hx, hy), (-hx, hy)] for wp in [apply_mat(pos, (lx, ly, 0.0))]]
-        return None
+            return [(wp[0], wp[1]) for lx, ly in [(-hx, -hy), (hx, -hy), (hx, hy), (-hx, hy)] for wp in [apply_mat(pos, (lx, ly, 0.0))]], False
+        return [], False
 
-    def item_local_aabb(self, eid: int) -> tuple[list[float] | None, bool]:
-        """Compute local AABB (in file length units) and exactness flag for a representation item."""
-        cached = self._geom_cache.get(eid)
+    def item_aabb(self, eid: int, transform: tuple) -> tuple[list[float] | None, bool]:
+        """Bound the transformed geometry of an item in file length units."""
+        key = (eid, transform)
+        cached = self._geom_cache.get(key)
         if cached is not None:
             return cached
         et = self.type_of(eid)
+        if et is None:
+            return None, False
         a = self.args(eid)
         res: list[float] | None = None
         exact = True
@@ -640,38 +646,42 @@ class StepModel:
                 origin_mat = self.axis2placement3d(parse_ref(rm_args[0]) if rm_args else None)
                 rep_ref = parse_ref(rm_args[1]) if len(rm_args) > 1 else None
                 if rep_ref:
-                    rep_box, rep_exact = self.shape_representation_local_aabb(rep_ref)
-                    exact = exact and rep_exact
-                    if rep_box is not None:
-                        op_mat = self.transform_operator_3d(op_ref)
-                        # IFC MappedItem: Origin maps rep into Map space; MappingTarget maps into instance space.
-                        # Note Revit/RvtIO usually leave MappingOrigin at Identity (0,0,0), so both agree.
-                        inv_origin = _invert_rigid(origin_mat)
-                        total = mat_mul(op_mat, inv_origin)
-                        res = transform_aabb(rep_box, total)
+                    op_mat = self.transform_operator_3d(op_ref)
+                    total = mat_mul(transform, mat_mul(op_mat, _invert_rigid(origin_mat)))
+                    res, exact = self.shape_representation_aabb(rep_ref, total)
         elif et == "IFCEXTRUDEDAREASOLID":
             prof_ref = parse_ref(a[0]) if len(a) > 0 else None
-            pos_mat = self.axis2placement3d(parse_ref(a[1]) if len(a) > 1 else None)
+            pos_mat = mat_mul(transform, self.axis2placement3d(parse_ref(a[1]) if len(a) > 1 else None))
             edir = self.direction(parse_ref(a[2]) if len(a) > 2 else None, (0.0, 0.0, 1.0))
             depth = parse_num(a[3]) if len(a) > 3 else None
             if prof_ref and depth is not None:
-                pts2 = self.profile_2d_points(prof_ref)
-                if pts2:
-                    pts3: list[tuple[float, float, float]] = []
-                    disp = (edir[0] * depth, edir[1] * depth, edir[2] * depth)
-                    for x, y in pts2:
-                        pts3.append(apply_mat(pos_mat, (x, y, 0.0)))
-                        pts3.append(apply_mat(pos_mat, (x + disp[0], y + disp[1], disp[2])))
-                    res = aabb_from_points(pts3)
+                disp = (edir[0] * depth, edir[1] * depth, edir[2] * depth)
+                profile_type = self.type_of(prof_ref)
+                if profile_type in ("IFCCIRCLEPROFILEDEF", "IFCCIRCLEHOLLOWPROFILEDEF", "IFCELLIPSEPROFILEDEF"):
+                    profile = self.args(prof_ref)
+                    rx = parse_num(profile[3]) if len(profile) > 3 else None
+                    ry = rx
+                    if profile_type == "IFCELLIPSEPROFILEDEF":
+                        ry = parse_num(profile[4]) if len(profile) > 4 else None
+                    if rx is not None and ry is not None:
+                        profile_mat = self.axis2placement3d(parse_ref(profile[2]))
+                        px, py, _, start = mat_mul(pos_mat, profile_mat)
+                        end = apply_mat(pos_mat, tuple(profile_mat[3][i] + disp[i] for i in range(3)))
+                        radii = [math.hypot(rx * px[i], ry * py[i]) for i in range(3)]
+                        res = [min(start[i], end[i]) - radii[i] for i in range(3)]
+                        res.extend(max(start[i], end[i]) + radii[i] for i in range(3))
                 else:
-                    exact = False
+                    pts2, exact = self.profile_2d_points(prof_ref)
+                    pts3 = [(x, y, 0.0) for x, y in pts2]
+                    pts3.extend((x + disp[0], y + disp[1], disp[2]) for x, y in pts2)
+                    res = aabb_from_points(pts3, pos_mat)
         elif et == "IFCREVOLVEDAREASOLID":
             prof_ref = parse_ref(a[0]) if len(a) > 0 else None
-            pos_mat = self.axis2placement3d(parse_ref(a[1]) if len(a) > 1 else None)
+            pos_mat = mat_mul(transform, self.axis2placement3d(parse_ref(a[1]) if len(a) > 1 else None))
             axis_ref = parse_ref(a[2]) if len(a) > 2 else None
             angle = parse_num(a[3]) or 0.0 if len(a) > 3 else 0.0
             if prof_ref:
-                pts2 = self.profile_2d_points(prof_ref)
+                pts2, _ = self.profile_2d_points(prof_ref)
                 if pts2 and axis_ref:
                     ax_args = self.args(axis_ref)
                     ax_loc = self.cartesian_point(parse_ref(ax_args[0])) if ax_args else (0.0, 0.0, 0.0)
@@ -682,61 +692,58 @@ class StepModel:
                         theta = angle * i / steps
                         for x, y in pts2:
                             rp = _rotate_around_axis((x, y, 0.0), ax_loc, ax_dir, theta)
-                            pts3.append(apply_mat(pos_mat, rp))
-                    res = aabb_from_points(pts3)
-                else:
-                    exact = False
+                            pts3.append(rp)
+                    res = aabb_from_points(pts3, pos_mat)
+            exact = False
         elif et == "IFCSWEPTDISKSOLID":
             curve_ref = parse_ref(a[0]) if len(a) > 0 else None
             radius = parse_num(a[1]) or 0.0 if len(a) > 1 else 0.0
             if curve_ref:
                 pts3 = self._curve_3d_points(curve_ref)
-                box = aabb_from_points(pts3)
+                box = aabb_from_points(pts3, transform)
                 if box:
-                    res = [box[0] - radius, box[1] - radius, box[2] - radius, box[3] + radius, box[4] + radius, box[5] + radius]
-                else:
-                    exact = False
+                    radii = [radius * math.hypot(*(v[i] for v in transform[:3])) for i in range(3)]
+                    res = [box[i] - radii[i] for i in range(3)] + [box[i + 3] + radii[i] for i in range(3)]
+            exact = False
         elif et == "IFCFACETEDBREP":
             shell_ref = parse_ref(a[0]) if len(a) > 0 else None
             if shell_ref:
-                res = self._shell_aabb(shell_ref)
+                res, exact = self._face_set_aabb(shell_ref, transform)
         elif et in ("IFCFACEBASEDSURFACEMODEL", "IFCSHELLBASEDSURFACEMODEL"):
             for sref in parse_ref_list(a[0]):
-                sub = self._shell_aabb(sref) if self.type_of(sref) in ("IFCCLOSEDSHELL", "IFCOPENSHELL") else self._face_set_aabb(sref)
+                sub, sub_exact = self._face_set_aabb(sref, transform)
                 res = union_aabb(res, sub)
+                exact = exact and sub_exact
         elif et == "IFCCONNECTEDFACESET":
-            res = self._face_set_aabb(eid)
-        elif et == "IFCPOLYGONALFACESET":
+            res, exact = self._face_set_aabb(eid, transform)
+        elif et in ("IFCPOLYGONALFACESET", "IFCTRIANGULATEDFACESET"):
             coords_ref = parse_ref(a[0]) if len(a) > 0 else None
             if coords_ref:
                 pts3 = [(r[0], r[1], r[2]) for r in parse_nested_num_list(self.args(coords_ref)[0]) if len(r) >= 3]
-                res = aabb_from_points(pts3)
-        elif et == "IFCTRIANGULATEDFACESET":
-            coords_ref = parse_ref(a[0]) if len(a) > 0 else None
-            if coords_ref:
-                pts3 = [(r[0], r[1], r[2]) for r in parse_nested_num_list(self.args(coords_ref)[0]) if len(r) >= 3]
-                res = aabb_from_points(pts3)
+                res = aabb_from_points(pts3, transform)
         elif et == "IFCBOUNDINGBOX":
             corner = self.cartesian_point(parse_ref(a[0]) if len(a) > 0 else None)
             xdim = parse_num(a[1]) or 0.0 if len(a) > 1 else 0.0
             ydim = parse_num(a[2]) or 0.0 if len(a) > 2 else 0.0
             zdim = parse_num(a[3]) or 0.0 if len(a) > 3 else 0.0
-            res = [corner[0], corner[1], corner[2], corner[0] + xdim, corner[1] + ydim, corner[2] + zdim]
+            box = [corner[0], corner[1], corner[2], corner[0] + xdim, corner[1] + ydim, corner[2] + zdim]
+            res = transform_aabb(box, transform)
         elif et in ("IFCBOOLEANCLIPPINGRESULT", "IFCBOOLEANRESULT"):
             op1 = parse_ref(a[1]) if len(a) > 1 else None
             if op1:
-                res, sub_exact = self.item_local_aabb(op1)
-                exact = False and sub_exact  # clipping can shrink the solid
+                res, _ = self.item_aabb(op1, transform)
+            exact = False  # clipping can shrink the solid
         elif et == "IFCGEOMETRICSET":
             for iref in parse_ref_list(a[0]):
-                sb, se = self.item_local_aabb(iref)
+                sb, se = self.item_aabb(iref, transform)
                 res = union_aabb(res, sb)
                 exact = exact and se
         else:
             exact = False
 
-        self._geom_cache[eid] = (res, exact)
-        return res, exact
+        result = (res, exact and res is not None)
+        self._geom_cache[key] = result
+        return result
 
     def _curve_3d_points(self, eid: int) -> list[tuple[float, float, float]]:
         et = self.type_of(eid)
@@ -744,11 +751,16 @@ class StepModel:
             return [self.cartesian_point(r) for r in parse_ref_list(self.args(eid)[0])]
         return []
 
-    def _face_set_aabb(self, eid: int) -> list[float] | None:
+    def _face_set_aabb(self, eid: int, transform: tuple) -> tuple[list[float] | None, bool]:
+        if self.type_of(eid) not in ("IFCCLOSEDSHELL", "IFCOPENSHELL", "IFCCONNECTEDFACESET"):
+            return None, False
         a = self.args(eid)
         pts: list[tuple[float, float, float]] = []
+        exact = True
         for fref in parse_ref_list(a[0]):
-            if self.type_of(fref) in ("IFCFACE", "IFCFACESURFACE"):
+            face_type = self.type_of(fref)
+            exact = exact and face_type == "IFCFACE"
+            if face_type in ("IFCFACE", "IFCFACESURFACE"):
                 f_args = self.args(fref)
                 for bref in parse_ref_list(f_args[0]):
                     b_args = self.args(bref)
@@ -756,12 +768,11 @@ class StepModel:
                     if loop_ref and self.type_of(loop_ref) == "IFCPOLYLOOP":
                         for pref in parse_ref_list(self.args(loop_ref)[0]):
                             pts.append(self.cartesian_point(pref))
-        return aabb_from_points(pts)
+                    else:
+                        exact = False
+        return aabb_from_points(pts, transform), exact and bool(pts)
 
-    def _shell_aabb(self, eid: int) -> list[float] | None:
-        return self._face_set_aabb(eid)
-
-    def shape_representation_local_aabb(self, rep_id: int) -> tuple[list[float] | None, bool]:
+    def shape_representation_aabb(self, rep_id: int, transform: tuple) -> tuple[list[float] | None, bool]:
         if self.type_of(rep_id) != "IFCSHAPEREPRESENTATION":
             return None, False
         a = self.args(rep_id)
@@ -769,23 +780,27 @@ class StepModel:
         box: list[float] | None = None
         exact = True
         for iref in item_refs:
-            ib, ie = self.item_local_aabb(iref)
+            ib, ie = self.item_aabb(iref, transform)
             box = union_aabb(box, ib)
             exact = exact and ie
-        return box, exact
+        return box, exact and box is not None
 
     def product_world_aabb_metres(self, eid: int) -> tuple[list[float] | None, bool]:
         """Compute world AABB in SI metres for an IfcProduct (Body prioritized)."""
         a = self.args(eid)
         placement_ref = parse_ref(a[5]) if len(a) > 5 else None
         rep_ref = parse_ref(a[6]) if len(a) > 6 else None
-        if rep_ref is None or self.type_of(rep_ref) != "IFCPRODUCTDEFINITIONSHAPE":
+        if rep_ref is None:
             return None, True
+        if self.type_of(rep_ref) != "IFCPRODUCTDEFINITIONSHAPE":
+            return None, False
         reps = parse_ref_list(self.args(rep_ref)[2]) if len(self.args(rep_ref)) > 2 else []
         body_reps: list[int] = []
         fallback_reps: list[int] = []
+        exact = True
         for rref in reps:
             if self.type_of(rref) != "IFCSHAPEREPRESENTATION":
+                exact = False
                 continue
             rargs = self.args(rref)
             rep_id = (decode_step_string(rargs[1]) or "").lower() if len(rargs) > 1 else ""
@@ -795,17 +810,15 @@ class StepModel:
                 fallback_reps.append(rref)
         chosen = body_reps or fallback_reps
         if not chosen:
-            return None, True
-        local_box: list[float] | None = None
-        exact = True
-        for rref in chosen:
-            rb, re_exact = self.shape_representation_local_aabb(rref)
-            local_box = union_aabb(local_box, rb)
-            exact = exact and re_exact
-        if local_box is None:
-            return None, exact
+            return None, exact and bool(reps)
+        world_native: list[float] | None = None
         placement_mat = self.local_placement(placement_ref)
-        world_native = transform_aabb(local_box, placement_mat)
+        for rref in chosen:
+            rb, re_exact = self.shape_representation_aabb(rref, placement_mat)
+            world_native = union_aabb(world_native, rb)
+            exact = exact and re_exact
+        if world_native is None:
+            return None, False
         return scale_aabb(world_native, self.length_scale_to_metres), exact
 
     def extract_structure(self) -> dict[str, Any]:
@@ -916,6 +929,7 @@ class StepModel:
             if box is not None:
                 model_box = union_aabb(model_box, box)
             elements[tag] = {
+                "entityId": eid,
                 "tag": tag,
                 "globalId": gid,
                 "class": etype,
@@ -1028,6 +1042,9 @@ def compare_ifc_against_reference(
     exceeding_box = 0
     missing_cand_box = 0
     missing_ref_box = 0
+    missing_both_boxes = 0
+    approximate_pairs = 0
+    unverified_box_tags: list[str] = []
     shifted_elements: list[dict[str, Any]] = []
     max_center_shift = 0.0
     max_extent_delta = 0.0
@@ -1074,10 +1091,13 @@ def compare_ifc_against_reference(
 
         # World AABB
         rb, cb = re_el["worldBboxMeters"], ce_el["worldBboxMeters"]
-        if rb is None and cb is None:
-            continue
         if rb is None:
             missing_ref_box += 1
+            if cb is None:
+                missing_cand_box += 1
+                missing_both_boxes += 1
+                if not (re_el["boxExact"] and ce_el["boxExact"]):
+                    unverified_box_tags.append(tag)
             continue
         if cb is None:
             missing_cand_box += 1
@@ -1090,6 +1110,8 @@ def compare_ifc_against_reference(
             })
             continue
 
+        if not (re_el["boxExact"] and ce_el["boxExact"]):
+            approximate_pairs += 1
         rcenter = [(rb[0] + rb[3]) * 0.5, (rb[1] + rb[4]) * 0.5, (rb[2] + rb[5]) * 0.5]
         ccenter = [(cb[0] + cb[3]) * 0.5, (cb[1] + cb[4]) * 0.5, (cb[2] + cb[5]) * 0.5]
         center_shift = math.sqrt(sum((ccenter[i] - rcenter[i]) ** 2 for i in range(3)))
@@ -1266,6 +1288,9 @@ def compare_ifc_against_reference(
             "exceedingToleranceCount": exceeding_box,
             "missingCandidateBoxCount": missing_cand_box,
             "missingReferenceBoxCount": missing_ref_box,
+            "missingBothBoxesCount": missing_both_boxes,
+            "unverifiedBoxTags": unverified_box_tags,
+            "approximatePairCount": approximate_pairs,
             "maxCenterShiftMeters": round(max_center_shift, 6),
             "maxExtentDeltaMeters": round(max_extent_delta, 6),
             "shiftedElements": shifted_elements,
@@ -1281,6 +1306,12 @@ def diff_commit_reports(base: dict[str, Any], head: dict[str, Any]) -> dict[str,
     head_added = {x["tag"] for x in head["identifiers"]["addedIds"]}
     base_shifted = {x["tag"] for x in base["worldBbox"]["shiftedElements"]}
     head_shifted = {x["tag"] for x in head["worldBbox"]["shiftedElements"]}
+    base_wrong_class = {tag for m in base["classes"]["crossClassMappings"] for tag in m["tags"]}
+    head_wrong_class = {tag for m in head["classes"]["crossClassMappings"] for tag in m["tags"]}
+    base_wrong_storey = {x["tag"] for x in base["storeys"]["elementAssignments"]["differences"]}
+    head_wrong_storey = {
+        x["tag"] for x in head["storeys"]["elementAssignments"]["differences"] if x["referenceStorey"] is not None
+    }
 
     return {
         "matchedCountDelta": head["identifiers"]["matchedCount"] - base["identifiers"]["matchedCount"],
@@ -1292,6 +1323,8 @@ def diff_commit_reports(base: dict[str, Any], head: dict[str, Any]) -> dict[str,
         "newlyMissingTags": sorted(head_missing - base_missing, key=_tag_sort_key),
         "newlyAddedTags": sorted(head_added - base_added, key=_tag_sort_key),
         "removedExtraTags": sorted(base_added - head_added, key=_tag_sort_key),
+        "regressedClassTags": sorted(head_wrong_class - base_wrong_class - base_missing, key=_tag_sort_key),
+        "regressedStoreyTags": sorted(head_wrong_storey - base_wrong_storey - base_missing, key=_tag_sort_key),
         "newlyAlignedBboxTags": sorted(base_shifted - head_shifted, key=_tag_sort_key),
         "regressedBboxTags": sorted(head_shifted - base_shifted, key=_tag_sort_key),
     }

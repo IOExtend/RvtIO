@@ -17,9 +17,9 @@ import argparse
 import hashlib
 import http.client
 import json
+import math
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -170,7 +170,7 @@ def export_model(
 
 def resolve_git_sha(repo: Path, ref: str) -> str:
     proc = subprocess.run(
-        ["git", "-C", str(repo), "rev-parse", "--verify", f"{ref}^{{commit}}"],
+        ["git", "-C", str(repo), "rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -229,61 +229,33 @@ def _mutate_remove_and_shift_ifc(source_ifc: Path, mutated_ifc: Path, shift_mm: 
     if len(elems) < 2:
         raise MeasureFailure("Control check requires at least 2 bounded tagged elements")
 
-    removed_tag = elems[0]["tag"]
-    shifted_tag = elems[1]["tag"]
-
-    remove_eid: int | None = None
-    shift_eid: int | None = None
-    shift_placement_eid: int | None = None
-    for eid, (etype, _) in model.ent.items():
-        if etype in ifc_compare.EXCLUDED_ELEMENT_TYPES or etype in ifc_compare.NON_PHYSICAL_PRODUCT_TYPES:
-            continue
-        a = model.args(eid)
-        if len(a) < 8:
-            continue
-        tag = ifc_compare.decode_step_string(a[7])
-        if tag == removed_tag:
-            remove_eid = eid
-        elif tag == shifted_tag:
-            shift_eid = eid
-            shift_placement_eid = ifc_compare.parse_ref(a[5])
-
-    if remove_eid is None or shift_eid is None:
-        raise MeasureFailure("Could not locate control target entities for perturbation test")
+    removed, shifted = elems[:2]
+    shift_eid = shifted["entityId"]
+    shift_args = list(model.args(shift_eid))
+    parent_tok = shift_args[5]
 
     shift_native = (shift_mm / 1000.0) / model.length_scale_to_metres
     max_id = max(model.ent.keys())
     pt_id = max_id + 1
     ax_id = max_id + 2
     pl_id = max_id + 3
-    parent_tok = f"#{shift_placement_eid}" if shift_placement_eid is not None else "$"
-
-    text = source_ifc.read_text(encoding="utf-8", errors="replace")
-    # Remove the exact target entity line/record
-    remove_pat = re.compile(rf"#{remove_eid}\s*=\s*[A-Z0-9_]+\s*\(.*?\)\s*;", re.S)
-    text, rem_n = remove_pat.subn("", text, count=1)
-
-    # Re-point ONLY shift_eid's ObjectPlacement (index 5) to an isolated shifted local placement
-    shift_args = list(model.args(shift_eid))
     shift_args[5] = f"#{pl_id}"
-    shift_pat = re.compile(rf"#{shift_eid}\s*=\s*[A-Z0-9_]+\s*\(.*?\)\s*;", re.S)
-    replacement = f"#{shift_eid}={model.type_of(shift_eid)}({','.join(shift_args)});"
-    text, shift_n = shift_pat.subn(lambda _: replacement, text, count=1)
-    if rem_n != 1 or shift_n != 1:
-        raise MeasureFailure(f"Control perturbation failed to patch IFC (rem={rem_n}, shift={shift_n})")
-
     injected = (
-        f"#{pt_id}=IFCCARTESIANPOINT(({shift_native:.6f},0.,0.));\n"
+        f"\n#{pt_id}=IFCCARTESIANPOINT(({shift_native:.6f},0.,0.));\n"
         f"#{ax_id}=IFCAXIS2PLACEMENT3D(#{pt_id},$,$);\n"
         f"#{pl_id}=IFCLOCALPLACEMENT({parent_tok},#{ax_id});\n"
     )
-    endsec_idx = text.rfind("ENDSEC;")
-    if endsec_idx == -1:
-        raise MeasureFailure("Missing ENDSEC; in source IFC")
-    text = text[:endsec_idx] + injected + text[endsec_idx:]
+    edits = [
+        (*model.record_spans[removed["entityId"]], ""),
+        (*model.record_spans[shift_eid], f"\n#{shift_eid}={shifted['class']}({','.join(shift_args)});"),
+        (model.data_end, model.data_end, injected),
+    ]
+    text = model.text
+    for start, end, replacement in sorted(edits, reverse=True):
+        text = text[:start] + replacement + text[end:]
 
     mutated_ifc.write_text(text, encoding="utf-8")
-    return removed_tag, shifted_tag
+    return removed["tag"], shifted["tag"]
 
 
 def run_control_check(valid_ifc: Path, bbox_tol_m: float = 0.01) -> dict[str, Any]:
@@ -364,7 +336,7 @@ def render_markdown_summary(summary: dict[str, Any]) -> str:
             assign = st["elementAssignments"]
             tag_str = f"{ids['matchedCount']}/{ids['referenceTaggedCount']} (+{ids['addedCount']}, -{ids['missingCount']})"
             storey_str = f"{len(st['matchedStoreys'])}/{st['referenceCount']} ({assign['sameStorey']}/{ids['matchedCount']} same)"
-            box_str = f"{bb['withinToleranceCount']}/{bb['pairedWithBothBoxes']}"
+            box_str = f"{bb['withinToleranceCount']}/{bb['pairedWithBothBoxes']} ({bb['approximatePairCount']} estimated)"
             delta_str = str(bb.get("modelBoxMaxCornerDeltaMeters"))
             lines.append(
                 f"| `{m['id']}` | `{side}` | {tag_str} | {ids['exactGlobalIdCount']}/{ids['matchedCount']} | "
@@ -381,6 +353,10 @@ def render_markdown_summary(summary: dict[str, Any]) -> str:
             f"GlobalId delta = `{d['exactGlobalIdDelta']:+d}`, class delta = `{d['exactClassMatchDelta']:+d}`, "
             f"storey delta = `{d['sameStoreyDelta']:+d}`, world-bbox within tol delta = `{d['bboxWithinToleranceDelta']:+d}`"
         )
+
+    if summary.get("regressions"):
+        lines.extend(["", "## Regressions", ""])
+        lines.extend(f"- {regression}" for regression in summary["regressions"])
 
     lines.extend(["", "## Pinned Sources & Verification", ""])
     for m in summary["models"]:
@@ -420,13 +396,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--elev-tol", type=float, help="Override storey elevation tolerance in metres")
     ap.add_argument("--offline", action="store_true", help="Require verified files in cache-dir without network download")
     ap.add_argument("--no-control-check", action="store_true", help="Skip synthetic removal/shift & negative gate control check")
-    ap.add_argument("--fail-on-regression", action="store_true", help="Exit non-zero if head regresses on matched/class/storey/bbox metrics vs base")
+    ap.add_argument("--fail-on-regression", action="store_true", help="Exit non-zero for worse matched/class/storey/bbox results or unverified geometry")
     args = ap.parse_args(argv)
 
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     rules = manifest["rules"]
     bbox_tol = args.bbox_tol if args.bbox_tol is not None else float(rules["tolerances"]["worldBboxMeters"])
     elev_tol = args.elev_tol if args.elev_tol is not None else float(rules["tolerances"]["storeyElevationMeters"])
+    for option, tolerance in (("--bbox-tol", bbox_tol), ("--elev-tol", elev_tol)):
+        if not math.isfinite(tolerance) or tolerance < 0:
+            raise MeasureFailure(f"{option} must be finite and non-negative")
     export_flags = list(rules["exportFlags"])
 
     selected = {x.strip() for x in args.models.split(",") if x.strip()} if args.models else None
@@ -489,8 +468,15 @@ def main(argv: list[str] | None = None) -> int:
         base_vs_head = ifc_compare.diff_commit_reports(side_data["base"]["comparison"], side_data["head"]["comparison"])
         if base_vs_head["newlyMissingTags"]:
             regressions.append(f"{mid}: newly missing tags {base_vs_head['newlyMissingTags']}")
+        if base_vs_head["regressedClassTags"]:
+            regressions.append(f"{mid}: lost exact IFC class matches for tags {base_vs_head['regressedClassTags']}")
+        if base_vs_head["regressedStoreyTags"]:
+            regressions.append(f"{mid}: lost same-storey matches for tags {base_vs_head['regressedStoreyTags']}")
         if base_vs_head["regressedBboxTags"]:
             regressions.append(f"{mid}: regressed bbox tags {base_vs_head['regressedBboxTags']}")
+        unverified_box_tags = side_data["head"]["comparison"]["worldBbox"]["unverifiedBoxTags"]
+        if unverified_box_tags:
+            regressions.append(f"{mid}: unverified bbox tags {unverified_box_tags}")
 
         model_results.append({
             "id": mid,

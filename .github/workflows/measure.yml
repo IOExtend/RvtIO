@@ -29,7 +29,7 @@ on:
         default: true
         type: boolean
       fail_on_regression:
-        description: "Fail run if head loses matched elements or aligned world boxes relative to base"
+        description: "Fail on comparison regressions or unverified geometry"
         required: false
         default: false
         type: boolean
@@ -60,22 +60,25 @@ jobs:
 
       - name: Run reproducible RE1 comparison
         shell: bash
+        env:
+          BASE_REF: ${{ inputs.base_ref }}
+          HEAD_REF: ${{ inputs.head_ref || github.sha }}
+          MODELS: ${{ inputs.models }}
+          WORLD_BBOX_TOL_M: ${{ inputs.world_bbox_tol_m }}
+          CONTROL_CHECK: ${{ inputs.control_check }}
+          FAIL_ON_REGRESSION: ${{ inputs.fail_on_regression }}
         run: |
-          HEAD_REF="${{ inputs.head_ref }}"
-          if [ -z "$HEAD_REF" ]; then
-            HEAD_REF="${{ github.sha }}"
-          fi
           ARGS=(
             tools/measure/measure_re1.py
-            --base "${{ inputs.base_ref }}"
-            --head "$HEAD_REF"
-            --models "${{ inputs.models }}"
-            --bbox-tol "${{ inputs.world_bbox_tol_m }}"
+            --base="$BASE_REF"
+            --head="$HEAD_REF"
+            --models="$MODELS"
+            --bbox-tol="$WORLD_BBOX_TOL_M"
           )
-          if [ "${{ inputs.control_check }}" != "true" ]; then
+          if [ "$CONTROL_CHECK" != "true" ]; then
             ARGS+=(--no-control-check)
           fi
-          if [ "${{ inputs.fail_on_regression }}" = "true" ]; then
+          if [ "$FAIL_ON_REGRESSION" = "true" ]; then
             ARGS+=(--fail-on-regression)
           fi
           python3 "${ARGS[@]}"

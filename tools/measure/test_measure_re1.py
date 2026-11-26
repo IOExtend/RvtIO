@@ -9,6 +9,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 MEASURE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(MEASURE_DIR))
@@ -59,6 +60,22 @@ END-ISO-10303-21;
 
 
 class MeasureRe1Tests(unittest.TestCase):
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+
+    def write_ifc(self, name: str, content: str) -> Path:
+        path = self.tmp / name
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def sample_metres(self) -> str:
+        return SAMPLE_IFC_TEMPLATE.format(
+            unit_prefix="$", storey2_z="3.66", w_dim="4.", w_thick="0.2", w_height="3.",
+            wall1_x="0.", wall2_x="5.",
+        )
+
     def test_manifest_has_pinned_re1_arch_and_mech(self) -> None:
         manifest = json.loads((MEASURE_DIR / "re1-manifest.json").read_text(encoding="utf-8"))
         ids = [m["id"] for m in manifest["models"]]
@@ -115,6 +132,130 @@ class MeasureRe1Tests(unittest.TestCase):
             self.assertTrue(ctrl["corruptHashRejected"])
             self.assertTrue(ctrl["partialExportRejected"])
             self.assertGreaterEqual(ctrl["observedShiftMeters"], 0.45)
+
+    def test_step_strings_keep_records_intact_during_parsing_and_control(self) -> None:
+        content = (
+            self.sample_metres()
+            .replace("'test.ifc'", "'DATA; in filename'")
+            .replace("'Wall 1'", "'Wall ); 1'")
+            .replace("'Slab 1'", "'Slab ''B'' );\n /* name */ ; (#123)'")
+            .replace("#32=IFCSLAB", "/* #32=IFCFAKE(); */ #32=IFCSLAB")
+        )
+        source = self.write_ifc("strings.ifc", content)
+        elements = ifc_compare.StepModel(source).extract_structure()["elements"]
+        self.assertEqual(list(elements), ["1001", "1002"])
+        self.assertEqual(elements["1001"]["name"], "Wall ); 1")
+        self.assertEqual(elements["1002"]["name"], "Slab 'B' );\n /* name */ ; (#123)")
+        self.assertTrue(measure_re1.run_control_check(source)["passed"])
+
+    def test_rotated_triangular_prism_matches_baked_vertices(self) -> None:
+        def prism(p2: str, p3: str) -> str:
+            return (
+                self.sample_metres()
+                .replace("#20=IFCRECTANGLEPROFILEDEF(.AREA.,$,$,4.,0.2);", (
+                    "#20=IFCARBITRARYCLOSEDPROFILEDEF(.AREA.,$,#40);\n"
+                    "#40=IFCPOLYLINE((#41,#42,#43,#41));\n"
+                    f"#41=IFCCARTESIANPOINT((0.,0.));\n"
+                    f"#42=IFCCARTESIANPOINT(({p2}));\n"
+                    f"#43=IFCCARTESIANPOINT(({p3}));\n"
+                    "#44=IFCDIRECTION((1.,1.,0.));"
+                ))
+                .replace("#31,#24,'1002'", "#31,$,'1002'")
+            )
+
+        local = prism("1.,0.", "0.,1.")
+        baked = self.write_ifc("baked.ifc", prism("0.70710678118655,0.70710678118655", "-0.70710678118655,0.70710678118655"))
+        mapped = local.replace("#24=IFCPRODUCTDEFINITIONSHAPE($,$,(#23));", (
+            "#24=IFCPRODUCTDEFINITIONSHAPE($,$,(#45));\n"
+            "#45=IFCSHAPEREPRESENTATION($,'Body','MappedRepresentation',(#46));\n"
+            "#46=IFCMAPPEDITEM(#47,#48);\n"
+            "#47=IFCREPRESENTATIONMAP(#4,#23);\n"
+            "#48=IFCCARTESIANTRANSFORMATIONOPERATOR3D(#44,#49,#3,1.,$);\n"
+            "#49=IFCDIRECTION((-1.,1.,0.));"
+        ))
+        for encoding, model in (
+            ("placement", local.replace("#26=IFCAXIS2PLACEMENT3D(#25,$,$)", "#26=IFCAXIS2PLACEMENT3D(#25,$,#44)")),
+            ("mapped", mapped),
+        ):
+            with self.subTest(encoding=encoding):
+                candidate = self.write_ifc(f"{encoding}.ifc", model)
+                box, exact = ifc_compare.StepModel(candidate).product_world_aabb_metres(28)
+                self.assertTrue(exact)
+                self.assertEqual(box, [-0.707107, 0., 0., 0.707107, 0.707107, 3.])
+                res = ifc_compare.compare_ifc_against_reference(candidate, baked)
+                self.assertEqual(res["worldBbox"]["withinToleranceCount"], 1)
+                self.assertEqual(res["worldBbox"]["exceedingToleranceCount"], 0)
+
+    def test_rotated_circle_extrusion_bounds_radius(self) -> None:
+        content = self.sample_metres().replace(
+            "#20=IFCRECTANGLEPROFILEDEF(.AREA.,$,$,4.,0.2);",
+            "#20=IFCCIRCLEPROFILEDEF(.AREA.,$,$,2.);\n#40=IFCDIRECTION((1.,1.,0.));",
+        ).replace("#26=IFCAXIS2PLACEMENT3D(#25,$,$)", "#26=IFCAXIS2PLACEMENT3D(#25,$,#40)")
+        source = self.write_ifc("circle.ifc", content)
+        box, exact = ifc_compare.StepModel(source).product_world_aabb_metres(28)
+        self.assertTrue(exact)
+        self.assertEqual(box, [-2., -2., 0., 2., 2., 3.])
+
+    def test_fail_on_regression_checks_class_storey_and_geometry_coverage(self) -> None:
+        original = self.sample_metres()
+        unsupported = original.replace(
+            "#22=IFCEXTRUDEDAREASOLID(#20,#4,#21,3.);", "#22=IFCBLOCK(#4,4.,0.2,3.);",
+        )
+        no_geometry = original.replace(",#24,'100", ",$,'100")
+        cli = self.tmp / "dummy.dll"
+        cli.touch()
+        for name, ref, base, head, expected in (
+            ("class", original, original, original.replace("IFCWALLSTANDARDCASE(", "IFCWALL("), "exact IFC class"),
+            ("storey", original, original, original.replace(
+                "(#28,#32),#14);", "(#32),#14);\n#40=IFCRELCONTAINEDINSPATIALSTRUCTURE('Rel2',$,$,$,(#28),#15);",
+            ), "same-storey"),
+            ("offsetting-class-change", original, original.replace("IFCSLAB(", "IFCWALL("),
+             original.replace("IFCWALLSTANDARDCASE(", "IFCWALL("), "exact IFC class matches for tags ['1001']"),
+            ("lost-bounds", original, original, unsupported, "regressed bbox tags ['1001', '1002']"),
+            ("unsupported", unsupported, unsupported, unsupported, "unverified bbox tags ['1001', '1002']"),
+            ("geometryless", no_geometry, no_geometry, no_geometry, None),
+        ):
+            with self.subTest(case=name):
+                reference = self.write_ifc("reference.ifc", ref)
+                out = self.tmp / name
+
+                def export(_cli, _rvt, out_ifc, _report, _flags, _model_id, side):
+                    out_ifc.write_text(base if side == "base" else head, encoding="utf-8")
+                    return {"ifcBytes": out_ifc.stat().st_size, "ifcSha256": measure_re1.sha256_file(out_ifc)}
+
+                argv = [
+                    "--base-cli", str(cli), "--head-cli", str(cli), "--models", "re1-architecture",
+                    "--out-dir", str(out), "--no-control-check", "--fail-on-regression",
+                ]
+                with (
+                    patch.object(measure_re1, "download_and_verify", return_value=reference),
+                    patch.object(measure_re1, "export_model", side_effect=export),
+                    patch("builtins.print"),
+                ):
+                    if expected:
+                        with self.assertRaises(measure_re1.MeasureFailure):
+                            measure_re1.main(argv)
+                    else:
+                        self.assertEqual(measure_re1.main(argv), 0)
+                summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+                if expected:
+                    self.assertEqual(len(summary["regressions"]), 1)
+                    self.assertIn(expected, summary["regressions"][0])
+                    self.assertIn(expected, (out / "summary.md").read_text(encoding="utf-8"))
+                else:
+                    self.assertEqual(summary["regressions"], [])
+                if name in ("unsupported", "geometryless"):
+                    bbox = summary["models"][0]["head"]["comparison"]["worldBbox"]
+                    self.assertEqual(bbox["pairedWithBothBoxes"], 0)
+                    self.assertEqual(bbox["missingReferenceBoxCount"], 2)
+                    self.assertEqual(bbox["missingCandidateBoxCount"], 2)
+                    self.assertEqual(bbox["missingBothBoxesCount"], 2)
+
+    def test_rejects_invalid_bbox_tolerance(self) -> None:
+        for tolerance in ("nan", "inf", "-0.01"):
+            with self.subTest(tolerance=tolerance):
+                with self.assertRaisesRegex(measure_re1.MeasureFailure, "--bbox-tol must be finite and non-negative"):
+                    measure_re1.main([f"--bbox-tol={tolerance}"])
 
     def test_hash_download_and_partial_export_failures_raise(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_str:
