@@ -13,14 +13,16 @@ internal static partial class ElementBuilder
     {
         foreach (var element in info.Elements)
         {
-            element.LevelShells = new SolidQuantities.Shell?[3];
-            element.LevelSolidCounts = new int[3];
+            var shells = new SolidQuantities.Shell?[3];
+            var counts = new int[3];
             for (int slot = 0; slot < 3; slot++)
             {
                 var geometry = slot == 2 ? element.Geometry : GeometryAtDetailLevel(element, state, slot + 1);
-                element.LevelShells[slot] = SolidQuantities.OfAllSolids(geometry);
-                element.LevelSolidCounts[slot] = geometry?.BrepSolids?.Count ?? 0;
+                shells[slot] = SolidQuantities.OfAllSolids(geometry);
+                counts[slot] = geometry?.BrepSolids?.Count ?? 0;
             }
+            element.LevelShells = shells;
+            element.LevelSolidCounts = counts;
         }
     }
 

@@ -44,8 +44,10 @@ internal static partial class ElementBuilder
             if (e.NativeMasterSymbolId != null && (!classByElement.TryGetValue((uint)e.Id, out var rootClass) || rootClass != FamilyInstanceRootClassId)) continue;
             if (ProductRules.HasOnlyUnfilledFaces(e)) continue;
             if (category == -2001320 && e.FramingCopingDistance is not < 0) continue;
-            int level = Array.FindIndex(e.LevelSolidCounts, count => count > 0);
-            if (level < 0 || e.LevelShells[level] is not { } shell) continue;
+            var counts = e.LevelSolidCounts;
+            int level = 0;
+            while (level < counts.Count && counts[level] <= 0) level++;
+            if (level == counts.Count || e.LevelShells[level] is not { } shell) continue;
             if (volume) SetParam(e, -1012806, "HOST_VOLUME_COMPUTED", StorageType.Double, shell.Volume);
             if (area) SetParam(e, -1012805, "HOST_AREA_COMPUTED", StorageType.Double, shell.SurfaceArea / 2);
         }

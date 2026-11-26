@@ -8,6 +8,24 @@ namespace RvtIO.Tests;
 public class DerivedInstanceParamsTests
 {
     [Fact]
+    public void RecomputingShellsOnACopyPreservesTheOriginalDetailLevels()
+    {
+        var original = new Element();
+        Assert.Equal(new[] { 0, 0, 0 }, original.LevelSolidCounts);
+        Assert.Equal(new SolidQuantities.Shell?[3], original.LevelShells);
+        original.LevelSolidCounts = [1, 0, 0];
+        original.LevelShells = [new SolidQuantities.Shell(1, 2, 3), null, null];
+        var copy = original.ShallowCopy();
+
+        ElementBuilder.ApplyShellQuantities(new RevitFileInfo { Elements = [copy] }, new ParsingState());
+
+        Assert.Equal(new[] { 0, 0, 0 }, copy.LevelSolidCounts);
+        Assert.Equal(new SolidQuantities.Shell?[3], copy.LevelShells);
+        Assert.Equal(1, original.LevelSolidCounts[0]);
+        Assert.Equal(new SolidQuantities.Shell(1, 2, 3), original.LevelShells[0]);
+    }
+
+    [Fact]
     public void RoomSeparationLineDoesNotUseItsNeighborAsAType()
     {
         var line = new Element { Id = 1, CategoryId = -2000066, TypeId = -1, References = [2] };

@@ -4074,40 +4074,19 @@ internal static partial class ElementBuilder
     internal static void ApplySerializedStairData(
         IReadOnlyList<Element> elements,
         IReadOnlyDictionary<uint, ExactTfRootSource> stairElementSource,
-        IReadOnlyDictionary<uint, ExactTfRootSource> stairTypeSource)
+        IReadOnlyDictionary<uint, ExactTfRootSource> stairTypeSource,
+        IReadOnlyDictionary<int, Element>? uniqueElementsById = null)
     {
-        var uniqueElementsById = new Dictionary<int, Element>();
-        var duplicateIds = new HashSet<int>();
-        foreach (Element element in elements)
-        {
-            if (duplicateIds.Contains(element.Id))
-                continue;
-            if (uniqueElementsById.TryAdd(element.Id, element))
-                continue;
-            uniqueElementsById.Remove(element.Id);
-            duplicateIds.Add(element.Id);
-        }
+        uniqueElementsById ??= BuildUniqueElementIndex(elements);
 
         foreach (Element element in elements)
-        {
-            element.SerializedStairTypeId = null;
-            element.SerializedStairTypeLinkIsResolved = false;
-            element.SerializedStairBaseLevelId = null;
-            element.SerializedStairsTypeClassId = null;
-            element.SerializedActualNumberOfRisers = null;
-            element.SerializedActualRiserHeightFeet = null;
-            element.SerializedActualTreadDepthFeet = null;
-        }
+            element.ClearSerializedStairTypeAndDimensions();
 
-        foreach (Element candidateType in elements)
+        foreach (var (id, source) in stairTypeSource)
         {
-            if (candidateType.Id <= 0
+            if (id is 0 or > int.MaxValue
+                || !uniqueElementsById.TryGetValue((int)id, out var candidateType)
                 || candidateType.CategoryId != -2000120
-                || !uniqueElementsById.TryGetValue(
-                    candidateType.Id, out Element? uniqueType)
-                || !ReferenceEquals(uniqueType, candidateType)
-                || !stairTypeSource.TryGetValue(
-                    (uint)candidateType.Id, out ExactTfRootSource? source)
                 || source.BlockCount != 1
                 || source.Root == null
                 || !source.Root.Fields.TryGetValue(
@@ -4120,15 +4099,11 @@ internal static partial class ElementBuilder
             candidateType.SerializedStairsTypeClassId = 3742;
         }
 
-        foreach (Element occurrence in elements)
+        foreach (var (id, source) in stairElementSource)
         {
-            if (occurrence.Id <= 0
+            if (id is 0 or > int.MaxValue
+                || !uniqueElementsById.TryGetValue((int)id, out var occurrence)
                 || occurrence.CategoryId != -2000120
-                || !uniqueElementsById.TryGetValue(
-                    occurrence.Id, out Element? uniqueOccurrence)
-                || !ReferenceEquals(uniqueOccurrence, occurrence)
-                || !stairElementSource.TryGetValue(
-                    (uint)occurrence.Id, out ExactTfRootSource? source)
                 || source.BlockCount != 1
                 || source.Root == null
                 || !source.Root.Fields.TryGetValue(
@@ -6689,7 +6664,7 @@ internal static partial class ElementBuilder
             ApplySerializedStairData(
                 rvtInfo.Elements,
                 state.StairElementRootSource,
-                state.StairTypeRootSource);
+                state.StairTypeRootSource, elemByIdLookup);
             StairComponentSource.Apply(rvtInfo.Elements, state, elemByIdLookup);
         }
         if (state != null)
