@@ -13,7 +13,7 @@ namespace RvtIO.Tests;
 public sealed partial class SetParameterTests
 {
     private const int ElevationLevelId = 181, ElevationTypeId = 182, ElevationLocationId = 183, ElevationProjectLocationId = 184,
-        ElevationTrackingId = 185, ElevationDependentId = 186;
+        ElevationTrackingId = 185, ElevationDependentId = 186, ElevationPlanLevelId = 187;
 
     [Theory]
     [InlineData(0, "3.25 ft", 3.25)]
@@ -63,7 +63,44 @@ public sealed partial class SetParameterTests
         Assert.False(File.Exists(Output));
     }
 
-    private string CreateElevationSource(int elevationBase, bool dependent = false, bool differentFace = false)
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void WritesPlanRangeWhenOnlyItsTopReferencesTheEditedLevel(bool renamedRangeFields)
+    {
+        string source = CreateElevationSource(0, renamedRangeFields: renamedRangeFields);
+
+        RvtWriter.SetParameters(source, Output,
+        [
+            new(ElevationLevelId, (int)BuiltInParameter.LEVEL_ELEV, "3.25 ft"),
+            new(ElevationLevelId, (int)BuiltInParameter.LEVEL_ELEV, "-4 ft"),
+        ]);
+
+        using var output = RootStorage.OpenRead(Output);
+        Assert.Equal(ElevationLevelBody(-4, -4), ReadBody(output, ElevationLevelId));
+        Assert.Equal(ElevationLevelBody(0, 0, ElevationPlanLevelId), ReadBody(output, ElevationPlanLevelId));
+        Assert.Equal(ElevationPlanBody(6), ReadBody(output, ElevationDependentId));
+    }
+
+    [Fact]
+    public void RefusesAHigherCutThanTopAfterAnEarlierValidPlanEdit()
+    {
+        string source = CreateElevationSource(0, renamedRangeFields: true);
+        byte[] original = File.ReadAllBytes(source);
+
+        var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetParameters(source, Output,
+        [
+            new(ElevationLevelId, (int)BuiltInParameter.LEVEL_ELEV, "3.25 ft"),
+            new(ElevationLevelId, (int)BuiltInParameter.LEVEL_ELEV, "-9 ft"),
+        ]));
+
+        Assert.Equal("unverified-parameter-storage", error.Kind);
+        Assert.Contains("falls outside the verified plan view range", error.Message);
+        Assert.Equal(original, File.ReadAllBytes(source));
+        Assert.False(File.Exists(Output));
+    }
+
+    private string CreateElevationSource(int elevationBase, bool dependent = false, bool differentFace = false, bool? renamedRangeFields = null)
     {
         var tags = Tags(2022);
         var schema = new SchemaStreamEditorTests.Writer();
@@ -93,7 +130,22 @@ public sealed partial class SetParameterTests
             [R("m_activeGeoLocationId", 14), R("m_projectGeoLocationId", 14)], [])); // 30
         Add("SerializedDummy"); // 31
         schema.Top(new("Dependent", new Back(18), 1, [], [])); // 32
-        for (int tag = 33; tag < tags.ContentKey; tag++)
+        if (renamedRangeFields.HasValue)
+        {
+            schema.Top(new("DBView", new Back(18), 1,
+                [R("m_genElemId", 14), R("m_fixedSketchPlaneId", 14), new("m_isTemplate", 4), R("m_viewTemplateId", 14),
+                 R("m_primaryViewId", 14), R("m_dependentViewIds", 14, 0x50)], [])); // 33
+            Add("PlanViewRange", new("m_levelPos", 4, 0x10, Fixed: 5), new("m_offsets", 7, 0x10, Fixed: 5)); // 34
+            Add("PlanViewRange2",
+                new(renamedRangeFields == true ? "m_viewDepthPlaneLevelIds" : "m_levelIds", 14, 0x10, Fixed: 5, Target: new Back(14)),
+                new(renamedRangeFields == true ? "m_viewDepthPlaneOffsets" : "m_offsets", 7, 0x10, Fixed: 5)); // 35
+            Add("GenericPlaneCutter", new Fld("m_pPlane", 14, 1)); // 36
+            schema.Top(new("DBViewPlan", new Back(33), 1,
+                [R("m_planRegionIds", 14, 0x50), R("m_idUnderlayLevel", 14), R("m_idUnderlayTopLevel", 14), new("m_planViewType", 4),
+                 new("m_pCutter", 14, 1), new("m_pPlanViewRange", 14, 1), new("m_pPlanViewRange2", 14, 1), new("m_pViewDepthCutter", 14, 1),
+                 new("m_cutPlaneElev", 7), new("m_topClipElev", 7), new("m_bottomClipElev", 7), new("m_levelBelowElev", 7)], [])); // 37
+        }
+        for (int tag = renamedRangeFields.HasValue ? 38 : 33; tag < tags.ContentKey; tag++)
             Add("Filler" + tag);
         foreach (string name in new[] { "ContentKey", "ContentMarker", "SegmentMarker", "SegmentCheckback", "SignatureMarker" })
             Add(name);
@@ -106,7 +158,10 @@ public sealed partial class SetParameterTests
             (ElevationProjectLocationId, 29, Location(ElevationProjectLocationId, 0)),
             (ElevationTrackingId, 30, Pack(w => { Element(w, ElevationTrackingId); w.Write(ElevationLocationId); w.Write(ElevationProjectLocationId); })),
         ];
-        if (dependent)
+        if (renamedRangeFields.HasValue)
+            records = [.. records, (ElevationDependentId, (ushort)37, ElevationPlanBody(10)[2..]),
+                (ElevationPlanLevelId, (ushort)24, ElevationLevelBody(0, 0, ElevationPlanLevelId)[2..])];
+        else if (dependent)
             records = [.. records, (ElevationDependentId, (ushort)32, Pack(w => Element(w, ElevationDependentId)))];
 
         string file = Path.Combine(_folder, "elevation.rvt");
@@ -131,7 +186,12 @@ public sealed partial class SetParameterTests
             block.Chains[0].Records[i] = new(owner, Pack(w =>
             {
                 w.Write((ushort)20);
-                w.Write(owner == ElevationLevelId ? (int)BuiltInCategory.OST_Levels : 0);
+                w.Write(owner switch
+                {
+                    ElevationLevelId or ElevationPlanLevelId => (int)BuiltInCategory.OST_Levels,
+                    ElevationDependentId when renamedRangeFields.HasValue => (int)BuiltInCategory.OST_Views,
+                    _ => 0,
+                });
                 w.Write(-1);
                 WritePointer(w, 0);
                 WritePointer(w, owner == ElevationDependentId ? 19 : 0);
@@ -155,10 +215,34 @@ public sealed partial class SetParameterTests
         });
     }
 
-    private static byte[] ElevationLevelBody(double surface, double face) => Pack(w =>
+    private static byte[] ElevationPlanBody(double top) => Pack(w =>
+    {
+        w.Write((ushort)37);
+        foreach (int value in new[] { ElevationDependentId, -1, ElevationPlanLevelId, -1, 0, -1, -1, 0, 0, -1, -1, 1 })
+            w.Write(value);
+        foreach (int tag in new[] { 36, 34, 35, 36 })
+            WritePointer(w, tag);
+        foreach (double elevation in new[] { 2, top, 0, -1 })
+            w.Write(elevation);
+        WritePointer(w, 21);
+        for (int i = 0; i < 5; i++)
+            w.Write(0);
+        for (int i = 0; i < 5; i++)
+            w.Write(0d);
+        foreach (int anchor in new[] { ElevationPlanLevelId, ElevationLevelId, ElevationPlanLevelId, ElevationPlanLevelId, -3 })
+            w.Write(anchor);
+        foreach (double offset in new[] { 2d, 10, 0, -1, 0 })
+            w.Write(offset);
+        WritePointer(w, 21);
+        foreach (double height in new[] { 2d, -1 })
+            foreach (double value in new[] { 0, 0, height, 1, 0, 0, 0, 1, 0 })
+                w.Write(value);
+    });
+
+    private static byte[] ElevationLevelBody(double surface, double face, int id = ElevationLevelId) => Pack(w =>
     {
         w.Write((ushort)24);
-        w.Write(ElevationLevelId);
+        w.Write(id);
         w.Write(-1);
         WritePointer(w, 22);
         WritePointer(w, 21);

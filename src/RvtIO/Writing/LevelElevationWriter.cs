@@ -5,7 +5,7 @@ using RvtIO.Parsing;
 
 namespace RvtIO.Writing;
 
-internal static class LevelElevationWriter
+internal static partial class LevelElevationWriter
 {
     private const string All = WideBlockWalker.AllItemsKeyPrefix;
     private const double ElevationTolerance = 1e-9;
@@ -19,18 +19,23 @@ internal static class LevelElevationWriter
         var walker = new WideBlockWalker(schema, (type, field) => type.Name switch
         {
             "Element" or "Level" or "LevelAttributes" or "DatumPlane" or "Face" or "Plane" or "Instance"
-                or "Trf" or "ActiveGeoLocationTrackingElement" => All + type.Name + "." + field.Name,
+                or "Trf" or "ActiveGeoLocationTrackingElement" or "DBView" or "DBViewPlan" or "PlanViewRange" or "PlanViewRange2"
+                or "GenericPlaneCutter" or "SketchPlane" or "SketchGrid" or "OneElementMovablePlaneRef" or "SunAndShadowSettings"
+                or "EnergyDataSettings" => All + type.Name + "." + field.Name,
             _ => GlobalParameterWriter.CaptureKey(type, field),
         }, []);
         var headerWalker = new WideBlockWalker(schema, (type, field) => type.Name is
             "ElementHeader" or "ElementParents" or "ElementRegenerationInfo" or "ClassDefinitionRef"
             ? All + type.Name + "." + field.Name : null, []);
         var target = new Dictionary<int, (int Partition, byte[] Body)>();
-        var headers = new HashSet<long>();
+        var headers = new Dictionary<long, DependencyHeader>();
         var globals = new HashSet<long>();
         var context = new Dictionary<long, byte[]>();
         long? trackerId = null;
-        bool hasDependents = false;
+        bool hasAnalyticalGeometry = false;
+        var dependents = new List<long>();
+        var planRecords = new Dictionary<long, (int Partition, byte[] Body)>();
+        var geometryPartitions = new Dictionary<long, int>();
         ParameterWriter.ScanPartitions(root, tags, idWidth, (partition, record) =>
         {
             long owner = (long)record.Owner;
@@ -42,19 +47,34 @@ internal static class LevelElevationWriter
                 throw ParameterWriter.Unverified("The level has duplicate project records.");
             if (record.Channel == 101)
             {
-                if (name != "ElementHeader" || !headers.Add(owner))
-                    throw ParameterWriter.Unverified("The project does not have a unique header for every scanned element.");
+                if (name != "ElementHeader")
+                    throw ParameterWriter.Unverified("A project element has an unverified header.");
                 byte[] body = record.Body.ToArray();
                 var header = headerWalker.Run(body, 0, body.Length, tag);
                 if (!header.Exact)
                     throw ParameterWriter.Unverified("A project header could not be read exactly to check level dependencies.");
-                if (owner != edit.ElementId && header.Captures.Any(c => c.Kind == WideBlockWalker.CaptureKind.Integer
-                    && c.Integer == edit.ElementId && (c.DeclaringClass == "ElementParents" && c.Key.Contains('@')
-                        || c.DeclaringClass == "ElementRegenerationInfo" && c.Field == "m_otherElementId")))
-                    hasDependents = true;
+                long[] parents = header.Captures.Where(c => c.Kind == WideBlockWalker.CaptureKind.Integer
+                    && c.Integer > 0 && (c.DeclaringClass == "ElementParents" && c.Key.Contains('@')
+                        || c.DeclaringClass == "ElementRegenerationInfo" && c.Field == "m_otherElementId"))
+                    .Select(c => c.Integer).Distinct().ToArray();
+                if (!headers.TryAdd(owner, new(partition, Integer(header, "ElementHeader.m_categroryId"),
+                    Integer(header, "ElementHeader.m_designOptionId") == -1 && Integer(header, "ElementHeader.m_pBBox") == 0, parents)))
+                    throw ParameterWriter.Unverified("A project element has duplicate headers.");
+                if (owner != edit.ElementId && parents.Contains(edit.ElementId))
+                    dependents.Add(owner);
+            }
+            if (record.Channel == 103)
+            {
+                int geometryPartition = name == "SerializedDummy" && record.Body.Length == sizeof(ushort) ? partition : -1;
+                if (!geometryPartitions.TryAdd(owner, geometryPartition))
+                    geometryPartitions[owner] = -1;
             }
             if (record.Channel != 102)
                 return;
+            hasAnalyticalGeometry |= name is "EnergyAnalysisDetailModel" or "EnergyAnalysisSpaceElem" or "EnergyAnalysisSurface";
+            if (name is ("Level" or "DBViewPlan" or "SketchPlane" or "SketchGrid" or "SunAndShadowSettings" or "EnergyDataSettings")
+                && !planRecords.TryAdd(owner, (partition, record.Body.ToArray())))
+                throw ParameterWriter.Unverified("A level dependency has duplicate project records.");
             if (name == "ParamElemGlobal" && !globals.Add(owner))
                 throw ParameterWriter.Unverified("A global parameter has duplicate project records.");
             if (name is "LevelAttributes" or "GeoLocation" or "ActiveGeoLocationTrackingElement")
@@ -68,7 +88,7 @@ internal static class LevelElevationWriter
 
         if (!target.TryGetValue(102, out var element) || Class(element.Body) != "Level")
             throw new RvtWriteRefusedException("unsupported-parameter-owner", "A level elevation edit requires a project level.");
-        if (hasDependents || !headers.SetEquals(elementIds))
+        if (headers.Count != elementIds.Count)
             throw ParameterWriter.Unverified("The level's dependent elements require verification before changing its elevation.");
         if (target.Count != 3 || !target.TryGetValue(101, out var head) || !target.TryGetValue(103, out var geometry)
             || head.Partition != element.Partition || geometry.Partition != element.Partition
@@ -106,7 +126,12 @@ internal static class LevelElevationWriter
         var (surface, face) = PlaneElevations(level);
         if (surface.Real != face.Real || surface.ValueOffset == face.ValueOffset)
             throw ParameterWriter.Unverified("The level's saved plane and face disagree.");
-        if (surface.Real == destination || IsRetainedElevation(surface.Real - origin, elevation))
+        bool retain = surface.Real == destination || IsRetainedElevation(surface.Real - origin, elevation);
+        var related = dependents.Count != 0
+            ? PlanViews(dependents, headers, planRecords, geometryPartitions, hasAnalyticalGeometry, edit.ElementId,
+                surface.Real, retain ? surface.Real : destination, Class, Read, Target, PlaneElevations)
+            : [];
+        if (retain)
             return null;
         byte[] updated = element.Body;
         BinaryPrimitives.WriteDoubleLittleEndian(updated.AsSpan(surface.ValueOffset), destination);
@@ -114,7 +139,7 @@ internal static class LevelElevationWriter
         var (revisedSurface, revisedFace) = PlaneElevations(Read(updated, "Level", edit.ElementId));
         if (revisedSurface.Real != destination || revisedFace.Real != destination)
             throw ParameterWriter.Unverified("The revised elevation could not be read back.");
-        return new([new RvtPartitionRecordEdit(element.Partition, 102, (ulong)edit.ElementId, updated)], null);
+        return new([new RvtPartitionRecordEdit(element.Partition, 102, (ulong)edit.ElementId, updated), .. related], null);
 
         string? Class(byte[] body) => body.Length >= sizeof(ushort)
             ? walker.Class(BinaryPrimitives.ReadUInt16LittleEndian(body))?.Name
@@ -164,7 +189,7 @@ internal static class LevelElevationWriter
         return false;
     }
 
-    private static long? Integer(WideBlockWalker.Walk walk, string field) => UserParameterWriter.Integer(walk, All + field);
+    private static long? Integer(WideBlockWalker.Walk walk, string field, int queue = -1) => UserParameterWriter.Integer(walk, All + field, queue);
 
     private static WideBlockWalker.Capture Real(WideBlockWalker.Walk walk, int queue, string field) =>
         walk.Captures.Where(c => c.QueueIndex == queue && c.Key == All + field).ToArray()

@@ -50,7 +50,7 @@ readable project record for the element and a verified source for the parameter 
 | Verified straight basic wall with an unconnected top | `WALL_USER_HEIGHT_PARAM` (Unconnected Height). Pass a length with units, such as `"3200 mm"`. |
 | Verified straight basic wall with level constraints | `WALL_BASE_OFFSET` (Base Offset), and `WALL_TOP_OFFSET` (Top Offset) when the top is constrained to a level. Pass a signed length with units, such as `"-150 mm"`. |
 | Level, straight or radial grid, or multi-segment grid in the main model | `DATUM_TEXT` (Name). A multi-segment grid assignment updates the name on the grid and all verified member records. |
-| Level in the main model without dependent elements | `LEVEL_ELEV` (Elevation). Pass a signed length with units. RvtIO interprets the value in the level type's selected elevation base, then updates the stored datum surface and face in project coordinates. |
+| Level in the main model without dependent elements or with verified plan and sketch plane dependencies | `LEVEL_ELEV` (Elevation). Pass a signed length with units. RvtIO uses the level type's selected elevation base and updates the stored datum planes and affected plan elevations in project coordinates. |
 | Basic wall type | `ALL_MODEL_TYPE_IMAGE` (Type Image). |
 | Basic wall type, primary or directly linked derived family symbol | `ALL_MODEL_TYPE_MARK` (Type Mark). Pass the ID of the type or symbol whose value you want to write. |
 | Basic wall type or verified loaded family type | `ALL_MODEL_TYPE_COMMENTS`, `ALL_MODEL_DESCRIPTION`, `ALL_MODEL_MANUFACTURER`, `ALL_MODEL_MODEL`, `ALL_MODEL_URL`, and `ALL_MODEL_COST`. Cost takes a finite invariant number with no currency symbol; a change that Revit can suppress within its numeric comparison tolerance is refused. |
@@ -617,6 +617,15 @@ format after upgrade. The Revit 2025 checks also covered an elevation measured f
 large finite elevations, and changes within the comparison tolerance. All 40 refused batches preserved the
 source bytes and produced no output. [Autodesk level elevation reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/b5d48a18-4aa9-7457-7a6a-6d4966eaf77f.htm)
 
+Level elevation checks with plan dependencies covered floor, structural, and reflected ceiling plans. RvtIO
+updates the stored clip elevations and cutter planes for each verified range reference. It also moves the
+associated sketch planes when the plan's generating level moves. A floor plan with a top plane referencing
+a different level was verified for edits to either level and for both edits in one batch. The 40 edited
+projects matched the Revit API for level elevations, plan range references and offsets, and sketch planes
+after Save As and reopening without Audit in Revit 2020–2025 and 2027. Revit 2027 checked the 2026 format
+after upgrade. All 32 refused batches preserved the source bytes and created no output.
+[Autodesk PlanViewRange reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/7edc5f13-a5fa-5c7a-9a03-ac6cbed1f005.htm)
+
 Empty-text checks covered walls, basic wall types, and rooms with non-shared definitions and shared definitions
 with either setting of `HideWhenNoValue`. A first empty assignment and a new empty assignment after clearing
 both returned `HasValue=true`. Clearing a shared parameter with `HideWhenNoValue` returned `HasValue=false`.
@@ -1008,7 +1017,7 @@ each case the source bytes stayed intact and no output was created.
 | Clearing an RVT value | Revit API `ClearValue()` requires a shared definition with `HideWhenNoValue`. RvtIO also checks the binding and stored value layout. |
 | Additional writable RVT built-ins and element classes | The RVT parameter writer supports the combinations in the table above. Other built-in fields, loaded family categories, and layouts beyond verified directly linked derived symbols still require coverage. |
 | Datum names | Revit exposes `DATUM_TEXT` as read-only on individual multi-segment grid members. The tested level and grid type name parameter (`SYMBOL_NAME_PARAM`) is read-only through `Parameter.Set`, and the tested levels expose their writable name as `DATUM_TEXT`. Grouped elements, design options, other datum classes, and renaming corresponding views with a level still require RvtIO coverage. |
-| Level elevation with dependents | The Revit API can set `LEVEL_ELEV` on a level with attached geometry or plan views. The tested wall moved with its base level. The tested plan views and associated sketch planes required separate updates to their saved elevations. These dependent layouts still require RvtIO coverage. The API property `Level.ProjectElevation` is read-only. [Autodesk project elevation reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/895ef506-bfea-cc4e-31f8-aad2af6672e4.htm) |
+| Level elevation with dependents | RvtIO supports the verified plan ranges and sketch planes described above. Levels with attached model geometry, including walls that move with their base level, still require RvtIO coverage. Plans with templates, plan regions, underlays, or other unverified range layouts also require coverage. The API property `Level.ProjectElevation` is read-only. [Autodesk project elevation reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/895ef506-bfea-cc4e-31f8-aad2af6672e4.htm) |
 | Additional built-ins in standalone families | The verified Generic Model, Door, Window, and Furniture fields are listed above. Other built-ins, other family categories, and selecting an unnamed family type still require coverage. |
 | User Currency parameters in standalone families | RvtIO supports verified type values, instance defaults, and formula dependencies. Additional Currency display formats still require coverage. |
 | Family-declared Currency parameters in projects | RvtIO supports the verified primary type and top-level instance assignments, exact type formula inverses, and existing global associations described above. Other formula paths and geometry dependencies still require coverage. |
