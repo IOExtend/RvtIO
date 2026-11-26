@@ -34,7 +34,9 @@ public class WallTopAttachmentTests
         Assert.Equal(506386u, BitConverter.ToUInt32(block, 0));
         Assert.Equal(16, BitConverter.ToInt32(block, JoinToRoofVersionOffset));
         Assert.Equal(1, BitConverter.ToInt32(block, JoinToRoofBaseOrTopOffset));
-        Assert.True(Extract(block));
+        Assert.True(TfBlockDeserializer.ExtractWallJoinedToTop(block, 0, BitConverter.ToUInt32(block, 8),
+            BitConverter.ToUInt16(block, 12), out _, out var targets));
+        Assert.Equal(new[] { 243274 }, targets);
     }
 
     [Fact]
@@ -77,7 +79,9 @@ public class WallTopAttachmentTests
     {
         byte[] block = Convert.FromBase64String(TopAttachedWall);
         BitConverter.GetBytes(0).CopyTo(block, JoinToRoofBaseOrTopOffset);
-        Assert.False(Extract(block));
+        Assert.False(TfBlockDeserializer.ExtractWallJoinedToTop(block, 0, BitConverter.ToUInt32(block, 8),
+            BitConverter.ToUInt16(block, 12), out _, out var targets));
+        Assert.Null(targets);
     }
 
     [Theory]
@@ -140,12 +144,12 @@ public class WallTopAttachmentTests
     public void Apply_SetsOnlyUniqueWallsWithSingleReadableRoot()
     {
         var state = new ParsingState();
-        state.WallJoinedToTop[1] = (1, true);
-        state.WallJoinedToTop[2] = (1, false);
-        state.WallJoinedToTop[3] = (2, null);
-        state.WallJoinedToTop[4] = (1, null);
-        state.WallJoinedToTop[5] = (1, true);
-        state.WallJoinedToTop[6] = (1, true);
+        state.WallJoinedToTop[1] = (1, true, [12]);
+        state.WallJoinedToTop[2] = (1, false, null);
+        state.WallJoinedToTop[3] = (2, null, null);
+        state.WallJoinedToTop[4] = (1, null, null);
+        state.WallJoinedToTop[5] = (1, true, [12]);
+        state.WallJoinedToTop[6] = (1, true, [12]);
         var top = Wall(1);
         var unattached = Wall(2);
         var duplicateRoot = Wall(3);
@@ -158,6 +162,8 @@ public class WallTopAttachmentTests
 
         Assert.Equal(2, ElementBuilder.ApplyWallJoinedToTop(elements, state));
         Assert.True(top.SerializedWallJoinedToTop);
+        Assert.Equal(new[] { 12 }, top.SerializedWallTopAttachmentTargets);
+        Assert.All(elements.Where(e => e != top), e => Assert.Null(e.SerializedWallTopAttachmentTargets));
         Assert.False(unattached.SerializedWallJoinedToTop);
         Assert.Null(duplicateRoot.SerializedWallJoinedToTop);
         Assert.Null(unread.SerializedWallJoinedToTop);
@@ -165,6 +171,23 @@ public class WallTopAttachmentTests
         Assert.Null(duplicateElement.SerializedWallJoinedToTop);
         Assert.Equal(1, top.Parameters.Single(p => p.Id == -1001117).Value);
         Assert.DoesNotContain(unattached.Parameters, p => p.Id == -1001117);
+    }
+
+    [Fact]
+    public void RepeatedRootDoesNotRetainAnAttachmentTarget()
+    {
+        byte[] block = Convert.FromBase64String(TopAttachedWall);
+        var state = new ParsingState();
+        uint id = BitConverter.ToUInt32(block, 0);
+        uint size = BitConverter.ToUInt32(block, 8);
+        ushort kind = BitConverter.ToUInt16(block, 12);
+
+        RvtFileReader.RecordWallJoinedToTop(state, block, 0, size, kind, id);
+        Assert.Equal(new[] { 243274 }, state.WallJoinedToTop[id].Targets);
+
+        RvtFileReader.RecordWallJoinedToTop(state, block, 0, size, kind, id);
+        Assert.Null(state.WallJoinedToTop[id].Targets);
+        Assert.Null(state.WallJoinedToTop[id].JoinedToTop);
     }
 
     private static Element Wall(int id) => new() { Id = id, CategoryId = -2000011 };

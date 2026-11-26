@@ -58,6 +58,13 @@ internal static class ShadedViewport
             double offset = sign * box.Offsets[i] + Dot(box.Origin[0], box.Origin[1], box.Origin[2], outward);
             return (Index: i, Outward: outward, Offset: offset);
         }).ToArray();
+        bool InsideModelBox(double x, double y, double z)
+        {
+            foreach (var (_, outward, offset) in planes)
+                if (Dot(x, y, z, outward) > offset + 1e-7) return false;
+            return true;
+        }
+
         double Distance(double[] point, double[] outward, double offset) =>
             offset - Dot(point[0], point[1], point[2], outward);
 
@@ -93,6 +100,7 @@ internal static class ShadedViewport
 
         var surfaces = new List<Surface>();
         var hidden = document.RawData.ViewHiddenElements?.GetValueOrDefault(view.Id);
+        var hiddenCategories = document.RawData.ViewHiddenCategories?.GetValueOrDefault(view.Id);
         double left = double.PositiveInfinity, right = double.NegativeInfinity;
         double bottom = double.PositiveInfinity, top = double.NegativeInfinity;
         void AddSurface(Point[][] rings, double[] normal, double facing, int rgb, double transmission = 0,
@@ -121,7 +129,8 @@ internal static class ShadedViewport
             if (element.Geometry is not { Faces.Count: > 0 } geometry || element.IsDiscovered
                 || element.OwnerViewId is > 0 || element.SerializedUnplacedOwnerId is > 0 || element.NativeIsSymbol == true
                 || element.RootClassIs("FamilySymbol")
-                || element.CategoryId is null or >= 0 || hidden?.Contains(element.Id) == true
+                || element.CategoryId is not int category || category >= 0 || hidden?.Contains(element.Id) == true
+                || hiddenCategories?.Contains(category) == true
                 || element.CategoryId is (int)BuiltInCategory.OST_Constraints or (int)BuiltInCategory.OST_CLines
                     or (int)BuiltInCategory.OST_Cameras or (int)BuiltInCategory.OST_LightingFixtureSource) continue;
             foreach (var face in geometry.Faces)
@@ -142,7 +151,6 @@ internal static class ShadedViewport
                 if (facesLight && !material.TransmitsLight) shadows!.AddCaster(rings, normal);
                 if (!visible) continue;
                 ViewportSurfacePattern? pattern = null;
-                int category = element.CategoryId.Value;
                 if (showPatterns && face.ModelPattern != null)
                 {
                     int pen = category == (int)BuiltInCategory.OST_Roofs ? (int)BuiltInCategory.OST_RoofsSurfacePattern : category;
@@ -266,7 +274,8 @@ internal static class ShadedViewport
             }
         }
         if (shadows != null && facesLightMask != null)
-            shadows.Apply(rgbBytes, depth, facesLightMask, columns, rows, left, top, stepX, stepY, anchorX, anchorY, factor);
+            shadows.Apply(rgbBytes, depth, facesLightMask, columns, rows, left, top, stepX, stepY, anchorX, anchorY,
+                factor, InsideModelBox);
         CompositePanes();
         annotation?.Paint(rgbBytes, columns, rows, left, top, stepX, stepY);
         page.DrawImage(new PdfRasterImage(columns, rows, rgbBytes) { TransparentWhite = true }, left, bottom, width, height);

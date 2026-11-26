@@ -3148,13 +3148,17 @@ internal static partial class ElementBuilder
     /// </summary>
     private static void ApplyDetailLines(RevitFileInfo info, ParsingState? state)
     {
-        if (state == null || (state.DetailCurveStyles.Count == 0 && state.CurveBlockOwners.Count == 0)) return;
+        if (state == null) return;
+        bool applyLineMetadata = state.DetailCurveStyles.Count != 0 || state.CurveBlockOwners.Count != 0;
+        if (!applyLineMetadata && state.CurveGeometry.Count == 0) return;
         foreach (var e in info.Elements)
         {
-            if (e.CategoryId.HasValue) continue; // categorized owners (sketch profiles etc.) keep their category
+            bool hasGeom = state.CurveGeometry.TryGetValue((uint)e.Id, out var cgeom);
+            if (hasGeom && cgeom.GStyle == -1)
+                e.DetailCircle = cgeom.Circle;
+            if (!applyLineMetadata || e.CategoryId.HasValue) continue; // Sketch profiles keep their category.
             bool hasStyle = state.DetailCurveStyles.TryGetValue((uint)e.Id, out int style);
             // A decoded line style (not -1) marks a detail/model line directly.
-            bool hasGeom = state.CurveGeometry.TryGetValue((uint)e.Id, out var cgeom);
             bool isCurveOwner = (state.CurveBlockOwners.Contains((uint)e.Id) || hasGeom)
                                 && !state.SketchCurves.ContainsKey((uint)e.Id);
             if (!hasStyle && !isCurveOwner) continue;
@@ -5124,6 +5128,7 @@ internal static partial class ElementBuilder
         foreach (Element element in elements)
         {
             element.SerializedWallJoinedToTop = null;
+            element.SerializedWallTopAttachmentTargets = null;
             if (element.Id <= 0
                 || element.CategoryId != -2000011
                 || counts[element.Id] != 1
@@ -5132,6 +5137,7 @@ internal static partial class ElementBuilder
                 || source.JoinedToTop is not bool joinedToTop)
                 continue;
             element.SerializedWallJoinedToTop = joinedToTop;
+            if (joinedToTop) element.SerializedWallTopAttachmentTargets = source.Targets;
             if (joinedToTop)
                 SetParam(element, -1001117, "WALL_TOP_IS_ATTACHED", StorageType.Integer, 1);
             applied++;

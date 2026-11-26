@@ -319,6 +319,7 @@ namespace RvtIO.Model
 
         internal (double Width, double Scale, bool Mirrored)? DetailInsulation { get; set; }
         internal Parsing.TfBlockDeserializer.BreakLineProfile? DetailBreak { get; set; }
+        internal (double X, double Y, double Radius)? DetailCircle { get; set; }
         internal (double Width, double Height)? ImagePaperSize { get; set; }
         internal int? ImageHolderId { get; set; }
         internal (double X, double Y)? RoomLegendOrigin { get; set; }
@@ -664,6 +665,9 @@ namespace RvtIO.Model
         /// (JoinToRoofGStep with m_baseOrTop = 1); null when unvalidated.</summary>
         [JsonIgnore]
         internal bool? SerializedWallJoinedToTop { get; set; }
+
+        /// <summary>Targets from this wall's verified native top-attachment geometry steps.</summary>
+        internal int[]? SerializedWallTopAttachmentTargets { get; set; }
 
         /// <summary>The export id of the element: its episode GUID with the last
         /// 32 bits XORed with the original element id (Global/History and Global/ElemTable);

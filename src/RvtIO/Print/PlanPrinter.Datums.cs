@@ -37,7 +37,10 @@ public static partial class PlanPrinter
                 || ElevationPrinter.CircleHeadRadius(document, head.SymbolId, "M_Grid Head - Circle") is not double radius)
                 return null;
 
-            double margin = head.EndSegmentLength.Value * FeetToMillimetres * scale;
+            // Revit applies a fixed paper-space margin in a cropped plan with annotation cropping off.
+            const double modelCropDatumMarginFeetOnPaper = 43d / 512;
+            double margin = (view.ViewAnnotationCropActive == false ? modelCropDatumMarginFeetOnPaper
+                : head.EndSegmentLength.Value) * FeetToMillimetres * scale;
             if (!ElevationPrinter.ClipSegment(x0, y0, x1, y1, box.X0 - margin, box.Y0 - margin,
                     box.X1 + margin, box.Y1 + margin, out x0, out y0, out x1, out y1)) continue;
             grids.Add(new PlanGrid(element.TypeId, element.Name ?? "", radius, (x0, y0), (x1, y1),

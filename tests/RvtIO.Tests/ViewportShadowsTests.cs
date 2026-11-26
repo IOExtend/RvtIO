@@ -37,6 +37,20 @@ public class ViewportShadowsTests
         Assert.Equal(new byte[] { 128, 64, 128, 128, 128, 128 }, rgb.Where((_, i) => i % 3 == 0));
     }
 
+    [Fact]
+    public void AppliesWorldSpaceGroundBoundsOnlyToArtificialReceivers()
+    {
+        var camera = new ViewCropFrame(10, 20, 10, [1, 0, 0], [0, 1, 0], [0, 0, -1], -10, -10, 10, 10, false);
+        var shadows = new ViewportShadows(camera, Vector3.UnitZ, 50, 3);
+        shadows.AddCaster([[[8, 19, 5], [12, 19, 5], [12, 21, 5], [8, 21, 5]]], [0, 0, 1]);
+        byte[] rgb = [255, 255, 255, 255, 255, 255, 128, 128, 128];
+
+        shadows.Apply(rgb, [double.PositiveInfinity, double.PositiveInfinity, 7], [false, false, true],
+            3, 1, -1.5, 0.5, 1, 1, 0, 0, 1, (x, y, z) => x == 10 && y == 20 && z == 3);
+
+        Assert.Equal(new byte[] { 255, 128, 64 }, rgb.Where((_, i) => i % 3 == 0));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

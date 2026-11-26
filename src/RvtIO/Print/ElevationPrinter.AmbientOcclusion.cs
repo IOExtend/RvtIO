@@ -20,15 +20,17 @@ public static partial class ElevationPrinter
         private const float AmbientReach = 1500;
         private readonly List<Occluder> _occluders = [];
         private readonly List<(List<Point> Polygon, List<List<Point>>? Holes, Vector3 Origin, Vector3 Normal,
-            double Gray, bool OrientDirectLight, bool IgnoreStairExitHits, bool ExcludeSamplesBehindCut)> _receivers = [];
+            double Gray, bool OrientDirectLight, bool IgnoreStairExitHits, bool IgnoreEdgeOnHits,
+            bool ExcludeSamplesBehindCut, bool DistanceFalloff, int[]? AttachedRoofIds,
+            (double Elevation, float Depth)? ExteriorWall)> _receivers = [];
         private readonly List<AmbientGlass> _glass = [];
 
         private readonly record struct Occluder(Vector3 Origin, Vector3 Normal, Vector3 Min, Vector3 Max,
-            int Axis, List<Point> Outline, List<List<Point>>? Holes, bool FrontFaceOnly);
+            int Axis, List<Point> Outline, List<List<Point>>? Holes, bool FrontFaceOnly, int RoofId);
         private sealed record Node(Vector3 Min, Vector3 Max, int Start, int Count, Node? Left, Node? Right);
 
         internal void AddOccluder(List<Vector3> ring, Vector3 normal, List<List<Vector3>>? holes = null,
-            bool frontFaceOnly = false)
+            bool frontFaceOnly = false, int roofId = 0)
         {
             if (ring.Count < 3 || !(normal.LengthSquared() > 0.5f)) return;
             Vector3 min = ring[0], max = ring[0];
@@ -42,16 +44,18 @@ public static partial class ElevationPrinter
             List<Point> Flatten(List<Vector3> points) => points.Select(point => Flat(point, axis)).ToList();
             var margin = new Vector3(RayBias);
             _occluders.Add(new(ring[0], normal, min - margin, max + margin, axis, Flatten(ring),
-                holes?.Select(Flatten).ToList(), frontFaceOnly));
+                holes?.Select(Flatten).ToList(), frontFaceOnly, roofId));
         }
 
         internal void AddReceiver(List<Point> polygon, List<List<Point>>? holes, Vector3 origin, Vector3 normal,
             double gray = 1, bool orientDirectLight = false, bool ignoreStairExitHits = false,
-            bool excludeSamplesBehindCut = false)
+            bool ignoreEdgeOnHits = false,
+            bool excludeSamplesBehindCut = false, bool distanceFalloff = false, int[]? attachedRoofIds = null,
+            (double Elevation, float Depth)? exteriorWall = null)
         {
             if (normal.Z < -1e-5f)
                 _receivers.Add((polygon, holes, origin, Vector3.Normalize(normal), gray, orientDirectLight,
-                    ignoreStairExitHits, excludeSamplesBehindCut));
+                    ignoreStairExitHits, ignoreEdgeOnHits, excludeSamplesBehindCut, distanceFalloff, attachedRoofIds, exteriorWall));
         }
 
         internal void AddGlazing(List<Point> polygon, List<List<Point>>? holes, double farDepth) =>
@@ -69,8 +73,9 @@ public static partial class ElevationPrinter
             Span<(double X, double Y, bool OnFace)> samples = stackalloc (double, double, bool)[gridSize * gridSize];
             Span<bool> sampled = stackalloc bool[samples.Length];
             Span<bool> behindCut = stackalloc bool[samples.Length];
-            foreach (var (polygon, holes, planeOrigin, normal, gray, orientDirectLight, ignoreStairExitHits,
-                excludeSamplesBehindCut) in _receivers)
+            float visibleSpan = (float)Math.Min(crop.X1 - crop.X0, crop.Y1 - crop.Y0);
+            foreach (var (polygon, holes, planeOrigin, normal, gray, orientDirectLight, ignoreStairExitHits, ignoreEdgeOnHits,
+                excludeSamplesBehindCut, distanceFalloff, attachedRoofIds, exteriorWall) in _receivers)
             {
                 sampled.Clear();
                 behindCut.Clear();
@@ -153,13 +158,18 @@ public static partial class ElevationPrinter
                     sampled[i] = true;
                     var receiver = new Vector3((float)x, (float)y, z);
                     double blocked = 0;
+                    // The saved crop and cut plane limit how far a buried wall samples its surroundings.
+                    float reach = exteriorWall is { } wall && y < wall.Elevation
+                        ? Math.Clamp(visibleSpan, AmbientReach, Math.Max(AmbientReach, z - wall.Depth))
+                        : AmbientReach;
                     foreach (var ray in rays)
                     {
-                        float distance = AmbientReach;
-                        if (!FindHit(tree, occluders, receiver + normal * RayBias, ray, ignoreStairExitHits, ref distance))
+                        float distance = reach;
+                        if (!FindHit(tree, occluders, receiver + normal * RayBias, ray, ignoreStairExitHits, ignoreEdgeOnHits,
+                            attachedRoofIds, ref distance))
                             continue;
-                        float relativeDistance = distance / AmbientReach;
-                        blocked += binaryVisibility ? 1 : 1 - relativeDistance * relativeDistance;
+                        float relativeDistance = distance / reach;
+                        blocked += binaryVisibility && !distanceFalloff && reach == AmbientReach ? 1 : 1 - relativeDistance * relativeDistance;
                     }
                     double ambientLoss = ambientFraction * blocked / RayCount;
                     byte tone = ToTone(baseLinear * (1 - ambientLoss - directLightLoss));
@@ -202,7 +212,7 @@ public static partial class ElevationPrinter
             return result.Count > 0 ? result : null;
         }
 
-        private static byte ToTone(double linear)
+        internal static byte ToTone(double linear)
         {
             double srgb = linear <= 0.0031308 ? 12.92 * linear : 1.055 * Math.Pow(linear, 1 / 2.4) - 0.055;
             return (byte)Math.Round(255 * srgb);
@@ -232,19 +242,23 @@ public static partial class ElevationPrinter
         }
 
         private static bool FindHit(Node node, Occluder[] faces, Vector3 origin, Vector3 direction, bool ignoreStairExitHits,
-            ref float limit)
+            bool ignoreEdgeOnHits,
+            int[]? attachedRoofIds, ref float limit)
         {
             if (!HitsBounds(node.Min, node.Max, origin, direction, limit)) return false;
             if (node.Left != null)
             {
-                bool left = FindHit(node.Left, faces, origin, direction, ignoreStairExitHits, ref limit);
-                bool right = FindHit(node.Right!, faces, origin, direction, ignoreStairExitHits, ref limit);
+                bool left = FindHit(node.Left, faces, origin, direction, ignoreStairExitHits, ignoreEdgeOnHits, attachedRoofIds, ref limit);
+                bool right = FindHit(node.Right!, faces, origin, direction, ignoreStairExitHits, ignoreEdgeOnHits, attachedRoofIds, ref limit);
                 return left || right;
             }
             bool found = false;
             for (int i = node.Start; i < node.Start + node.Count; i++)
             {
                 ref readonly var face = ref faces[i];
+                if (face.RoofId > 0 && attachedRoofIds != null && Array.IndexOf(attachedRoofIds, face.RoofId) >= 0)
+                    continue;
+                if (ignoreEdgeOnHits && Math.Abs(face.Normal.Z) < 1e-6f) continue;
                 float dot = Vector3.Dot(face.Normal, direction);
                 if (Math.Abs(dot) < 1e-6f || ignoreStairExitHits && face.FrontFaceOnly && dot > 0) continue;
                 float distance = Vector3.Dot(face.Normal, face.Origin - origin) / dot;

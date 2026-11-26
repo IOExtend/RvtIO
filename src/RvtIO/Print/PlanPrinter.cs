@@ -72,6 +72,8 @@ public static partial class PlanPrinter
     {
         internal List<(DoorPlanSymbol Symbol, double[] Transform)>? DoorSymbols { get; init; }
         internal List<(double X1, double Y1, double X2, double Y2, int StyleId)>? FixtureLines { get; init; }
+        internal List<(double X1, double Y1, double X2, double Y2, bool Cut)>? GenericModelLines { get; init; }
+        internal List<(double X, double Y, double Radius)>? DetailCircles { get; init; }
         internal Dictionary<int, ColumnProfile>? ColumnProfiles { get; init; }
         internal Dictionary<int, List<(double X, double Y)>>? ProjectedWallTops { get; init; }
         internal List<(int CategoryId, bool IsCut, List<(double X, double Y)> Ring)>? CurtainProfiles { get; init; }
@@ -169,6 +171,17 @@ public static partial class PlanPrinter
                 }
                 return profile with { Ring = MapPolygon(profile.Ring), Circle = circle };
             }),
+            DetailCircles = content.DetailCircles?.Select(circle =>
+            {
+                var center = Map(circle.X, circle.Y);
+                return (center.X, center.Y, circle.Radius);
+            }).ToList(),
+            GenericModelLines = content.GenericModelLines?.Select(line =>
+            {
+                var a = Map(line.X1, line.Y1);
+                var b = Map(line.X2, line.Y2);
+                return (a.X, a.Y, b.X, b.Y, line.Cut);
+            }).ToList(),
             FixtureLines = content.FixtureLines?.Select(line =>
             {
                 var a = Map(line.X1, line.Y1);
@@ -587,6 +600,8 @@ public static partial class PlanPrinter
         var furnitureLines = new List<(double X1, double Y1, double X2, double Y2)>();
         var furnitureFill = new List<List<(double X, double Y)>>();
         List<(double X1, double Y1, double X2, double Y2, int StyleId)>? fixtureLines = null;
+        List<(double X1, double Y1, double X2, double Y2, bool Cut)>? genericModelLines = null;
+        List<(double X, double Y, double Radius)>? detailCircles = null;
         bool opaqueFurniture = viewId is int fixtureView && document.RawData.OpaquePlanViews?.Contains(fixtureView) == true;
         int? planDetail = viewId is int detailView
             ? document.GetElement(detailView)?.LookupParameter(BuiltInParameter.VIEW_DETAIL_LEVEL)?.Value as int?
@@ -606,6 +621,22 @@ public static partial class PlanPrinter
             : null;
         foreach (var element in document.Elements)
         {
+            if (IsHidden(element)) continue;
+            if (viewId is int circleView && element.OwnerViewId == circleView
+                && element.RootClassName == "CurveElem" && element.CategoryId == (int)BuiltInCategory.OST_Lines
+                && element.DetailCircle is { } circle)
+                (detailCircles ??= []).Add((circle.X * FeetToMillimetres, circle.Y * FeetToMillimetres,
+                    circle.Radius * FeetToMillimetres));
+            if (opaqueFurniture && element is { CategoryId: (int)BuiltInCategory.OST_GenericModel,
+                    RootClassName: "FamilyInstance", BoundingBox: { Length: 6 } bounds, Geometry: { } modelGeometry }
+                && planRange is { } modelRange && double.IsFinite(bounds[2]) && double.IsFinite(bounds[5])
+                && bounds[2] < modelRange.Cut && bounds[5] >= modelRange.Cut)
+            {
+                CollectSectionedGenericModel(modelGeometry, modelRange.Bottom, modelRange.Cut,
+                    furnitureFill, ref genericModelLines);
+                continue;
+            }
+
             // Generic families entirely below the cut draw their projection in the visible portion of the plan.
             bool projectedFamily = element.CategoryId is (int)BuiltInCategory.OST_Furniture or (int)BuiltInCategory.OST_Casework
                 or (int)BuiltInCategory.OST_PlumbingFixtures or (int)BuiltInCategory.OST_SpecialityEquipment
@@ -613,8 +644,7 @@ public static partial class PlanPrinter
                 || element is { CategoryId: (int)BuiltInCategory.OST_GenericModel, RootClassName: "FamilyInstance",
                     BoundingBox: { Length: 6 } box } && planRange is { } range
                     && double.IsFinite(box[5]) && box[5] < range.Cut;
-            if (IsHidden(element)
-                || !projectedFamily && element.CategoryId is not ((int)BuiltInCategory.OST_Stairs or (int)BuiltInCategory.OST_StairsRailing))
+            if (!projectedFamily && element.CategoryId is not ((int)BuiltInCategory.OST_Stairs or (int)BuiltInCategory.OST_StairsRailing))
                 continue;
             if (element.PlacedPlanFixtureGraphics is { } fixture && element.Geometry is not { Faces.Count: > 0 })
             {
@@ -731,6 +761,8 @@ public static partial class PlanPrinter
             furniture, tags, minX, minY, maxX, maxY, roomPatterns, stairLines, railLines, furnitureLines, colors, furnitureFill)
         {
             DoorSymbols = doorSymbols, FixtureLines = fixtureLines, ColumnProfiles = columnProfiles,
+            GenericModelLines = genericModelLines,
+            DetailCircles = detailCircles,
             ProjectedWallTops = viewId is int wallView && planRange is { } wallRange
                 && document.RawData.UnshadedHiddenLineViews?.Contains(wallView) == true
                 ? CollectProjectedWallTops(document, walls.Select(wall => wall.Id), gaps, wallRange.Bottom, wallRange.Cut)
@@ -1061,8 +1093,35 @@ public static partial class PlanPrinter
             else
                 page.DrawLine(ToX(line.X1), ToY(line.Y1), ToX(line.X2), ToY(line.Y2), furnitureLine);
         }
+        if (content.GenericModelLines is { Count: > 0 } genericModelLines)
+        {
+            foreach (var group in genericModelLines.GroupBy(line => line.Cut).OrderBy(group => group.Key))
+            {
+                double width = document != null && PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_GenericModel,
+                    group.Key, scaleDenominator, out double savedWidth) ? savedWidth : furnitureLine;
+                foreach (var line in group)
+                {
+                    var (x0, y0, x1, y1, _) = line;
+                    if (clipRect is { } clip && !ElevationPrinter.ClipSegment(x0, y0, x1, y1,
+                        clip.X0, clip.Y0, clip.X1, clip.Y1, out x0, out y0, out x1, out y1)) continue;
+                    page.DrawLine(ToX(x0), ToY(y0), ToX(x1), ToY(y1), width);
+                }
+            }
+        }
         if (content.FixtureLines is { Count: > 0 } fixtureLines)
             DrawFixtureLines(page, document, fixtureLines, scale, furnitureLine, ToX, ToY, clipRect);
+
+        if (content.DetailCircles is { Count: > 0 } circles)
+        {
+            if (clipRect is { } clip)
+                page.BeginClip(ToX(clip.X0), ToY(clip.Y0),
+                    ToX(clip.X1) - ToX(clip.X0), ToY(clip.Y1) - ToY(clip.Y0));
+            double width = document != null && PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Lines,
+                false, scaleDenominator, out double savedWidth) ? savedWidth : 0.1;
+            foreach (var circle in circles)
+                page.DrawArc(ToX(circle.X), ToY(circle.Y), circle.Radius / scale, 0, 360, width);
+            if (clipRect != null) page.EndClip();
+        }
 
         foreach (var line in content.RailLines ?? [])
         {

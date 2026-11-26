@@ -8,6 +8,26 @@ API between minor releases.
 
 ### Fixed
 
+- Fine section callouts include screen-space ambient shadows from glazed curtain panels onto visible walls.
+- Fine section callouts retain the contour of closed furniture meshes with saved cylindrical facets.
+- Opaque fine section callouts clip upright wall and railing strokes behind nearer slab sides facing the view.
+- Elevations use the topography cut pen on the soil side of a building pad's cut contour.
+- Elevations clip projected wall and foundation edges behind opaque faces after the ground cut trims them, including
+  upright edges in building pad excavations.
+- Opaque building sections clip window jambs and opening marks behind nearer furniture and preserve the dash phase.
+- Elevation soil cuts use the saved outline to exclude RPC plants that lie wholly in front of the view.
+- Regular fine sections use projected ambient shadows on aligned inner finishes of exterior walls with unattached tops.
+- Regular fine sections with ambient shadows use the saved graphics colour of opaque fixture finishes.
+- Section views shade upright, view-aligned risers of cut stairs using occluders with a visible projection.
+- Plans print view-owned horizontal detail circles and preserve the outline of thin projected generic-model facets.
+- Opaque plans print the projection and cut outlines of closed generic-model instances within the saved view range.
+- Lit elevations retain shadows from fully clipped RPC plants on visible RPC foliage.
+- Opaque fine sections tone projected single-layer exterior structural walls above their saved base level.
+  Below that level, ambient occlusion also samples more distant geometry within the section's crop and depth.
+- Glazed curtain panels in opaque fine sections cover surfaces behind them and use the saved ambient intensity.
+- Cropped plan grid ends use the paper-space crop margin when annotation cropping is off.
+- Solar studies shade the exposed side of the solar band that faces away from the saved active sun.
+- Shaded 3D views honor saved model category visibility and clip ground-plane shadows at the section box.
 - Hidden-line site views print visible roof glazing inside the saved skylight openings.
 - Site views keep cast shadows on their receiving roof surfaces and cast shadows from opaque skylight frames.
 - Site views project visible horizontal stair treads and landings with their cast shadows.
@@ -15,6 +35,11 @@ API between minor releases.
 - Site views draw visible horizontal floor slabs and preserve skylight glazing over them.
 - Elevations hide covered skylight frame edges when the glazing is seen edge-on.
 - Elevations project shadows from opaque skylight frames onto their sloped host roofs.
+- Elevations project cast shadows onto oblique vertical wall faces using the saved light direction.
+- Elevations project shadows from explicitly opaque model faces onto planar mesh facets of structural foundations.
+- Cropped sections trim projected edges where a nearer cut stroke covers them.
+- Fine sections soften distant ambient shadows on exposed finishes of exterior walls with attached tops.
+- Fine sections use the saved top attachment to exclude the joined roof from ambient shading on the exterior finish.
 - In elevations, planar opaque faces of placed structural columns cast shadows using the saved light direction.
 - Cropped detail views clip model edges added by layer boundaries and roof-wall joins to the saved viewport.
 - Overview sections trim sloping railing lines behind nearer opaque wall faces.

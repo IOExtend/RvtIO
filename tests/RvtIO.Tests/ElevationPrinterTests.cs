@@ -544,6 +544,36 @@ public class ElevationPrinterTests
                 .Select(edge => (edge.X1, edge.X2)));
     }
 
+    [Theory]
+    [InlineData(2, 0, 1)]
+    [InlineData(3, 0, 2)]
+    [InlineData(2, 150, 2)]
+    public void DrawContent_TrimsProjectionOnlyBehindACutWithACoveringPen(int cutPen, double cutDepth, int strokeCount)
+    {
+        int walls = (int)BuiltInCategory.OST_Walls, roofs = (int)BuiltInCategory.OST_Roofs;
+        var projection = new ElevationPrinter.CollectedEdge(0, 300, 1000, 300, 100, 100, 0, -1,
+            0, 0, 0, 0, CategoryId: roofs);
+        var cut = projection with { X1 = 1000, X2 = 0, Depth = cutDepth, MidDepth = cutDepth, IsCut = true };
+        var content = new ElevationPrinter.ElevationContent([], [], [], [], [projection, cut], 0, 0, 1000, 600);
+        var document = Document();
+        document.RawData.GraphicsStylePens = new Dictionary<int, (int, int, int, int, int, int)>
+        {
+            [1] = (walls, -1, 1, 1, 0, 0),
+            [2] = (roofs, -1, 2, cutPen, 0, 0),
+        };
+        document.RawData.PenWidthTable = (new Dictionary<int, double[]>
+        {
+            [100] = [0.54 / 864, 1.0 / 864, 0.26 / 864],
+        }, []);
+        var page = new PdfDocument().AddPage(PdfPageSize.A1.Landscape);
+
+        ElevationPrinter.DrawContent(page, content, 100, 0, 0, 0.82,
+            document: document, clipRect: (0, 0, 1000, 600));
+
+        Assert.Equal(strokeCount, System.Text.RegularExpressions.Regex.Matches(page.Content, @"(?m) l S$").Count);
+        Assert.Contains(cutPen == 2 ? "1 w" : "0.26 w", page.Content);
+    }
+
     [Fact]
     public void MergeOverlaps_PreservesTheWiderCutPenOnlyWhereItsSourceSpans()
     {
@@ -652,6 +682,43 @@ public class ElevationPrinterTests
         ambient.AddReceiver(receiver, null, System.Numerics.Vector3.Zero, -up, ignoreStairExitHits: stairReceiver);
 
         Assert.Equal(castsShadow, ambient.Calculate()?.ContainsKey(receiver) == true);
+    }
+
+    [Theory]
+    [InlineData(true, true, false)]
+    [InlineData(true, false, true)]
+    [InlineData(false, true, true)]
+    public void AmbientOcclusion_UsesProjectedOccludersForAnAlignedStairFace(
+        bool edgeOn, bool projectOccluders, bool castsShadow)
+    {
+        var ambient = new ElevationPrinter.AmbientOcclusion(0.5, (0, 0, 10, 10));
+        if (edgeOn)
+            ambient.AddOccluder(
+                [new(-20, -100, -100), new(-20, 100, -100), new(-20, 100, 0), new(-20, -100, 0)],
+                System.Numerics.Vector3.UnitX);
+        else
+            ambient.AddOccluder(
+                [new(-100, -100, -20), new(100, -100, -20), new(100, 100, -20), new(-100, 100, -20)],
+                System.Numerics.Vector3.UnitZ);
+        List<(double X, double Y)> receiver = [(0, 0), (10, 0), (10, 10), (0, 10)];
+        ambient.AddReceiver(receiver, null, System.Numerics.Vector3.Zero, -System.Numerics.Vector3.UnitZ,
+            ignoreEdgeOnHits: projectOccluders);
+
+        Assert.Equal(castsShadow, ambient.Calculate()?.ContainsKey(receiver) == true);
+    }
+
+    [Theory]
+    [InlineData(-2, -1, false)]
+    [InlineData(-2, 0, false)]
+    [InlineData(-2, 1, true)]
+    public void StairCutRequiresAFaceCrossingTheSectionPlane(double start, double end, bool crosses)
+    {
+        List<GeoFace> faces =
+        [
+            new() { OuterVertices = [[start, 0, 0], [end, 1, 0], [end, 0, 0]] },
+            new() { OuterVertices = [[2, 0, 0], [2, 1, 0], [2, 0, 1]] },
+        ];
+        Assert.Equal(crosses, ElevationPrinter.SpansSectionPlane(faces, [1, 0, 0], 0));
     }
 
     [Fact]
@@ -770,6 +837,111 @@ public class ElevationPrinterTests
         ElevationPrinter.DrawContent(page, content, 50, 10, 10, document: document);
         Assert.Contains("4.32", page.Content);
         Assert.Contains("0 0 0 RG", page.Content);
+    }
+
+    [Theory]
+    [InlineData(9.5, 1.75, 2.25, false, true)]
+    [InlineData(9.5, 1.25, 1.5, false, true)]
+    [InlineData(8.5, 1.75, 2.25, false, false)]
+    [InlineData(9.5, 1.25, 1.5, true, false)]
+    public void Collect_ClipsWindowSymbolSpansBehindOpaqueFurniture(double coverX,
+        double coverStart, double coverEnd, bool transparent, bool clipped)
+    {
+        const int styleId = 700;
+        var view = SectionView(900, [10, 0, 0]);
+        Add(view, BuiltInParameter.VIEW_SCALE, StorageType.Integer, 100);
+        var window = QuadWall(600, [[9, 0, 0], [9, 4, 0], [9, 4, 3], [9, 0, 3]], [1, 0, 0],
+            (int)BuiltInCategory.OST_Windows);
+        window.Geometry!.ViewFacingLines = [new([9, 1, 1], [9, 3, 1], [-1, 0, 0], styleId, null)];
+        var cover = QuadWall(601, [[coverX, coverStart, 0], [coverX, coverEnd, 0],
+            [coverX, coverEnd, 2], [coverX, coverStart, 2]], [1, 0, 0], (int)BuiltInCategory.OST_Furniture);
+        var material = new Element { Id = 602, SerializedMaterialTransparency = transparent ? 0.5 : 0 };
+        cover.Geometry!.Faces[0].PlaneSurface = true;
+        cover.Geometry.Faces[0].RenderStyleId = material.Id;
+        var document = Document(view, window, cover, material);
+        document.RawData.OpaquePlanViews = new HashSet<int> { view.Id };
+        document.RawData.GraphicsStylePens = new Dictionary<int, (int, int, int, int, int, int)>
+        {
+            [styleId] = (707, -1, 1, 1, 0, 711),
+        };
+        document.RawData.LinePatterns = new Dictionary<int, (string, List<(double, int)>)>
+        {
+            [711] = ("Dash", [(0.005, 0), (0.0025, 1)]),
+        };
+        var content = Assert.IsType<ElevationPrinter.ElevationContent>(
+            ElevationPrinter.Collect(document, "section", planeView: view));
+        var lines = content.Edges.Where(edge => edge.ViewLineStyleId == styleId).OrderBy(edge => edge.X1).ToArray();
+        if (!clipped)
+        {
+            var line = Assert.Single(lines);
+            Assert.Equal(FeetToMillimetres, line.X1, 6);
+            Assert.Equal(3 * FeetToMillimetres, line.X2, 6);
+            Assert.Null(line.UnclippedViewLine);
+            return;
+        }
+
+        Assert.Equal(2, lines.Length);
+        Assert.Equal(FeetToMillimetres, lines[0].X1, 6);
+        Assert.Equal(coverStart * FeetToMillimetres, lines[0].X2, 6);
+        Assert.Equal(coverEnd * FeetToMillimetres, lines[1].X1, 6);
+        Assert.Equal(3 * FeetToMillimetres, lines[1].X2, 6);
+        var page = new PdfDocument().AddPage(PdfPageSize.A1.Landscape);
+        ElevationPrinter.DrawContent(page, content, 100, 10, 10, document: document);
+        var dashCommands = page.Content.Split('\n').Where(command => command.StartsWith('[')
+            && !command.StartsWith("[]", StringComparison.Ordinal)).ToArray();
+        Assert.Equal(2, dashCommands.Length);
+        Assert.Equal(dashCommands[0].Split(']')[0], dashCommands[1].Split(']')[0]);
+        Assert.EndsWith("] 0 d", dashCommands[0]);
+        Assert.EndsWith(coverEnd == 2.25 ? "] 10.8 d" : "] 4.32 d", dashCommands[1]);
+    }
+
+    [Theory]
+    [InlineData(9.5, 1.25, 2.75, false, 2)]
+    [InlineData(9.5, 0.25, 0.75, false, 2)]
+    [InlineData(9.5, -0.25, 4.25, false, 0)]
+    [InlineData(8.5, 1.25, 2.75, false, 1)]
+    [InlineData(9.5, 0.25, 0.75, true, 1)]
+    public void Collect_ClipsWindowJambsAtNearerFurniture(double coverX, double bottom, double top,
+        bool transparent, int visibleSpans)
+    {
+        int windowCategory = (int)BuiltInCategory.OST_Windows;
+        var view = SectionView(900, [10, 0, 0]);
+        Add(view, BuiltInParameter.VIEW_SCALE, StorageType.Integer, 100);
+        var window = QuadWall(600, [[9, 1, 0], [9, 3, 0], [9, 3, 4], [9, 1, 4]], [1, 0, 0], windowCategory);
+        var cover = QuadWall(601, [[coverX, 0.5, bottom], [coverX, 1.5, bottom],
+            [coverX, 1.5, top], [coverX, 0.5, top]], [1, 0, 0], (int)BuiltInCategory.OST_Furniture);
+        var material = new Element { Id = 602, SerializedMaterialTransparency = transparent ? 0.5 : 0 };
+        cover.Geometry!.Faces[0].PlaneSurface = true;
+        cover.Geometry.Faces[0].RenderStyleId = material.Id;
+        var document = Document(view, window, cover, material);
+        document.RawData.OpaquePlanViews = new HashSet<int> { view.Id };
+        var content = Assert.IsType<ElevationPrinter.ElevationContent>(
+            ElevationPrinter.Collect(document, "section", planeView: view));
+
+        var jambs = content.Edges.Where(edge => edge.CategoryId == windowCategory && edge.X1 == edge.X2).ToArray();
+        var rails = content.Edges.Where(edge => edge.CategoryId == windowCategory && edge.Y1 == edge.Y2).ToArray();
+        Assert.Equal(2, rails.Length);
+        Assert.All(rails, edge =>
+        {
+            Assert.Equal(FeetToMillimetres, Math.Min(edge.X1, edge.X2), 6);
+            Assert.Equal(3 * FeetToMillimetres, Math.Max(edge.X1, edge.X2), 6);
+        });
+        var right = Assert.Single(jambs, edge => edge.X1 == 3 * FeetToMillimetres);
+        Assert.Equal(0, Math.Min(right.Y1, right.Y2), 6);
+        Assert.Equal(4 * FeetToMillimetres, Math.Max(right.Y1, right.Y2), 6);
+
+        var left = jambs.Where(edge => edge.X1 == FeetToMillimetres)
+            .Select(edge => (Lo: Math.Min(edge.Y1, edge.Y2), Hi: Math.Max(edge.Y1, edge.Y2)))
+            .OrderBy(span => span.Lo).ToArray();
+        Assert.Equal(visibleSpans, left.Length);
+        if (visibleSpans == 0) return;
+        Assert.Equal(0, left[0].Lo, 6);
+        Assert.Equal(4 * FeetToMillimetres, left[^1].Hi, 6);
+        if (visibleSpans == 2)
+        {
+            Assert.Equal(bottom * FeetToMillimetres, left[0].Hi, 6);
+            Assert.Equal(top * FeetToMillimetres, left[1].Lo, 6);
+        }
     }
 
     [Theory]
@@ -1403,6 +1575,119 @@ public class ElevationPrinterTests
     }
 
     [Theory]
+    [InlineData(BuiltInCategory.OST_Walls, 9, true)]
+    [InlineData(BuiltInCategory.OST_StairsRailing, 9, true)]
+    [InlineData(BuiltInCategory.OST_StairsRailing, 7, false)]
+    public void Collect_ClipsUprightsAtANearerProjectedSlabInASectionCallout(
+        BuiltInCategory category, double slabDepth, bool clipped)
+    {
+        var view = SectionView(900, [10, 0, 0]);
+        Add(view, BuiltInParameter.VIEW_SCALE, StorageType.Integer, 20);
+        view.ViewCrop = new ViewCropFrame(10, 0, 0, [0, 1, 0], [0, 0, 1], [-1, 0, 0], -2, -1, 5, 5, true);
+        view.SectionViewerId = 905;
+        var upright = QuadWall(901, [[8, 0, 0], [8, 1, 0], [8, 1, 3], [8, 0, 3]], [1, 0, 0], (int)category);
+        var slab = QuadWall(902, [[slabDepth, -1, 1], [slabDepth, 2, 1], [slabDepth, 2, 2], [slabDepth, -1, 2]],
+            [1, 0, 0], (int)BuiltInCategory.OST_Floors);
+        slab.Geometry!.Faces[0].PlaneSurface = true;
+        var document = Document(view, upright, slab);
+        document.RawData.OpaquePlanViews = new HashSet<int> { view.Id };
+        document.RawData.SectionViews = new Dictionary<int, (int, double, IReadOnlyList<double[]>?)>
+        {
+            [905] = (899, 0.02, null),
+        };
+
+        var content = ElevationPrinter.Collect(document, "section", planeView: view)!;
+
+        var spans = content.Edges.Where(edge => edge.CategoryId == (int)category && edge.X1 == 0 && edge.X2 == 0)
+            .Select(edge => (Math.Round(Math.Min(edge.Y1, edge.Y2) / FeetToMillimetres, 9),
+                Math.Round(Math.Max(edge.Y1, edge.Y2) / FeetToMillimetres, 9)))
+            .OrderBy(span => span.Item1).ToArray();
+        Assert.Equal(clipped ? [(0d, 1d), (2d, 3d)] : [(0d, 3d)], spans);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Collect_ProjectsSmallFurnitureSilhouetteFacetsWhenOpeningsAreEdgeOn(bool facingOpening)
+    {
+        var view = SectionView(900, [10, 0, 0]);
+        Add(view, BuiltInParameter.VIEW_SCALE, StorageType.Integer, 20);
+        view.ViewCrop = new ViewCropFrame(10, 0, 0, [0, 1, 0], [0, 0, 1], [-1, 0, 0], -2, -1, 5, 5, true);
+        view.SectionViewerId = 905;
+        var furniture = QuadWall(901, [[7, 0, 0], [7, 0.1, 0], [7, 0.1, 0.5], [7, 0, 0.5]], [1, 0, 0],
+            (int)BuiltInCategory.OST_Furniture);
+        furniture.NativeRootClassName = "FamilyInstance";
+        furniture.NativeRootClassChain = ["FamilyInstance"];
+        var geometry = furniture.Geometry!;
+        geometry.Faces[0].PlaneSurface = true;
+        geometry.Faces.AddRange([
+            new() { OuterVertices = [[7, 0, 0.5], [7, 0.1, 0.5], [7, 0, 0.6]], Normal = [1, 0, 0], GeometryNode = 11, MeshMarker = 1 },
+            new() { OuterVertices = [[6, 0, 0], [6, 0, 0.6], [6, 0.1, 0.5], [6, 0.1, 0]], Normal = [-1, 0, 0], PlaneSurface = true },
+            new() { OuterVertices = [[6, 0, 0], [7, 0, 0], [7, 0, 0.6], [6, 0, 0.6]], Normal = [0, -1, 0], PlaneSurface = true },
+            new() { OuterVertices = [[6, 0.1, 0], [6, 0.1, 0.5], [7, 0.1, 0.5], [7, 0.1, 0]], Normal = [0, 1, 0], PlaneSurface = true },
+            new() { OuterVertices = [[6, 0, 0], [6, 0.1, 0], [7, 0.1, 0], [7, 0, 0]], Normal = [0, 0, -1], PlaneSurface = true },
+            new() { OuterVertices = [[6, 0, 0.6], [7, 0, 0.6], [7, 0.1, 0.5], [6, 0.1, 0.5]], Normal = [0, 0.7071067811865476, 0.7071067811865476], PlaneSurface = true },
+        ]);
+        geometry.Faces[facingOpening ? 2 : 3].InnerLoops = [[0.01, 0.1, 0.08, 0.3]];
+        geometry.BrepSolids = [new() { IsClosed = true, FaceIndices = Enumerable.Range(0, geometry.Faces.Count).ToList() }];
+        geometry.MeshNodes = [new GeometryNode(11, 0,
+            [new BrFace { Marker = 1, SurfaceKind = SurfaceKind.Cylinder, Loops = [] }], 1)];
+        var document = Document(view, furniture);
+        document.RawData.OpaquePlanViews = new HashSet<int> { view.Id };
+        document.RawData.SectionViews = new Dictionary<int, (int, double, IReadOnlyList<double[]>?)>
+        {
+            [905] = (899, 0.02, null),
+        };
+
+        var content = ElevationPrinter.Collect(document, "section", planeView: view)!;
+        var contour = content.Edges.Where(edge => edge.SilhouetteOwnerId == furniture.Id).ToList();
+        if (facingOpening)
+            Assert.Empty(contour);
+        else
+            Assert.Contains(contour, edge => Math.Abs(edge.X1 - edge.X2) > 1
+                && Math.Abs(Math.Max(edge.Y1, edge.Y2) - 0.6 * FeetToMillimetres) < 1e-6);
+    }
+
+    [Theory]
+    [InlineData(BuiltInCategory.OST_Walls, false)]
+    [InlineData(BuiltInCategory.OST_StructuralFoundation, true)]
+    public void Collect_ClipsAGroundTrimmedProjectionAgainstNearerOpaqueFaces(BuiltInCategory category, bool opening)
+    {
+        var view = SectionView(900, [10, 0, 0]);
+        var terrain = QuadWall(601, [[9, -4, 0], [11, -4, 0], [11, 4, 0], [9, 4, 0]],
+            [0, 0, 1], (int)BuiltInCategory.OST_Topography);
+        var pad = QuadWall(602, [[9, -1, -1], [11, -1, -1], [11, 1, -1], [9, 1, -1]],
+            [0, 0, 1], (int)BuiltInCategory.OST_BuildingPad);
+        var rear = QuadWall(603, [[7, -3, -0.5], [7, 3, -0.5], [7, 3, 2], [7, -3, 2]],
+            [1, 0, 0], (int)category);
+        var front = QuadWall(604, [[9, 0.25, -0.75], [9, 1.25, -0.75], [9, 1.25, 0.25], [9, 0.25, 0.25]], [1, 0, 0]);
+        var insidePad = QuadWall(605, [[8, 0.8, -0.4], [8, 0.9, -0.4], [8, 0.9, 1], [8, 0.8, 1]], [1, 0, 0]);
+        var face = front.Geometry!.Faces[0];
+        face.PlaneSurface = true;
+        if (opening)
+            face.InnerVertices = [[[9, 0.5, -0.65], [9, 0.75, -0.65], [9, 0.75, -0.35], [9, 0.5, -0.35]]];
+        var document = Document(view, terrain, pad, rear, front, insidePad);
+        document.RawData.OpaqueViewsWithSurfacePatterns = new HashSet<int> { view.Id };
+        document.RawData.SiteCutGraphics = (-3, 100);
+        document.RawData.MaterialPatterns = new Dictionary<int, (int, int, int?)> { [100] = (101, 102, null) };
+        var grid = new TfBlockDeserializer.PatternGrid(0, 0, 0, 0, 0.005, [0.004, 0.001]);
+        document.RawData.FillPatterns =
+            new Dictionary<int, (string, IReadOnlyList<TfBlockDeserializer.PatternGrid>)> { [101] = ("Earth", [grid]) };
+
+        var content = ElevationPrinter.Collect(document, "east", planeView: view)!;
+
+        var bottom = content.Edges.Where(edge => edge.CategoryId == (int)category
+            && Math.Abs(edge.Y1 + 0.5 * FeetToMillimetres) < 1e-6 && Math.Abs(edge.Y2 - edge.Y1) < 1e-6)
+            .Select(edge => (Left: Math.Round(Math.Min(edge.X1, edge.X2) / FeetToMillimetres, 9),
+                Right: Math.Round(Math.Max(edge.X1, edge.X2) / FeetToMillimetres, 9))).OrderBy(span => span.Left).ToArray();
+        Assert.Equal(opening ? [(-1d, 0.25d), (0.5d, 0.75d)] : [(-1d, 0.25d)], bottom);
+        var upright = Assert.Single(content.Edges, edge => Math.Abs(edge.X1 - 0.9 * FeetToMillimetres) < 1e-6
+            && Math.Abs(edge.X2 - edge.X1) < 1e-6);
+        Assert.Equal(0.25 * FeetToMillimetres, Math.Min(upright.Y1, upright.Y2), 6);
+        Assert.Equal(FeetToMillimetres, Math.Max(upright.Y1, upright.Y2), 6);
+    }
+
+    [Theory]
     [InlineData("east", 1.0, 100, false, false)]
     [InlineData("east", 1.0, 100, true, false)]
     [InlineData("section", 0.82, 100, true, false)]
@@ -1501,6 +1786,40 @@ public class ElevationPrinterTests
                 clipRect: crop, unshadedHiddenLine: unshadedHiddenLine);
             return page.Content;
         }
+    }
+
+    [Theory]
+    [InlineData(1, false)]
+    [InlineData(2, true)]
+    public void DrawContent_ClipsTheTerrainPenToTheSoilSideOfACutPad(int terrainPen, bool extraInk)
+    {
+        const int pad = (int)BuiltInCategory.OST_BuildingPad;
+        const int terrain = (int)BuiltInCategory.OST_Topography;
+        var bottom = new ElevationPrinter.CollectedEdge(0, 300, 1000, 300, 0, 0, -1, -1,
+            0, 0, 0, 0, IsCut: true, CategoryId: pad);
+        var top = bottom with { Y1 = 500, Y2 = 500 };
+        var grid = new TfBlockDeserializer.PatternGrid(0, 0, 0, 0, 0.005, [0.004, 0.001]);
+        var hatch = new ElevationPrinter.TerrainHatch(0, 0, 0, [top], [grid],
+            [[(0, 300), (1000, 300), (1000, 500), (0, 500)]]);
+        var content = new ElevationPrinter.ElevationContent([], [], [], [], [bottom, top], 0, 0, 1000, 600, hatch);
+        var document = Document();
+        document.RawData.GraphicsStylePens = new Dictionary<int, (int, int, int, int, int, int)>
+        {
+            [1] = (terrain, -1, 2, terrainPen, 0, 0),
+            [2] = (pad, -1, 2, 3, 0, 0),
+        };
+        document.RawData.PenWidthTable = (new Dictionary<int, double[]>
+        {
+            [100] = [0.1 / FeetToMillimetres, 0.7 / FeetToMillimetres, 0.18 / FeetToMillimetres],
+        }, []);
+        var page = new PdfDocument().AddPage(PdfPageSize.A1.Landscape);
+
+        ElevationPrinter.DrawContent(page, content, 100, 0, 0, document: document);
+
+        Assert.Contains("0.5102 w", page.Content);
+        const string soilClipAndBand = "W n\n0 0 0 rg\n0 7.5118 m 28.3465 7.5118 l 28.3465 9.4961 l 0 9.4961 l h f";
+        if (extraInk) Assert.Contains(soilClipAndBand, page.Content);
+        else Assert.DoesNotContain(soilClipAndBand, page.Content);
     }
 
     [Fact]
@@ -2163,6 +2482,48 @@ public class ElevationPrinterTests
         Assert.InRange(PlanPrinter.SignedArea(ring), 1, 499_999);
     }
 
+    [Theory]
+    [InlineData(true, true, 1, true)]
+    [InlineData(true, true, -0.5, false)]
+    [InlineData(true, false, 1, false)]
+    [InlineData(false, true, 1, false)]
+    public void Collect_KeepsAnRpcProxyWhenItsSavedExtentReachesTheView(
+        bool rpc, bool savedExtent, double maxDepth, bool visible)
+    {
+        const int planting = (int)BuiltInCategory.OST_Planting;
+        var view = new Element
+        {
+            Id = 900, ViewOrigin = [0, 0, 0], ViewDirection = [0, 1, 0],
+            ViewHorizontalDirection = [1, 0, 0], ViewVerticalDirection = [0, 0, 1],
+        };
+        var tree = QuadWall(601, [[2, -1, 1], [4, -1, 1], [4, -1, 2]], [0, -1, 0], planting);
+        tree.Geometry!.Faces[0].PolygonMesh = true;
+        tree.InstanceOriginXY = (2.5, -1);
+        tree.BoundingBox = [2, -3, 1, 4, maxDepth, 2];
+        tree.BoundingBoxIsHeaderOutline = savedExtent;
+        var type = new Element { Id = 903, CategoryId = planting, NativeIsSymbol = true };
+        if (rpc) Add(type, BuiltInParameter.RENDER_RPC_FILENAME, StorageType.String, "RPC tree");
+        tree.TypeId = type.Id;
+
+        var document = Document(view, WallWithFace(602), tree, type);
+        document.RawData.OpaqueViewsWithSurfacePatterns = new HashSet<int> { view.Id };
+        var content = ElevationPrinter.Collect(document, "south", planeView: view)!;
+
+        if (visible)
+        {
+            var ring = Assert.Single(content.SiteSilhouettes!);
+            Assert.Equal(3, ring.Count);
+            Assert.Equal(FeetToMillimetres * FeetToMillimetres, PlanPrinter.SignedArea(ring), 6);
+            Assert.Equal(3, Assert.IsAssignableFrom<IReadOnlyList<ElevationPrinter.CollectedEdge>>(
+                content.SiteOutlines).Count(edge => edge.CategoryId == planting));
+        }
+        else
+        {
+            Assert.Null(content.SiteSilhouettes);
+            Assert.Null(content.SiteOutlines);
+        }
+    }
+
     [Fact]
     public void Collect_KeepsSlopingGroupedEquipmentEdgesThroughStoredGlass()
     {
@@ -2517,6 +2878,62 @@ public class ElevationPrinterTests
         var ring = Assert.Single(shadow.Rings);
         Assert.Equal(-1.5 * FeetToMillimetres, ring.Min(point => point.X), 6);
         Assert.Equal(-0.5 * FeetToMillimetres, ring.Max(point => point.X), 6);
+    }
+
+    [Theory]
+    [InlineData(0.5, true)]
+    [InlineData(-2, false)]
+    [InlineData(0.5, true, true)]
+    [InlineData(0.5, false, true, true)]
+    [InlineData(0.5, false, true, false, false)]
+    [InlineData(-2, true, true)]
+    public void Collect_ProjectsShadowsOntoObliqueModelFaces(
+        double slope, bool receivesShadow, bool foundationFacet = false, bool warped = false, bool verifiedCaster = true)
+    {
+        var view = new Element
+        {
+            Id = 900, ViewOrigin = [0, 0, 0], ViewDirection = [0, 1, 0],
+            ViewHorizontalDirection = [1, 0, 0], ViewVerticalDirection = [0, 0, 1],
+        };
+        const double left = -2, right = 1;
+        double normalLength = Math.Sqrt(1 + slope * slope);
+        var surface = QuadWall(600,
+            [[left, 3 + slope * left, 0], [right, 3 + slope * right, 0],
+                [right, 3 + slope * right, 6], [left, 3 + slope * left + (warped ? 0.1 : 0), 6]],
+            [slope / normalLength, -1 / normalLength, 0],
+            (int)(foundationFacet ? BuiltInCategory.OST_StructuralFoundation : BuiltInCategory.OST_Walls));
+        var face = Assert.Single(surface.Geometry!.Faces);
+        face.PlaneSurface = !foundationFacet;
+        if (foundationFacet) face.MeshMarker = 1;
+        double castX = slope < 0 ? 3 : 0;
+        var column = QuadWall(601, [[castX, 0.5, 2], [castX, 1.5, 2], [castX, 1.5, 5], [castX, 0.5, 5]], [1, 0, 0],
+            (int)BuiltInCategory.OST_StructuralColumns);
+        var material = new Element
+        {
+            Id = 602, HasShadingAppearance = true, SerializedMaterialUsesRenderAppearance = !verifiedCaster,
+            SerializedMaterialTransparency = 0,
+        };
+        var caster = Assert.Single(column.Geometry!.Faces);
+        caster.PlaneSurface = true;
+        caster.RenderStyleId = material.Id;
+        var document = Document(view, surface, column, material);
+        document.RawData.ViewGroundShadows = new Dictionary<int, (double, double, int, int)>
+        {
+            [view.Id] = (3 * Math.PI / 4, Math.Atan(Math.Sqrt(0.5)), 1, 60),
+        };
+
+        var content = ElevationPrinter.Collect(document, "south", planeView: view)!;
+        if (!receivesShadow)
+        {
+            Assert.Null(content.CastShadows);
+            return;
+        }
+
+        var (receiver, shadow) = Assert.Single(content.CastShadows!);
+        Assert.Same(Assert.Single(content.Faces).Points, receiver);
+        var ring = Assert.Single(shadow.Rings);
+        Assert.Equal((slope < 0 ? -1.5 : -5.0 / 3) * FeetToMillimetres, ring.Min(point => point.X), 6);
+        Assert.Equal((slope < 0 ? -0.5 : -1) * FeetToMillimetres, ring.Max(point => point.X), 6);
     }
 
     [Fact]
@@ -3013,6 +3430,34 @@ public class ElevationPrinterTests
     }
 
     [Theory]
+    [InlineData(true, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    public void Project_KeepsOffscreenRpcShadowsOnEligiblePlanting(
+        bool wholeCasterOutside, bool rpcReceiver, bool shaded)
+    {
+        var projector = new ElevationPrinter.ElevationShadows([1, 0, 0], [0, 0, 1], [0, 1, 0], 0, 0, 0.4);
+        var face = new GeoFace { Normal = [0, -1, 0] };
+        List<(double X, double Y)> panel = [(0, 0), (100, 0), (0, 100)];
+        projector.AddCaster(face, [[0, -50, 0], [100, -50, 0], [0, -50, 100]],
+            planting: true, groundOnly: true, castsOnVisiblePlanting: wholeCasterOutside);
+        projector.AddVisibleFacet(panel, face, [[0, 100, 0], [100, 100, 0], [0, 100, 100]],
+            planting: true, receivesOffscreenPlantShadows: rpcReceiver);
+        projector.AddReceiver([(0, 0), (100, 0), (0, 100)], face, 200);
+
+        var shadows = projector.Project(0);
+
+        if (shaded)
+        {
+            var result = Assert.Single(shadows!);
+            Assert.Same(panel, result.Key);
+            Assert.Equal(5000, result.Value.Rings.Sum(PlanPrinter.SignedArea), 6);
+        }
+        else
+            Assert.Null(shadows);
+    }
+
+    [Theory]
     [InlineData(2, 1, true, false, 5000)]
     [InlineData(2, -1, true, false, 5000)]
     [InlineData(1, 1, true, false, 5000)]
@@ -3095,10 +3540,31 @@ public class ElevationPrinterTests
     }
 
     [Theory]
-    [InlineData(-1, false)]
-    [InlineData(0, true)]
-    [InlineData(1, true)]
-    public void Project_UsesPlantFacesDirectedIntoTheViewForTheSoilCut(int facing, bool shadesSoil)
+    [InlineData(true, -2, -1, true)]
+    [InlineData(true, -2, 0, false)]
+    [InlineData(true, -2, 1, false)]
+    [InlineData(false, -2, -1, false)]
+    public void HeaderOutlineIsBeforePlane_UsesTheSavedOutlineOnly(
+        bool headerOutline, double minDepth, double maxDepth, bool beforeView)
+    {
+        var plant = new Element
+        {
+            BoundingBox = [0, minDepth, 0, 1, maxDepth, 1],
+            BoundingBoxIsHeaderOutline = headerOutline,
+        };
+
+        Assert.Equal(beforeView, ElevationPrinter.HeaderOutlineIsBeforePlane(plant, [0, 1, 0], 0));
+        Assert.Equal(beforeView, ElevationPrinter.HeaderOutlineIsBeforePlane(plant, [0, -1, 0],
+            -(minDepth + maxDepth) * FeetToMillimetres));
+    }
+
+    [Theory]
+    [InlineData(-1, true, false)]
+    [InlineData(0, true, true)]
+    [InlineData(1, true, true)]
+    [InlineData(1, false, false)]
+    public void Project_UsesEligiblePlantFacesDirectedIntoTheViewForTheSoilCut(
+        int facing, bool castsOnSoilCut, bool shadesSoil)
     {
         var projector = new ElevationPrinter.ElevationShadows([1, 0, 0], [0, 0, 1], [0, 1, 0], 1, 1, 0.4);
         var soil = projector.AddSoilCutReceiver((-500, -500, 500, 500), 0, -200)!;
@@ -3109,7 +3575,8 @@ public class ElevationPrinterTests
         List<double[]> corners = facing == 0
             ? [[0, -140, 120], [0, -60, 120], [0, -60, 180], [0, -140, 180]]
             : [[-40, -100, 120], [40, -100, 120], [40, -100, 180], [-40, -100, 180]];
-        projector.AddCaster(new GeoFace { Normal = normal }, corners, siteOnly: true, planting: true);
+        projector.AddCaster(new GeoFace { Normal = normal }, corners, siteOnly: true, planting: true,
+            castsOnSoilCut: castsOnSoilCut);
 
         var shadows = Assert.IsType<Dictionary<List<(double X, double Y)>, ElevationPrinter.CastShadow>>(projector.Project(0));
         Assert.True(shadows.ContainsKey(terrain));
@@ -3192,6 +3659,40 @@ public class ElevationPrinterTests
             edges.Where(edge => edge.Y1 == edge.Y2).Sum(edge => Math.Abs(edge.X2 - edge.X1)), 6);
     }
 
+    [Theory]
+    [InlineData(true, false, 0, true)]
+    [InlineData(false, false, 0, false)]
+    [InlineData(true, true, 0, false)]
+    [InlineData(true, false, 0.5, false)]
+    public void Collect_UsesTheSavedOpaqueFixtureFinishInAnAmbientFineSection(
+        bool ambientShadows, bool useRenderAppearance, double transparency, bool expected)
+    {
+        var view = SectionView(900, [10, 0, 0]);
+        Add(view, BuiltInParameter.VIEW_SCALE, StorageType.Integer, 50);
+        view.ViewCrop = new ViewCropFrame(10, 0, 0, [0, 1, 0], [0, 0, 1], [-1, 0, 0], -1, -1, 5, 5, true);
+        var material = new Element
+        {
+            Id = 901, HasShadingAppearance = true, SerializedMaterialUsesRenderAppearance = useRenderAppearance,
+            SerializedMaterialTransparency = transparency,
+        };
+        Add(material, BuiltInParameter.MATERIAL_PARAM_COLOR, StorageType.Integer, 0x787878);
+        var fixture = QuadWall(902, [[8, 1, 1], [8, 3, 1], [8, 3, 2], [8, 1, 2]], [1, 0, 0],
+            (int)BuiltInCategory.OST_LightingFixtures);
+        var face = Assert.Single(fixture.Geometry!.Faces);
+        face.PlaneSurface = true;
+        face.NestedRenderStyleId = material.Id;
+        var document = Document(view, fixture, material);
+        document.RawData.OpaquePlanViews = new HashSet<int> { view.Id };
+        if (ambientShadows) document.RawData.ViewAmbientFractions = new Dictionary<int, double> { [view.Id] = 0.5 };
+
+        var content = ElevationPrinter.Collect(document, "section", planeView: view)!;
+
+        if (expected)
+            Assert.Equal(120 / 255d, Assert.Single(content.FaceFills!).Value!.Value, 10);
+        else
+            Assert.Null(content.FaceFills);
+    }
+
     [Fact]
     public void Collect_FineSectionShowsAThinLightingFixtureSuspension()
     {
@@ -3233,20 +3734,70 @@ public class ElevationPrinterTests
         else Assert.Null(content.AmbientTones);
     }
 
-    [Fact]
-    public void AmbientOcclusion_AnOpaqueBlockerFullyBlocksEveryRayItIntersects()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AmbientOcclusion_SoftensDistantBlockersOnlyForReceiversWithDistanceFalloff(bool distanceFalloff)
     {
         byte[] Sample(float depth)
         {
             var ambient = new ElevationPrinter.AmbientOcclusion(0.5, (0, 0, 10, 10), binaryVisibility: true);
             ambient.AddReceiver([(0, 0), (10, 0), (10, 10), (0, 10)], null,
-                System.Numerics.Vector3.Zero, -System.Numerics.Vector3.UnitZ);
+                System.Numerics.Vector3.Zero, -System.Numerics.Vector3.UnitZ, distanceFalloff: distanceFalloff);
             ambient.AddOccluder([new(-10000, -10000, depth), new(10000, -10000, depth),
                 new(10000, 10000, depth), new(-10000, 10000, depth)], System.Numerics.Vector3.UnitZ);
             return Assert.Single(ambient.Calculate()!).Value.Image.Rgb;
         }
 
-        Assert.Equal(Sample(-25), Sample(-200));
+        var near = Sample(-25);
+        var far = Sample(-200);
+        if (distanceFalloff) Assert.True(far.Min() > near.Max());
+        else Assert.Equal(near, far);
+    }
+
+    [Theory]
+    [InlineData(6000, -3000, true)]
+    [InlineData(2000, -3000, false)]
+    [InlineData(6000, -2000, false)]
+    public void AmbientOcclusion_ExtendsTheReachBelowAnExteriorWallBase(double cropSize, float cutDepth,
+        bool shaded)
+    {
+        var ambient = new ElevationPrinter.AmbientOcclusion(0.5, (0, 0, cropSize, cropSize), binaryVisibility: true);
+        ambient.AddReceiver([(0, 0), (10, 0), (10, 10), (0, 10)], null,
+            System.Numerics.Vector3.Zero, -System.Numerics.Vector3.UnitZ, exteriorWall: (4, cutDepth));
+        ambient.AddOccluder([new(-10000, -10000, -2200), new(10000, -10000, -2200),
+            new(10000, 10000, -2200), new(-10000, 10000, -2200)], System.Numerics.Vector3.UnitZ);
+
+        var tones = ambient.Calculate();
+        if (shaded)
+        {
+            var pixels = Assert.Single(tones!).Value.Image.Rgb;
+            Assert.All(pixels[..18], sample => Assert.Equal(255, sample));
+            Assert.All(pixels[18..], sample => Assert.InRange(sample, (byte)189, (byte)254));
+        }
+        else
+        {
+            Assert.Null(tones);
+        }
+    }
+
+    [Theory]
+    [InlineData(false, false, true)]
+    [InlineData(true, false, false)]
+    [InlineData(true, true, true)]
+    public void AmbientOcclusion_SkipsOnlyTheAttachedRoof(bool attached, bool separateRoof, bool shaded)
+    {
+        var ambient = new ElevationPrinter.AmbientOcclusion(0.5, (0, 0, 10, 10), binaryVisibility: true);
+        ambient.AddReceiver([(0, 0), (10, 0), (10, 10), (0, 10)], null,
+            System.Numerics.Vector3.Zero, -System.Numerics.Vector3.UnitZ, attachedRoofIds: attached ? [1] : null);
+        AddRoof(1, -100);
+        if (separateRoof) AddRoof(2, -200);
+
+        Assert.Equal(shaded, ambient.Calculate() is { Count: 1 });
+
+        void AddRoof(int roofId, float depth) =>
+            ambient.AddOccluder([new(-10000, -10000, depth), new(10000, -10000, depth),
+                new(10000, 10000, depth), new(-10000, 10000, depth)], System.Numerics.Vector3.UnitZ, roofId: roofId);
     }
 
     [Fact]
@@ -3380,11 +3931,50 @@ public class ElevationPrinterTests
         Assert.Equal(2, CountOccurrences(page.Content, " l S\n"));
     }
 
+    [Fact]
+    public void PaneScreenShadows_UseVisiblePaneDepthAndRespectOpeningsAndScale()
+    {
+        List<(double X, double Y)> wall = [(1200, 0), (3300, 0), (3300, 1600), (1200, 1600)];
+        List<(double X, double Y)> pane = [(100, 0), (1050, 0), (1050, 1500), (100, 1500)];
+        List<(double X, double Y)> hole = [(1450, 700), (1800, 700), (1800, 950), (1450, 950)];
+        List<(List<(double X, double Y)> Points, double Depth, bool Outline)> faces =
+            [(wall, 6500, true), (pane, 100, true), (pane, 125, true)];
+        var openings = new Dictionary<List<(double X, double Y)>, List<List<(double X, double Y)>>>
+        {
+            [wall] = [hole],
+        };
+        var receivers = new Dictionary<List<(double X, double Y)>, double> { [wall] = 6500 };
+        var crop = (0d, 0d, 3300d, 1600d);
+        var fullScale = new ElevationPrinter.PaneScreenShadows(crop, 20, 0.5)
+            .Calculate(faces, [1, 2, 2], openings, [2], receivers, null)![wall];
+        var halfScale = new ElevationPrinter.PaneScreenShadows(crop, 40, 0.5)
+            .Calculate(faces, [1, 2, 2], openings, [2], receivers, null)![wall];
+
+        Assert.True(fullScale.Image.TransparentWhite);
+        byte near = ShadeAt(fullScale, 1325, 800);
+        Assert.True(near < 255);
+        Assert.True(ShadeAt(halfScale, 1325, 800) > near);
+        Assert.Equal(255, ShadeAt(fullScale, 1550, 820));
+
+        faces.Add((pane, 0, true));
+        Assert.Null(new ElevationPrinter.PaneScreenShadows(crop, 20, 0.5)
+            .Calculate(faces, [1, 2, 2, 3], openings, [2], receivers, null));
+
+        static byte ShadeAt(ElevationPrinter.AmbientPatch patch, double x, double y)
+        {
+            int column = (int)((x - patch.X0) / (patch.X1 - patch.X0) * patch.Image.Width);
+            int row = (int)((patch.Y1 - y) / (patch.Y1 - patch.Y0) * patch.Image.Height);
+            return patch.Image.Rgb[(row * patch.Image.Width + column) * 3];
+        }
+    }
+
     [Theory]
-    [InlineData(false, "0.72 0.72 0.72 rg", false)]
-    [InlineData(false, "0.72 0.72 0.72 rg", true)]
-    [InlineData(true, "0.9 g\n", false)]
-    public void DrawContent_UsesThePaneToneForTheSectionKind(bool detailCallout, string fillOperator, bool ambientPatch)
+    [InlineData(false, "0.72 0.72 0.72 rg", false, false)]
+    [InlineData(false, "0.72 0.72 0.72 rg", true, false)]
+    [InlineData(false, "0.72 0.72 0.72 rg", true, true)]
+    [InlineData(true, "0.9 g\n", false, false)]
+    public void DrawContent_UsesThePaneToneForTheSectionKind(bool detailCallout, string fillOperator, bool ambientPatch,
+        bool coversBacking)
     {
         var glass = new Element { Id = 1, HasShadingAppearance = true, SerializedMaterialTransparency = 0.9 };
         var wall = new Element { Id = 2, HasShadingAppearance = true };
@@ -3396,7 +3986,7 @@ public class ElevationPrinterTests
         List<(double X, double Y)> pane = [(200, 200), (800, 200), (800, 800), (200, 800)];
         List<(double X, double Y)> front = [(150, 400), (850, 400), (850, 500), (150, 500)];
         glazing.Add(document, back, 240, 240, wall.Id, glazing: false);
-        glazing.Add(document, pane, 100, 100, glass.Id, glazing: true);
+        glazing.Add(document, pane, 100, 100, glass.Id, glazing: true, coversBacking: coversBacking);
         glazing.Add(document, front, 50, 50, wall.Id, glazing: false);
         var tones = ambientPatch
             ? new Dictionary<List<(double X, double Y)>, ElevationPrinter.AmbientPatch>
@@ -3409,14 +3999,14 @@ public class ElevationPrinterTests
         var page = new PdfDocument().AddPage(PdfPageSize.A1.Landscape);
         ElevationPrinter.DrawContent(page, content, 50, 10, 10);
 
-        Assert.Equal(1, CountOccurrences(page.Content, fillOperator));
+        Assert.Equal(coversBacking ? 0 : 1, CountOccurrences(page.Content, fillOperator));
         Assert.Equal(ambientPatch, page.Content.Contains("/Im", StringComparison.Ordinal));
         if (!detailCallout)
         {
-            int backdrop = page.Content.IndexOf("0.72 g\n", StringComparison.Ordinal);
+            int backdrop = page.Content.IndexOf(coversBacking ? "0.576 g\n" : "0.72 g\n", StringComparison.Ordinal);
             int clip = page.Content.IndexOf("W* n", StringComparison.Ordinal);
             Assert.True(backdrop >= 0 && backdrop < clip);
-            if (ambientPatch)
+            if (ambientPatch && !coversBacking)
             {
                 int image = page.Content.IndexOf("/Im", StringComparison.Ordinal);
                 int backing = page.Content.IndexOf(fillOperator, StringComparison.Ordinal);
@@ -4699,6 +5289,95 @@ public class ElevationPrinterTests
         {
             Assert.Null(section.FaceFills);
         }
+    }
+
+    [Theory]
+    [InlineData(0, true, true, false)]
+    [InlineData(1, true, true, true)]
+    [InlineData(null, true, true, true)]
+    [InlineData(0, false, true, true)]
+    [InlineData(0, true, false, true)]
+    public void Collect_UsesProjectedAmbientOccludersForTheInsideFinishOfAnUnattachedExteriorWall(
+        int? topAttached, bool matchesFinish, bool edgeOn, bool castsShadow)
+    {
+        var view = SectionView(900, [10, 0, 0]);
+        Add(view, BuiltInParameter.VIEW_SCALE, StorageType.Integer, 50);
+        view.ViewCrop = new(10, 0, 0, [0, 1, 0], [0, 0, 1], [-1, 0, 0], -1, -1, 5, 5, true);
+        var wall = QuadWall(902, [[8, 0, 0], [8, 2, 0], [8, 2, 2], [8, 0, 2]], [1, 0, 0]);
+        var finish = Assert.Single(wall.Geometry!.Faces);
+        finish.PlaneSurface = true;
+        finish.RenderStyleId = matchesFinish ? 901 : 906;
+        var wallType = new Element
+        {
+            Id = 905,
+            SerializedBasicWallTypeFunction = 1,
+            SerializedHostTypeLayers =
+            [
+                new(BitConverter.DoubleToInt64Bits(0.3), 1, 0, 906, -1, 0, 0),
+                new(BitConverter.DoubleToInt64Bits(0.05), 4, 0, 901, -1, 0, 0),
+            ],
+        };
+        wall.TypeId = wallType.Id;
+        if (topAttached.HasValue)
+            Add(wall, BuiltInParameter.WALL_TOP_IS_ATTACHED, StorageType.Integer, topAttached.Value);
+        var blocker = edgeOn
+            ? QuadWall(903, [[8.05, -0.25, -2], [9.9, -0.25, -2], [9.9, -0.25, 4], [8.05, -0.25, 4]], [0, 1, 0])
+            : QuadWall(903, [[9, -2, -2], [9, 4, -2], [9, 4, 4], [9, -2, 4]], [-1, 0, 0]);
+        Assert.Single(blocker.Geometry!.Faces).PlaneSurface = true;
+        var document = Document(view, wallType, wall, blocker);
+        document.RawData.OpaquePlanViews = new HashSet<int> { view.Id };
+        document.RawData.ViewAmbientFractions = new Dictionary<int, double> { [view.Id] = 0.5 };
+
+        var content = ElevationPrinter.Collect(document, "section", planeView: view)!;
+        var receiver = Assert.Single(content.Faces, face => Math.Abs(face.Depth + 8 * FeetToMillimetres) < 1e-6);
+
+        Assert.Equal(castsShadow, content.AmbientTones?.ContainsKey(receiver.Points) == true);
+    }
+
+    [Theory]
+    [InlineData(true, true, 1, 0.5, true)]
+    [InlineData(false, true, 1, 0.5, false)]
+    [InlineData(true, false, 1, 0.5, false)]
+    [InlineData(true, true, 0, 0.5, false)]
+    [InlineData(true, true, 1, 2.0, false)]
+    public void Collect_ShadesAProjectedSingleLayerExteriorStructuralWallAboveItsBaseLevel(
+        bool structural, bool matchesFace, int wallFunction, double baseLevelElevation, bool shaded)
+    {
+        var view = SectionView(900, [10, 0, 0]);
+        Add(view, BuiltInParameter.VIEW_SCALE, StorageType.Integer, 50);
+        view.ViewCrop = new(10, 0, 0, [0, 1, 0], [0, 0, 1], [-1, 0, 0], -1, -1, 5, 5, true);
+        var material = new Element { Id = 901, HasShadingAppearance = true, SerializedMaterialTransparency = 0 };
+        var type = new Element
+        {
+            Id = 902, SerializedBasicWallTypeFunction = wallFunction,
+            SerializedHostTypeLayers = [new(BitConverter.DoubleToInt64Bits(0.4), 1, -1, material.Id, -1, 0, 1)],
+        };
+        var wall = QuadWall(903, [[8, 0, 0], [8, 4, 0], [8, 4, 1], [8, 0, 1]], [1, 0, 0]);
+        wall.TypeId = type.Id;
+        var face = Assert.Single(wall.Geometry!.Faces);
+        face.PlaneSurface = true;
+        face.RenderStyleId = matchesFace ? material.Id : null;
+        Add(wall, BuiltInParameter.WALL_STRUCTURAL_SIGNIFICANT, StorageType.Integer, structural ? 1 : 0);
+        Add(wall, BuiltInParameter.STRUCTURAL_MATERIAL_PARAM, StorageType.ElementId, material.Id);
+        var baseLevel = new Element { Id = 904, CategoryId = (int)BuiltInCategory.OST_Levels };
+        Add(baseLevel, BuiltInParameter.LEVEL_ELEV, StorageType.Double, baseLevelElevation);
+        Add(wall, BuiltInParameter.WALL_BASE_CONSTRAINT, StorageType.ElementId, baseLevel.Id);
+        var document = Document(view, wall, type, material, baseLevel);
+        document.RawData.OpaquePlanViews = new HashSet<int> { view.Id };
+        document.RawData.ViewAmbientFractions = new Dictionary<int, double> { [view.Id] = 0.5 };
+        document.RawData.ViewAmbientLight = new Dictionary<int, double> { [view.Id] = 0.75 };
+
+        var section = ElevationPrinter.Collect(document, "section", planeView: view, viewportScale: 50)!;
+
+        if (shaded)
+        {
+            var tone = Assert.Single(section.ExteriorWallTones!).Value;
+            Assert.Equal(baseLevelElevation * FeetToMillimetres, tone.BaseY, 10);
+            Assert.Equal(0.75, tone.Light, 10);
+        }
+        else
+            Assert.Null(section.ExteriorWallTones);
+        Assert.Null(section.FaceFills);
     }
 
     [Fact]

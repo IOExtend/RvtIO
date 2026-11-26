@@ -27,11 +27,12 @@ public static partial class ElevationPrinter
         internal TerrainOcclusion Terrain => _terrain ??= new(h, v, d, _terrainFacets);
         private sealed record ShadowCaster(List<double[]> Outer, List<List<double[]>> Holes,
             (double X0, double Y0, double X1, double Y1) Bounds, double MinDepth, bool SiteOnly, bool ProjectsToSoilCut,
-            bool GroundOnly, int? RoofId);
+            bool GroundOnly, int? RoofId, bool VerifiedOpaque, bool CastsOnVisiblePlanting);
         private sealed record Receiver(List<(double X, double Y)> Face, GeoFace Geometry,
             double A, double B, double C, double MaxDepth, bool Site,
             (double X0, double Y0, double X1, double Y1) LightBounds, VisibleFacet? Facet = null, bool SoilCut = false,
-            bool Terrain = false, bool RoundShaft = false, int? RoofId = null);
+            bool Terrain = false, bool RoundShaft = false, int? RoofId = null, bool MeshFacet = false,
+            bool ReceivesOffscreenPlantShadows = false);
 
         internal sealed record VisibleFacet(List<(double X, double Y)> Points, double Dx, double Dy, double Offset,
             (double X0, double Y0, double X1, double Y1) Bounds, bool MasksModel = false)
@@ -60,8 +61,15 @@ public static partial class ElevationPrinter
                     Bounds(points.Select(p => (p.X + shiftX * depth, p.Y + shiftY * depth))), RoundShaft: roundShaft));
         }
 
+        internal void AddPlanarModelReceiver(List<(double X, double Y)> points, GeoFace face, List<double[]> corners,
+            bool meshFacet)
+        {
+            if (face.InnerLoops is not { Count: > 0 } || face.InnerVertices is { Count: > 0 })
+                AddPlanarReceiver(points, face, corners, null, site: false, meshFacet: meshFacet);
+        }
+
         internal void AddRoofReceiver(List<(double X, double Y)> points, GeoFace face, List<double[]> corners, int roofId) =>
-            AddPlanarReceiver(points, face, corners, null, roofId: roofId);
+            AddPlanarReceiver(points, face, corners, null, roofId: roofId, site: false);
 
         internal void AddTerrainReceiver(List<(double X, double Y)> points, GeoFace face, List<double[]> corners,
             bool placed = true)
@@ -100,14 +108,17 @@ public static partial class ElevationPrinter
         }
 
         internal void AddVisibleFacet(List<(double X, double Y)> points, GeoFace face, List<double[]> corners,
-            bool planting = false, bool twoSidedBillboard = false, bool receivesShadow = true)
+            bool planting = false, bool twoSidedBillboard = false, bool receivesShadow = true,
+            bool receivesOffscreenPlantShadows = false)
         {
             var facet = CreateVisibleFacet(h, v, d, points, face, corners);
             if (facet == null) return;
             _visibleFacets.Add(facet);
             if (planting) _planting.Add(facet);
             if (twoSidedBillboard) _billboards.Add(facet);
-            if (receivesShadow) AddPlanarReceiver(points, face, corners, facet, twoSidedBillboard: twoSidedBillboard);
+            if (receivesShadow)
+                AddPlanarReceiver(points, face, corners, facet, twoSidedBillboard: twoSidedBillboard,
+                    receivesOffscreenPlantShadows: receivesOffscreenPlantShadows);
         }
 
         internal static VisibleFacet? CreateVisibleFacet(double[] h, double[] v, double[] d,
@@ -254,8 +265,9 @@ public static partial class ElevationPrinter
             private readonly List<Mesh> _trees = [];
             private readonly List<VisibleFacet> _model = [];
 
-            internal sealed class Mesh
+            internal sealed class Mesh(bool clipAtViewPlane)
             {
+                internal bool ClipAtViewPlane { get; } = clipAtViewPlane;
                 internal readonly List<VisibleFacet> Facets = [];
                 internal readonly Dictionary<((long, long, long), (long, long, long)),
                     (double[] A, double[] B, VisibleFacet? Source)> Edges = [];
@@ -297,13 +309,14 @@ public static partial class ElevationPrinter
                 if (_trees.Count == 0) yield break;
                 var covers = (shadows?._modelOccluders ?? _model).Concat(_trees.SelectMany(tree => tree.Facets))
                     .OrderBy(facet => facet.Bounds.X0).ToList();
-                foreach (var (a, b, source) in _trees.SelectMany(tree => tree.Edges.Values))
+                foreach (var tree in _trees)
+                foreach (var (a, b, source) in tree.Edges.Values)
                 {
                     if (source == null) continue;
                     double start = Dot(a, d) - viewPlaneDepth, end = Dot(b, d) - viewPlaneDepth;
-                    if (start < 0 && end < 0) continue;
+                    if (tree.ClipAtViewPlane && start < 0 && end < 0) continue;
                     double x0 = Dot(a, h), y0 = Dot(a, v), x1 = Dot(b, h), y1 = Dot(b, v);
-                    if (start < 0 || end < 0)
+                    if (tree.ClipAtViewPlane && (start < 0 || end < 0))
                     {
                         double t = start / (start - end);
                         double x = x0 + t * (x1 - x0), y = y0 + t * (y1 - y0);
@@ -362,7 +375,8 @@ public static partial class ElevationPrinter
         }
 
         private void AddPlanarReceiver(List<(double X, double Y)> points, GeoFace face, List<double[]> corners,
-            VisibleFacet? facet, bool soilCut = false, bool terrain = false, bool twoSidedBillboard = false, int? roofId = null)
+            VisibleFacet? facet, bool soilCut = false, bool terrain = false, bool twoSidedBillboard = false, int? roofId = null,
+            bool site = true, bool meshFacet = false, bool receivesOffscreenPlantShadows = false)
         {
             double nx = Dot(face.Normal, h), ny = Dot(face.Normal, v);
             double viewNormal = Dot(face.Normal, d);
@@ -373,16 +387,19 @@ public static partial class ElevationPrinter
                 _unlitBillboardFacets.Add(facet);
                 return;
             }
-            if ((facet == null || terrain) ? !(nz < -1e-9) : Math.Abs(nz) < 1e-9) return;
+            // Foundation mesh facets can receive a verified model shadow from either side.
+            if (!meshFacet && (facet == null || terrain) ? !(nz < -1e-9) : Math.Abs(nz) < 1e-9) return;
             // In light coordinates (u, v, depth), the receiving plane has depth A*u + B*v + C.
             var lightRing = corners.Select(point => LightCoordinates(point, 1)).ToList();
             _receivers.Add(new(points, face, -nx / nz, -ny / nz, Dot(face.Normal, corners[0]) / nz,
-                lightRing.Max(point => point[2]), !roofId.HasValue, Bounds(lightRing.Select(point => (point[0], point[1]))),
-                facet, soilCut, terrain, RoofId: roofId));
+                lightRing.Max(point => point[2]), site, Bounds(lightRing.Select(point => (point[0], point[1]))),
+                facet, soilCut, terrain, RoofId: roofId, MeshFacet: meshFacet,
+                ReceivesOffscreenPlantShadows: receivesOffscreenPlantShadows));
         }
 
         internal void AddCaster(GeoFace face, List<double[]> corners, bool siteOnly = false, bool planting = false,
-            bool groundOnly = false, int? roofId = null)
+            bool groundOnly = false, int? roofId = null, bool verifiedOpaque = false,
+            bool castsOnVisiblePlanting = false, bool castsOnSoilCut = true)
         {
             if (face.InnerLoops is { Count: > 0 } && face.InnerVertices is not { Count: > 0 }) return;
             var outer = corners.Select(point => LightCoordinates(point, 1)).ToList();
@@ -392,9 +409,10 @@ public static partial class ElevationPrinter
             if (holes.Any(ring => ring.Count < 3 || ring.Any(point => !point.All(double.IsFinite)))) return;
             // The foreground faces of the cut's planting projection are the ones facing
             // into the view. Edge-on faces can still project along the light direction.
-            bool projectsToSoilCut = planting && Dot(face.Normal, d) >= -1e-6;
+            bool projectsToSoilCut = planting && castsOnSoilCut && Dot(face.Normal, d) >= -1e-6;
             _casters.Add(new(outer, holes, Bounds(outer.Select(point => (point[0], point[1]))),
-                outer.Min(point => point[2]), siteOnly, projectsToSoilCut, groundOnly, roofId));
+                outer.Min(point => point[2]), siteOnly, projectsToSoilCut, groundOnly, roofId, verifiedOpaque,
+                castsOnVisiblePlanting));
         }
 
         internal Dictionary<List<(double X, double Y)>, CastShadow>? Project(double viewDepth)
@@ -421,9 +439,11 @@ public static partial class ElevationPrinter
                     });
                 }
             }
+            List<ShadowCaster>? plantingCasters = null;
             foreach (var receiver in _receivers)
             {
-                var (face, geometry, a, b, c, maxDepth, site, lightBounds, facet, soilCut, terrain, roundShaft, roofId) = receiver;
+                var (face, geometry, a, b, c, maxDepth, site, lightBounds, facet, soilCut, terrain, roundShaft, roofId,
+                    meshFacet, receivesOffscreenPlantShadows) = receiver;
                 var bounds = Bounds(face);
                 double[] limit = [0, 0, c - PlaneTolerance], normal = [a, b, -1];
                 var rings = new List<List<(double X, double Y)>>();
@@ -437,9 +457,14 @@ public static partial class ElevationPrinter
                     if (PlanPrinter.SignedArea(shade) < 0) shade.Reverse();
                     if (HasArea(shade)) rings.Add(shade);
                 }
-                foreach (var caster in site && (facet == null || terrain) ? _casters : visibleCasters)
+                var casters = site && (facet == null || terrain) ? _casters
+                    : receivesOffscreenPlantShadows
+                        ? plantingCasters ??= visibleCasters.Concat(_casters.Where(caster => caster.CastsOnVisiblePlanting)).ToList()
+                        : visibleCasters;
+                foreach (var caster in casters)
                 {
-                    if (caster.RoofId != roofId || soilCut && !caster.ProjectsToSoilCut || caster.SiteOnly && !site
+                    if (caster.RoofId != roofId || meshFacet && !caster.VerifiedOpaque
+                        || soilCut && !caster.ProjectsToSoilCut || caster.SiteOnly && !site
                         || caster.MinDepth >= maxDepth - PlaneTolerance
                         || caster.Bounds.X0 >= lightBounds.X1 || caster.Bounds.X1 <= lightBounds.X0
                         || caster.Bounds.Y0 >= lightBounds.Y1 || caster.Bounds.Y1 <= lightBounds.Y0) continue;

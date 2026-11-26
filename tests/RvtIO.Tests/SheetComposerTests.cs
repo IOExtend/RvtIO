@@ -951,6 +951,73 @@ public class SheetComposerTests
         Assert.True(Red(image.Width - 1, 3 * image.Height / 8) < 192);
     }
 
+    [Theory]
+    [InlineData(50, 0.04, false, 4.19921875)]
+    [InlineData(75, 0.145, false, 6.298828125)]
+    [InlineData(125, 0.04, false, 10)]
+    [InlineData(50, 0.04, true, 2)]
+    public void PlanGridEndsRespectTheModelCropAndScale(int scale, double endSegmentFeet,
+        bool annotationCrop, double addedFeet)
+    {
+        var view = View(300, "Plan", 0);
+        view.ViewAnnotationCropActive = annotationCrop;
+        var crop = new ViewCropFrame(0, 0, 0, [1, 0, 0], [0, 1, 0], [0, 0, -1], -5, -5, 5, 5, true);
+        var grid = new Element
+        {
+            Id = 400, CategoryId = (int)BuiltInCategory.OST_Grids, TypeId = 401,
+            Location = new LocationCurve { CurveType = "Line", StartPoint = [0, -15, 0], EndPoint = [0, 15, 0] },
+        };
+        var symbol = new Element
+        {
+            Id = 402, FamilyName = "M_Grid Head - Circle", BoundingBox = [-0.02, -0.02, 0, 0.02, 0.02, 0],
+        };
+        var info = new RevitFileInfo
+        {
+            Elements = [view, grid, symbol],
+            DatumExtents = new Dictionary<int, TfBlockDeserializer.ViewDatumExtents>
+            {
+                [view.Id] = new(view.Id, [0, 0, -1], new()),
+            },
+            DatumHeads = new Dictionary<int, TfBlockDeserializer.DatumHead>
+            {
+                [grid.TypeId] = new(symbol.Id, 2, endSegmentFeet, false, true),
+            },
+        };
+
+        var result = Assert.Single(PlanPrinter.CollectPlanGrids(RvtDocument.FromInfo(info), view, crop, scale)!);
+
+        Assert.Equal(-(5 + addedFeet) * FeetToMillimetres, result.Start.Y, 8);
+        Assert.Equal((5 + addedFeet) * FeetToMillimetres, result.End.Y, 8);
+        Assert.True(result.StartBubble);
+        Assert.False(result.EndBubble);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ShadedViewport_RespectsSavedCategoryVisibility(bool hidden)
+    {
+        var view = View(300, "Solar Analysis", 0);
+        view.ViewCrop = new(0, 0, 10, [1, 0, 0], [0, 1, 0], [0, 0, -1], -100, -100, 100, 100, false);
+        view.OrthographicModelBounds = new([0, 0, 0], [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+            [2, -2, 2, -2, 5, 0], [true, true, true, true, true, true]);
+        int category = (int)BuiltInCategory.OST_Lights;
+        var model = new Element
+        {
+            Id = 400, CategoryId = category,
+            Geometry = new()
+            {
+                Faces = [new() { Normal = [0, 0, 1], OuterVertices = [[-1, -1, 1], [1, -1, 1], [0, 1, 1]] }],
+            },
+        };
+        var document = RvtDocument.FromInfo(new RevitFileInfo { Elements = [view, model] });
+        if (hidden) document.RawData.ViewHiddenCategories = new Dictionary<int, HashSet<int>> { [view.Id] = [category] };
+        var page = new PdfDocument().AddPage(new PdfPageSize(200, 200));
+
+        Assert.Equal(!hidden, ShadedViewport.Render(page, document, view, 100, 100, 100).HasValue);
+        Assert.Equal(hidden ? 0 : 1, page.Images.Count);
+    }
+
     [Fact]
     public void ShadedViewport_UsesTheModelBoxBottomForTerrainCuts()
     {

@@ -13,11 +13,12 @@ public static partial class ElevationPrinter
         private readonly Dictionary<int, (double? Gray, double Transmission)> _materials = [];
 
         private readonly record struct Surface(double Near, double Far, double X0, double Y0, double X1, double Y1,
-            double? Gray, double Transmission, bool Pane);
+            double? Gray, double Transmission, bool Pane, bool CoversBacking);
 
         internal bool HasPanes { get; private set; }
 
-        internal void Add(RvtDocument document, List<Point> points, double near, double far, int? materialId, bool glazing)
+        internal void Add(RvtDocument document, List<Point> points, double near, double far, int? materialId,
+            bool glazing, bool coversBacking = false)
         {
             double? gray = null;
             double transmission = 0;
@@ -39,14 +40,21 @@ public static partial class ElevationPrinter
             bool pane = glazing && gray != null && transmission is > 0 and <= 1;
             HasPanes |= pane;
             _surfaces.Add(points, new(near, far, points.Min(p => p.X), points.Min(p => p.Y),
-                points.Max(p => p.X), points.Max(p => p.Y), gray, transmission, pane));
+                points.Max(p => p.X), points.Max(p => p.Y), gray, transmission, pane, coversBacking));
         }
 
         internal bool IsPane(List<Point> points) => _surfaces.GetValueOrDefault(points).Pane;
 
         internal double? AmbientBackgroundGray(List<Point> points)
             => !detailCallout && _surfaces.TryGetValue(points, out var pane) && pane.Pane
-                ? (1 - pane.Transmission) * pane.Gray!.Value + pane.Transmission * light : null;
+                ? BackgroundGray(pane) : null;
+
+        private double BackgroundGray(Surface pane)
+        {
+            double tint = (1 - pane.Transmission) * pane.Gray!.Value + pane.Transmission * light;
+            // Approximate the opaque curtain pane tone using the saved ambient light intensity.
+            return pane.CoversBacking ? tint * light : tint;
+        }
 
         internal void Draw(PdfPage page, ElevationContent content, List<Point> points,
             IReadOnlyList<IReadOnlyList<Point>> paneRings, Func<double, double> toX, Func<double, double> toY,
@@ -60,27 +68,30 @@ public static partial class ElevationPrinter
                 page.FillPolygonUnion(paneRings, reflection + pane.Transmission);
                 return;
             }
-            page.FillPolygonUnion(paneRings, reflection + pane.Transmission * light);
+            page.FillPolygonUnion(paneRings, BackgroundGray(pane));
             page.BeginPolygonClip(paneRings);
             if (content.AmbientTones?.GetValueOrDefault(points) is { } background)
             {
                 double x = toX(background.X0), y = toY(background.Y0);
                 page.DrawImage(background.Image, x, y, toX(background.X1) - x, toY(background.Y1) - y);
             }
-            foreach (var (back, _, _) in content.Faces)
+            if (!pane.CoversBacking)
             {
-                // Only planes wholly behind the pane are repainted. The existing painter's ordering
-                // and inner rings keep nearer solid infill and empty openings distinct.
-                if (!_surfaces.TryGetValue(back, out var surface) || surface.Near < pane.Far + PlaneTolerance
-                    || surface.Transmission > 0 || surface.X0 >= pane.X1 || surface.X1 <= pane.X0
-                    || surface.Y0 >= pane.Y1 || surface.Y1 <= pane.Y0)
-                    continue;
-                double fill = surface.Gray is double gray ? reflection + pane.Transmission * light * gray : 1;
-                var projected = back.Select(point => (toX(point.X), toY(point.Y))).ToList();
-                if (content.FaceOpenings?.GetValueOrDefault(back) is { } holes)
-                    page.FillPolygonUnion(faceRings(projected, holes), fill);
-                else
-                    page.DrawPolyline(projected, 0, true, fill);
+                foreach (var (back, _, _) in content.Faces)
+                {
+                    // Only planes wholly behind the pane are repainted. The existing painter's ordering
+                    // and inner rings keep nearer solid infill and empty openings distinct.
+                    if (!_surfaces.TryGetValue(back, out var surface) || surface.Near < pane.Far + PlaneTolerance
+                        || surface.Transmission > 0 || surface.X0 >= pane.X1 || surface.X1 <= pane.X0
+                        || surface.Y0 >= pane.Y1 || surface.Y1 <= pane.Y0)
+                        continue;
+                    double fill = surface.Gray is double gray ? reflection + pane.Transmission * light * gray : 1;
+                    var projected = back.Select(point => (toX(point.X), toY(point.Y))).ToList();
+                    if (content.FaceOpenings?.GetValueOrDefault(back) is { } holes)
+                        page.FillPolygonUnion(faceRings(projected, holes), fill);
+                    else
+                        page.DrawPolyline(projected, 0, true, fill);
+                }
             }
             page.EndClip();
         }

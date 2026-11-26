@@ -221,15 +221,17 @@ internal sealed class SolarStudyOverlay
                 double depth = Math.Sqrt(1 - u * u - v * v);
                 bool front = InBand(u, v, -depth, sinLat, cosLat, out var direction);
                 bool back = InBand(u, v, depth, sinLat, cosLat, out _);
-                if (front)
+                double incidence = _sun is Vector3 sun && front ? Vector3.Dot(sun, direction) : 1;
+                bool unlitBackground = front && !hasModel && incidence <= 0;
+                if (front && !unlitBackground)
                 {
-                    double incidence = _sun is Vector3 sun ? Math.Max(0, Vector3.Dot(sun, direction)) : 1;
                     // shortcut: diffuse dome shading, until the native study shader is reproduced.
-                    double intensity = hasModel ? Math.Min(1, 0.38 + incidence) : 1;
-                    double green = hasModel ? 175 + 80 * Math.Pow(incidence, 6) : 165 + 70 * direction.Z;
+                    double diffuse = Math.Max(0, incidence);
+                    double intensity = hasModel ? Math.Min(1, 0.38 + diffuse) : 1;
+                    double green = hasModel ? 175 + 80 * Math.Pow(diffuse, 6) : 165 + 70 * direction.Z;
                     Blend(pixel, (int)(255 * intensity), (int)(green * intensity), 6, 0.74);
                 }
-                if (back) Blend(pixel, 135, 105, 62, front ? 0.63 : 1);
+                if (back || unlitBackground) Blend(pixel, 135, 105, 62, front && !unlitBackground ? 0.63 : 1);
             }
         }
         if (_hours != null)

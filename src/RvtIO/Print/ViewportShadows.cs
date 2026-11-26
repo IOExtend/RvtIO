@@ -70,7 +70,8 @@ internal sealed class ViewportShadows
     }
 
     internal void Apply(byte[] rgb, double[] depth, bool[] facesLight, int columns, int rows,
-        double left, double top, double stepX, double stepY, double anchorX, double anchorY, double scale)
+        double left, double top, double stepX, double stepY, double anchorX, double anchorY, double scale,
+        Func<double, double, double, bool>? containsGroundPoint = null)
     {
         // Approximate the tone of surfaces facing away from the active sun with the saved shadow strength.
         for (int pixel = 0; pixel < depth.Length; pixel++)
@@ -111,6 +112,8 @@ internal sealed class ViewportShadows
                 double wx = x * _camera.Right[0] + y * _camera.Up[0] + z * _camera.Look[0];
                 double wy = x * _camera.Right[1] + y * _camera.Up[1] + z * _camera.Look[1];
                 double wz = x * _camera.Right[2] + y * _camera.Up[2] + z * _camera.Look[2];
+                if (groundPixel && containsGroundPoint?.Invoke(wx + _camera.OriginX, wy + _camera.OriginY,
+                    wz + _camera.OriginZ) == false) continue;
                 double lx = Dot(wx, wy, wz, _right), ly = Dot(wx, wy, wz, _up);
                 if (lx < minX || lx > maxX || ly < minY || ly > maxY
                     || grid[GridY(ly) * GridSize + GridX(lx)] is not { } candidates) continue;

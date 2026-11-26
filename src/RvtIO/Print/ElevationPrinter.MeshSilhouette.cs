@@ -7,22 +7,24 @@ public static partial class ElevationPrinter
 {
     private static List<CollectedEdge>? ProjectSectionMeshSilhouette(GeometryData geometry,
         double[] horizontal, double[] vertical, double[] direction, double planeDepth, int elementId, int category,
-        bool multipleRevolvedNodes)
+        bool multipleRevolvedNodes, bool cylindricalFurniture)
     {
-        if (geometry is not { BrepSolids.Count: > 1, UnresolvedSymbol: false, PlacedSymbolBox: false,
+        if (geometry is not { BrepSolids.Count: > 0, UnresolvedSymbol: false, PlacedSymbolBox: false,
                 PlacedSymbolClipped: false, UntriangulatedFaces: 0, MeshNodes: { Count: > 0 } nodes }
+            || !cylindricalFurniture && geometry.BrepSolids.Count < 2
             || geometry.BrepSolids.Any(solid => !solid.IsClosed)
             || nodes.Any(node => node.Ghost || node.Faces.Any(face =>
                 face.SurfaceKind is not (SurfaceKind.Plane or SurfaceKind.Cylinder or SurfaceKind.Revolved)))
-            || (multipleRevolvedNodes
+            || !cylindricalFurniture && (multipleRevolvedNodes
                 ? nodes.Count < 2 || nodes.Any(node => !node.Faces.Any(face => face.SurfaceKind == SurfaceKind.Revolved))
                 : nodes.Count != 1))
             return null;
 
-        var revolvedMarkers = nodes.SelectMany(node => node.Faces.Where(face => face.SurfaceKind == SurfaceKind.Revolved)
+        var curvedKind = cylindricalFurniture ? SurfaceKind.Cylinder : SurfaceKind.Revolved;
+        var curvedMarkers = nodes.SelectMany(node => node.Faces.Where(face => face.SurfaceKind == curvedKind)
             .Select(face => (node.Node, (uint)face.Marker))).ToHashSet();
         if (!geometry.Faces.Any(face => !face.PlaneSurface
-                && revolvedMarkers.Contains((face.GeometryNode, face.MeshMarker))))
+                && curvedMarkers.Contains((face.GeometryNode, face.MeshMarker))))
             return null;
 
         var assigned = geometry.BrepSolids.SelectMany(solid => solid.FaceIndices).ToHashSet();
@@ -35,7 +37,8 @@ public static partial class ElevationPrinter
         for (int i = 0; i < geometry.Faces.Count; i++)
         {
             var face = geometry.Faces[i];
-            if (face.CurvedSurface || face.InnerVertices is { Count: > 0 } || face.InnerLoops is { Count: > 0 }
+            bool hasOpenings = face.InnerVertices is { Count: > 0 } || face.InnerLoops is { Count: > 0 };
+            if (face.CurvedSurface || !cylindricalFurniture && hasOpenings
                 || face.OuterVertices is not { Count: >= 3 } vertices
                 || vertices.Any(point => point.Length != 3 || !point.All(double.IsFinite)))
                 return null;
@@ -46,7 +49,7 @@ public static partial class ElevationPrinter
             double area = PlanPrinter.SignedArea(ring);
             if (Math.Abs(area) < 1e-6) continue;
             // Unassigned display faces may be edge-on in this view. A visible open face uses the fallback.
-            if (!assigned.Contains(i)) return null;
+            if (hasOpenings || !assigned.Contains(i)) return null;
             if (area < 0)
             {
                 ring.Reverse();

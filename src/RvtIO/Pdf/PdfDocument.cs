@@ -601,7 +601,9 @@ public sealed class PdfPage
     /// <summary>Sets an arbitrary dash pattern of the following strokes, in PDF points
     /// (a dash array alternating dash and gap lengths, starting with a dash).</summary>
     /// <param name="points">Dash and gap lengths in points.</param>
-    public void SetDashPoints(double[] points)
+    public void SetDashPoints(double[] points) => SetDashPoints(points, 0);
+
+    internal void SetDashPoints(double[] points, double phase)
     {
         _content.Append('[');
         for (int i = 0; i < points.Length; i++)
@@ -609,7 +611,7 @@ public sealed class PdfPage
             if (i > 0) _content.Append(' ');
             _content.Append(Number(points[i]));
         }
-        _content.Append("] 0 d\n");
+        _content.Append("] ").Append(Number(phase)).Append(" d\n");
     }
 
     /// <summary>Clears the dash pattern.</summary>

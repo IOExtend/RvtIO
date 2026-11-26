@@ -646,6 +646,65 @@ public class PlanPrinterTests
     }
 
     [Theory]
+    [InlineData(-4, true, false, true, true)]
+    [InlineData(500, true, false, true, false)]
+    [InlineData(-4, false, false, false, false)]
+    [InlineData(-4, true, true, false, false)]
+    public void CollectLevel_ClipsClosedGenericModelToTheSavedPlanRange(
+        int bottom, bool closed, bool hidden, bool expectedCut, bool expectedProjection)
+    {
+        const int level = 500, view = 700, fixture = 800;
+        var geometry = new GeometryData { BrepSolids = [] };
+        AddBox(0, 4, -2, -1, true);
+        AddBox(1, 3, -1.5, 8, closed);
+        var instance = new Element
+        {
+            Id = fixture, CategoryId = (int)BuiltInCategory.OST_GenericModel, NativeRootClassName = "FamilyInstance",
+            BoundingBox = [0, 0, -2, 4, 4, 8], Geometry = geometry,
+        };
+        var document = RvtDocument.FromInfo(new RevitFileInfo
+        {
+            Elements = { Level(level, "Main", 0), Wall(600, level, 0, 0, 10, 0), instance },
+            PlanViewRanges = new Dictionary<int, (double[], int[])> { [view] = ([4, 8, 0], [level, level, bottom]) },
+            OpaquePlanViews = new HashSet<int> { view },
+            ViewHiddenElements = new Dictionary<int, HashSet<int>> { [view] = hidden ? [fixture] : [] },
+        });
+
+        var content = PlanPrinter.CollectLevel(document, level, view)!;
+        var lines = content.GenericModelLines ?? [];
+        Assert.Equal(expectedCut ? 4 : 0, lines.Count(line => line.Cut));
+        Assert.Equal(expectedProjection ? 4 : 0, lines.Count(line => !line.Cut));
+        Assert.Equal(expectedProjection, content.FurnitureFillRings!.Any(ring => ring.Any(point => point.X == 0)));
+        Assert.Equal(expectedCut, content.FurnitureFillRings!.Count > 0);
+        if (expectedCut)
+        {
+            Assert.All(lines.Where(line => line.Cut), line =>
+            {
+                Assert.InRange(line.X1, 304.8, 914.4 + 1e-8);
+                Assert.InRange(line.Y1, 304.8, 914.4 + 1e-8);
+            });
+            var rotated = PlanPrinter.InViewBasis(content, [0, 1, 0], [-1, 0, 0]).GenericModelLines!;
+            Assert.Equal(lines.Select(line => (line.Y1, -line.X1, line.Y2, -line.X2, line.Cut)), rotated);
+        }
+
+        void AddBox(double min, double max, double low, double high, bool isClosed)
+        {
+            List<double[]> baseRing = [[min, min, low], [max, min, low], [max, max, low], [min, max, low]];
+            var topRing = baseRing.Select(point => new[] { point[0], point[1], high }).ToList();
+            int first = geometry.Faces.Count;
+            geometry.Faces.Add(new GeoFace { OuterVertices = baseRing.AsEnumerable().Reverse().ToList() });
+            geometry.Faces.Add(new GeoFace { OuterVertices = topRing });
+            for (int i = 0; i < 4; i++)
+            {
+                int next = (i + 1) % 4;
+                geometry.Faces.Add(new GeoFace { OuterVertices = [baseRing[i], baseRing[next], topRing[next], topRing[i]] });
+            }
+            geometry.BrepSolids!.Add(new GeoBrepSolid { FaceIndices = Enumerable.Range(first, 6).ToList(), IsClosed = isClosed });
+        }
+    }
+
+
+    [Theory]
     [InlineData(false, false)]
     [InlineData(true, false)]
     [InlineData(true, true)]
@@ -741,6 +800,50 @@ public class PlanPrinterTests
                 IsClosed = true, FaceIndices = Enumerable.Range(first, geometry.Faces.Count - first).ToList(),
             });
         }
+    }
+
+    [Fact]
+    public void OutlineJoinedRings_PreservesTheBoundaryOfAThinProjectedFacet()
+    {
+        var edges = ElevationPrinter.OutlineJoinedRings(
+            [[(0, 0), (10, 0), (10, 10), (0, 10)], [(10, 0), (10.04, 0), (10.04, 10), (10, 10)]],
+            (int)BuiltInCategory.OST_GenericModel, coverOppositeEdges: true, snapEndpoints: false).ToArray();
+
+        Assert.Single(edges, edge => edge.X1 == 10.04 && edge.X2 == 10.04);
+        Assert.DoesNotContain(edges, edge => edge.X1 == 10 && edge.X2 == 10);
+    }
+
+    [Theory]
+    [InlineData(700, false, false, true)]
+    [InlineData(701, false, false, false)]
+    [InlineData(700, true, false, false)]
+    [InlineData(700, false, true, false)]
+    public void CollectLevel_DetailCircleFollowsItsOwningViewAndVisibility(
+        int owner, bool hiddenElement, bool hiddenCategory, bool visible)
+    {
+        const int level = 500, view = 700, id = 800;
+        var circle = new Element
+        {
+            Id = id, CategoryId = (int)BuiltInCategory.OST_Lines, NativeRootClassName = "CurveElem",
+            SerializedOwnerDbViewId = owner, DetailCircle = (2, 3, 0.5),
+        };
+        var document = RvtDocument.FromInfo(new RevitFileInfo
+        {
+            Elements = { Level(level, "Main", 0), Wall(600, level, 0, 0, 10, 0), circle },
+            ViewHiddenElements = new Dictionary<int, HashSet<int>> { [view] = hiddenElement ? [id] : [] },
+            ViewHiddenCategories = new Dictionary<int, HashSet<int>>
+                { [view] = hiddenCategory ? [(int)BuiltInCategory.OST_Lines] : [] },
+        });
+
+        var content = PlanPrinter.CollectLevel(document, level, view)!;
+        if (!visible)
+        {
+            Assert.Null(content.DetailCircles);
+            return;
+        }
+
+        var rotated = PlanPrinter.InViewBasis(content, [0, 1, 0], [-1, 0, 0]);
+        Assert.Equal((3 * 304.8, -2 * 304.8, 0.5 * 304.8), Assert.Single(rotated.DetailCircles!));
     }
 
     [Theory]

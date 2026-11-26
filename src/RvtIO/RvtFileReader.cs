@@ -2062,13 +2062,14 @@ public partial class RvtFileReader
         ParsingState state, byte[] data, int start, uint size, ushort classId, uint owner)
     {
         if (classId is not (3524 or 361)) return;
+        int[]? targets = null;
         bool? joinedToTop = start >= 0 && start <= data.Length - 4
             && BitConverter.ToUInt32(data, start) == owner
-                ? TfBlockDeserializer.ExtractWallJoinedToTop(data, start, size, classId)
+                ? TfBlockDeserializer.ExtractWallJoinedToTop(data, start, size, classId, out _, out targets)
                 : null;
         state.WallJoinedToTop[owner] = state.WallJoinedToTop.TryGetValue(owner, out var old)
-            ? (old.BlockCount + 1, null)
-            : (1, joinedToTop);
+            ? (old.BlockCount + 1, null, null)
+            : (1, joinedToTop, targets);
     }
 
     internal static void RecordWallEndJoins(

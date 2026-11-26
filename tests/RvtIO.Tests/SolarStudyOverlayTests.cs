@@ -61,6 +61,45 @@ public class SolarStudyOverlayTests
         Assert.Null(ShadedViewport.Render(pageWithoutStudy, hiddenDocument, view, 150, 150, 200));
     }
 
+    [Theory]
+    [InlineData(0.8, false)]
+    [InlineData(-0.8, true)]
+    public void ShadesExposedDomeOnTheSideFacingAwayFromTheSun(double east, bool unlit)
+    {
+        var camera = new ViewCropFrame(0, 0, 10, [1, 0, 0], [0, 1, 0], [0, 0, -1], -80, -80, 80, 80, false);
+        var ground = new Element { Id = 30 };
+        ground.Parameters.Add(BipHelpers.MakeBipParam((int)BuiltInParameter.LEVEL_ELEV, "LEVEL_ELEV", StorageType.Double, 0d));
+        var view = new Element
+        {
+            Id = 10,
+            SolarStudy = new([-20, -20, 0, 20, 20, 15], 150, ground.Id, 20,
+                Packed(2024, 3, 18, 7, 0), Packed(2024, 4, 20, 17, 0), 3, 1),
+        };
+        var document = RvtDocument.FromInfo(new RevitFileInfo
+        {
+            Elements = [view, ground],
+            SharedTransformIsActiveLocation = true,
+            SharedTransform = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],
+            SiteLatitudeRadians = 0,
+            SiteLongitudeRadians = 0,
+            SiteTimeZoneHours = 0,
+        });
+        var overlay = Assert.IsType<SolarStudyOverlay>(SolarStudyOverlay.Create(document, view, camera, 1,
+            point => (point[0], point[1])));
+        byte[] background = [255, 255, 255];
+
+        overlay.Paint(background, 1, 1, overlay.X + east * overlay.Radius - 0.5,
+            overlay.Y + 0.1 * overlay.Radius + 0.5, 1, 1);
+
+        if (unlit)
+            Assert.Equal(new byte[] { 135, 105, 62 }, background);
+        else
+        {
+            Assert.InRange(background[0], 230, 254);
+            Assert.InRange(background[2], 0, 90);
+        }
+    }
+
     private static uint Packed(int year, int month, int day, int hour, int minute) =>
         (uint)(year << 20 | month << 16 | day << 11 | hour << 6 | minute);
 }

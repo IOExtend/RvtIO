@@ -119,7 +119,9 @@ public static partial class ElevationPrinter
         IReadOnlyDictionary<List<(double X, double Y)>, List<List<(double X, double Y)>>>? TerrainClippedFaces = null,
         bool KeepDoorDepths = false,
         IReadOnlyList<List<(double X, double Y)>>? SectionBillboards = null,
-        IReadOnlyDictionary<byte, List<List<(double X, double Y)>>>? PlantTones = null);
+        IReadOnlyDictionary<byte, List<List<(double X, double Y)>>>? PlantTones = null,
+        IReadOnlyDictionary<List<(double X, double Y)>, (double BaseY, double Light)>? ExteriorWallTones = null,
+        IReadOnlyDictionary<List<(double X, double Y)>, AmbientPatch>? PaneTones = null);
 
     internal sealed record SectionBand(double Left, double Right, ElevationContent Content);
 
@@ -297,6 +299,7 @@ public static partial class ElevationPrinter
             (Parsing.TfBlockDeserializer.PatternGrid Grid, double Width)>();
         var modelHatches = new Dictionary<List<(double X, double Y)>, ModelHatch>();
         var faceFills = new Dictionary<List<(double X, double Y)>, double?>();
+        var exteriorWallTones = new Dictionary<List<(double X, double Y)>, (double BaseY, double Light)>();
         var roundShaftFaces = new HashSet<int>();
         var paintOpenings = new Dictionary<List<(double X, double Y)>, List<List<(double X, double Y)>>>();
         var dashedSurfacePatterns = new Dictionary<List<(double X, double Y)>, IReadOnlyList<Parsing.TfBlockDeserializer.PatternGrid>>();
@@ -359,9 +362,13 @@ public static partial class ElevationPrinter
         var sectionTerrain = sectionTerrainCrop.HasValue ? new ElevationShadows.TerrainOcclusion(H, V, D) : null;
         var terrainOcclusion = shadowTerrainCrop != null ? shadows!.Terrain : sectionTerrain;
         var terrainFillCrop = shadowTerrainCrop ?? sectionTerrainCrop;
+        double ambientFraction = 0;
         var ambient = opaqueFineSection && (!detailPath || paintDetailCuts) && sectionCrop is { } lightCrop
-            && document.RawData.ViewAmbientFractions?.TryGetValue(planeView!.Id, out double ambientFraction) == true
+            && document.RawData.ViewAmbientFractions?.TryGetValue(planeView!.Id, out ambientFraction) == true
             ? new AmbientOcclusion(ambientFraction, lightCrop, binaryVisibility: regularFineSection) : null;
+        bool screenShadows = ambient != null && glazing != null && detailCallout;
+        var screenPaneOwners = screenShadows ? new HashSet<int>() : null;
+        var screenWallReceivers = screenShadows ? new Dictionary<List<(double X, double Y)>, double>() : null;
         var plantSun = sectionTerrainCrop.HasValue ? SolarStudyOverlay.StillSunDirection(document.RawData, planeView!.Id) : null;
         double plantAmbientFraction = plantSun.HasValue
             ? document.RawData.ViewAmbientFractions?.GetValueOrDefault(planeView!.Id, 1) ?? 1 : 1;
@@ -402,14 +409,16 @@ public static partial class ElevationPrinter
         var detailWallOccluders = paintDetailCuts ? new List<(List<(double X, double Y)> Points, double Depth)>() : null;
         bool roundElevationShafts = !cut && drawTerrainCut && showSurfacePatterns;
         var spanOccluders = fineSection || roundElevationShafts
-            ? new List<(List<(double X, double Y)> Points, double FarDepth)>() : null;
+            ? new List<(List<(double X, double Y)> Points, double FarDepth, bool ViewAlignedSlabSide)>() : null;
         var spanOpenings = roundElevationShafts
             ? new Dictionary<List<(double X, double Y)>, List<List<(double X, double Y)>>>() : null;
         var elevationCutEdges = new List<CollectedEdge>();
         var meshSilhouettes = new List<CollectedEdge>();
-        var meshCovers = opaqueSection && (drawTerrainCut || regularFineSection)
+        bool calloutFurnitureMeshes = opaqueFineSection && detailCallout && !detailPath;
+        var meshCovers = opaqueSection && (drawTerrainCut || regularFineSection || calloutFurnitureMeshes)
             ? new List<(List<(double X, double Y)> Points, double FarDepth, int ElementId)>()
             : null;
+        var furnitureCovers = overviewSection && opaqueSection ? new Dictionary<int, double>() : null;
         TerrainHatch? groundHatch = null;
         List<DetailAnnotations.LayerHatch>? layerHatches = sectionCrop != null && (isDetail || fineSection && window == null)
             || roofSectionCrop != null && window == null || towardViewer != null && showSurfacePatterns
@@ -459,14 +468,22 @@ public static partial class ElevationPrinter
                     var siteLight = outlineSiteObject ? null : shadows;
                     bool planting = element.CategoryId == (int)BuiltInCategory.OST_Planting;
                     // The RPC insertion point determines whether its proxy casts onto visible geometry.
-                    bool groundOnly = siteLight != null && planting && Math.Abs(D[2]) < 1e-9
-                        && element.InstanceOriginXY is { } insertion
-                        && (insertion.X * D[0] + insertion.Y * D[1]) * FeetToMillimetres < viewPlaneDepth
+                    bool rpcPlant = planting && Math.Abs(D[2]) < 1e-9
+                        && element.InstanceOriginXY != null
                         && document.GetElement(element.TypeId)?.LookupParameter(BuiltInParameter.RENDER_RPC_FILENAME)
                             ?.Value is string { Length: > 0 };
+                    bool groundOnly = rpcPlant && element.InstanceOriginXY is { } insertion
+                        && (insertion.X * D[0] + insertion.Y * D[1]) * FeetToMillimetres < viewPlaneDepth;
+                    bool outlineBeforePlane = groundOnly && HeaderOutlineIsBeforePlane(element, D, viewPlaneDepth);
+                    bool proxyBeforePlane = groundOnly && placedGeometry.Faces.All(face =>
+                        face.OuterVertices is { Count: >= 3 } vertices
+                        && vertices.All(point => Project(point, D) < viewPlaneDepth));
+                    // The saved RPC extent can intersect the view even when its display panels lie in front of it.
+                    bool retainRpcProxy = proxyBeforePlane && !outlineBeforePlane && element.BoundingBoxIsHeaderOutline
+                        && element.BoundingBox is { Length: 6 } outlineBounds && outlineBounds.All(double.IsFinite);
                     var tree = planting && plantingOutlines != null && placedGeometry.Faces.All(face =>
                         face.PolygonMesh && face.OuterVertices is { Count: 3 })
-                        ? new ElevationShadows.PlantingOutlines.Mesh() : null;
+                        ? new ElevationShadows.PlantingOutlines.Mesh(clipAtViewPlane: !retainRpcProxy) : null;
                     var wireFaces = element.CategoryId == (int)BuiltInCategory.OST_Entourage
                         && element.RootClassIs("FamilyInstance")
                         ? new List<(List<double[]> Points, double Facing)>() : null;
@@ -492,8 +509,8 @@ public static partial class ElevationPrinter
                             wireFaces.Add((world, Project(face.Normal, D, 1)));
                         if (face.PlaneSurface || vertices.Count == 3)
                             siteLight?.AddCaster(face, world, siteOnly: !planting, planting: planting,
-                                groundOnly: groundOnly);
-                        var visible = ClipBehind(world, planeOrigin, D);
+                                groundOnly: groundOnly, castsOnVisiblePlanting: proxyBeforePlane, castsOnSoilCut: !outlineBeforePlane);
+                        var visible = retainRpcProxy ? world : ClipBehind(world, planeOrigin, D);
                         var ring = visible.Select(point => (Project(point, H, 1), Project(point, V, 1))).ToList();
                         double area = PlanPrinter.SignedArea(ring);
                         if (tree != null) plantingOutlines!.AddFacet(tree, world, ring, face, visible);
@@ -522,7 +539,8 @@ public static partial class ElevationPrinter
                         }
                         if (outlineSiteObject) objectNear = Math.Min(objectNear, visible.Min(point => Project(point, D, 1)));
                         if (vertices.Count == 3 && !face.CurvedSurface)
-                            siteLight?.AddVisibleFacet(ring, face, visible, planting, crossedBillboard);
+                            siteLight?.AddVisibleFacet(ring, face, visible, planting, crossedBillboard,
+                                receivesOffscreenPlantShadows: rpcPlant && !groundOnly);
                     }
                     if (tree != null) plantingOutlines!.AddTree(tree);
                     if (outlineSiteObject && siteSilhouettes.Count > silhouetteStart)
@@ -646,10 +664,12 @@ public static partial class ElevationPrinter
             int categoryId = element.CategoryId ?? 0;
             bool fineEquipmentMesh = regularFineSection && categoryId == (int)BuiltInCategory.OST_SpecialityEquipment
                 && element.RootClassIs("FamilyInstance");
-            var meshSilhouette = PlacedSiteElement(element) && (fineEquipmentMesh
+            bool fineFurnitureMesh = calloutFurnitureMeshes && categoryId == (int)BuiltInCategory.OST_Furniture
+                && element.RootClassIs("FamilyInstance");
+            var meshSilhouette = PlacedSiteElement(element) && (fineEquipmentMesh || fineFurnitureMesh
                 || opaqueSection && drawTerrainCut && categoryId == (int)BuiltInCategory.OST_GenericModel)
                 ? ProjectSectionMeshSilhouette(geometry, H, V, D, viewPlaneDepth, element.Id, categoryId,
-                    multipleRevolvedNodes: fineEquipmentMesh)
+                    multipleRevolvedNodes: fineEquipmentMesh, cylindricalFurniture: fineFurnitureMesh)
                 : null;
             if (meshSilhouette != null) meshSilhouettes.AddRange(meshSilhouette);
             bool castColumnShadow = shadows != null && categoryId == (int)BuiltInCategory.OST_StructuralColumns
@@ -663,6 +683,10 @@ public static partial class ElevationPrinter
                 && categoryId != (int)BuiltInCategory.OST_LightingFixtureSource
                 && !(categoryId == (int)BuiltInCategory.OST_Walls
                     && document.GetElement(element.TypeId)?.RootClassIs("NewCurtainWallType") == true);
+            bool screenPane = screenPaneOwners != null && PlacedSiteElement(element)
+                && categoryId == (int)BuiltInCategory.OST_CurtainWallPanels
+                && geometry.Faces.All(face => document.GetElement(face.RenderStyleId ?? face.NestedRenderStyleId ?? -1)
+                    ?.SerializedMaterialTransparency is > 0 and <= 1);
             double? slabGray = null;
             if (regularFineSection && physicalOccluder && categoryId == (int)BuiltInCategory.OST_Floors
                 && element.LookupParameter(BuiltInParameter.FLOOR_PARAM_IS_STRUCTURAL)?.Value is 1
@@ -672,9 +696,34 @@ public static partial class ElevationPrinter
                 && finish.LookupParameter(BuiltInParameter.MATERIAL_PARAM_COLOR)?.Value is int slabColor and >= 0 and <= 0xffffff)
                 slabGray = (0.2126 * (slabColor & 255) + 0.7152 * ((slabColor >> 8) & 255)
                     + 0.0722 * ((slabColor >> 16) & 255)) / 255;
-            var wallFaceLayers = opaqueFineSection && !detailPath && detailCallout && physicalOccluder
+            var wallType = opaqueFineSection && !detailPath && physicalOccluder
                 && categoryId == (int)BuiltInCategory.OST_Walls
-                ? document.GetElement(element.TypeId)?.SerializedHostTypeLayers : null;
+                ? document.GetElement(element.TypeId) : null;
+            var wallFaceLayers = detailCallout ? wallType?.SerializedHostTypeLayers : null;
+            int? interiorFinish = regularFineSection && wallType?.SerializedBasicWallTypeFunction == 1
+                && element.LookupParameter(BuiltInParameter.WALL_TOP_IS_ATTACHED)?.Value is 0
+                && wallType.SerializedHostTypeLayers is { Length: > 1 } layers
+                && layers[^1] is { RawFunction: 4 or 5, RawMaterialId: > 0 and int finishId }
+                ? finishId : null;
+            int? structuralWallMaterial = regularFineSection
+                && wallType is { SerializedBasicWallTypeFunction: 1,
+                    SerializedHostTypeLayers: [{ RawFunction: 1, RawMaterialId: > 0 and int structuralLayer }] }
+                && element.LookupParameter(BuiltInParameter.WALL_STRUCTURAL_SIGNIFICANT)?.Value is 1
+                && element.LookupParameter(BuiltInParameter.STRUCTURAL_MATERIAL_PARAM)?.Value is int wallStructuralId
+                && wallStructuralId == structuralLayer
+                && document.GetElement(wallStructuralId) is { HasShadingAppearance: true, SerializedMaterialTransparency: 0 }
+                ? wallStructuralId : null;
+            double? structuralWallBaseY = structuralWallMaterial.HasValue && Math.Abs(V[2] - 1) < 1e-9
+                && element.LookupParameter(BuiltInParameter.WALL_BASE_CONSTRAINT)?.Value is > 0 and int baseLevelId
+                && document.GetElement(baseLevelId)?.LookupParameter(BuiltInParameter.LEVEL_ELEV)?.Value is double baseElevation
+                && double.IsFinite(baseElevation)
+                ? baseElevation * FeetToMillimetres : null;
+            int? exposedWallFinish = regularFineSection && wallType?.SerializedBasicWallTypeFunction == 1
+                && element.LookupParameter(BuiltInParameter.WALL_TOP_IS_ATTACHED)?.Value is 1
+                && wallType.SerializedHostTypeLayers is { Length: > 1 } exteriorLayers
+                && exteriorLayers[0] is { RawFunction: 4 or 5, RawMaterialId: > 0 and int exteriorMaterial }
+                && !exteriorLayers.Skip(1).Any(layer => layer.RawMaterialId == exteriorMaterial)
+                ? exteriorMaterial : null;
             int? wallMaterial = paintDetailCuts && categoryId == (int)BuiltInCategory.OST_Walls
                 && geometry.Faces[0].RenderStyleId is > 0 and int material
                 && geometry.Faces.All(face => face.RenderStyleId == material) ? material : null;
@@ -785,8 +834,9 @@ public static partial class ElevationPrinter
             bool projectRoundShafts = showSurfacePatterns && PlacedSiteElement(element)
                 && (regularOpaqueSection && categoryId == (int)BuiltInCategory.OST_StructuralColumns
                     || roundElevationShafts && categoryId == (int)BuiltInCategory.OST_GenericModel);
-            var outwardStairFaces = ambient != null && IsStairBodyCategory(categoryId)
-                ? OutwardConvexStairFaces(geometry) : null;
+            bool shadeStair = ambient != null && IsStairBodyCategory(categoryId);
+            var outwardStairFaces = shadeStair ? OutwardConvexStairFaces(geometry) : null;
+            bool stairIntersectsCut = shadeStair && SpansSectionPlane(geometry.Faces, D, viewPlaneDepth);
             foreach (var (face, projectedSilhouette) in SectionFaces(document, element, geometry,
                 fineSection || cut && drawTerrainCut, H, V, D, planeOrigin, projectRoundShafts,
                 maxElevationTubeDiameter, elevationTubeEdges))
@@ -819,7 +869,10 @@ public static partial class ElevationPrinter
                     || IsRailingCategory(categoryId) && PlacedSiteElement(element)
                     || castColumnShadow && document.GetElement(face.RenderStyleId ?? face.NestedRenderStyleId ?? -1)
                         ?.SerializedMaterialTransparency is not > 0))
-                    shadows.AddCaster(face, corners);
+                    shadows.AddCaster(face, corners, verifiedOpaque:
+                        document.GetElement(face.RenderStyleId ?? face.NestedRenderStyleId ?? -1) is
+                            { HasShadingAppearance: true, SerializedMaterialUsesRenderAppearance: false,
+                                SerializedMaterialTransparency: 0 });
                 if (!cut && shadows != null && roofHostId is int roof && face.PlaneSurface
                     && document.GetElement(face.RenderStyleId ?? face.NestedRenderStyleId ?? -1)
                         ?.SerializedMaterialTransparency is not > 0)
@@ -891,7 +944,7 @@ public static partial class ElevationPrinter
                     ambientOrigin = AmbientVector(corners[0], 1);
                     ambient!.AddOccluder(corners.Select(point => AmbientVector(point, 1)).ToList(), ambientNormal,
                         face.InnerVertices?.Select(ring => ring.Select(point => AmbientVector(point, FeetToMillimetres)).ToList()).ToList(),
-                        frontFaceOnly: outwardStairFaces?.Contains(face) == true);
+                        frontFaceOnly: outwardStairFaces?.Contains(face) == true, roofId: isRoof ? element.Id : 0);
                 }
                 var points = new List<(double X, double Y)>(corners.Count);
                 double depth = 0, minDepth = double.PositiveInfinity;
@@ -969,6 +1022,11 @@ public static partial class ElevationPrinter
                 double? slabSideGray = slabGray.HasValue && face.PlaneSurface && facing > 0.5
                     && Math.Abs(face.Normal[2]) <= 1e-6 ? slabGray : null;
                 double? sideGray = slabSideGray;
+                if (structuralWallBaseY is double baseY && ambientBlocker
+                    && face.RenderStyleId == structuralWallMaterial && Project(face.Normal, D, 1) < -1 + 1e-9
+                    && minDepth > viewPlaneDepth && points.Any(point => point.Y > baseY)
+                    && document.RawData.ViewAmbientLight?.TryGetValue(planeView!.Id, out double wallLight) == true)
+                    exteriorWallTones.Add(points, (baseY, wallLight));
                 if (wallFaceLayers != null && face.PlaneSurface && outline && Math.Abs(facing - 1) < 1e-9
                     && face.RenderStyleId is > 0 and int wallFaceFinish
                     && wallFaceLayers.Any(layer => layer.RawFunction is 4 or 5 && layer.RawMaterialId == wallFaceFinish)
@@ -978,6 +1036,14 @@ public static partial class ElevationPrinter
                         and >= 0 and <= 0xffffff)
                     sideGray = (0.2126 * (wallColour & 255) + 0.7152 * ((wallColour >> 8) & 255)
                         + 0.0722 * ((wallColour >> 16) & 255)) / 255;
+                if (regularFineSection && fineFixture && ambientBlocker && face.PlaneSurface && outline
+                    && document.GetElement(face.RenderStyleId ?? face.NestedRenderStyleId ?? -1) is
+                        { HasShadingAppearance: true, SerializedMaterialUsesRenderAppearance: false,
+                            SerializedMaterialTransparency: 0 } fixtureFinish
+                    && fixtureFinish.LookupParameter(BuiltInParameter.MATERIAL_PARAM_COLOR)?.Value is int fixtureColour
+                        and >= 0 and <= 0xffffff)
+                    sideGray = (0.2126 * (fixtureColour & 255) + 0.7152 * ((fixtureColour >> 8) & 255)
+                        + 0.0722 * ((fixtureColour >> 16) & 255)) / 255;
                 if (sideGray.HasValue) faceFills.Add(points, sideGray);
                 if (paneStyle is { } pane)
                 {
@@ -1008,6 +1074,14 @@ public static partial class ElevationPrinter
                     siteModelMasks.Add((points, minDepth, corners.Max(point => Project(point, D, 1))));
                 if (shadows != null && face.PlaneSurface && Math.Abs(facing - 1) < 1e-9)
                     shadows.AddReceiver(points, face, depth, roundShaft: roundShaft);
+                else if (!cut && shadows != null && Math.Abs(face.Normal[2]) <= 1e-6
+                    && Project(face.Normal, D, 1) < -1e-9
+                    && (categoryId == (int)BuiltInCategory.OST_Walls && face.PlaneSurface
+                        || categoryId == (int)BuiltInCategory.OST_StructuralFoundation && PlacedSiteElement(element)
+                        && face.MeshMarker != 0 && !face.CurvedSurface && corners.All(corner =>
+                            Math.Abs(Project(corner, face.Normal, 1) - Project(corners[0], face.Normal, 1)) < 1e-6)))
+                    shadows.AddPlanarModelReceiver(points, face, corners,
+                        meshFacet: categoryId == (int)BuiltInCategory.OST_StructuralFoundation);
                 else if (!cut && shadows != null && isRoof && face.PlaneSurface
                     && face.Normal[2] > 1e-9 && Project(face.Normal, D, 1) < -1e-9
                     && face.InnerVertices is { Count: > 0 })
@@ -1045,7 +1119,10 @@ public static partial class ElevationPrinter
                         (int)BuiltInCategory.OST_Windows or (int)BuiltInCategory.OST_Doors)
                     && HasGlazingPattern(face);
                 glazing?.Add(document, points, minDepth, corners.Max(point => Project(point, D, 1)),
-                    face.RenderStyleId ?? face.NestedRenderStyleId, glazedFace);
+                    face.RenderStyleId ?? face.NestedRenderStyleId, glazedFace,
+                    coversBacking: regularFineSection && categoryId == (int)BuiltInCategory.OST_CurtainWallPanels);
+                if (screenPane && face.PlaneSurface && Math.Abs(facing - 1) < 1e-9 && glazing?.IsPane(points) == true)
+                    screenPaneOwners!.Add(element.Id);
                 if (showSurfacePatterns && (isRoof || glazedFace) && window == null && planeOrigin.Length == 3
                     && (face.InnerLoops is not { Count: > 0 } || face.InnerVertices is { Count: > 0 })
                     && face.InnerVertices?.All(hole => hole.Count >= 3
@@ -1080,11 +1157,26 @@ public static partial class ElevationPrinter
                     ambient!.AddGlazing(points, faceOpenings, corners.Max(point => Project(point, D, 1)));
                 if (ambientBlocker && face.PlaneSurface && !glazedFace
                     && !(shadeDoorFinish && faceFills.ContainsKey(points)))
+                {
+                    if (screenWallReceivers != null && categoryId == (int)BuiltInCategory.OST_Walls
+                        && sideGray == null && Project(face.Normal, D, 1) < -1 + 1e-9)
+                        screenWallReceivers.Add(points, depth);
+                    bool exposedFinish = exposedWallFinish is int finishMaterial
+                        && face.RenderStyleId == finishMaterial && Math.Abs(facing - 1) < 1e-9;
                     ambient!.AddReceiver(points, faceOpenings, ambientOrigin, ambientNormal, sideGray ?? 1,
                         orientDirectLight: paintDetailCuts && categoryId == (int)BuiltInCategory.OST_Walls,
                         ignoreStairExitHits: IsStairBodyCategory(categoryId),
+                        // An edge-on blocker has no surface in the projected view.
+                        ignoreEdgeOnHits: (stairIntersectsCut || interiorFinish is int inside
+                            && face.RenderStyleId == inside) && Math.Abs(facing - 1) < 1e-9
+                            && Math.Abs(face.Normal[2]) <= 1e-6,
+                        distanceFalloff: exposedFinish,
+                        attachedRoofIds: exposedFinish ? element.SerializedWallTopAttachmentTargets : null,
                         excludeSamplesBehindCut: paintDetailCuts && categoryId == (int)BuiltInCategory.OST_Floors
-                            && Math.Abs(face.Normal[2]) <= 1e-6);
+                            && Math.Abs(face.Normal[2]) <= 1e-6,
+                        exteriorWall: exteriorWallTones.TryGetValue(points, out var exteriorTone)
+                            ? (exteriorTone.BaseY, (float)viewPlaneDepth) : null);
+                }
                 else if (regularFineSection && face.PlaneSurface && ambient != null
                     && glazing?.AmbientBackgroundGray(points) is double glazedBackground)
                     ambient.AddReceiver(points, faceOpenings, AmbientVector(corners[0], 1), AmbientVector(face.Normal, 1),
@@ -1125,7 +1217,14 @@ public static partial class ElevationPrinter
                 if (meshCovers != null && face.PlaneSurface && !seeThrough && !glazedFace
                     && faceOpenings is not { Count: > 0 } && face.InnerLoops is not { Count: > 0 }
                     && face.InnerVertices is not { Count: > 0 })
-                    meshCovers.Add((points, corners.Max(point => Project(point, D, 1)), element.Id));
+                {
+                    double farDepth = corners.Max(point => Project(point, D, 1));
+                    meshCovers.Add((points, farDepth, element.Id));
+                    if (furnitureCovers != null && categoryId == (int)BuiltInCategory.OST_Furniture
+                        && !element.IsDiscovered && document.GetElement(face.RenderStyleId ?? face.NestedRenderStyleId ?? -1)
+                            ?.SerializedMaterialTransparency is not > 0)
+                        furnitureCovers.Add(faces.Count - 1, farDepth);
+                }
                 if (spanOccluders != null && face.PlaneSurface && !element.IsDiscovered
                     && (face.InnerLoops is not { Count: > 0 } loops || roundElevationShafts
                         && Math.Max(face.InnerVertices?.Count ?? 0, faceOpenings?.Count ?? 0) >= loops.Count)
@@ -1133,7 +1232,9 @@ public static partial class ElevationPrinter
                     && ((face.RenderStyleId ?? face.NestedRenderStyleId) is not (> 0 and int spanMaskMaterial)
                         || document.GetElement(spanMaskMaterial)?.SerializedMaterialTransparency is not > 0))
                 {
-                    spanOccluders.Add((points, corners.Max(point => Project(point, D, 1))));
+                    bool viewAlignedSlabSide = categoryId == (int)BuiltInCategory.OST_Floors
+                        && Math.Abs(face.Normal[2]) < 1e-6 && Project(face.Normal, D, 1) < -1 + 1e-9;
+                    spanOccluders.Add((points, corners.Max(point => Project(point, D, 1)), viewAlignedSlabSide));
                     if (spanOpenings != null)
                     {
                         var openings = faceOpenings;
@@ -1359,6 +1460,20 @@ public static partial class ElevationPrinter
                 deduped.AddRange(VisibleTerrainEdges(group,
                     spanOccluders.Where(mask => mask.FarDepth < group.Key - 1).Select(mask => mask.Points), [],
                     openings: spanOpenings));
+            if (opaqueFineSection && detailCallout && !detailPath)
+            {
+                var slabs = spanOccluders.Where(mask => mask.ViewAlignedSlabSide).ToList();
+                if (slabs.Count > 0)
+                {
+                    // A projected slab can hide the middle of a wall or railing upright while leaving both ends visible.
+                    var uprights = deduped.Where(IsSlabCoveredProfile).GroupBy(edge => edge.NearDepth!.Value).ToList();
+                    deduped.RemoveAll(IsSlabCoveredProfile);
+                    foreach (var group in uprights)
+                        deduped.AddRange(VisibleTerrainEdges(group,
+                            slabs.Where(mask => mask.FarDepth < group.Key - 1).Select(mask => mask.Points), [],
+                            coverBoundary: false));
+                }
+            }
             if (opaqueFineSection && !regularFineSection)
                 foreach (var group in deduped.Where(IsSlopingWall).GroupBy(edge => edge.MidDepth))
                 {
@@ -1381,6 +1496,11 @@ public static partial class ElevationPrinter
                 || roundShaftFaces.Contains(edge.FaceA) || roundShaftFaces.Contains(edge.FaceB)
                 || regularFineSection && IsSlopingWall(edge)
                 || paintDetailCuts && IsVerticalDetailProfile(edge.CategoryId, edge.X1, edge.X2));
+
+        static bool IsSlabCoveredProfile(CollectedEdge edge) =>
+            !edge.IsCut && edge.NearDepth is double near && Math.Abs(near - edge.MidDepth) < 1e-6
+            && (IsVerticalDetailProfile(edge.CategoryId, edge.X1, edge.X2)
+                || edge.CategoryId == (int)BuiltInCategory.OST_Walls && Math.Abs(edge.X1 - edge.X2) < 1e-6);
 
         static bool IsConstantDepthDetailProfile(CollectedEdge edge) =>
             !edge.IsCut && edge.NearDepth is double near && Math.Abs(near - edge.MidDepth) < 1e-6
@@ -1412,7 +1532,7 @@ public static partial class ElevationPrinter
             stairMaskFaces: stairMasks.Count > 0 ? stairMasks : null,
             railingMaskDepths: railingMaskDepths.Count > 0 ? railingMaskDepths : null,
             behindRailings: behindRailings, useDetailPlaneDepth: detailWallOccluders != null,
-            stairAssembly: overviewSection ? StairAssembly : null);
+            stairAssembly: overviewSection ? StairAssembly : null, furnitureCovers: furnitureCovers);
         if (keepStairDepths)
         {
             var stairEdges = occluded.Where(edge => IsStairBodyCategory(edge.CategoryId) && !edge.IsCut)
@@ -1422,7 +1542,8 @@ public static partial class ElevationPrinter
             occluded.AddRange(stairEdges);
         }
         if (viewLines.Count > 0)
-            viewLines = OccludeEdges(faces, faceOccluders, viewLines, keepWindowJambs: false);
+            viewLines = OccludeEdges(faces, faceOccluders, viewLines, keepWindowJambs: false,
+                furnitureCovers: furnitureCovers);
         if (drawTerrainCut)
         {
             var visibleComponentEdges = occluded.Where(edge => HasCoincidentComponents(edge.CategoryId, !cut))
@@ -1620,8 +1741,32 @@ public static partial class ElevationPrinter
                         !edge.IsCut && edge.FaceA >= 0 && edge.MidDepth > viewPlaneDepth + 1;
                     var covers = GroundSpans(groundHatch, groundHatch.BaseY);
                     if (!cut) covers = covers.Concat(terrainSectionMasks);
-                    var visible = VisibleTerrainEdges(edges.Where(BehindGround), covers, [],
-                        coverBoundary: false).ToList();
+                    var projected = edges.Where(BehindGround).ToList();
+                    var visible = VisibleTerrainEdges(projected, covers, [], coverBoundary: false).ToList();
+                    if (!cut && spanOccluders is { Count: > 0 })
+                    {
+                        // The original midpoint can be outside a nearer face even when the grade only leaves a span behind it.
+                        var originalSpans = projected.ToHashSet();
+                        bool NeedsModelClip(CollectedEdge edge) => edge.NearDepth.HasValue
+                            && edge.CategoryId is ((int)BuiltInCategory.OST_Walls or (int)BuiltInCategory.OST_StructuralFoundation)
+                            && (!originalSpans.Contains(edge) || WithinPadCut(edge));
+                        bool WithinPadCut(CollectedEdge edge)
+                        {
+                            if (Math.Abs(edge.X1 - edge.X2) >= 1e-6) return false;
+                            double x = edge.X1;
+                            return terrainPads.Any(pad => x > pad.From && x < pad.To)
+                                && terrainProfile.Any(grade => x >= Math.Min(grade.X1, grade.X2)
+                                    && x <= Math.Max(grade.X1, grade.X2) && grade.X1 != grade.X2
+                                    && Math.Min(edge.Y1, edge.Y2) < grade.Y1
+                                        + (x - grade.X1) * (grade.Y2 - grade.Y1) / (grade.X2 - grade.X1));
+                        }
+                        var trimmed = visible.Where(NeedsModelClip).GroupBy(edge => edge.NearDepth!.Value).ToList();
+                        visible.RemoveAll(NeedsModelClip);
+                        foreach (var group in trimmed)
+                            visible.AddRange(VisibleTerrainEdges(group,
+                                spanOccluders.Where(mask => mask.FarDepth < group.Key - 1).Select(mask => mask.Points), [],
+                                coverBoundary: false, openings: spanOpenings));
+                    }
                     edges.RemoveAll(edge => BehindGround(edge));
                     edges.AddRange(visible);
                 }
@@ -1962,6 +2107,13 @@ public static partial class ElevationPrinter
             // Layer boundaries and roof-wall seams can be derived from full host rings after the faces were clipped.
             edges = edges.Select(edge => ClipCollectedEdge(edge, finalCrop)).OfType<CollectedEdge>().ToList();
         }
+        var ambientTones = ambient?.Calculate(paintDetailCuts ? cutFaces : null, viewPlaneDepth);
+        var paneTones = screenPaneOwners is { Count: > 0 } && screenWallReceivers is { Count: > 0 }
+            && sectionCrop is { } screenCrop
+            ? new PaneScreenShadows(screenCrop, viewportScale ?? viewScale, ambientFraction)
+                .Calculate(faces, faceOccluders.Select(owner => owner.ElementId).ToArray(), paintOpenings,
+                    screenPaneOwners, screenWallReceivers, ambientTones)
+            : null;
         // Visibility uses face indices in collection order. Reorder the fills only for painting.
         faces.Sort((left, right) => right.Depth.CompareTo(left.Depth));
         return new ElevationContent(faces, distinctLevels, grids, context, edges, minX, minY, maxX, maxY,
@@ -1974,13 +2126,15 @@ public static partial class ElevationPrinter
             paintOpenings.Count > 0 ? paintOpenings : null, shadows?.ClipSiteFacetsToModel(castShadows),
             DetailCutFaces: cutFaces is { Count: > 0 } ? cutFaces : null,
             Glazing: glazing is { HasPanes: true } ? glazing : null,
-            AmbientTones: ambient?.Calculate(paintDetailCuts ? cutFaces : null, viewPlaneDepth),
+            AmbientTones: ambientTones,
             FaceFills: faceFills.Count > 0 ? faceFills : null,
             DetailGlass: detailGlass is { Count: > 0 } ? detailGlass : null,
             TerrainClippedFaces: terrainOcclusion?.ClippedFaces(),
             KeepDoorDepths: keepDoorDepths,
             SectionBillboards: sectionBillboards.Count > 0 ? sectionBillboards : null,
-            PlantTones: ElevationShadows.VisiblePlantTones(plantFacets, plantTones));
+            PlantTones: ElevationShadows.VisiblePlantTones(plantFacets, plantTones),
+            ExteriorWallTones: exteriorWallTones.Count > 0 ? exteriorWallTones : null,
+            PaneTones: paneTones);
 
         System.Numerics.Vector3 AmbientVector(double[] point, double units) =>
             new((float)Project(point, H, units), (float)Project(point, V, units), (float)Project(point, D, units));
@@ -2087,6 +2241,7 @@ public static partial class ElevationPrinter
         double? NearDepth = null)
     {
         internal int ViewLineStyleId { get; init; }
+        internal CollectedEdge? UnclippedViewLine { get; init; }
         internal (int Ring, int Segment)? SourceRingEdge { get; init; }
         internal int? SilhouetteOwnerId { get; init; }
     }
@@ -2284,7 +2439,8 @@ public static partial class ElevationPrinter
         List<CollectedEdge> edges, bool keepWindowJambs, IReadOnlySet<int>? roofInsertFaces = null,
         IReadOnlyDictionary<int, List<(double X, double Y)>>? stairMaskFaces = null,
         IReadOnlyDictionary<int, double>? railingMaskDepths = null,
-        List<CollectedEdge>? behindRailings = null, bool useDetailPlaneDepth = false, Func<int, int>? stairAssembly = null)
+        List<CollectedEdge>? behindRailings = null, bool useDetailPlaneDepth = false, Func<int, int>? stairAssembly = null,
+        IReadOnlyDictionary<int, double>? furnitureCovers = null)
     {
         const int Cells = 128;
         double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
@@ -2332,12 +2488,15 @@ public static partial class ElevationPrinter
             double? stairDepth = !edge.IsCut && edge.ViewLineStyleId == 0 && !stairBody
                 ? edge.NearDepth : null;
             double? railingDepth = railingMaskDepths != null ? RailingClipDepth(edge) : null;
+            double? furnitureDepth = furnitureCovers is { Count: > 0 } ? FurnitureClipDepth(edge) : null;
             var candidates = grid[gy * Cells + gx];
             if (candidates != null)
             {
                 foreach (int f in candidates)
                 {
                     if (f == edge.FaceA || f == edge.FaceB) continue;
+                    if (furnitureDepth is double lineDepth && furnitureCovers!.TryGetValue(f, out double farDepth)
+                        && farDepth < lineDepth - 1) continue;
                     var (coverDepth, elementId, hostId, categoryId, plane) = faceOccluders[f];
                     // The projected union already resolves overlaps within this mesh.
                     if (edge.SilhouetteOwnerId == elementId) continue;
@@ -2398,7 +2557,38 @@ public static partial class ElevationPrinter
             else kept.Add(edge);
         }
         kept.Sort((left, right) => right.Depth.CompareTo(left.Depth));
-        return kept;
+        if (furnitureCovers is not { Count: > 0 }) return kept;
+
+        // Keep the original order of coincident edges for the later merge. Only replace a jamb
+        // or opening mark when it encounters a nearer furniture face.
+        var furnitureMasks = furnitureCovers.Select(mask =>
+        {
+            var polygon = faces[mask.Key].Points;
+            return (mask.Value, Polygon: polygon, Left: polygon.Min(p => p.X), Right: polygon.Max(p => p.X),
+                Bottom: polygon.Min(p => p.Y), Top: polygon.Max(p => p.Y));
+        }).ToArray();
+        return kept.SelectMany(ClipAtFurniture).ToList();
+
+        IEnumerable<CollectedEdge> ClipAtFurniture(CollectedEdge edge)
+        {
+            if (FurnitureClipDepth(edge) is not double depth) return [edge];
+            double left = Math.Min(edge.X1, edge.X2), right = Math.Max(edge.X1, edge.X2);
+            double bottom = Math.Min(edge.Y1, edge.Y2), top = Math.Max(edge.Y1, edge.Y2);
+            var covers = furnitureMasks.Where(mask => mask.Value < depth - 1
+                && mask.Left <= right && mask.Right >= left && mask.Bottom <= top && mask.Top >= bottom)
+                .Select(mask => mask.Polygon).ToList();
+            return covers.Count == 0 ? [edge] : VisibleTerrainEdges([edge], covers, [],
+                coverBoundary: false, preserveDashOrigin: true);
+        }
+    }
+
+    private static double? FurnitureClipDepth(CollectedEdge edge)
+    {
+        if (edge.IsCut || edge.NearDepth is not double depth) return null;
+        if (edge.ViewLineStyleId > 0 || edge.CategoryId == (int)BuiltInCategory.OST_Windows
+            && Math.Abs(edge.X1 - edge.X2) < 1e-6 && Math.Abs(depth - edge.MidDepth) < 1e-6)
+            return depth;
+        return null;
     }
 
     private static int ProjectedSide((double X, double Y) start, (double X, double Y) end,
@@ -2565,6 +2755,30 @@ public static partial class ElevationPrinter
                     survivors.Add(edge);
         }
         return survivors;
+    }
+
+    internal static bool HeaderOutlineIsBeforePlane(Element element, double[] direction, double planeDepth)
+        // An RPC outline can reach the view plane even when all its proxy triangles lie in front of it.
+        => element.BoundingBoxIsHeaderOutline && element.BoundingBox is { Length: 6 } bounds
+            && bounds.All(double.IsFinite)
+            && Enumerable.Range(0, 3).Sum(i => bounds[direction[i] < 0 ? i : i + 3] * direction[i])
+                * FeetToMillimetres < planeDepth;
+
+    internal static bool SpansSectionPlane(List<GeoFace> faces, double[] direction, double planeDepth)
+    {
+        foreach (var face in faces)
+        {
+            if (face.OuterVertices is not { Count: >= 3 } vertices) continue;
+            bool before = false, beyond = false;
+            foreach (var vertex in vertices)
+            {
+                double depth = Project(vertex, direction);
+                before |= depth < planeDepth - 1e-6;
+                beyond |= depth > planeDepth + 1e-6;
+                if (before && beyond) return true;
+            }
+        }
+        return false;
     }
 
     private static bool IsStairBodyCategory(int category) => category is
@@ -2744,10 +2958,11 @@ public static partial class ElevationPrinter
         }
     }
 
-    internal static IEnumerable<CollectedEdge> TrimProjectedEdgesAtCuts(IReadOnlyList<CollectedEdge> edges)
+    internal static IEnumerable<CollectedEdge> TrimProjectedEdgesAtCuts(IReadOnlyList<CollectedEdge> edges,
+        Func<CollectedEdge, bool>? coversProjection = null)
     {
         const double tolerance = 0.1;
-        var cuts = edges.Where(edge => edge.IsCut).ToList();
+        var cuts = edges.Where(edge => edge.IsCut && (coversProjection?.Invoke(edge) ?? true)).ToList();
         foreach (var edge in edges)
         {
             if (edge.IsCut || edge.ViewLineStyleId > 0 || cuts.Count == 0)
@@ -2814,7 +3029,8 @@ public static partial class ElevationPrinter
     internal static IEnumerable<CollectedEdge> VisibleTerrainEdges(IEnumerable<CollectedEdge> terrainEdges,
         IEnumerable<List<(double X, double Y)>> polygons, List<(double From, double To)> pads,
         double minimumLengthSquared = 0.01, bool coverBoundary = true, bool coverOppositeEdges = false,
-        IReadOnlyDictionary<List<(double X, double Y)>, List<List<(double X, double Y)>>>? openings = null)
+        IReadOnlyDictionary<List<(double X, double Y)>, List<List<(double X, double Y)>>>? openings = null,
+        bool preserveDashOrigin = false)
     {
         // Ground is background. Keep only its parts outside the opaque model polygons so covered lines
         // do not remain as invisible strokes in the PDF.
@@ -2889,6 +3105,11 @@ public static partial class ElevationPrinter
                     }
                 }
             }
+            if (covered.Count == 0)
+            {
+                yield return edge;
+                continue;
+            }
             double cursor = 0;
             foreach (var (from, to) in covered.OrderBy(interval => interval.From))
             {
@@ -2901,6 +3122,8 @@ public static partial class ElevationPrinter
             {
                 X1 = edge.X1 + dx * from, Y1 = edge.Y1 + dy * from,
                 X2 = edge.X1 + dx * to, Y2 = edge.Y1 + dy * to,
+                UnclippedViewLine = preserveDashOrigin && edge.ViewLineStyleId > 0 && (from > 1e-9 || to < 1 - 1e-9)
+                    ? edge.UnclippedViewLine ?? edge : edge.UnclippedViewLine,
             };
         }
     }
@@ -3054,9 +3277,9 @@ public static partial class ElevationPrinter
     }
 
     internal static IEnumerable<CollectedEdge> OutlineJoinedRings(List<List<(double X, double Y)>> rings, int category,
-        bool coverOppositeEdges = false, bool retainSource = false)
+        bool coverOppositeEdges = false, bool retainSource = false, bool snapEndpoints = true)
     {
-        var edges = new Dictionary<(long Ax, long Ay, long Bx, long By), (CollectedEdge Edge, int Sides)>();
+        var edges = new Dictionary<((double X, double Y) A, (double X, double Y) B), (CollectedEdge Edge, int Sides)>();
         for (int ringIndex = 0; ringIndex < rings.Count; ringIndex++)
         {
             var ring = rings[ringIndex];
@@ -3064,10 +3287,13 @@ public static partial class ElevationPrinter
             {
                 var a = ring[i];
                 var b = ring[(i + 1) % ring.Count];
-                var key = ProjectedEdgeKey(a.X, a.Y, b.X, b.Y);
-                if (key.Ax == key.Bx && key.Ay == key.By) continue;
+                var start = snapEndpoints ? (Math.Round(a.X * 10), Math.Round(a.Y * 10)) : a;
+                var end = snapEndpoints ? (Math.Round(b.X * 10), Math.Round(b.Y * 10)) : b;
+                if (start == end) continue;
                 // Counterclockwise rings put their interiors on the left of each directed edge.
-                int side = (long)Math.Round(a.X * 10) == key.Ax && (long)Math.Round(a.Y * 10) == key.Ay ? 1 : 2;
+                bool forward = start.CompareTo(end) < 0;
+                var key = forward ? (start, end) : (end, start);
+                int side = forward ? 1 : 2;
                 if (edges.TryGetValue(key, out var existing))
                     edges[key] = (existing.Edge, existing.Sides | side);
                 else
@@ -3868,6 +4094,26 @@ public static partial class ElevationPrinter
             }
             if (paintPane)
                 glazing!.Draw(page, content, points, rings ?? [polygon], ToX, ToY, FaceRings);
+            if (modelHatch == null && content.PaneTones?.GetValueOrDefault(points) is { } paneTone)
+            {
+                page.BeginPolygonClip(rings ?? [polygon]);
+                double x = ToX(paneTone.X0), y = ToY(paneTone.Y0);
+                page.DrawImage(paneTone.Image, x, y, ToX(paneTone.X1) - x, ToY(paneTone.Y1) - y);
+                page.EndClip();
+            }
+            if (content.ExteriorWallTones?.TryGetValue(points, out var tone) == true && tone.Light < 1)
+            {
+                double lower = Math.Max(tone.BaseY, pagePoints.Min(point => point.Y));
+                double upper = pagePoints.Max(point => point.Y);
+                double left = pagePoints.Min(point => point.X);
+                double right = pagePoints.Max(point => point.X);
+                if (upper > lower && right > left)
+                {
+                    page.BeginClip(ToX(left), ToY(lower), (right - left) / scale, (upper - lower) / scale);
+                    page.FillPolygonUnion(rings ?? [polygon], 0, 1 - tone.Light);
+                    page.EndClip();
+                }
+            }
             DrawShadow(points, polygon, shadowBase);
             if (surfaceHatches is { } hatch && hatch.Faces.TryGetValue(points, out var surfacePattern))
             {
@@ -3935,6 +4181,28 @@ public static partial class ElevationPrinter
                 caps.Add(polygon);
             }
             DrawGroundTiles(groundTiles, opaque: true);
+            if (!isSection && document != null
+                && PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Topography, true, penScale, out double terrainOutline))
+            {
+                var padCuts = content.Edges.Where(edge => edge.IsCut && edge.CategoryId == (int)BuiltInCategory.OST_BuildingPad
+                    && terrainOutline > CutPen(edge)).ToList();
+                if (padCuts.Count > 0)
+                {
+                    // The intersected ground adds its cut pen only on the soil side of the pad's contour.
+                    page.BeginPolygonClip(groundPolygons, evenOdd: false);
+                    foreach (var edge in padCuts)
+                    {
+                        double x1 = ToX(edge.X1), y1 = ToY(edge.Y1), x2 = ToX(edge.X2), y2 = ToY(edge.Y2);
+                        double dx = x2 - x1, dy = y2 - y1;
+                        double length = Math.Sqrt(dx * dx + dy * dy);
+                        if (length == 0) continue;
+                        double nx = -dy * terrainOutline / (2 * length), ny = dx * terrainOutline / (2 * length);
+                        page.DrawPolyline([(x1 - nx, y1 - ny), (x2 - nx, y2 - ny),
+                            (x2 + nx, y2 + ny), (x1 + nx, y1 + ny)], 0, closed: true, fillGray: 0);
+                    }
+                    page.EndClip();
+                }
+            }
             page.EndClip();
             if (caps.Count > 0) page.FillPolygonUnion(caps, 1);
         }
@@ -4084,7 +4352,11 @@ public static partial class ElevationPrinter
             }
         }
         HashSet<(long Ax, long Ay, long Bx, long By)>? doorProjections = content.KeepDoorDepths ? [] : null;
-        foreach (var edge in Unmasked(content.Edges))
+        var visibleEdges = Unmasked(content.Edges);
+        if (isSection && clipRect.HasValue)
+            visibleEdges = TrimProjectedEdgesAtCuts(visibleEdges.ToList(),
+                edge => edge.ViewLineStyleId == 0 && CutPen(edge) >= projLine);
+        foreach (var edge in visibleEdges)
         {
             double x1 = edge.X1, y1 = edge.Y1, x2 = edge.X2, y2 = edge.Y2;
             if ((clipRect.HasValue || edge.CategoryId == (int)BuiltInCategory.OST_Topography)
@@ -4096,11 +4368,7 @@ public static partial class ElevationPrinter
                 && !doorProjections.Add(ProjectedEdgeKey(x1, y1, x2, y2))) continue;
             // A cut edge inks with its own category's cut pen (falling back to the Walls cut pen when the
             // category decodes none); anything else inks with the projection pen.
-            double width = projLine;
-            if (edge.IsCut)
-                width = document != null
-                    && PenWidths.TryGetWidth(document, edge.CategoryId, true, penScale, out double cutWidth)
-                    ? cutWidth : faceLine;
+            double width = edge.IsCut ? CutPen(edge) : projLine;
             if (edge.ViewLineStyleId > 0)
             {
                 if (document == null || document.RawData.GraphicsStylePens?.TryGetValue(edge.ViewLineStyleId, out var style) != true
@@ -4112,7 +4380,17 @@ public static partial class ElevationPrinter
                 if (LinePatterns.TryGetPatternDashes(document, style.LinePatternId, out var dashes))
                 {
                     double dx = x2 - x1, dy = y2 - y1;
-                    page.SetDashPoints(LinePatterns.FitEndpointDashes(Math.Sqrt(dx * dx + dy * dy) / scale * 72 / 25.4, dashes));
+                    double length = Math.Sqrt(dx * dx + dy * dy);
+                    double phase = 0;
+                    if (edge.UnclippedViewLine is { } source)
+                    {
+                        dx = source.X2 - source.X1;
+                        dy = source.Y2 - source.Y1;
+                        length = Math.Sqrt(dx * dx + dy * dy);
+                        double offset = ((x1 - source.X1) * dx + (y1 - source.Y1) * dy) / length;
+                        phase = Math.Max(0, offset) / scale * 72 / 25.4;
+                    }
+                    page.SetDashPoints(LinePatterns.FitEndpointDashes(length / scale * 72 / 25.4, dashes), phase);
                 }
                 page.DrawLine(ToX(x1), ToY(y1), ToX(x2), ToY(y2), width, color);
                 page.ResetDash();
@@ -4141,6 +4419,9 @@ public static partial class ElevationPrinter
                     out double x1, out double y1, out double x2, out double y2))
                     page.DrawLine(ToX(x1), ToY(y1), ToX(x2), ToY(y2), 0.35);
             }
+
+        double CutPen(CollectedEdge edge) => document != null
+            && PenWidths.TryGetWidth(document, edge.CategoryId, true, penScale, out double width) ? width : faceLine;
 
         IEnumerable<CollectedEdge> Unmasked(List<CollectedEdge> edges) =>
             masks == null ? edges : VisibleTerrainEdges(edges, masks, []);

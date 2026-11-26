@@ -3354,7 +3354,7 @@ internal static partial class TfBlockDeserializer
                 {
                     failure = $"step {queuedClass}";
                     if (!TryReadExactWallGeomStep(cur, queuedClass,
-                            out uint stepOwner, out _, out string? stepFailure))
+                            out uint stepOwner, out _, out string? stepFailure, out _))
                     {
                         failure = $"step {queuedClass} {stepFailure}";
                         return null;
@@ -3407,7 +3407,12 @@ internal static partial class TfBlockDeserializer
     /// <param name="failure">Why no value was produced, for diagnostics.</param>
     internal static bool? ExtractWallJoinedToTop(
         byte[] d, int blockStart, uint dataSize, ushort classId, out string? failure)
+        => ExtractWallJoinedToTop(d, blockStart, dataSize, classId, out failure, out _);
+
+    internal static bool? ExtractWallJoinedToTop(byte[] d, int blockStart, uint dataSize, ushort classId,
+        out string? failure, out int[]? topTargetIds)
     {
+        topTargetIds = null;
         failure = "framing";
         if (classId is not (3524 or 361)
             || blockStart < 0
@@ -3435,6 +3440,7 @@ internal static partial class TfBlockDeserializer
         var decodedSteps = new HashSet<int>();
         uint? owner = null;
         bool joinedToTop = false;
+        List<int>? topTargets = null;
         try
         {
             failure = "root";
@@ -3492,7 +3498,8 @@ internal static partial class TfBlockDeserializer
                     int stepStart = cur.Pos - blockStart;
                     failure = $"step {queuedClass} @{stepStart}";
                     if (!TryReadExactWallGeomStep(cur, queuedClass,
-                            out uint stepOwner, out bool stepJoinsTop, out string? stepFailure, anyVersion: true))
+                            out uint stepOwner, out bool stepJoinsTop, out string? stepFailure, out var targets,
+                            anyVersion: true))
                     {
                         failure = $"step {queuedClass} {stepFailure} @{stepStart}";
                         return null;
@@ -3504,9 +3511,17 @@ internal static partial class TfBlockDeserializer
                     }
                     owner = stepOwner;
                     joinedToTop |= stepJoinsTop;
+                    if (stepJoinsTop && stepIndices?.Contains(queueIndex) == true)
+                    {
+                        topTargets ??= [];
+                        for (int i = 0; i < targets.Count; i++)
+                            topTargets.Add(BitConverter.ToInt32(d, targets.Offset + 4 * i));
+                    }
                     decodedSteps.Add(queueIndex);
                     if (stepIndices != null && stepIndices.IsSubsetOf(decodedSteps))
                     {
+                        if (topTargets?.All(id => id > 0) == true)
+                            topTargetIds = topTargets.Distinct().ToArray();
                         failure = null;
                         return joinedToTop;
                     }
@@ -6071,8 +6086,10 @@ internal static partial class TfBlockDeserializer
     /// ElementId&gt; 8, an affected-edge entry an ElementId plus a counted tag set, a merged
     /// face entry an int key plus a counted int set.</summary>
     private static bool TryReadExactWallGeomStep(
-        Cursor c, ushort classId, out uint owner, out bool joinsTop, out string? failure, bool anyVersion = false)
+        Cursor c, ushort classId, out uint owner, out bool joinsTop, out string? failure,
+        out (int Offset, uint Count) topTargets, bool anyVersion = false)
     {
+        topTargets = default;
         owner = 0;
         joinsTop = false;
         failure = null;
@@ -6131,11 +6148,13 @@ internal static partial class TfBlockDeserializer
             case 2262:
             {
                 uint targets = Count();
+                int targetsOffset = c.Pos;
                 Skip(4L * targets);
                 int baseOrTop = ReadI32(c);
                 ReadI32(c);
                 if (targets == 0 || baseOrTop is not (0 or 1)) { failure = "join to roof"; return false; }
                 joinsTop = baseOrTop == 1;
+                if (joinsTop) topTargets = (targetsOffset, targets);
                 break;
             }
             case 4098:
@@ -6375,10 +6394,11 @@ internal static partial class TfBlockDeserializer
     }
 
     /// <summary>Decode a CurveElem (0x346) block fully (root + all deferred objects) and
-    /// return the curve's line style (BUILDING_CURVE_GSTYLE) and length (CURVE_ELEM_LENGTH).
+    /// return the curve's line style, length, and the geometry of a closed horizontal circle.
     /// Detail arcs store geometry as deferred GArc/GLine/GEllipse objects the pattern scan
     /// couldn't reach; the full schema walk with rules R1-R7 recovers them.</summary>
-    public static (int GStyle, double Length)? ExtractCurveGeometry(byte[] d, int blockStart, uint dataSize)
+    public static (int GStyle, double Length, (double X, double Y, double Radius)? Circle)?
+        ExtractCurveGeometry(byte[] d, int blockStart, uint dataSize)
     {
         var fields = SerializationFields(0x346);
         if (fields == null) return null;
@@ -6389,6 +6409,7 @@ internal static partial class TfBlockDeserializer
 
         var cur = new Cursor { D = d, Pos = payloadStart, End = payloadEnd - 4, Curves = new() };
         var queue = new List<(ushort Cls, uint Id)>();
+        (double X, double Y, double Radius)? circle = null;
         try
         {
             foreach (var f in fields) ReadField(cur, f, queue, 0, null);
@@ -6411,12 +6432,29 @@ internal static partial class TfBlockDeserializer
                 if (qf == null) throw Fail;
                 bool isCurve = cls is 0x7B6 or 0x7DA or 0x6C8;
                 if (isCurve) { cur.Ep0 = cur.Ep1 = cur.Radius = cur.XLen = cur.YLen = 0; }
+                if (cls == 0x7B6) cur.FamilyLineCapture = new();
                 foreach (var sf in qf) ReadField(cur, sf, queue, 1, null);
                 if (isCurve)
                     cur.Curves!.Add((cls, cur.Ep0, cur.Ep1, cur.Radius, cur.XLen, cur.YLen));
+                if (cur.FamilyLineCapture is { } vectors)
+                {
+                    double sweep = Math.Abs(cur.Ep1 - cur.Ep0);
+                    if ((sweep < 1e-12 || Math.Abs(sweep - 2 * Math.PI) < 1e-9)
+                        && cur.Radius > 0 && double.IsFinite(cur.Radius)
+                        && vectors.GetValueOrDefault("m_center") is [var x, var y, var z]
+                        && double.IsFinite(x) && double.IsFinite(y) && double.IsFinite(z)
+                        && vectors.GetValueOrDefault("m_xVec") is [var ax, var ay, var az]
+                        && vectors.GetValueOrDefault("m_yVec") is [var bx, var by, var bz]
+                        && Math.Abs(az) < 1e-8 && Math.Abs(bz) < 1e-8
+                        && Math.Abs(ax * ax + ay * ay - 1) < 1e-8
+                        && Math.Abs(bx * bx + by * by - 1) < 1e-8
+                        && Math.Abs(ax * bx + ay * by) < 1e-8)
+                        circle = (x, y, cur.Radius);
+                    cur.FamilyLineCapture = null;
+                }
             }
         }
-        catch (DecodeFail) { } // Expected: an unsupported or truncated field ends the scan; fall through to the no-value result
+        catch (DecodeFail) { circle = null; } // Keep metadata from fully traversed objects.
 
         double? length = null;
         // Prefer a GArc/GEllipse over a GLine (a detail arc may carry a helper line).
@@ -6455,7 +6493,8 @@ internal static partial class TfBlockDeserializer
 
         int gs = cur.GStyle == int.MinValue ? -1 : cur.GStyle;
         if (gs < 0 && length == null) return null;
-        return (gs, length ?? 0);
+        // A circle can be accompanied by a straight helper curve.
+        return (gs, length ?? 0, cur.Pos == cur.End && cur.Curves!.Count(g => g.Kind != 0x6C8) == 1 ? circle : null);
     }
 
     /// <summary>Decode the two coordinate representations stored by a BasePoint block.
