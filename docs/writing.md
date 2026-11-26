@@ -263,11 +263,12 @@ separated interior opening can remain in place during the transition. RvtIO pres
 geometry history so that a later transition can reuse them. When the base moves above the entire opening, RvtIO
 retains the opening element, removes the cut and writes Revit's "Rectangular opening doesn't cut its host" warning.
 Moving the base back through the opening restores the cut and removes that warning. Reactivation directly through the
-base requires verified saved cut history. For a wall with one rectangular opening and verified cut history, the base can
-also coincide exactly with the sill or head. At the sill the opening cuts the wall and divides the base face into two
-outlines. At the head the opening keeps its guide faces and posts the warning without cutting the wall. Exact contacts
-on a wall with multiple openings, near-contact positions outside the verified ranges, simultaneous transitions of two
-bottom cuts, and unverified vertex projections are still refused.
+base requires verified saved cut history. The base can coincide exactly with the sill or head of one or two rectangular
+openings with verified cut histories and separated positions along the wall. At the sill the opening cuts the wall and
+splits the outline of its base face. At the head the opening keeps its guide faces and posts the warning without cutting
+the wall. This covers contacts at both openings and a contact at one opening while the other remains interior, cuts through
+the base, or falls below it. Transitions outside these layouts, near-contact positions outside the verified ranges, and
+unverified vertex projections are still refused.
 
 ## Editing a standalone family
 
@@ -898,6 +899,14 @@ verified transitions between the contacts, an interior opening, a cut through th
 the wall, including the saved warning. Revit 2027 additionally checked oblique and level-constrained walls and changes
 to Unconnected Height and Top Offset with the base still in contact. A later unverified near-contact edit in a batch
 left the source byte-for-byte intact and produced no output in every file format.
+
+The two-opening checks covered matching and staggered opening elevations, an unaffected interior opening, and batches
+that add or remove two warnings on the same wall. Revit 2020–2025 and 2027 matched the API controls after saving and
+reopening without Audit. The 2026-format files were checked after upgrade in Revit 2027. Revit 2027 also checked the
+opposite creation order of the two openings. The checks compared assigned offsets, bounds, quantities, opening
+ownership and warnings. Revit also accepted tested near-contact positions that
+RvtIO still refuses. Near the opening head, the number of stored edges can differ from both the exact contact and the
+ordinary cut through the base.
 
 ## Remaining parameter coverage
 

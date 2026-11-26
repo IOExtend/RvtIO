@@ -423,8 +423,9 @@ internal static partial class WallHeightWriter
         && openings.Any(o => IsAtBoundary(o.Cut) || IsAtBoundary(o.Destination));
 
     internal static bool CanReplayBaseBoundaryCuts(IReadOnlyList<OpeningInterval> openings) =>
-        openings.Count == 1 && IsBaseLayout(openings[0].Cut) && IsBaseLayout(openings[0].Destination)
-        && (IsAtBaseBoundary(openings[0].Cut) || IsAtBaseBoundary(openings[0].Destination));
+        openings.Count is 1 or 2 && SeparatedOpeningStations(openings)
+        && openings.All(o => IsBaseLayout(o.Cut) && IsBaseLayout(o.Destination))
+        && openings.Any(o => IsAtBaseBoundary(o.Cut) || IsAtBaseBoundary(o.Destination));
 
     private static bool IsBaseLayout(OpeningCut cut) =>
         cut is OpeningCut.Interior or OpeningCut.ThroughBottom or OpeningCut.BelowWall || IsAtBaseBoundary(cut);

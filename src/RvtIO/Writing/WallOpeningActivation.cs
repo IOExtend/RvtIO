@@ -289,13 +289,23 @@ internal static partial class WallHeightWriter
                 _edits.Add((_tableStart, _tableEnd, Encode([generators.Count, .. generators])));
             if (replaysFloor)
             {
+                var floor = contours[_boundary];
+                if (floor.Count == 3)
+                {
+                    // Revit writes the two end contours before the contour between the openings.
+                    int leftEnd = _baseEdges.Get((2, 0, 2, -1));
+                    int left = floor.FindIndex(loop => loop.Contains(leftEnd));
+                    if (left is not (1 or 2) || !floor[0].Contains(_baseEdges.Get((2, 2, 1, -1))))
+                        throw Layout();
+                    (floor[1], floor[left]) = (floor[left], floor[1]);
+                }
                 // The saved contour starts at a vertical end edge when the opening interrupts the base.
-                if (_opening.Destination is OpeningCut.AtBaseSill or OpeningCut.ThroughBottom)
+                if (floor.Count > 1)
                 {
                     RotateSideOutline(_sideA, BaseSideEdge(1, 0));
                     RotateSideOutline(_sideB, BaseSideEdge(1, 1));
                 }
-                else if (_opening.Destination is OpeningCut.AtBaseHead or OpeningCut.BelowWall)
+                else if (contours[_sideA].Count == 1)
                 {
                     RotateSideOutline(_sideB, BaseSideEdge(0, 1));
                 }

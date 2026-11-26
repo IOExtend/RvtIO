@@ -44,6 +44,10 @@ public class WallHeightWriterTests
             [opening with { Cut = WallHeightWriter.OpeningCut.AtBaseSill, Destination = WallHeightWriter.OpeningCut.BelowWall }]));
         Assert.False(WallHeightWriter.CanReplayBaseBoundaryCuts(
             [opening with { Cut = WallHeightWriter.OpeningCut.ThroughTop }]));
+        var interior = opening with { Left = 11, Right = 15, Bottom = 6, Top = 7.5, Destination = WallHeightWriter.OpeningCut.Interior };
+        Assert.True(WallHeightWriter.CanReplayBaseBoundaryCuts([opening, interior]));
+        Assert.True(WallHeightWriter.CanReplayBaseBoundaryCuts([interior, opening]));
+        Assert.False(WallHeightWriter.CanReplayBaseBoundaryCuts([opening, interior with { Left = 7 }]));
     }
 
     [Fact]
