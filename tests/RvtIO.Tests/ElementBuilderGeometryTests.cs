@@ -8,6 +8,29 @@ namespace RvtIO.Tests;
 public class ElementBuilderGeometryTests
 {
     [Fact]
+    public void PlacedFaceAxesRemainIndependentlyWritableAfterConcurrentAccess()
+    {
+        var face = new GeoFace([1, 2, 3], [0, 0, 1]);
+        var other = new GeoFace([1, 2, 3], [0, 0, 1]);
+        var axes = new double[32][];
+        Parallel.For(0, axes.Length, i => axes[i] = face.XVector);
+
+        Assert.All(axes, axis => Assert.Same(face.XVector, axis));
+        face.XVector[0] = 4;
+        Assert.Equal(new double[3], face.YVector);
+        Assert.Equal(new double[3], other.XVector);
+        double[] assigned = [0, -1, 0];
+        face.YVector = assigned;
+        Assert.Same(assigned, face.YVector);
+        face.YVector = null!;
+        Assert.Null(face.YVector);
+
+        var areaOnly = new GeoFace([], [], includePlaneAxes: false);
+        Assert.Empty(areaOnly.XVector);
+        Assert.Empty(areaOnly.YVector);
+    }
+
+    [Fact]
     public void SelectWallLocationCurveCandidate_RejectsVerticalExtrusionGenerator()
     {
         var locationCurve = new CurveDriverData

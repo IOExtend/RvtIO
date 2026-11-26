@@ -117,14 +117,32 @@ namespace RvtIO.Model
     public class GeoFace
     {
         /// <summary>Creates a face with zeroed plane vectors.</summary>
-        public GeoFace() : this(new double[3], new double[3]) { }
+        public GeoFace() : this(new double[3], new double[3])
+        {
+            _xVector = new double[3];
+            _yVector = new double[3];
+        }
 
         internal GeoFace(double[] origin, double[] normal, bool includePlaneAxes = true)
         {
             Origin = origin;
             Normal = normal;
-            XVector = includePlaneAxes ? new double[3] : [];
-            YVector = includePlaneAxes ? new double[3] : [];
+            _xVector = includePlaneAxes ? DeferredAxis : [];
+            _yVector = includePlaneAxes ? DeferredAxis : [];
+        }
+
+        // Placed polygon faces expose writable zero axes, which a mesh export rarely reads.
+        private static readonly double[] DeferredAxis = new double[0];
+        private double[] _xVector;
+        private double[] _yVector;
+
+        private static double[] GetAxis(ref double[] field)
+        {
+            var axis = Volatile.Read(ref field);
+            if (!ReferenceEquals(axis, DeferredAxis)) return axis;
+            var zero = new double[3];
+            var previous = Interlocked.CompareExchange(ref field, zero, DeferredAxis);
+            return ReferenceEquals(previous, DeferredAxis) ? zero : previous;
         }
 
         /// <summary>GFace.m_renderStyleId: the material element id of the face (internal; not serialized).</summary>
@@ -135,10 +153,18 @@ namespace RvtIO.Model
         public double[] Origin { get; set; }
 
         /// <summary>Plane X direction vector [x, y, z].</summary>
-        public double[] XVector { get; set; }
+        public double[] XVector
+        {
+            get => GetAxis(ref _xVector);
+            set => Volatile.Write(ref _xVector, value);
+        }
 
         /// <summary>Plane Y direction vector [x, y, z].</summary>
-        public double[] YVector { get; set; }
+        public double[] YVector
+        {
+            get => GetAxis(ref _yVector);
+            set => Volatile.Write(ref _yVector, value);
+        }
 
         /// <summary>Normal = XVector x YVector (computed).</summary>
         public double[] Normal { get; set; }
