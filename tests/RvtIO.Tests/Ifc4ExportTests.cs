@@ -120,6 +120,56 @@ public class Ifc4ExportTests
         return sw.ToString();
     }
 
+    [Theory]
+    [InlineData(IfcModelView.ReferenceView12, IfcProfile.Current)]
+    [InlineData(IfcModelView.DesignTransferView10, IfcProfile.Current)]
+    [InlineData(IfcModelView.ReferenceView12, IfcProfile.Legacy)]
+    public void Ifc4FixedDistributionPortsNestUnderTheirHosts(IfcModelView view, IfcProfile profile)
+    {
+        var doc = SyntheticArchAndMepDocument();
+        var panel = doc.Elements.Single(element => element.Id == 31);
+        var outlet = doc.Elements.Single(element => element.Id == 41);
+        panel.SerializedConnectorGraph = [(2, -1, []), (0, 2, [(41, 0, 1)])];
+        panel.SerializedConnectorModes = [1, 1];
+        outlet.SerializedConnectorGraph = [(0, 1, [(31, 0, 1)])];
+        outlet.SerializedConnectorModes = [1];
+        panel.SerializedMepConnectors = [(2, -1, 16), (0, 2, 16)];
+        outlet.SerializedMepConnectors = [(0, 1, 16)];
+
+        string step = ExportText(doc, new IfcExporter { Schema = IfcSchema.Ifc4, ModelView = view, Profile = profile });
+        var lines = step.Split('\n');
+
+        static string Ref(string line) => line[..line.IndexOf('=')];
+        static string[] Args(string line) => IfcExporter.SplitStepArguments(line[(line.IndexOf('(') + 1)..line.LastIndexOf(')')]);
+        string[] Entities(string entity) => lines.Where(line => line.Contains($"={entity}(", StringComparison.Ordinal)).ToArray();
+
+        string panelRef = Ref(Assert.Single(Entities("IFCELECTRICDISTRIBUTIONBOARD")));
+        string outletRef = Ref(Assert.Single(Entities("IFCOUTLET")));
+        var ports = Entities("IFCDISTRIBUTIONPORT").ToDictionary(line => Args(line)[2], Ref);
+        Assert.Equal(3, ports.Count);
+        string sourceRef = ports["'OutPort_31_0'"];
+        string sinkRef = ports["'InPort_41_0'"];
+        string freeRef = ports["'Port_31_2'"];
+
+        var nests = Entities("IFCRELNESTS").Select(Args).ToDictionary(args => args[4], args => args[5]);
+        Assert.Equal(2, nests.Count);
+        Assert.Equal($"({sourceRef},{freeRef})", nests[panelRef]);
+        Assert.Equal($"({sinkRef})", nests[outletRef]);
+        Assert.Empty(Entities("IFCRELCONNECTSPORTTOELEMENT"));
+
+        var connections = Entities("IFCRELCONNECTSPORTS");
+        if (profile == IfcProfile.Current)
+        {
+            var connection = Args(Assert.Single(connections));
+            Assert.Equal(sourceRef, connection[4]);
+            Assert.Equal(sinkRef, connection[5]);
+        }
+        else
+        {
+            Assert.Empty(connections);
+        }
+    }
+
     [Fact]
     public void FixedTimestampIfc2x3Regression_DefaultMatchesExplicitIfc2x3ByteForByte()
     {
