@@ -1083,7 +1083,8 @@ namespace RvtIO.Model
         [JsonIgnore]
         internal int? SketchLoopKey { get; set; }
 
-        /// <summary>Host element ID for inserts (doors/windows -> host wall).</summary>
+        /// <summary>Host element key, for example the wall of an insert or the analytical host
+        /// of a boundary condition. Use HostElementId for the full source ID.</summary>
         public int? HostId { get; set; }
 
         /// <summary>

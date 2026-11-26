@@ -12,6 +12,9 @@ internal sealed class FramedElementTypes
     private const string OwnerField = "Element.m_id";
     private const string ViewerView = "Viewer.m_dbViewId";
     private const string CenterLineOwner = "CenterLine.m_OwnerId";
+    private const string BoundaryType = "BoundaryConditions.m_type";
+    private const string BoundaryPick = "LoadBCBase.m_oPick";
+    private const string PickElement = "ElemPick.m_elemId";
     private const string ViewType = "DBView.m_dbViewTypeId";
     private const string ViewMarker = "DBView.m_viewerId";
     private const string ViewportType = "Viewport.m_attrId";
@@ -78,7 +81,8 @@ internal sealed class FramedElementTypes
 
     private static readonly HashSet<string> CapturedFields =
     [
-        OwnerField, HeaderCategory, ViewerView, CenterLineOwner, ViewType, ViewMarker, ViewportType, ReferenceViewer, MarkerParent, MarkerType, StairOwner,
+        OwnerField, HeaderCategory, ViewerView, CenterLineOwner, BoundaryType, BoundaryPick, PickElement,
+        ViewType, ViewMarker, ViewportType, ReferenceViewer, MarkerParent, MarkerType, StairOwner,
         StairType, RunType, LandingType, FabricType, RailType, ActualSpanSymbol, TagSymbol, MasterSymbol,
         SupportHost, SupportOverridden, LeftSupport, RightSupport, LeftSupportStyle, RightSupportStyle, IntermediateSupport,
         GridChainType, RebarContainerType, RebarInstance, RebarType, SoffitType, RampType, WallSweepType,
@@ -120,7 +124,8 @@ internal sealed class FramedElementTypes
     private static readonly HashSet<string> CategoryParameterSources =
     [
         "Viewer", "Viewer3d", "Section", "InteriorElevArrow", "SegmentCenterLine",
-        "PipeFittingCenterLine", "DuctFittingCenterLine", "PropertySetElement",
+        "PipeFittingCenterLine", "DuctFittingCenterLine", "PropertySetElement", "BoundaryConditions",
+        "RbsPipeCurve", "RbsDuctCurve", "RbsConduitCurve", "CableTray",
     ];
 
     private enum HeaderParameterValue { InvalidOnly, NamedOnly, InvalidOrNamed }
@@ -142,6 +147,7 @@ internal sealed class FramedElementTypes
             && copy.Count(field => field.Key.StartsWith(ArrowList + "@", StringComparison.Ordinal)) == count);
     }
 
+    private readonly SchemaDocument _schema;
     private readonly WideBlockWalker _walker;
     private readonly Lazy<WideBlockWalker> _familyVisibility;
     private readonly HashSet<int> _classes;
@@ -153,6 +159,7 @@ internal sealed class FramedElementTypes
     private FramedElementTypes(SchemaDocument schema, IReadOnlyDictionary<Guid, SchemaField[]?> entities,
         bool recoverUnanchoredTypes, bool recoverRoutedTypes, bool englishCurveNames, bool applyTypeLinks, bool projectCategories)
     {
+        _schema = schema;
         var extraFields = recoverUnanchoredTypes ? UnanchoredTypes.Values.Select(link => link.Field).ToHashSet() : null;
         if (recoverRoutedTypes) extraFields!.UnionWith(RoutedTypes.Values.Select(link => link.Field));
         _walker = new WideBlockWalker(schema, (declaring, field) =>
@@ -190,15 +197,18 @@ internal sealed class FramedElementTypes
             {
                 if (_walker.IsA(cls.Id, "Symbol") || _walker.IsA(cls.Id, "ParamElem") || _walker.IsA(cls.Id, "DBView"))
                     _headerParameterClasses.Add(cls.Id, HeaderParameterValue.InvalidOrNamed);
-                else if (cls.Name is "RoomTag" or "LegendComponent" || _walker.IsA(cls.Id, "Dimension"))
+                else if (cls.Name is "RoomTag" or "LegendComponent" or "SWall" or "FamilyInstance" || _walker.IsA(cls.Id, "Dimension"))
                     _headerParameterClasses.Add(cls.Id, HeaderParameterValue.NamedOnly);
                 else if (cls.Name is "GStyleElem" or "ParamElemFamily" or "CategoryElem" or "FontElem" or "ParamBinding"
                     or "SketchPlane" or "PostedWarningElem" or "Family" or "DBDrawing" or "AppearanceAssetElem"
                     or "ExtentElem" or "FillPatternElem" or "RefTableElem" or "LinePatternElem"
+                    or "LightGroup" or "LightSchemeElement" or "AreaTypeElem" or "LevelRoomPlan"
+                    or "AllPlanTopologies" or "AreaSchemePlanTopologies"
                     || _walker.IsA(cls.Id, "FamilySurrogateBase") || _walker.IsA(cls.Id, "SketchBase") || _walker.IsA(cls.Id, "FilterElement"))
                     _headerParameterClasses.Add(cls.Id, HeaderParameterValue.InvalidOnly);
             }
         _classes = schema.Classes.Where(cls => englishCurveNames && cls.Name is ("CurveElem" or "Family" or "VarSketch")
+                || projectCategories && cls.Name == "BoundaryConditions"
                 || applyTypeLinks && (Classes.Contains(cls.Name) || projectCategories && CategoryParameterSources.Contains(cls.Name)
                     || _untypedClasses.Contains(cls.Id) || _walker.IsA(cls.Id, "FamilySymbol")
                     || _walker.IsA(cls.Id, "DBView") || _walker.IsA(cls.Id, "DBViewType")
@@ -357,8 +367,16 @@ internal sealed class FramedElementTypes
             element.TypeId = typeKey;
             changed++;
         }
-        if (applyTypeLinks && projectCategories)
-            reader.ApplyProjectCategories(frames.Cast<PartitionFraming.Framed>().ToArray(), elements, state, unroutedTypePartitions);
+        if (projectCategories)
+        {
+            var projectFrames = frames.Cast<PartitionFraming.Framed>().ToArray();
+            if (applyTypeLinks)
+                reader.ApplyProjectCategories(projectFrames, elements, state, unroutedTypePartitions);
+            else
+                reader.ApplyCategoryParameters(projectFrames,
+                    elements.Where(e => e.RootClassName == "BoundaryConditions" && state.ElemTable.ContainsKey((uint)e.Id))
+                        .ToDictionary(e => SourceId(e.Id)), state);
+        }
         return changed;
     }
 
@@ -483,8 +501,22 @@ internal sealed class FramedElementTypes
     {
         var links = new List<(long Owner, string Kind, long? Target)>();
         var records = new Dictionary<long, CategoryRecords>();
+        long? RegisterTarget(long owner, long? id)
+        {
+            if (id is not > 0 || id == owner) return null;
+            int key;
+            if (state.ElementIds != null ? !state.ElementIds.TryGetKey(id.Value, out key)
+                : id > int.MaxValue || (key = (int)id.Value) <= 0) return null;
+            if (!state.ElemTable.ContainsKey((uint)key)) return null;
+            if (!records.ContainsKey(id.Value)) records.Add(id.Value, new());
+            return id;
+        }
         foreach (long owner in _headerParameterOwners)
             records.Add(owner, new());
+        var fittings = owners.Where(pair => pair.Value.CategoryId is (int)BuiltInCategory.OST_PipeFitting
+            or (int)BuiltInCategory.OST_DuctFitting).ToArray();
+        foreach (var (owner, _) in fittings)
+            records.TryAdd(owner, new());
         foreach (var (owner, copies) in _sources)
         {
             string kind = copies[0].Class.Name;
@@ -493,15 +525,12 @@ internal sealed class FramedElementTypes
             if (kind is "Viewer" or "Viewer3d" or "Section" or "InteriorElevArrow"
                 or "SegmentCenterLine" or "PipeFittingCenterLine" or "DuctFittingCenterLine")
             {
-                target = root.Field(kind is "SegmentCenterLine" or "PipeFittingCenterLine" or "DuctFittingCenterLine"
-                    ? CenterLineOwner : ViewerView);
-                if (target is not > 0 || target == owner) continue;
-                int key;
-                if (state.ElementIds != null ? !state.ElementIds.TryGetKey(target.Value, out key)
-                    : target > int.MaxValue || (key = (int)target.Value) <= 0) continue;
-                if (!state.ElemTable.ContainsKey((uint)key)) continue;
-                if (!records.ContainsKey(target.Value)) records.Add(target.Value, new());
+                target = RegisterTarget(owner, root.Field(kind is "SegmentCenterLine" or "PipeFittingCenterLine" or "DuctFittingCenterLine"
+                    ? CenterLineOwner : ViewerView));
+                if (target == null) continue;
             }
+            else if (kind == "BoundaryConditions")
+                target = RegisterTarget(owner, root.Field(PickElement));
             if (!records.TryGetValue(owner, out var source)) records.Add(owner, source = new());
             source.RootClass = root.Class.Id;
             links.Add((owner, kind, target));
@@ -535,10 +564,76 @@ internal sealed class FramedElementTypes
                 }
             }
 
+        // A run and its center line report the volume of the run's own coarse solid.
+        WideSolidQuantities? geometry = null;
+        var volumes = new Dictionary<long, double>();
+        foreach (var (owner, kind, _) in links)
+        {
+            var category = kind switch
+            {
+                "RbsPipeCurve" => BuiltInCategory.OST_PipeCurves,
+                "RbsDuctCurve" => BuiltInCategory.OST_DuctCurves,
+                "RbsConduitCurve" => BuiltInCategory.OST_Conduit,
+                "CableTray" => BuiltInCategory.OST_CableTray,
+                _ => BuiltInCategory.INVALID,
+            };
+            if (category == BuiltInCategory.INVALID || records[owner] is not { Complete: true, Category: long recorded }
+                || recorded != (int)category || owners[owner].CategoryId != (int)category) continue;
+            var run = owners[owner];
+            var existing = run.Parameters.FirstOrDefault(p => p.Id == (int)BuiltInParameter.HOST_VOLUME_COMPUTED && p.HasRevitValue);
+            double volume;
+            if (existing == null)
+            {
+                geometry ??= new WideSolidQuantities(_schema, frames, frames[0].IdWidth, state.ElementIds);
+                if (geometry.OwnCoarseVolume(run.Id) is not double measured) continue;
+                volume = measured;
+                Revit2027ApiValues.SetQuantity(run, BuiltInParameter.HOST_VOLUME_COMPUTED, volume);
+            }
+            else if (existing is { FromNativeFields: true, StorageType: StorageType.Double, Value: double saved }
+                && saved > 0 && double.IsFinite(saved)) volume = saved;
+            else continue;
+            if (category == BuiltInCategory.OST_CableTray) continue;
+            volumes.Add(owner, volume);
+
+            // The physical run exposes an unset Area parameter. Its center line has no such slot.
+            Revit2027ApiValues.SetUnsetArea(run);
+        }
+
+        foreach (var (owner, fitting) in fittings)
+        {
+            if (records[owner] is not { Complete: true, Category: long category, RootClass: int cls }
+                || category != fitting.CategoryId || _walker.Class(cls)?.Name != "FamilyInstance") continue;
+            geometry ??= new WideSolidQuantities(_schema, frames, frames[0].IdWidth, state.ElementIds);
+            Revit2027ApiValues.ApplyHistoricalFittingQuantities(fitting, geometry);
+        }
+
         foreach (var (owner, kind, target) in links)
         {
             var source = records[owner];
             if (!source.Complete) continue;
+            if (kind == "BoundaryConditions")
+            {
+                // Historical headers can carry the parent category for all three kinds of support.
+                int? subcategory = GetRoot(owner)?.Field(BoundaryType) switch
+                {
+                    0 => -2005302, // OST_PointBoundaryConditions
+                    1 => -2005303, // OST_LineBoundaryConditions
+                    2 => -2005304, // OST_AreaBoundaryConditions
+                    _ => null,
+                };
+                if (subcategory is int id && (source.Category == (int)BuiltInCategory.OST_BoundaryConditions || source.Category == id))
+                {
+                    var element = owners[owner];
+                    element.CategoryId = id;
+                    element.Category = BuiltInCategoryNames.Lookup[id];
+                    SetCategoryParameters(element, id, true);
+                    if (target is long pick && records[pick] is { Complete: true, RootClass: int targetClass }
+                        && _walker.Class(targetClass)?.Name is "AnalyticalMember" or "AnalyticalPanel"
+                            or "AnalyticalModelColumn" or "AnalyticalModelBeam" or "AnalyticalModelWall" or "AnalyticalModelSlab")
+                        element.HostId ??= state.ElementIds?.Key(pick) ?? checked((int)pick);
+                }
+                continue;
+            }
             if (target == null)
             {
                 if (kind == "PropertySetElement" && source.Category == (int)BuiltInCategory.OST_PropertySet)
@@ -556,7 +651,18 @@ internal sealed class FramedElementTypes
                 "DuctFittingCenterLine" => hostKind == "FamilyInstance" && category == (int)BuiltInCategory.OST_DuctFitting,
                 _ => _walker.IsA(cls, "DBView"),
             };
-            if (matches) SetCategoryParameters(owners[owner], (int)category, true);
+            if (matches)
+            {
+                SetCategoryParameters(owners[owner], (int)category, true);
+                if (kind == "SegmentCenterLine" && volumes.TryGetValue(target.Value, out double volume))
+                    Revit2027ApiValues.SetQuantity(owners[owner], BuiltInParameter.HOST_VOLUME_COMPUTED, volume);
+                if (kind is "PipeFittingCenterLine" or "DuctFittingCenterLine"
+                    && owners.TryGetValue(target.Value, out var fitting) && fitting.CategoryId == category)
+                {
+                    Revit2027ApiValues.CopyPositiveQuantity(owners[owner], fitting, BuiltInParameter.HOST_AREA_COMPUTED);
+                    Revit2027ApiValues.CopyPositiveQuantity(owners[owner], fitting, BuiltInParameter.HOST_VOLUME_COMPUTED);
+                }
+            }
         }
 
         foreach (long owner in _headerParameterOwners)
@@ -669,11 +775,18 @@ internal sealed class FramedElementTypes
             if (!walk.Exact) return null;
             int rebarInstance = kind.Name == "Rebar" && walk.RootPointers?.TryGetValue(RebarInstance, out int queued) == true
                 && _walker.IsA(walk.Queue[queued], "RebarInstBase") ? queued : -1;
+            int pick = kind.Name == "BoundaryConditions" && walk.RootPointers?.TryGetValue(BoundaryPick, out int selected) == true
+                && _walker.Class(walk.Queue[selected])?.Name == "Pick" ? selected : -1;
             var values = new Dictionary<string, long>();
             foreach (var capture in walk.Captures)
             {
                 if (capture.Kind == WideBlockWalker.CaptureKind.Integer
-                    && (capture.Key == RebarType ? rebarInstance >= 0 && capture.QueueIndex == rebarInstance : capture.AtRoot)
+                    && (capture.Key switch
+                    {
+                        RebarType => rebarInstance >= 0 && capture.QueueIndex == rebarInstance,
+                        PickElement => pick >= 0 && capture.QueueIndex == pick,
+                        _ => capture.AtRoot,
+                    })
                     && !values.TryAdd(capture.Key, capture.Integer)) return null;
                 if (capture.Key == CurveUserData && capture.Kind == WideBlockWalker.CaptureKind.PointerClass
                     && capture.QueueIndex == -1 && !capture.AtRoot && !values.TryAdd(CurveUserData, capture.Integer))

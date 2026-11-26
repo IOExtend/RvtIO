@@ -29,12 +29,15 @@ internal sealed class WideSolidQuantities
     private readonly HashSet<(long X, long Y, long Z)> _splitVertices = [];
 
     internal WideSolidQuantities(FileSchema schema, IReadOnlyList<PartitionFraming.Framed?> frames, ElementIdMap? ids = null)
+        : this(schema.Document, frames, 8, ids) { }
+
+    internal WideSolidQuantities(SchemaDocument schema, IReadOnlyList<PartitionFraming.Framed?> frames, int idWidth, ElementIdMap? ids)
     {
-        _geometryLayout = new(schema.Document, GeometrySchema.Value, 8, ids);
+        _geometryLayout = new(schema, GeometrySchema.Value, idWidth, ids);
         var ambiguous = new HashSet<int>();
         foreach (var frame in frames)
         {
-            if (frame?.IdWidth != 8) continue;
+            if (frame == null || frame.IdWidth != idWidth) continue;
             foreach (var item in frame.Items)
             {
                 if (item.Channel != 103 || item.Owner is 0 or > long.MaxValue) continue;
@@ -52,6 +55,15 @@ internal sealed class WideSolidQuantities
     }
 
     internal Solid?[]? Measure(int id, Source source = Source.Default) => Measure(id, source, []);
+
+    internal double? OwnCoarseVolume(int id) => OwnCoarseVolume(Read(id, Source.VisibleVolume));
+
+    internal static double? OwnCoarseVolume(GRepData? fine)
+    {
+        var coarse = fine?.Coarse ?? fine;
+        return coarse is { IsOpenSurface: false, Instances.Count: 0, SourceBodyMeasures: { Count: > 0, Volume: > 0 } body }
+            && double.IsFinite(body.Volume) ? body.Volume : null;
+    }
 
     internal double? WallArea(int id, double dx, double dy, double dz, double? width, bool curtain)
     {
@@ -363,12 +375,13 @@ internal sealed class WideSolidQuantities
 
     private GRepData? Read(int id, Source source = Source.Default)
     {
-        if (!_records.TryGetValue(id, out var record) || record.Item.Length is < 22 or > (int)BlockParser.MaxBlockSize + 20)
-            return null;
+        if (!_records.TryGetValue(id, out var record)) return null;
+        int size = record.Item.Length - record.Frame.IdWidth - 12;
+        if (size is < 2 or > (int)BlockParser.MaxBlockSize) return null;
         var (data, start, _) = record.Frame.Bytes(record.Item);
-        int size = record.Item.Length - 20;
-        if (_geometryLayout.TargetId(BitConverter.ToUInt16(data, start + 16)) is not (2006 or 2007)
-            || _geometryLayout.Payload(data, start + 16, size) is not { } payload || payload.Length > BlockParser.MaxBlockSize)
+        int payloadStart = start + record.Frame.IdWidth + 8;
+        if (_geometryLayout.TargetId(BitConverter.ToUInt16(data, payloadStart)) is not (2006 or 2007)
+            || _geometryLayout.Payload(data, payloadStart, size) is not { } payload || payload.Length > BlockParser.MaxBlockSize)
             return null;
 
         byte[] block = new byte[payload.Length + 16];

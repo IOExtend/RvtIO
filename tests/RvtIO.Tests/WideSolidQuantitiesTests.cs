@@ -1,4 +1,6 @@
+using RvtIO.BuiltIns;
 using RvtIO.Internal;
+using RvtIO.Model;
 using RvtIO.Parsing;
 using Xunit;
 
@@ -6,6 +8,46 @@ namespace RvtIO.Tests;
 
 public sealed class WideSolidQuantitiesTests
 {
+    [SkippableFact]
+    public void CableTraysExposeTheirCoarseBodyVolumesInThe2022JpSample()
+    {
+        // Autodesk Revit 2022 Samples/サンプル設備.rvt, copied to this fixture name.
+        var doc = RvtDocument.Open(TestFiles.FindRelative("2022/jp_sample_3.rvt"));
+        var category = doc.Collector().OfCategory(BuiltInCategory.OST_CableTray).ToElements();
+        var trays = category.Where(e => e.RootClassName == "CableTray").ToArray();
+        Assert.Equal(47, trays.Length);
+        Assert.All(category.Where(e => e.RootClassName == "RbsCableTrayType"),
+            type => Assert.Null(type.LookupParameter(BuiltInParameter.HOST_VOLUME_COMPUTED)));
+        var volumes = trays.Select(tray =>
+            Assert.IsType<double>(tray.LookupParameter(BuiltInParameter.HOST_VOLUME_COMPUTED)?.Value)).ToArray();
+        // Revit 2027.2, internal cubic feet.
+        Assert.Equal(0.08306293994227595, volumes.Min(), 10);
+        Assert.Equal(26.62019577465626, volumes.Max(), 10);
+        Assert.Equal(339.6598724599558, volumes.Sum(), 9);
+    }
+
+    [SkippableFact]
+    public void StandaloneDuctFittingsExposeTheirOwnVolumeAndAreaInThe2022MepSample()
+    {
+        // Autodesk Revit 2022 Sample Project Files, Mechanical, Electrical, and Plumbing.
+        var doc = RvtDocument.Open(TestFiles.FindRelative("2022/rme_basic_sample_project.rvt"));
+        // Revit 2027.2 reports no fitting center line for either instance.
+        var withArea = doc.GetElement("7485c179-9364-48d7-b68b-6736718012c4-000600c6");
+        var withUnsetArea = doc.GetElement("7485c179-9364-48d7-b68b-6736718012c4-0005fc0b");
+        Assert.NotNull(withArea);
+        Assert.NotNull(withUnsetArea);
+        const BuiltInParameter volume = BuiltInParameter.HOST_VOLUME_COMPUTED;
+        const BuiltInParameter area = BuiltInParameter.HOST_AREA_COMPUTED;
+        Assert.Equal(4.124314503041933, Assert.IsType<double>(withArea.LookupParameter(volume)?.Value), 10);
+        Assert.Equal(2.628232886538773, Assert.IsType<double>(withArea.LookupParameter(area)?.Value), 10);
+        Assert.Equal(4.767480007400812, Assert.IsType<double>(withUnsetArea.LookupParameter(volume)?.Value), 10);
+        var emptyArea = withUnsetArea.LookupParameter(area);
+        Assert.NotNull(emptyArea);
+        Assert.Equal(StorageType.Double, emptyArea.StorageType);
+        Assert.False(emptyArea.HasRevitValue);
+        Assert.Null(emptyArea.Value);
+    }
+
     [Theory]
     [InlineData(1, 2, 5d)]
     [InlineData(3, 4, 0d)]
@@ -29,6 +71,23 @@ public sealed class WideSolidQuantitiesTests
         representation.Solids[0].IsClosed = false;
 
         Assert.Null(WideSolidQuantities.Local(representation));
+    }
+
+    [Fact]
+    public void RunVolumeUsesOnlyItsOwnClosedCoarseBodies()
+    {
+        var fine = new GRepData { SourceBodyMeasures = (7, 18, 1) };
+        Assert.Equal(7d, WideSolidQuantities.OwnCoarseVolume(fine));
+        fine.Coarse = new GRepData { SourceBodyMeasures = (3, 10, 1) };
+        Assert.Equal(3d, WideSolidQuantities.OwnCoarseVolume(fine));
+        fine.Coarse.IsOpenSurface = true;
+        Assert.Null(WideSolidQuantities.OwnCoarseVolume(fine));
+        fine.Coarse.IsOpenSurface = false;
+        fine.Coarse.Instances.Add(new());
+        Assert.Null(WideSolidQuantities.OwnCoarseVolume(fine));
+        fine.Coarse.Instances.Clear();
+        fine.Coarse.SourceBodyMeasures = null;
+        Assert.Null(WideSolidQuantities.OwnCoarseVolume(fine));
     }
 
     [Fact]

@@ -85,6 +85,89 @@ public class FramedElementTypesTests
     }
 
     [Theory]
+    [InlineData("saved", 2.5)]
+    [InlineData("stored zero area", 2.5)]
+    [InlineData("existing line", 9.0)]
+    [InlineData("conflicting link", null)]
+    [InlineData("unpaired geometry owner", null)]
+    [InlineData("different category", null)]
+    [InlineData("unavailable source", null)]
+    public void SegmentCenterLineVolumeRequiresItsAgreedRun(string condition, double? expected)
+    {
+        var f = new Fixture();
+        f.Add("SegmentCenterLine", 10, w => f.Id(w, 20), partition: 1);
+        f.AddHeader(10, BuiltInCategory.OST_Lines, partition: 1);
+        if (condition == "conflicting link")
+        {
+            f.Add("SegmentCenterLine", 10, w => f.Id(w, 21), partition: 3);
+            f.AddHeader(10, BuiltInCategory.OST_Lines, partition: 3);
+        }
+        var category = condition == "different category" ? BuiltInCategory.OST_DuctCurves : BuiltInCategory.OST_PipeCurves;
+        f.Add("RbsPipeCurve", 20, partition: 2);
+        f.AddHeader(20, category, partition: condition == "unpaired geometry owner" ? 5 : 2);
+        var run = new Element { Id = 20, CategoryId = (int)category };
+        var line = new Element { Id = 10 };
+        var source = BipHelpers.MakeBipParam((int)BuiltInParameter.HOST_VOLUME_COMPUTED, "HOST_VOLUME_COMPUTED", StorageType.Double, 2.5);
+        source.FromNativeFields = true;
+        source.HasNoRevitValue = condition == "unavailable source";
+        run.Parameters.Add(source);
+        const BuiltInParameter area = BuiltInParameter.HOST_AREA_COMPUTED;
+        if (condition == "stored zero area")
+            run.Parameters.Add(BipHelpers.MakeBipParam((int)area, area.ToString(), StorageType.Double, 0.0));
+        if (condition == "existing line") line.Parameters.Add(source.ShallowCopy(9.0));
+        f.Apply(line, linkedElement: run);
+        Assert.Equal(expected, line.Parameters.SingleOrDefault(p => p.Id == source.Id)?.Value);
+        Assert.Same(source, Assert.Single(run.Parameters, p => p.Id == source.Id));
+        Assert.DoesNotContain(line.Parameters, p => p.Id == (int)area);
+        if (condition is "different category" or "unpaired geometry owner" or "unavailable source")
+            Assert.DoesNotContain(run.Parameters, p => p.Id == (int)area);
+        else
+        {
+            var slot = Assert.Single(run.Parameters, p => p.Id == (int)area);
+            Assert.Equal(StorageType.Double, slot.StorageType);
+            Assert.Equal(condition == "stored zero area", slot.HasRevitValue);
+            Assert.Equal(condition == "stored zero area" ? 0d : (double?)null, slot.Value);
+        }
+    }
+
+    [Theory]
+    [InlineData("PipeFittingCenterLine", BuiltInCategory.OST_PipeFitting, "valued")]
+    [InlineData("DuctFittingCenterLine", BuiltInCategory.OST_DuctFitting, "valued")]
+    [InlineData("DuctFittingCenterLine", BuiltInCategory.OST_DuctFitting, "unset area")]
+    [InlineData("PipeFittingCenterLine", BuiltInCategory.OST_PipeFitting, "existing line volume")]
+    [InlineData("PipeFittingCenterLine", BuiltInCategory.OST_DuctFitting, "wrong fitting class")]
+    [InlineData("PipeFittingCenterLine", BuiltInCategory.OST_PipeFitting, "unpaired owner")]
+    [InlineData("PipeFittingCenterLine", BuiltInCategory.OST_PipeFitting, "unverified volume")]
+    public void FittingCenterLineCopiesVerifiedPositiveQuantities(string kind, BuiltInCategory category, string condition)
+    {
+        var f = new Fixture();
+        f.Add(kind, 10, w => f.Id(w, 20), partition: 1);
+        f.AddHeader(10, BuiltInCategory.OST_Lines, partition: 1);
+        f.Add("FamilyInstance", 20, w => f.Id(w, -1), partition: 2);
+        f.AddHeader(20, category, partition: condition == "unpaired owner" ? 3 : 2);
+        var owner = new Element { Id = 20, CategoryId = (int)category };
+        var line = new Element { Id = 10 };
+        const BuiltInParameter volume = BuiltInParameter.HOST_VOLUME_COMPUTED, area = BuiltInParameter.HOST_AREA_COMPUTED;
+        var v = BipHelpers.MakeBipParam((int)volume, volume.ToString(), StorageType.Double, 3d);
+        v.FromNativeFields = condition != "unverified volume";
+        var a = BipHelpers.MakeBipParam((int)area, area.ToString(), StorageType.Double, condition == "unset area" ? null : 2d);
+        a.FromNativeFields = true;
+        owner.Parameters.Add(v);
+        owner.Parameters.Add(a);
+        if (condition == "existing line volume") line.Parameters.Add(v.ShallowCopy(4d));
+
+        f.Apply(line, linkedElement: owner);
+
+        bool paired = condition is not ("wrong fitting class" or "unpaired owner");
+        double? expectedVolume = !paired || condition == "unverified volume" ? null : condition == "existing line volume" ? 4d : 3d;
+        Assert.Equal(expectedVolume, line.LookupParameter(volume)?.Value);
+        Assert.Equal(paired && condition != "unset area" ? 2d : (double?)null, line.LookupParameter(area)?.Value);
+        if (condition == "unset area") Assert.Null(line.LookupParameter(area));
+        Assert.Same(a, owner.LookupParameter(area));
+        Assert.Same(v, owner.LookupParameter(volume));
+    }
+
+    [Theory]
     [InlineData(4)]
     [InlineData(8)]
     public void PropertySetElementHasACategoryAndTwoUnsetCategoryParameters(int width)
@@ -97,6 +180,107 @@ public class FramedElementTypesTests
         Assert.Equal((int)BuiltInCategory.OST_PropertySet, element.CategoryId);
         Assert.Equal(2, element.Parameters.Count);
         Assert.All(element.Parameters, p => { Assert.Equal(-1, p.Value); Assert.False(p.HasRevitValue); });
+    }
+
+    [Theory]
+    [InlineData(4, 0, 0, -2005301, -2005302)]
+    [InlineData(4, 1, 1, -2005301, -2005303)]
+    [InlineData(8, 2, 2, -2005301, -2005304)]
+    [InlineData(8, 1, 1, -2005303, -2005303)]
+    [InlineData(4, 0, 1, -2005301, 0)]
+    [InlineData(8, 2, 2, -2005303, 0)]
+    [InlineData(8, 3, 3, -2005301, 0)]
+    public void BoundaryCategoryRequiresAnAgreedKindAndCompatibleHeader(int width, int first, int second, int header, int expected)
+    {
+        var f = new Fixture(width);
+        f.Add("BoundaryConditions", 10, w => w.Write(first), partition: 1);
+        f.AddHeaderId(10, header, partition: 1);
+        f.Add("BoundaryConditions", 10, w => w.Write(second), partition: 3);
+        f.AddHeaderId(10, header, partition: 3);
+        foreach (bool keep in new[] { false, true })
+        {
+            var e = new Element { Id = 10, CategoryId = header, References = [17] };
+            f.Apply(e, recoverUnanchoredTypes: keep);
+            Assert.Equal(expected == 0 ? header : expected, e.CategoryId);
+            Assert.Equal([17], e.References);
+            if (expected == 0)
+                Assert.Empty(e.Parameters);
+            else
+            {
+                Assert.Equal(new[] { -1140362, -1140363 }, e.Parameters.Select(p => p.Id));
+                Assert.All(e.Parameters, p => { Assert.Equal(expected, p.Value); Assert.True(p.HasRevitValue); });
+                Assert.Equal(RvtIO.Lookup.BuiltInCategoryNames.Lookup[expected], e.Category);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(4, "AnalyticalModelColumn")]
+    [InlineData(4, "AnalyticalModelBeam")]
+    [InlineData(4, "AnalyticalModelWall")]
+    [InlineData(4, "AnalyticalModelSlab")]
+    [InlineData(4, "AnalyticalMember")]
+    [InlineData(8, "AnalyticalPanel")]
+    public void BoundaryHostUsesOnlyTheElementInItsOwnedPick(int width, string targetClass)
+    {
+        var f = new Fixture(width, boundaryPick: true);
+        long host = width == 8 ? (long)int.MaxValue + 20 : 20;
+        f.AddBoundary(10, host, 1);
+        f.AddBoundary(10, host, 3);
+        f.Add(targetClass, host, partition: 2);
+        f.AddHeader(host, BuiltInCategory.OST_Lines, partition: 2);
+        foreach (bool historical in new[] { false, true })
+        {
+            var element = new Element { Id = 10, NativeRootClassName = "BoundaryConditions" };
+            f.Apply(element, applyTypeLinks: historical);
+            Assert.Equal(host, element.HostElementId);
+            Assert.Equal(-2005302, element.CategoryId);
+        }
+    }
+
+    [Theory]
+    [InlineData("missing pick")]
+    [InlineData("different picks")]
+    [InlineData("self")]
+    [InlineData("unknown target")]
+    [InlineData("wrong class")]
+    [InlineData("wrong owner")]
+    [InlineData("unpaired target")]
+    [InlineData("existing host")]
+    public void UnresolvedBoundaryHostPreservesExistingFields(string condition)
+    {
+        var f = new Fixture(boundaryPick: true);
+        f.AddBoundary(10, condition switch { "missing pick" => null, "self" => 10, _ => 20 }, 1);
+        if (condition == "different picks") f.AddBoundary(10, 21, 3);
+        if (condition != "unknown target")
+        {
+            f.Add(condition == "wrong class" ? "Other" : "AnalyticalMember", 20,
+                storedOwner: condition == "wrong owner" ? 21 : 20, partition: 2);
+            f.AddHeader(20, BuiltInCategory.OST_Lines, partition: condition == "unpaired target" ? 4 : 2);
+        }
+        f.Add("AnalyticalPanel", 21, partition: 2);
+        f.AddHeader(21, BuiltInCategory.OST_Lines, partition: 2);
+        int? existing = condition == "existing host" ? 37 : null;
+        var element = new Element { Id = 10, HostId = existing };
+        f.Apply(element);
+        Assert.Equal(existing, element.HostId);
+        Assert.Equal(new[] { -1140362, -1140363 }, element.Parameters.Select(p => p.Id));
+        Assert.All(element.Parameters, p => Assert.Equal(-2005302, p.Value));
+    }
+
+    [Theory]
+    [InlineData(true, 2)]
+    [InlineData(false, 0)]
+    public void WideBoundaryParametersDoNotRequireHistoricalTypeRecovery(bool project, int count)
+    {
+        var f = new Fixture(8);
+        f.Add("BoundaryConditions", 10, w => w.Write(2), partition: 2);
+        f.AddHeaderId(10, -2005304, partition: 2);
+        var element = new Element { Id = 10, NativeRootClassName = "BoundaryConditions", TypeId = 77 };
+        f.Apply(element, applyTypeLinks: false, projectCategories: project);
+        Assert.Equal(77, element.TypeId);
+        Assert.Equal(count, element.Parameters.Count);
+        Assert.All(element.Parameters, p => Assert.Equal(-2005304, p.Value));
     }
 
     [Theory]
@@ -117,6 +301,12 @@ public class FramedElementTypesTests
     [InlineData(4, "FillPatternElem", true)]
     [InlineData(8, "RefTableElem", true)]
     [InlineData(4, "LinePatternElem", true)]
+    [InlineData(4, "LightGroup", true)]
+    [InlineData(8, "LightSchemeElement", true)]
+    [InlineData(4, "AreaTypeElem", true)]
+    [InlineData(8, "LevelRoomPlan", true)]
+    [InlineData(4, "AllPlanTopologies", true)]
+    [InlineData(8, "AreaSchemePlanTopologies", true)]
     [InlineData(4, "Other", false)]
     public void InvalidCategoryCanBeAComputedValueForAnUncategorizedOwner(int width, string kind, bool expected)
     {
@@ -176,6 +366,32 @@ public class FramedElementTypesTests
         var parameters = element.Parameters.Where(p => p.Id is -1140362 or -1140363).ToArray();
         Assert.Equal(expected ? new[] { -1140362, -1140363 } : [], parameters.Select(p => p.Id));
         Assert.All(parameters, p => { Assert.Equal(category, p.Value); Assert.True(p.HasRevitValue); });
+    }
+
+    [Theory]
+    [InlineData("SWall", 4, BuiltInCategory.OST_Walls, false)]
+    [InlineData("FamilyInstance", 8, BuiltInCategory.OST_Doors, false)]
+    [InlineData("SWall", 8, BuiltInCategory.OST_Walls, true)]
+    [InlineData("FamilyInstance", 4, BuiltInCategory.OST_Doors, true)]
+    [InlineData("FamilyInstance", 8, BuiltInCategory.INVALID, false)]
+    public void InstanceCategoryParametersRequireMatchingNamedHeadersAcrossCopies(
+        string kind, int width, BuiltInCategory category, bool conflict)
+    {
+        var f = new Fixture(width);
+        foreach (int partition in new[] { 1, 2 })
+        {
+            f.Add(kind, 10, w => f.Id(w, 20 + partition), partition: partition);
+            f.AddHeader(10, conflict && partition == 2 ? BuiltInCategory.OST_Windows : category, partition: partition);
+        }
+        foreach (bool keep in new[] { false, true })
+        {
+            var element = new Element { Id = 10, Name = "selected copy" };
+            f.Apply(element, recoverUnanchoredTypes: keep);
+            Assert.Equal("selected copy", element.Name);
+            var parameters = element.Parameters.Where(p => p.Id is -1140362 or -1140363).ToArray();
+            Assert.Equal(!conflict && category != BuiltInCategory.INVALID ? 2 : 0, parameters.Length);
+            Assert.All(parameters, p => { Assert.Equal((int)category, p.Value); Assert.True(p.HasRevitValue); });
+        }
     }
 
     [Theory]
@@ -1121,7 +1337,8 @@ public class FramedElementTypesTests
         private readonly HashSet<long> _ids = [];
         private readonly int _width;
 
-        internal Fixture(int width = 4, SchemaDocument? schema = null, bool familyVisibility = false, bool detailSketch = false)
+        internal Fixture(int width = 4, SchemaDocument? schema = null, bool familyVisibility = false, bool detailSketch = false,
+            bool boundaryPick = false)
         {
             _width = width;
             _schema = schema ?? new();
@@ -1163,11 +1380,22 @@ public class FramedElementTypesTests
             foreach (string kind in new[] { "EnergyAnalysisSurface", "EnergyAnalysisOpening", "LegendComponent", "AreaMeasureElem",
                 "PlanRegion", "RefPlane", "AnalysisDisplayStyle", "CurtainGridLine", "Opening", "ReferencePoint",
                 "ScheduleInstance", "BuildingOperatingYearSchedule", "DPart", "FaceSplitter", "PartMaker", "Matchline",
-                "Property", "RevisionCloud", "ShaftOpening", "BoundaryConditions", "ProjectPhase",
+                "Property", "RevisionCloud", "ShaftOpening", "ProjectPhase",
                 "GStyleElem", "CategoryElem", "FontElem", "SketchPlane", "PostedWarningElem", "DBDrawing",
                 "AppearanceAssetElem", "ExtentElem", "FillPatternElem", "RefTableElem", "LinePatternElem",
+                "LightGroup", "LightSchemeElement", "AreaTypeElem", "LevelRoomPlan", "AllPlanTopologies", "AreaSchemePlanTopologies",
                 "FamSymSurrogate", "NestedFamSymRefElem", "KeynoteTable" })
                 Class(kind, element);
+            if (boundaryPick)
+            {
+                Class("Pick", Class("ElemPick", 0, Ref("m_elemId")));
+                int load = Class("LoadBCBase", element, Owned("m_otherPick"), Owned("m_oPick"));
+                Class("BoundaryConditions", load, Int("m_type"));
+                foreach (string kind in new[] { "AnalyticalMember", "AnalyticalPanel", "AnalyticalModelColumn",
+                    "AnalyticalModelBeam", "AnalyticalModelWall", "AnalyticalModelSlab" })
+                    Class(kind, element);
+            }
+            else Class("BoundaryConditions", element, Int("m_type"));
             Class("WallSweep", element, Ref("m_typeId"));
             int symbol = Class("Symbol", element);
             Class("Viewport", element, Ref("m_attrId"));
@@ -1298,13 +1526,27 @@ public class FramedElementTypesTests
                 }
             }, family: family);
 
+        internal void AddBoundary(long owner, long? host, int partition)
+        {
+            Add("BoundaryConditions", owner, w =>
+            {
+                Pointer(w, "Pick");
+                Pointer(w, host.HasValue ? "Pick" : null);
+                w.Write(0);
+                Id(w, 21); // Another owned pick has its own element reference.
+                if (host.HasValue) Id(w, host.Value);
+            }, partition: partition);
+            AddHeader(owner, BuiltInCategory.OST_BoundaryConditions, partition: partition);
+        }
+
         internal void Add(string kind, long owner, Action<BinaryWriter>? payload = null, long? storedOwner = null,
             int? partition = null, long family = -1)
             => AddBlock(kind, owner, writer =>
             {
                 Id(writer, storedOwner ?? owner);
                 Id(writer, family);
-                payload?.Invoke(writer);
+                if (kind == "BoundaryConditions" && payload == null) writer.Write(0);
+                else payload?.Invoke(writer);
             }, partition);
 
         internal void AddHeader(long owner, BuiltInCategory category, bool trailingByte = false, int? partition = null)
@@ -1349,7 +1591,7 @@ public class FramedElementTypesTests
         internal long Apply(Element element, bool wasRouted = false, int? stairOwner = null,
             IReadOnlyDictionary<ulong, int>? typePartitions = null, bool recoverUnanchoredTypes = false, bool anchored = false,
             bool englishCurveNames = false, bool applyTypeLinks = true, long? routedView = null,
-            bool projectCategories = true)
+            bool projectCategories = true, Element? linkedElement = null)
         {
             var ids = new ElementIdMap(_ids.Select(id => new ElemTableLayout.Row(id, id, 0, 0, 0)).ToArray());
             var state = new ParsingState { ElementIds = ids, ElemTable = _ids.ToDictionary(id => (uint)ids.Key(id), _ => 0u) };
@@ -1357,9 +1599,10 @@ public class FramedElementTypesTests
             if (routedView is long view) state.IncrementRoutedPartitions = new Dictionary<ulong, int> { [(uint)ids.Key(view)] = 1 };
             if (stairOwner is int stair) state.ElemRecOwningElementIds = new Dictionary<uint, int> { [(uint)element.Id] = stair };
             if (anchored) state.NativeParamsFromRootClass.Add((uint)element.Id);
-            FramedElementTypes.Apply(_schema, new Dictionary<Guid, SchemaField[]?>(), _frames, state, [element],
+            List<Element> elements = linkedElement == null ? [element] : [element, linkedElement];
+            FramedElementTypes.Apply(_schema, new Dictionary<Guid, SchemaField[]?>(), _frames, state, elements,
                 typePartitions, recoverUnanchoredTypes, englishCurveNames, applyTypeLinks, projectCategories);
-            new RevitFileInfo { ElementIds = ids, Elements = [element] }.AttachSourceElementIds();
+            new RevitFileInfo { ElementIds = ids, Elements = elements }.AttachSourceElementIds();
             return ids.SourceId(element.TypeId);
         }
     }

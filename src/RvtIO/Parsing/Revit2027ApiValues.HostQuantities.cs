@@ -196,7 +196,38 @@ internal static partial class Revit2027ApiValues
 
     private static bool HasValue(Element element, BuiltInParameter id) => element.Parameters.Any(p => p.Id == (int)id && p.HasRevitValue);
 
-    private static void SetQuantity(Element element, BuiltInParameter id, double? value)
+    internal static void ApplyHistoricalFittingQuantities(Element fitting, WideSolidQuantities geometry)
+    {
+        if (!HasValue(fitting, BuiltInParameter.HOST_VOLUME_COMPUTED))
+        {
+            int detail = fitting.CategoryId == (int)BuiltInCategory.OST_PipeFitting ? Fine : Medium;
+            if (geometry.Measure(fitting.Id, WideSolidQuantities.Source.VisibleVolume)?[detail] is { BodyCount: > 0 } solid)
+                SetQuantity(fitting, BuiltInParameter.HOST_VOLUME_COMPUTED, solid.Volume);
+        }
+        if (!HasValue(fitting, BuiltInParameter.HOST_AREA_COMPUTED)
+            && geometry.Measure(fitting.Id, WideSolidQuantities.Source.Directional)?[Coarse] is { } coarse)
+        {
+            if (coarse.Surface == 0) SetUnsetArea(fitting);
+            else SetQuantity(fitting, BuiltInParameter.HOST_AREA_COMPUTED, coarse.Surface / 2);
+        }
+    }
+
+    internal static void SetUnsetArea(Element element)
+    {
+        const BuiltInParameter area = BuiltInParameter.HOST_AREA_COMPUTED;
+        if (!element.Parameters.Any(p => p.Id == (int)area))
+            element.Parameters.Add(BipHelpers.MakeBipParam((int)area, nameof(BuiltInParameter.HOST_AREA_COMPUTED),
+                StorageType.Double, null, hasNoRevitValue: true));
+    }
+
+    internal static void CopyPositiveQuantity(Element element, Element owner, BuiltInParameter id)
+    {
+        if (owner.Parameters.FirstOrDefault(p => p.Id == (int)id)
+            is { HasRevitValue: true, FromNativeFields: true, StorageType: StorageType.Double, Value: double value })
+            SetQuantity(element, id, value);
+    }
+
+    internal static void SetQuantity(Element element, BuiltInParameter id, double? value)
     {
         if (value is > 0 and double amount && double.IsFinite(amount)) SetParameter(element, id, StorageType.Double, amount);
     }

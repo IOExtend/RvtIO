@@ -100,6 +100,17 @@ In the verified historical records, both parameters also hold the header's named
 for dimensions, room tags and legend components. Views can carry a named category or
 `-1`. An invalid category on a sketch plane, project family, drawing, warning, appearance asset,
 extent, fill pattern, reference table or line pattern gives both parameters the value `-1`.
+For walls and family instances, matching named categories across the retained headers
+also supply these parameters. Historical lighting groups, lighting schemes, area types,
+level room plans and project or area-scheme plan topologies preserve an explicit `-1`.
+For structural boundary conditions, the point, line or area kind stored
+in the element body determines its category and both category parameters. The header
+must identify the parent category or the matching subcategory. These categories follow
+Revit 2027. A historical version of Revit can report the parent category.
+`HostElementId` identifies the analytical element referenced by the boundary condition's
+saved pick when the retained records agree and identify its target. This includes
+analytical members and panels and historical analytical columns, beams, walls and slabs.
+Upgrading a historical project in Revit can create an analytical host with a new ID.
 In historical files, element types identified by complete records derived from `Symbol` in the file's
 schema have `TypeElementId` equal to `-1`. Instances can refer to those elements as their types.
 With `--keep-all-copies`, a single family instance record can restore its saved symbol when the previous type
@@ -166,6 +177,27 @@ area comes from the stored closed wall profile.
 The reader integrates supported circular and straight profiles of revolution along the saved trim
 loops. Pipe fitting volume uses the detailed solids and excludes coarse proxies when their complete
 source faces are reused. Supported MEP center lines get quantities from their linked physical owner.
+
+For pipe, duct and conduit runs in historical projects, the reader can recover a missing
+`HOST_VOLUME_COMPUTED` in cubic feet from the visible closed bodies at Coarse detail.
+The saved geometry record must identify a single owner and contain no nested instances at
+that detail level. A segment center line can receive the volume through its stored
+`CenterLine.m_OwnerId` link to the run. The physical run exposes an unset `Double` Area
+parameter when no area is present. Its segment center line omits that parameter.
+This recovery has been verified on RVT 2022.
+
+Cable trays can also expose a missing `HOST_VOLUME_COMPUTED` from their own closed
+Coarse geometry. On the 2022 JP sample, these volumes match Revit 2027.2 for all
+47 cable tray instances.
+
+For historical pipe and duct fittings, the reader checks the family instance's saved category
+and measures its visible bodies at Fine detail for pipes and Medium detail for ducts.
+The fitting's Area comes from half the combined surface of the directional bodies at Coarse
+detail. A completely measured empty surface gives the fitting an Area parameter of type
+`Double` with `HasRevitValue == false`. Its center line omits Area in that case.
+Positive Volume and Area values are available on both the fitting and its linked center line.
+Fittings without a center line expose their own quantities. Both read modes were checked
+against Revit 2027.2 on the 2021 and 2022 versions of the MEP basic sample.
 
 The reader measures horizontal floors, ceilings, and foundations at their saved cap faces, with trim
 loops applied. Door area uses the coarse source bodies for ordinary wall-hosted doors and the opening

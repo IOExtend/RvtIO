@@ -917,17 +917,17 @@ public partial class RvtFileReader
             rvtInfo.SerializedLengthUnitIssue = state.WideLengthUnitIssue ?? lengthUnitIssue;
         bool applyTypeLinks = wideSchema?.Release != 2027 || r22View;
         bool englishCurveNames = string.Equals(systemFamilyLocale, "ENU", StringComparison.OrdinalIgnoreCase);
-        if ((applyTypeLinks || englishCurveNames)
+        bool projectCategories = (applyTypeLinks || rvtInfo.Elements.Any(e => e.RootClassName == "BoundaryConditions"))
+            && root.EnumerateEntries().Any(entry => entry.Type == EntryType.Stream && entry.Name.Equals("ProjectInformation", StringComparison.OrdinalIgnoreCase))
+            && !root.EnumerateEntries().Any(entry => entry.Type == EntryType.Stream && entry.Name.Equals("PartAtom", StringComparison.OrdinalIgnoreCase));
+        if ((applyTypeLinks || englishCurveNames || projectCategories)
             && (wideSchema?.Document ?? TfSchemaReader.Read(root)) is { } typeSchema)
         {
             int typeLinks = FramedElementTypes.Apply(typeSchema, EntitySchemaReader.Read(root, typeSchema),
                 framedStreams, state, rvtInfo.Elements, routing.UnroutedTypePartitions,
                 recoverUnanchoredTypes: applyTypeLinks && !_options.ResolveCurrentCopies,
                 englishCurveNames: englishCurveNames, applyTypeLinks: applyTypeLinks,
-                projectCategories: applyTypeLinks && root.EnumerateEntries().Any(entry =>
-                    entry.Type == EntryType.Stream && entry.Name.Equals("ProjectInformation", StringComparison.OrdinalIgnoreCase))
-                    && !root.EnumerateEntries().Any(entry =>
-                        entry.Type == EntryType.Stream && entry.Name.Equals("PartAtom", StringComparison.OrdinalIgnoreCase)));
+                projectCategories: projectCategories);
             diag?.WriteLine($"Framed type references: {typeLinks} corrected");
         }
         rvtInfo.ElementIds = ids;
