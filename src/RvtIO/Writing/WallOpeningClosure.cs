@@ -50,7 +50,7 @@ internal static partial class WallHeightWriter
                         throw Layout();
                     faces = faces.Where(p => !cutGenerators.Contains(Generator(p.Key))).ToDictionary();
                     edges = edges.Where(p => !cutGenerators.Contains(Generator(p.Key))).ToDictionary();
-                    var contours = UncutContours(faces, edges, _roof);
+                    var contours = UncutContours(faces, edges, _boundary);
                     if (faces.Count != 6 || edges.Count != 12 || contours.Count != 6)
                         throw Layout();
                     foreach (var (tag, loops) in contours)
@@ -60,7 +60,7 @@ internal static partial class WallHeightWriter
                         face.Contours.AddRange(loops);
                     }
                 }
-                edges = ActivateCuts(faces, edges, cutters, height, idWidth, baseOffset);
+                edges = ActivateCuts(faces, edges, cutters, height, idWidth, baseOffset, replay && _throughBottom);
             }
             else if (removesCuts)
             {

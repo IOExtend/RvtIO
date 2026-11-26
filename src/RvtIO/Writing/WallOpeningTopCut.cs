@@ -20,10 +20,10 @@ internal static partial class WallHeightWriter
             var crossingFace = Find(faces, notch.CrossingFace);
             int back = notch.Back;
             int front = notch.Front;
-            bool atHead = notch.Opening.Destination == OpeningCut.AtHead;
+            bool contact = notch.Opening.Destination is OpeningCut.AtHead or OpeningCut.AtBaseSill;
             double crossing = _throughBottom ? notch.Opening.Bottom : notch.Opening.Top;
             double boundary = _throughBottom ? height.NewBase : height.NewTop;
-            if (crossingFace.Loops.Count != (atHead ? 0 : 1) || !SameCoordinate(crossingFace.Frame.Origin.Z, crossing)
+            if (crossingFace.Loops.Count != (contact ? 0 : 1) || !SameCoordinate(crossingFace.Frame.Origin.Z, crossing)
                 || crossingFace.Frame.X.Z != 0 || crossingFace.Frame.Y.Z != 0
                 || Find(faces, back).Loops.Count != 0 || Find(faces, front).Loops.Count != 0)
                 throw Layout();
@@ -65,13 +65,15 @@ internal static partial class WallHeightWriter
             var edges = new Dictionary<int, Edge>();
             foreach (var (tag, original) in source)
             {
-                if (!atHead && (tag == notch.CrossingEdgeA || tag == notch.CrossingEdgeB))
+                if (!contact && (tag == notch.CrossingEdgeA || tag == notch.CrossingEdgeB))
                     continue;
                 var edge = original;
-                if (atHead && (edge.A == notch.CrossingFace || edge.B == notch.CrossingFace))
+                if (contact && (edge.A == notch.CrossingFace || edge.B == notch.CrossingFace))
                 {
                     if (!borderEdges.Remove(tag) && tag != notch.CrossingEdgeA && tag != notch.CrossingEdgeB)
                         throw Layout();
+                    if (_throughBottom && tag == notch.CrossingEdgeA)
+                        edge = edge with { Segment = new(aLeft, aRight) };
                 }
                 else if (borderEdges.Remove(tag, out var border))
                 {
@@ -93,7 +95,7 @@ internal static partial class WallHeightWriter
                 }
                 edges.Add(tag, edge);
             }
-            if (borderEdges.Count != 0 || revealSides.Count != 0 || !atHead && !faces.Remove(notch.CrossingFace))
+            if (borderEdges.Count != 0 || revealSides.Count != 0 || !contact && !faces.Remove(notch.CrossingFace))
                 throw Layout();
 
             var wallBoundary = contours[_boundary];
@@ -124,32 +126,32 @@ internal static partial class WallHeightWriter
             // Both boundary faces split the wall sides left to right, with opposite edge directions.
             var (aFirst, aSecond) = Split(boundaryA, Station, notch.Opening.Left, boundary);
             var (aRest, aStart) = _throughBottom ? (aSecond, aFirst) : (aFirst, aSecond);
-            if (!atHead)
+            if (!contact)
                 _ = Split(CutterEdge(12), p => p.Z, boundary, boundary);
             (aFirst, aSecond) = Split(aRest, Station, notch.Opening.Right, boundary);
             var (aEnd, aGap) = _throughBottom ? (aSecond, aFirst) : (aFirst, aSecond);
-            if (!atHead)
+            if (!contact)
                 _ = Split(CutterEdge(16), p => p.Z, boundary, boundary);
             var (bFirst, bSecond) = Split(boundaryB, Station, notch.Opening.Left, boundary);
             var (bStart, bRest) = _throughBottom ? (bSecond, bFirst) : (bFirst, bSecond);
-            if (!atHead)
+            if (!contact)
                 _ = Split(CutterEdge(8), p => p.Z, boundary, boundary);
             (bFirst, bSecond) = Split(bRest, Station, notch.Opening.Right, boundary);
             var (bGap, bEnd) = _throughBottom ? (bSecond, bFirst) : (bFirst, bSecond);
-            if (!atHead)
+            if (!contact)
                 _ = Split(CutterEdge(17), p => p.Z, boundary, boundary);
 
             _ = BoundaryEdge(back, bLeft, bRight);
             int leftBoundary = _throughBottom ? BoundaryEdge(notch.Left, bLeft, aLeft) : BoundaryEdge(notch.Left, aLeft, bLeft);
             _ = BoundaryEdge(front, aLeft, aRight);
             int rightBoundary = _throughBottom ? BoundaryEdge(notch.Right, aRight, bRight) : BoundaryEdge(notch.Right, bRight, aRight);
-            if (edges.Count != source.Count + (atHead ? 12 : 18) || faces.Values.Count(f => f.Loops.Count != 0) < 9)
+            if (edges.Count != source.Count + (contact ? 12 : 18) || faces.Values.Count(f => f.Loops.Count != 0) < 9)
                 throw Layout();
 
             int al = SideEdge(_sideA, notch.Left), ar = SideEdge(_sideA, notch.Right);
             int bl = SideEdge(_sideB, notch.Left), br = SideEdge(_sideB, notch.Right);
             int oppositeA = SideEdge(_sideA, notch.OppositeFace), oppositeB = SideEdge(_sideB, notch.OppositeFace);
-            if (!atHead && !contours.Remove(notch.CrossingFace))
+            if (!contact && !contours.Remove(notch.CrossingFace))
                 throw Layout();
             contours[_sideA] = SideContours(_sideA, boundaryA,
                 _throughBottom ? [aStart, al, oppositeA, ar, aEnd] : [aEnd, ar, oppositeA, al, aStart],

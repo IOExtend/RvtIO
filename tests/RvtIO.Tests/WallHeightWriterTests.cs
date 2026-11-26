@@ -22,11 +22,28 @@ public class WallHeightWriterTests
         Assert.Equal(WallHeightWriter.OpeningCut.Interior, WallHeightWriter.CutAt(0, 8, 2, 5));
         Assert.Equal(WallHeightWriter.OpeningCut.ThroughBottom, WallHeightWriter.CutAt(2.25, 10.25, 2, 5));
         Assert.Equal(WallHeightWriter.OpeningCut.ThroughBottom, WallHeightWriter.CutAt(2.0006103515625, 10.0006103515625, 2, 5));
-        Assert.Equal(WallHeightWriter.OpeningCut.Unverified, WallHeightWriter.CutAt(2, 10, 2, 5));
+        Assert.Equal(WallHeightWriter.OpeningCut.AtBaseSill, WallHeightWriter.CutAt(2, 10, 2, 5));
+        Assert.Equal(WallHeightWriter.OpeningCut.Unverified, WallHeightWriter.CutAt(2, 5, 2, 5));
         Assert.Equal(WallHeightWriter.OpeningCut.Unverified, WallHeightWriter.CutAt(2.00048828125, 10.00048828125, 2, 5));
         Assert.Equal(WallHeightWriter.OpeningCut.Unverified, WallHeightWriter.CutAt(2.25, 4, 2, 5));
-        Assert.Equal(WallHeightWriter.OpeningCut.Unverified, WallHeightWriter.CutAt(5, 13, 2, 5));
+        Assert.Equal(WallHeightWriter.OpeningCut.AtBaseHead, WallHeightWriter.CutAt(5, 13, 2, 5));
+        Assert.Equal(WallHeightWriter.OpeningCut.Unverified, WallHeightWriter.CutAt(Math.BitDecrement(5), 13, 2, 5));
+        Assert.Equal(WallHeightWriter.OpeningCut.Unverified, WallHeightWriter.CutAt(Math.BitIncrement(5), 13, 2, 5));
         Assert.Equal(WallHeightWriter.OpeningCut.BelowWall, WallHeightWriter.CutAt(5.25, 13.25, 2, 5));
+    }
+
+    [Fact]
+    public void ReplaysCutsAtAnExactBaseContactInEitherDirection()
+    {
+        var opening = new WallHeightWriter.OpeningInterval(0, 4, 8, 2, 5,
+            WallHeightWriter.OpeningCut.Interior, WallHeightWriter.OpeningCut.AtBaseSill);
+        Assert.True(WallHeightWriter.CanReplayBaseBoundaryCuts([opening]));
+        Assert.True(WallHeightWriter.CanReplayBaseBoundaryCuts(
+            [opening with { Cut = WallHeightWriter.OpeningCut.AtBaseHead, Destination = WallHeightWriter.OpeningCut.ThroughBottom }]));
+        Assert.True(WallHeightWriter.CanReplayBaseBoundaryCuts(
+            [opening with { Cut = WallHeightWriter.OpeningCut.AtBaseSill, Destination = WallHeightWriter.OpeningCut.BelowWall }]));
+        Assert.False(WallHeightWriter.CanReplayBaseBoundaryCuts(
+            [opening with { Cut = WallHeightWriter.OpeningCut.ThroughTop }]));
     }
 
     [Fact]

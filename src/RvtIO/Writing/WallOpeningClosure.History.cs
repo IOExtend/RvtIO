@@ -20,7 +20,7 @@ internal static partial class WallHeightWriter
         private int _addedTags;
         private readonly List<(int Start, int End, byte[] Bytes)> _edits = [];
 
-        internal OpeningTransition(Archive wall, OpeningInterval opening, bool removesCuts, bool activatesCuts)
+        internal OpeningTransition(Archive wall, OpeningInterval opening, bool removesCuts, bool activatesCuts, bool replaysFloor)
         {
             _wall = wall;
             _opening = opening;
@@ -46,7 +46,7 @@ internal static partial class WallHeightWriter
             _sideA = _baseFaces.Get((2, -1, -1, 0));
             _sideB = _baseFaces.Get((1, -1, -1, 0));
             _roof = _baseFaces.Get((3, 3, -1, 0));
-            _throughBottom = opening.Cut == OpeningCut.ThroughBottom || opening.Destination == OpeningCut.ThroughBottom;
+            _throughBottom = replaysFloor || opening.Cut == OpeningCut.ThroughBottom || opening.Destination == OpeningCut.ThroughBottom;
             _boundary = _throughBottom ? _baseFaces.Get((3, 2, -1, 0)) : _roof;
             if (!_baseFaces.Tags.Concat(_baseEdges.Tags).All(t => Generator(t) == _baseGenerator))
                 throw Layout();

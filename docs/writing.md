@@ -263,9 +263,11 @@ separated interior opening can remain in place during the transition. RvtIO pres
 geometry history so that a later transition can reuse them. When the base moves above the entire opening, RvtIO
 retains the opening element, removes the cut and writes Revit's "Rectangular opening doesn't cut its host" warning.
 Moving the base back through the opening restores the cut and removes that warning. Reactivation directly through the
-base requires verified saved cut history. Coincident boundaries, simultaneous transitions of two bottom cuts, and
-unverified vertex projections are still refused. Revit 2024 accepted positioning the base exactly at the sill or head
-of the tested opening.
+base requires verified saved cut history. For a wall with one rectangular opening and verified cut history, the base can
+also coincide exactly with the sill or head. At the sill the opening cuts the wall and divides the base face into two
+outlines. At the head the opening keeps its guide faces and posts the warning without cutting the wall. Exact contacts
+on a wall with multiple openings, near-contact positions outside the verified ranges, simultaneous transitions of two
+bottom cuts, and unverified vertex projections are still refused.
 
 ## Editing a standalone family
 
@@ -882,14 +884,20 @@ interior opening were compared with Revit API controls for straight and oblique 
 confirmed the offsets, absolute opening elevations and bounds after opening, saving and reopening without Audit.
 The 2026-format files were verified after upgrade in Revit 2027. Computed areas and volumes agreed within
 floating-point rounding. Revit 2025 also verified a level-constrained top and a second, unchanged rectangular
-opening on the same wall. Revit 2027 verified a base crossing less than 0.2 mm past the sill. A later attempt to
-place the base at the sill refused the whole batch.
+opening on the same wall. Revit 2027 verified a base crossing less than 0.2 mm past the sill.
 
 Base Offset edits past the full height of an opening were compared with saved Revit API controls in Revit
 2020–2025 and 2027. The 2026-format files were verified after upgrade in Revit 2027. Opening, saving and reopening
 without Audit preserved the parameter values, geometry, opening ownership and warning state. Revit 2024 and 2027
 also verified removal and reactivation of a cut through the base. The Revit 2027 batch added and removed warnings
 on two separate walls. A later unsupported boundary edit left the source byte-for-byte intact and produced no output.
+
+Exact Base Offset contacts at the sill and head matched Revit API controls after opening, saving and reopening without
+Audit in Revit 2020–2025 and 2027. Revit 2027 verified the 2026-format files after upgrade. Revit 2024 and 2027 also
+verified transitions between the contacts, an interior opening, a cut through the base, and an opening wholly below
+the wall, including the saved warning. Revit 2027 additionally checked oblique and level-constrained walls and changes
+to Unconnected Height and Top Offset with the base still in contact. A later unverified near-contact edit in a batch
+left the source byte-for-byte intact and produced no output in every file format.
 
 ## Remaining parameter coverage
 

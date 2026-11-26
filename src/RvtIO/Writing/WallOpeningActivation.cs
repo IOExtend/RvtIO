@@ -5,7 +5,8 @@ internal static partial class WallHeightWriter
     private sealed partial class OpeningTransition
     {
         private Dictionary<int, Edge> ActivateCuts(Dictionary<int, Face> faces, Dictionary<int, Edge> edges,
-            IReadOnlyList<(OpeningInterval Opening, Archive Geometry)> cutters, HeightInterval height, int idWidth, double baseOffset)
+            IReadOnlyList<(OpeningInterval Opening, Archive Geometry)> cutters, HeightInterval height, int idWidth, double baseOffset,
+            bool replaysFloor)
         {
             var contours = faces.Where(pair => pair.Value.Contours.Count != 0)
                 .ToDictionary(pair => pair.Key, pair => pair.Value.Contours);
@@ -38,8 +39,11 @@ internal static partial class WallHeightWriter
                 bool throughBottom = opening.Destination == OpeningCut.ThroughBottom;
                 bool atHead = opening.Destination == OpeningCut.AtHead;
                 bool atSill = opening.Destination == OpeningCut.AtSill;
+                bool atBaseSill = opening.Destination == OpeningCut.AtBaseSill;
+                bool atBaseHead = opening.Destination == OpeningCut.AtBaseHead;
+                bool dormantContact = atSill || atBaseHead;
                 bool missingHead = !faceHistory.Contains((5, 0, -1, 0));
-                if (throughBottom && (first || missingHead || !faceHistory.Contains((5, 1, -1, 0))))
+                if (_throughBottom && (first || missingHead || !faceHistory.Contains((5, 1, -1, 0))))
                     throw Layout();
                 bool virtualHead = (throughTop || atSill) && missingHead;
                 var archive = new GeometryArchive(cutter);
@@ -74,7 +78,7 @@ internal static partial class WallHeightWriter
                 int splitStart = generators.Count;
                 int nextSplit = splitStart;
                 bool missingSides = !edgeHistory.Contains((17, _sideA, faceIds[1], 0));
-                if (throughBottom && missingSides)
+                if (_throughBottom && missingSides)
                     throw Layout();
                 // An existing notch can allocate new roof splits before it gains permanent head edges.
                 bool deferHeadSides = atHead && missingHead && !missingSides;
@@ -82,7 +86,7 @@ internal static partial class WallHeightWriter
                 generators.AddRange(Enumerable.Repeat(generator, splitCount));
                 var boundaryIds = new Dictionary<(int Side, int Reveal), int>();
                 int[] reveals = missingSides && !first ? [1, 5, 13, 0] : [0, 1, 5, 13];
-                if (!atSill)
+                if (!dormantContact)
                     foreach (int side in new[] { _sideA, _sideB })
                         foreach (int reveal in reveals)
                             boundaryIds.Add((side, reveal), reveal == 0 && (virtualHead || deferHeadSides) ? temporaryHead + (side == _sideA ? 1 : 2)
@@ -91,13 +95,13 @@ internal static partial class WallHeightWriter
                 foreach (var node in cutterFaces)
                 {
                     int local = CutterTag(node);
-                    bool guide = atSill || atHead && local == 0 || local is 2 or 9;
+                    bool guide = dormantContact || atHead && local == 0 || atBaseSill && local == 1 || local is 2 or 9;
                     var plane = node.Target("Face.m_pSurf");
                     var frame = cutterFrames[local];
                     var loop = node.Target("GFace.m_pFirstLoop");
                     if (loop.Ref("GEdgeLoop.m_nextLoop") is not null)
                         throw Layout();
-                    if (atSill && local == 0)
+                    if (atSill && local == 0 || atBaseHead && local == 1)
                         continue;
                     int tag = faceIds[local];
                     node.SetTag(tag);
@@ -135,12 +139,13 @@ internal static partial class WallHeightWriter
                     if (!segment.Matches(cutterFrames[b].World(node, 1))
                         || !Corner(segment.First) || !Corner(segment.Last))
                         throw Layout();
-                    if (atSill)
+                    if (dormantContact)
                         continue;
                     int tag = edgeIds[local];
                     node.SetTag(tag);
-                    node.SetEdgeFlags(local is 3 or 4 or 10 or 11 or 17 || atHead && local is 6 or 14 ? (byte)7 : (byte)6);
-                    if (local is 7 or 15 || !atHead && local is 6 or 14)
+                    node.SetEdgeFlags(local is 3 or 4 or 10 or 11 or 17 || atHead && local is 6 or 14
+                        || atBaseSill && local is 7 or 15 ? (byte)7 : (byte)6);
+                    if (!atBaseSill && local is 7 or 15 || !atHead && local is 6 or 14)
                         segment = new(segment.Last, segment.First);
                     if (!edges.TryAdd(tag, new(node, faceA, faceB, segment)))
                         throw Layout();
@@ -153,7 +158,7 @@ internal static partial class WallHeightWriter
                             throw Layout();
                     }
                 }
-                if (!atSill)
+                if (!dormantContact)
                 {
                     if (boundary.Count != 8)
                         throw Layout();
@@ -161,20 +166,21 @@ internal static partial class WallHeightWriter
                     AddHole(_sideB, [0, 5, 1, 13]);
                     if (!atHead)
                         contours.Add(faceIds[0], [[edgeIds[6], boundaryIds[(_sideB, 0)], edgeIds[14], boundaryIds[(_sideA, 0)]]]);
-                    contours.Add(faceIds[1], [[edgeIds[15], boundaryIds[(_sideB, 1)], edgeIds[7], boundaryIds[(_sideA, 1)]]]);
+                    if (!atBaseSill)
+                        contours.Add(faceIds[1], [[edgeIds[15], boundaryIds[(_sideB, 1)], edgeIds[7], boundaryIds[(_sideA, 1)]]]);
                     contours.Add(faceIds[5], [[edgeIds[6], boundaryIds[(_sideA, 5)], edgeIds[7], boundaryIds[(_sideB, 5)]]]);
                     contours.Add(faceIds[13], [[edgeIds[14], boundaryIds[(_sideB, 13)], edgeIds[15], boundaryIds[(_sideA, 13)]]]);
                 }
 
-                if (throughTop || atHead || throughBottom)
+                if (throughTop || atHead || throughBottom || atBaseSill)
                 {
-                    int crossedFace = throughBottom ? 1 : 0;
+                    int crossedFace = throughBottom || atBaseSill ? 1 : 0;
                     var notch = new Notch(opening, edgeHistory, faceIds[crossedFace],
                         boundaryIds[(_sideA, crossedFace)], boundaryIds[(_sideB, crossedFace)],
                         faceIds[1 - crossedFace], faceIds[5], faceIds[13], faceIds[2], faceIds[9]);
                     int added = 0, addedRoofSplits = 0, addedRevealSplits = 0;
                     edges = OpenCut(faces, edges, contours, topCut, height, notch, AllocateNotchEdge);
-                    int full = atHead ? 12 : 20;
+                    int full = atHead || atBaseSill ? 12 : 20;
                     bool partial = added == addedRoofSplits + addedRevealSplits
                         && addedRoofSplits is 0 or 8 && addedRevealSplits is 0 or 8;
                     if (added != 0 && added != full && !partial || splitCount != 0 && (nextSplit != splitStart + splitCount || added != full))
@@ -222,8 +228,8 @@ internal static partial class WallHeightWriter
                     throw Layout();
                 if (cut != destination)
                     _edits.Add((flag.ValueOffset, flag.ValueOffset + 1, [destination]));
-                int[] openingSlots = atSill ? [-1, -1, -1, -1]
-                    : [throughBottom ? -1 : faceIds[1], throughTop || atHead ? -1 : faceIds[0], faceIds[5], faceIds[13]];
+                int[] openingSlots = dormantContact ? [-1, -1, -1, -1]
+                    : [throughBottom || atBaseSill ? -1 : faceIds[1], throughTop || atHead ? -1 : faceIds[0], faceIds[5], faceIds[13]];
                 for (int i = 0; i < openingSlots.Length; i++)
                 {
                     var slot = _wall.Field(opening.Step, $"WallRectOpeningGStep.m_OpeningFacesIds@{i}");
@@ -281,20 +287,36 @@ internal static partial class WallHeightWriter
 
             if (generators.Count != _generators.Length)
                 _edits.Add((_tableStart, _tableEnd, Encode([generators.Count, .. generators])));
-            if (contours[_roof].Count == 2)
+            if (replaysFloor)
+            {
+                // The saved contour starts at a vertical end edge when the opening interrupts the base.
+                if (_opening.Destination is OpeningCut.AtBaseSill or OpeningCut.ThroughBottom)
+                {
+                    RotateSideOutline(_sideA, BaseSideEdge(1, 0));
+                    RotateSideOutline(_sideB, BaseSideEdge(1, 1));
+                }
+                else if (_opening.Destination is OpeningCut.AtBaseHead or OpeningCut.BelowWall)
+                {
+                    RotateSideOutline(_sideB, BaseSideEdge(0, 1));
+                }
+            }
+            else if (contours[_roof].Count == 2)
             {
                 // Retain the wall outline's established starting edge for a single cut through the top.
-                for (int side = 0; side < 2; side++)
-                {
-                    var outline = contours[side == 0 ? _sideA : _sideB];
-                    int start = Array.IndexOf(outline[0], BaseSideEdge(2, side));
-                    if (start < 0)
-                        throw Layout();
-                    outline[0] = [.. outline[0].AsSpan(start), .. outline[0].AsSpan(0, start)];
-                }
+                RotateSideOutline(_sideA, BaseSideEdge(2, 0));
+                RotateSideOutline(_sideB, BaseSideEdge(2, 1));
             }
             RebuildSolid(faces, edges, contours, topCut);
             return edges;
+
+            void RotateSideOutline(int side, int firstEdge)
+            {
+                var loops = contours[side];
+                int start = Array.IndexOf(loops[0], firstEdge);
+                if (start < 0)
+                    throw Layout();
+                loops[0] = [.. loops[0].AsSpan(start), .. loops[0].AsSpan(0, start)];
+            }
 
             Point Vector(string field) => new(_wall.Real(axisPlane, field + "@0"), _wall.Real(axisPlane, field + "@1"),
                 _wall.Real(axisPlane, field + "@2"));
