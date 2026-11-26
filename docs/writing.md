@@ -50,6 +50,7 @@ readable project record for the element and a verified source for the parameter 
 | Verified straight basic wall with an unconnected top | `WALL_USER_HEIGHT_PARAM` (Unconnected Height). Pass a length with units, such as `"3200 mm"`. |
 | Verified straight basic wall with level constraints | `WALL_BASE_OFFSET` (Base Offset), and `WALL_TOP_OFFSET` (Top Offset) when the top is constrained to a level. Pass a signed length with units, such as `"-150 mm"`. |
 | Level, straight or radial grid, or multi-segment grid in the main model | `DATUM_TEXT` (Name). A multi-segment grid assignment updates the name on the grid and all verified member records. |
+| Level in the main model without dependent elements | `LEVEL_ELEV` (Elevation). Pass a signed length with units. RvtIO interprets the value in the level type's selected elevation base, then updates the stored datum surface and face in project coordinates. |
 | Basic wall type | `ALL_MODEL_TYPE_IMAGE` (Type Image). |
 | Basic wall type, primary or directly linked derived family symbol | `ALL_MODEL_TYPE_MARK` (Type Mark). Pass the ID of the type or symbol whose value you want to write. |
 | Basic wall type or verified loaded family type | `ALL_MODEL_TYPE_COMMENTS`, `ALL_MODEL_DESCRIPTION`, `ALL_MODEL_MANUFACTURER`, `ALL_MODEL_MODEL`, `ALL_MODEL_URL`, and `ALL_MODEL_COST`. Cost takes a finite invariant number with no currency symbol; a change that Revit can suppress within its numeric comparison tolerance is refused. |
@@ -606,6 +607,16 @@ source bytes and created no output. A separate Revit 2025 check renamed a level 
 RvtIO's level-only rename matched the API after choosing **No** in the corresponding-view dialog and after
 Save As and reopening without Audit. [Autodesk documentation on renaming levels and corresponding views](https://help.autodesk.com/cloudhelp/2023/ENU/RevitLT-DocumentPresent/files/GUID-C67D39DB-57A3-4A79-9705-C78791647CDD.htm) [Autodesk MultiSegmentGrid.Text reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/8ec5e47a-8821-5d3c-0951-33d051a58b96.htm)
 
+Level elevation checks compared assignments in project and shared coordinates, including a negative replacement
+and repeated edits in one batch. The writer resolves the location selected by the level type and checks the
+vertical transform and both saved planes. The Revit API also permits raising a pinned level without changing
+its pinned state. Small changes can leave the displayed value at its current value in the API. RvtIO follows
+the observed tolerance and refuses changes at an ambiguous floating-point cutoff. The 40 projects matched the
+Revit API after Save As and reopening without Audit in Revit 2020–2025 and 2027. Revit 2027 checked the 2026
+format after upgrade. The Revit 2025 checks also covered an elevation measured from a moved project base point,
+large finite elevations, and changes within the comparison tolerance. All 40 refused batches preserved the
+source bytes and produced no output. [Autodesk level elevation reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/b5d48a18-4aa9-7457-7a6a-6d4966eaf77f.htm)
+
 Empty-text checks covered walls, basic wall types, and rooms with non-shared definitions and shared definitions
 with either setting of `HideWhenNoValue`. A first empty assignment and a new empty assignment after clearing
 both returned `HasValue=true`. Clearing a shared parameter with `HideWhenNoValue` returned `HasValue=false`.
@@ -997,6 +1008,7 @@ each case the source bytes stayed intact and no output was created.
 | Clearing an RVT value | Revit API `ClearValue()` requires a shared definition with `HideWhenNoValue`. RvtIO also checks the binding and stored value layout. |
 | Additional writable RVT built-ins and element classes | The RVT parameter writer supports the combinations in the table above. Other built-in fields, loaded family categories, and layouts beyond verified directly linked derived symbols still require coverage. |
 | Datum names | Revit exposes `DATUM_TEXT` as read-only on individual multi-segment grid members. The tested level and grid type name parameter (`SYMBOL_NAME_PARAM`) is read-only through `Parameter.Set`, and the tested levels expose their writable name as `DATUM_TEXT`. Grouped elements, design options, other datum classes, and renaming corresponding views with a level still require RvtIO coverage. |
+| Level elevation with dependents | The Revit API can set `LEVEL_ELEV` on a level with attached geometry or plan views. The tested wall moved with its base level. The tested plan views and associated sketch planes required separate updates to their saved elevations. These dependent layouts still require RvtIO coverage. The API property `Level.ProjectElevation` is read-only. [Autodesk project elevation reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/895ef506-bfea-cc4e-31f8-aad2af6672e4.htm) |
 | Additional built-ins in standalone families | The verified Generic Model, Door, Window, and Furniture fields are listed above. Other built-ins, other family categories, and selecting an unnamed family type still require coverage. |
 | User Currency parameters in standalone families | RvtIO supports verified type values, instance defaults, and formula dependencies. Additional Currency display formats still require coverage. |
 | Family-declared Currency parameters in projects | RvtIO supports the verified primary type and top-level instance assignments, exact type formula inverses, and existing global associations described above. Other formula paths and geometry dependencies still require coverage. |

@@ -16,7 +16,7 @@ using NoRef = RvtIO.Tests.SchemaStreamEditorTests.NoRef;
 
 namespace RvtIO.Tests;
 
-public sealed class SetParameterTests : IDisposable
+public sealed partial class SetParameterTests : IDisposable
 {
     private const int ProjectId = 70;
     private const int DefinitionId = 71;
