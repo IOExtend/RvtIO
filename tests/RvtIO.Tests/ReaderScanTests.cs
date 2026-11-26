@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using RvtIO.Internal;
 using RvtIO.Parsing;
@@ -142,11 +143,52 @@ public class ReaderScanTests
     public void ParameterNamesKeepTheOriginalFilters(string name, bool expected)
         => Assert.Equal(expected, StringScanner.IsValidParamName(name));
 
-    [Fact]
-    public void ParameterNamesUseTheCurrentCultureForTheMetadataPrefix()
+    [Theory]
+    [InlineData("\u00adautodesk.spec")]
+    [InlineData("\0autodesk.spec")]
+    [InlineData("auto\u007fdesk.spec")]
+    public void ParameterNamesUseTheCurrentCultureForTheMetadataPrefix(string name)
     {
-        const string name = "\u00adautodesk.spec";
         Assert.Equal(!name.StartsWith("autodesk.", StringComparison.CurrentCulture), StringScanner.IsValidParamName(name));
+    }
+
+    [Theory]
+    [InlineData("auto\u007fdesk.spec", (byte)0xF7)]
+    [InlineData("auto\u007fdesk.spec", (byte)0x1B)]
+    [InlineData("-autodesk.spec", (byte)0)]
+    public void NearbyNameScanUsesTheCurrentCultureForTheMetadataPrefix(string metadata, byte highByte)
+    {
+        const uint id = 70_000;
+        const string caption = "Wall length";
+        byte[] chunk = new byte[100];
+        chunk.AsSpan().Fill(0xFF);
+        BinaryPrimitives.WriteUInt32LittleEndian(chunk, id);
+        WriteName(9, metadata);
+        if (highByte != 0)
+            chunk[9 + 4 + 2 * metadata.IndexOf('\u007f') + 1] = highByte;
+        WriteName(60, caption);
+        var strings = new Dictionary<uint, List<string>>();
+
+        var previousCulture = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("mi");
+            StringScanner.ScanChunk(chunk, [id], strings);
+            bool isMetadata = metadata.StartsWith("autodesk.", StringComparison.CurrentCulture);
+            Assert.Equal(!isMetadata, StringScanner.IsValidParamName(metadata));
+            string[] expected = isMetadata ? [caption] : [metadata, caption];
+            Assert.Equal(expected, strings[id]);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previousCulture;
+        }
+
+        void WriteName(int offset, string name)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(chunk.AsSpan(offset), (uint)name.Length);
+            System.Text.Encoding.Unicode.GetBytes(name, chunk.AsSpan(offset + 4));
+        }
     }
 
     [Theory]
