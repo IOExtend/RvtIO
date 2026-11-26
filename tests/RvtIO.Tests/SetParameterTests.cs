@@ -1431,6 +1431,15 @@ public sealed class SetParameterTests : IDisposable
     [InlineData(OwnerKind.Room, 1, true)]
     [InlineData(OwnerKind.WallType, 1, false)]
     [InlineData(OwnerKind.Room, 2, false)]
+    [InlineData(OwnerKind.Floor, 1, true)]
+    [InlineData(OwnerKind.FloorType, 2, true)]
+    [InlineData(OwnerKind.Roof, 1, true)]
+    [InlineData(OwnerKind.RoofType, 2, true)]
+    [InlineData(OwnerKind.Ceiling, 1, true)]
+    [InlineData(OwnerKind.CeilingType, 2, true)]
+    [InlineData(OwnerKind.Floor, 2, false)]
+    [InlineData(OwnerKind.RoofType, 1, false)]
+    [InlineData(OwnerKind.Ceiling, 2, false)]
     public void FirstValueRequiresTheRightBindingForTheOwner(OwnerKind owner, int binding, bool writable)
     {
         var parameter = new UserParameter(Kind.Text, false, Binding: binding, Store: StoreState.NullPointer, Owner: owner);
@@ -1446,6 +1455,20 @@ public sealed class SetParameterTests : IDisposable
         RvtWriter.SetParameter(source, Output, ProjectId, DefinitionId, "First");
         using var root = RootStorage.OpenRead(Output);
         Assert.Equal(UserBody(parameter, "First"), ReadBody(root));
+    }
+
+    [Theory]
+    [InlineData(OwnerKind.Floor, 1, true)]
+    [InlineData(OwnerKind.RoofType, 2, false)]
+    public void WritesAnExplicitFirstEmptyTextOnAVerifiedSystemElement(OwnerKind owner, int binding, bool shared)
+    {
+        var parameter = new UserParameter(Kind.Text, shared, Binding: binding, Store: StoreState.NullPointer, Owner: owner);
+        string source = CreateSource(wall: true, user: parameter);
+
+        RvtWriter.SetParameter(source, Output, ProjectId, DefinitionId, "");
+
+        using var output = RootStorage.OpenRead(Output);
+        Assert.Equal(UserBody(parameter, ""), ReadBody(output));
     }
 
     [Theory]
@@ -1479,7 +1502,10 @@ public sealed class SetParameterTests : IDisposable
     }
 
     public enum Kind { Text, Integer, YesNo, Number, Material, FamilyType }
-    public enum OwnerKind : ushort { Wall = 22, WallType = 50, Room = 51 }
+    public enum OwnerKind : ushort
+    {
+        Wall = 22, WallType = 50, Room = 51, Floor = 86, FloorType = 87, Roof = 88, RoofType = 89, Ceiling = 90, CeilingType = 91,
+    }
     private enum StoreState { Value, NullPointer, Neighbour, Unsorted }
     private sealed record UserParameter(Kind Kind, bool Shared, bool ReadOnly = false, int Binding = 1, bool Measured = false,
         bool IdFirst = false, StoreState Store = StoreState.Value, OwnerKind Owner = OwnerKind.Wall, bool HideWhenNoValue = false,
@@ -2535,7 +2561,13 @@ public sealed class SetParameterTests : IDisposable
         Add("std::pair< AString, AString >", new Fld("first", 8), new Fld("second", 8)); // 83
         Add("ExternalResourceRef", Reference("m_referenceInformation", 83, 0x50)); // 84
         Add("ExternalResourceReferenceCell", Reference("m_externalResourceReferences", 84, 0x50)); // 85
-        for (int i = 86; i < tags.ContentKey; i++)
+        schema.Top(new("Floor", new Back(20), 1, ownerFields, [])); // 86
+        schema.Top(new("FloorAttributes", new Back(20), 1, ownerFields, [])); // 87
+        schema.Top(new("ProfileRoof", new Back(20), 1, ownerFields, [])); // 88
+        schema.Top(new("RoofAttributes", new Back(20), 1, ownerFields, [])); // 89
+        schema.Top(new("Ceiling", new Back(20), 1, ownerFields, [])); // 90
+        schema.Top(new("CompoundCeilingType", new Back(20), 1, ownerFields, [])); // 91
+        for (int i = 92; i < tags.ContentKey; i++)
             Add("Filler" + i);
         foreach (string marker in new[] { "ContentKey", "ContentMarker", "SegmentMarker", "SegmentCheckback", "SignatureMarker" })
             Add(marker);
@@ -2592,7 +2624,14 @@ public sealed class SetParameterTests : IDisposable
         }
         using (var partition = root.CreateStorage("Partitions").CreateStream("0"))
         {
-            var category = (user?.Owner ?? image?.Owner) == OwnerKind.Room ? BuiltInCategory.OST_Rooms : BuiltInCategory.OST_Walls;
+            var category = (user?.Owner ?? image?.Owner) switch
+            {
+                OwnerKind.Room => BuiltInCategory.OST_Rooms,
+                OwnerKind.Floor or OwnerKind.FloorType => BuiltInCategory.OST_Floors,
+                OwnerKind.Roof or OwnerKind.RoofType => BuiltInCategory.OST_Roofs,
+                OwnerKind.Ceiling or OwnerKind.CeilingType => BuiltInCategory.OST_Ceilings,
+                _ => BuiltInCategory.OST_Walls,
+            };
             ushort ownerTag = user is not null ? (ushort)user.Owner : wall ? (ushort)22 : (ushort)21;
             var records = new List<(ulong, ushort, byte[])>
                 { (ProjectId, ownerTag, user is null ? Body(wall ? xmlValue : "Owner", duplicate, wall, grouped, association)[2..] : UserBody(user, grouped: grouped, association: association)[2..]) };

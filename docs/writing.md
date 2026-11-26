@@ -54,6 +54,7 @@ readable project record for the element and a verified source for the parameter 
 | Basic wall type or verified loaded family type | `ALL_MODEL_TYPE_COMMENTS`, `ALL_MODEL_DESCRIPTION`, `ALL_MODEL_MANUFACTURER`, `ALL_MODEL_MODEL`, `ALL_MODEL_URL`, and `ALL_MODEL_COST`. Cost takes a finite invariant number with no currency symbol; a change that Revit can suppress within its numeric comparison tolerance is refused. |
 | Basic wall type or verified loaded Door type | `FIRE_RATING` (also named `DOOR_FIRE_RATING`, the same parameter ID). |
 | Straight wall (`SWall`), basic wall type (`BasicWallType`), room (`RoomElem`) | Project and shared parameters of supported types with a verified definition and a matching instance or type binding. |
+| Floor, footprint roof, or ceiling and their verified types | Project-bound Text, Integer, Yes/No, Length, Currency, and Material. The category and binding must agree with the stored class (`Floor`, `FloorAttributes`, `ProfileRoof`, `RoofAttributes`, `Ceiling`, or `CompoundCeilingType`). |
 | Straight wall, basic wall type, room, or loaded family instance or type | **Family Type** parameters supplied by a verified project binding. Assign a matching nested type reference, a verified material ID, or `"-1"`. Shared definitions also accept the verified local element and active primary type references described below. A shared definition with `HideWhenNoValue` supports clearing. |
 | Top-level loaded family instance (`FamilyInstance`) or primary family type (`FamilySymbol`) | Family and family-shared parameters of supported types. The loaded family must mark the parameter as independent of geometry. |
 | Top-level loaded family instance or primary loaded family type | Family and family-shared **Family Type** parameters with a verified geometry-independent declaration. Assign a matching local nested type reference, a verified local material ID, or the explicit value `"-1"`. Primary type assignments also update verified derived copies. |
@@ -62,11 +63,10 @@ readable project record for the element and a verified source for the parameter 
 | Global parameter (`GlobalParameter`) | Text, Integer, Yes/No, Number, Length, Area, Volume, Angle, Currency, Mass, Force, Mass Density, Speed, Slope, and Time, including inputs to verified formulas. Currency globals can update verified built-in Cost and project-bound Currency associations on walls, basic wall types, rooms, and loaded family elements. Use the global parameter's element ID for both `elementId` and `parameterId` in single edits and batches. |
 
 For project and shared parameters, the writer checks the definition's read-only flag and verifies the category binding in the main model.
-Revit API editability governs shared parameters that the UI displays as read-only. The writer can also assign the first
-value of a supported parameter on a straight wall, a basic wall type, or a room. First assignment of a wall comment requires
-a wall in the main model. First assignment of project-bound text on walls and rooms requires a non-empty value.
-The supported built-in Comments and text identity fields, and project-bound text on loaded family elements, accept an
-empty string even on first assignment.
+Revit API editability governs shared parameters that the UI displays as read-only. First assignment of a wall comment
+requires a wall in the main model. First assignment of project-bound text on walls, basic wall types, and rooms requires
+a non-empty value. The supported built-in Comments and text identity fields and project-bound text on loaded family
+elements, floors, footprint roofs, ceilings, and their verified types accept an empty string on first assignment.
 Ordinary element edits also work in projects with global parameters. RvtIO checks project associations by the
 parameter ID on the element. A supported parameter can be assigned or cleared when another parameter on that
 element has an association. The associated parameter is read-only. Group membership and unverified association
@@ -579,6 +579,13 @@ matched Revit 2020–2025 and 2027 after Save As and reopening without Audit. Re
 after upgrade. Invalid or ambiguous numeric changes, direct edits to associated values, and attempts to clear a
 non-shared parameter rejected all 32 invalid batches. The source bytes stayed intact and no outputs were created.
 
+The floor, footprint roof, and ceiling checks used instance and type bindings for shared Text, Integer, Yes/No,
+Length, and Material, and non-shared Text and Currency. The cases covered first values including empty text and zero,
+replacement, clearing the verified shared values, ordered batches, and updating initialized Length values through
+an existing global association. The 48 edited projects matched the Revit API values, presence flags, associations,
+and element bounds after Save As and reopening without Audit in Revit 2020–2025 and 2027. Revit 2027 checked the
+2026 format after upgrade. All 40 refused batches left the source bytes intact and produced no output.
+
 Independent Mass, Force, Mass Density, Speed, Slope, and Time checks covered 64 files. Project fixtures included
 shared values on walls and wall types, family-defined values on loaded primary types and top-level instances,
 and independent global parameters. Standalone family fixtures covered custom and shared type values and instance
@@ -965,7 +972,7 @@ each case the source bytes stayed intact and no output was created.
 | Additional built-ins in standalone families | The verified Generic Model, Door, Window, and Furniture fields are listed above. Other built-ins, other family categories, and selecting an unnamed family type still require coverage. |
 | User Currency parameters in standalone families | RvtIO supports verified type values, instance defaults, and formula dependencies. Additional Currency display formats still require coverage. |
 | Family-declared Currency parameters in projects | RvtIO supports the verified primary type and top-level instance assignments, exact type formula inverses, and existing global associations described above. Other formula paths and geometry dependencies still require coverage. |
-| Project-bound Currency parameters | RvtIO supports verified shared and non-shared values on walls, basic wall types, rooms, and loaded family types and instances. Other owner classes and unverified binding layouts still require coverage. |
+| Project-bound Currency parameters | RvtIO supports the shared and non-shared bindings listed above. Other owner classes and unverified binding layouts still require coverage. |
 | Additional measurable specs and units | RvtIO supports the input units, display formats, and formula combinations listed above. Further measurable specs, combinations, and display symbols in standalone family metadata still require verification. Values and fractional rounding steps outside the verified numeric range are refused. |
 | Invalid standalone image references | Revit 2022 and 2027 rejected a missing element ID and an existing family element that was outside the image class. RvtIO requires a local imported image with a verified raster record, or the explicit None value. |
 | Standalone instance and shared Image definitions | The Revit API prohibits creating instance Image parameters. Revit 2025 also rejected the tested attempt to create a shared type definition. RvtIO supports the non-shared type scope described above. [Autodesk FamilyManager.AddParameter reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/3ac89d60-4b71-694f-002f-125d2e6565fc.htm) |
