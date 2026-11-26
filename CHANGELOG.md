@@ -38,6 +38,7 @@ API between minor releases.
 
 ### Fixed
 
+- IFC export preserves the base of a level-constrained wall whose location line already includes its base offset when its decoded body confirms the base and top. The current profile preserves separately closed sections of a straight wall across a full-height gap.
 - Nest fixed MEP ports under their host with `IfcRelNests` in IFC4 and write directed port links from source to sink.
 - Avoid overflow when triangulating trimmed faces with 46,341 or more vertices after bridging.
 - Read `Global` and `Formats` streams whose last page has exactly the length of a full page and holds no segment marker at the segment position.

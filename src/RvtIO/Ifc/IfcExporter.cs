@@ -8741,11 +8741,12 @@ public partial class IfcExporter
             StepWriter w, GeometryData geo, int subCtxId,
             double offX = 0, double offY = 0, double offZ = 0,
             bool preserveValidatedPlanarFaces = false,
-            Func<double[], double[]>? localFrame = null)
+            Func<double[], double[]>? localFrame = null,
+            bool keepClosedComponentsSeparate = false)
     {
         var result = CreateFacetedShapeRepresentations(
             w, geo, subCtxId, offX, offY, offZ, preserveValidatedPlanarFaces,
-            localFrame: localFrame);
+            localFrame: localFrame, keepClosedComponentsSeparate: keepClosedComponentsSeparate);
         int shapeId = result.RepresentationIds.Count == 0 ? 0
             : w.Add("IFCPRODUCTDEFINITIONSHAPE",
                 $"$,$,{StepWriter.List(result.RepresentationIds.Select(R))}");
@@ -8925,7 +8926,8 @@ public partial class IfcExporter
         bool preserveValidatedPlanarFaces = false,
         bool preserveValidatedCoordinates = false,
         Func<double[], double[]>? localFrame = null,
-        List<ClosedComponentCurrent>? precomputedComponents = null)
+        List<ClosedComponentCurrent>? precomputedComponents = null,
+        bool keepClosedComponentsSeparate = false)
     {
         var closedComponents = precomputedComponents
             ?? ComputeClosedComponents(geo, preserveValidatedPlanarFaces, CurrentProfile);
@@ -9143,7 +9145,8 @@ public partial class IfcExporter
         if (dropUntakenNodes)
             for (int faceIndex = 0; faceIndex < geo.Faces.Count; faceIndex++)
                 if (geo.Faces[faceIndex].GeometryNode < 0) assignedFaces.Add(faceIndex);
-        var referenceWritten = WriteTriangleNodes(w, geo, offX, offY, offZ, localFrame, shellItems);
+        var referenceWritten = keepClosedComponentsSeparate
+            ? [] : WriteTriangleNodes(w, geo, offX, offY, offZ, localFrame, shellItems);
         if (referenceWritten.Count > 0)
             for (int faceIndex = 0; faceIndex < geo.Faces.Count; faceIndex++)
                 if (referenceWritten.Contains(Math.Abs(geo.Faces[faceIndex].GeometryNode))) assignedFaces.Add(faceIndex);
@@ -9164,7 +9167,7 @@ public partial class IfcExporter
             if (solidFaces.Count < 4)
                 continue;
             foreach (int faceIndex in component.ConsumedIndices) assignedFaces.Add(faceIndex);
-            if (perNode)
+            if (perNode && !keepClosedComponentsSeparate)
             {
                 // The current profile writes one IfcFacetedBrep per Geometry node with all its
                 // faces in one closed shell, however many disjoint shells the node holds
@@ -11898,15 +11901,13 @@ public partial class IfcExporter
                 .Select(parameter => (double)parameter.Value!)
                 .Cast<double?>()
                 .FirstOrDefault();
-            double locationBaseFt = Math.Min(loc.StartPoint[2], loc.EndPoint[2]);
-            double exactBaseOffsetFt = baseOffsetFt ?? 0;
-            z0 = (locationBaseFt + exactBaseOffsetFt) * FeetToMetres;
             double bboxHeightFt = bbox[5] - bbox[2];
             dz = bboxHeightFt * FeetToMetres;
             double hFt = 0;
             foreach (var p in elem.Parameters)
                 if (p.Id == -1001105 && p.Value is double hv && hv > 0.1 && hv < 10000) { hFt = hv; break; }
             if (hFt > 0) dz = hFt * FeetToMetres;
+            z0 = ResolveStraightWallBaseFeet(elem, loc, baseOffsetFt ?? 0, hFt) * FeetToMetres;
             if (useBoundaryOwnedVerticalDefinition
                 || useBoundaryOwnedTrimmedPlan)
             {
@@ -39017,8 +39018,7 @@ public partial class IfcExporter
             : authoredBaseParameters.Count == 1
                 ? (double)authoredBaseParameters[0].Value! : 0;
         double baseZFt = hasBaseParameter
-            ? Math.Min(location.StartPoint[2], location.EndPoint[2])
-                + baseOffsetFt
+            ? ResolveStraightWallBaseFeet(wall, location, baseOffsetFt, heightFt)
             : grossDefinitionBounds[2];
         double coordinateScale = Math.Max(1.0,
             grossDefinitionBounds.Take(6)
@@ -41384,8 +41384,7 @@ public partial class IfcExporter
             ? preferredBaseOffsets[0]
             : fallbackBaseOffsets.Count == 1
                 ? fallbackBaseOffsets[0] : 0;
-        baseZFt = Math.Min(
-            location.StartPoint[2], location.EndPoint[2]) + baseOffsetFt;
+        baseZFt = ResolveStraightWallBaseFeet(wall, location, baseOffsetFt, heightValues[0]);
         topZFt = baseZFt + heightValues[0];
         const double MachineEpsilon = 2.2204460492503131e-16;
         double scale = Math.Max(1.0, bounds.Take(6)
@@ -45474,19 +45473,36 @@ public partial class IfcExporter
             .Select(parameter => (double)parameter.Value!)
             .Cast<double?>()
             .FirstOrDefault() ?? 0;
-        double baseZFt = Math.Min(location.StartPoint[2], location.EndPoint[2])
-            + baseOffsetFt;
         double heightFt = element.Parameters
             .Where(parameter => parameter.Id == -1001105
                 && parameter.Value is double value && double.IsFinite(value)
                 && value > 0.1 && value < 10000)
             .Select(parameter => (double)parameter.Value!)
             .FirstOrDefault();
+        double baseZFt = ResolveStraightWallBaseFeet(element, location, baseOffsetFt, heightFt);
         if (!(heightFt > 0)) heightFt = bounds[5] - bounds[2];
         double toleranceFt = IfcDeclaredPrecisionMetres / FeetToMetres;
         return double.IsFinite(baseZFt) && double.IsFinite(heightFt)
             && Math.Abs(baseZFt - bounds[2]) <= toleranceFt
             && Math.Abs(baseZFt + heightFt - bounds[5]) <= toleranceFt;
+    }
+
+    private static double ResolveStraightWallBaseFeet(
+        Element wall, LocationCurve location, double offsetFt, double heightFt)
+    {
+        double lineBaseFt = Math.Min(location.StartPoint[2], location.EndPoint[2]);
+        double offsetBaseFt = lineBaseFt + offsetFt;
+        const double toleranceFt = IfcDeclaredPrecisionMetres / FeetToMetres;
+        // Some constrained walls store a location line at the already offset base.
+        if (heightFt > 0
+            && wall.Geometry?.BoundingBox is { Length: 6 } bodyBounds
+            && Math.Abs(offsetBaseFt - bodyBounds[2]) > toleranceFt
+            && Math.Abs(location.StartPoint[2] - location.EndPoint[2]) <= toleranceFt
+            && Math.Abs(lineBaseFt - bodyBounds[2]) <= toleranceFt
+            && Math.Abs(lineBaseFt + heightFt - bodyBounds[5]) <= toleranceFt
+            && wall.Parameters.Any(p => p.Id == -1001103 && p.Value is int topLevel && topLevel > 0))
+            return lineBaseFt;
+        return offsetBaseFt;
     }
 
     /// <summary>
@@ -68813,6 +68829,7 @@ public partial class IfcExporter
     {
         if (Environment.GetEnvironmentVariable("RVTIO_WALL_DIAG") is { Length: > 0 } diagPath) AppendWallDiag(diagPath, elem);
         if (elem.Location is not { CurveType: "Line" or "Arc" }) return true;
+        if (currentProfile && HasSeparatedFullHeightWallPieces(elem)) return true;
         // The current profile writes IfcWallStandardCase only for a body it can reproduce as a
         // vertical extrusion; a body it cannot judge (no decoded BRep) keeps the earlier rule
         // below.
