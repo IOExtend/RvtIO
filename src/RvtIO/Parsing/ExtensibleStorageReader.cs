@@ -8,27 +8,41 @@ namespace RvtIO.Parsing;
 /// <summary>Reads public entities from legacy project records and embedded family records in their saved document scope.</summary>
 internal static class ExtensibleStorageReader
 {
-    internal static void Apply(RootStorage root, RevitFileInfo info, IReadOnlyList<PartitionFraming.Framed?> framed)
+    internal sealed record Storage(Dictionary<ulong, IReadOnlyList<ExtensibleStorageEntity>>? Project,
+        List<EmbeddedFamilyElementStorage>? Families)
+    {
+        internal void Apply(RevitFileInfo info)
+        {
+            if (Project is { Count: > 0 })
+                foreach (var element in info.Elements)
+                    if (Project.TryGetValue((ulong)element.ElementId, out var entities))
+                        element.ExtensibleStorage = entities;
+            if (Families is { Count: > 0 }) info.EmbeddedFamilyExtensibleStorage = Families;
+        }
+    }
+
+    internal static Storage? Read(RootStorage root, bool exactTable, IReadOnlyList<PartitionFraming.Framed?> framed)
     {
         // An unframed partition may contain a second copy of an owner or family block.
-        if (framed.Count == 0 || framed.Any(frame => frame == null)) return;
+        if (framed.Count == 0 || framed.Any(frame => frame == null)) return null;
         var parts = framed.Cast<PartitionFraming.Framed>().ToArray();
-        bool legacy = parts[0].IdWidth == 4 && info.ElemTableIsExact;
+        bool legacy = parts[0].IdWidth == 4 && exactTable;
         var candidates = parts.SelectMany(part => part.FamilyEntityCandidates.Select(item => (Part: part, Record: item))).ToArray();
         if ((!legacy && candidates.Length == 0) || TfSchemaReader.Read(root) is not { } schema
-            || schema.Classes.FirstOrDefault(c => c.Name == "ESEntityCell") is not { } cell) return;
+            || schema.Classes.FirstOrDefault(c => c.Name == "ESEntityCell") is not { } cell) return null;
 
         var projectNames = new Dictionary<Guid, string>();
         var project = EntitySchemaReader.Read(root, schema, projectNames);
         var walker = new WideBlockWalker(schema, (declaring, field) =>
             declaring.Name == "Element" && field.Name == "m_id" ? field.Name : null, []);
+        Dictionary<ulong, IReadOnlyList<ExtensibleStorageEntity>>? projectEntities = null;
         if (legacy && projectNames.Count != 0)
         {
             walker.UseEntitySchemas(project, publicEntityNames: projectNames);
-            ApplyLegacyProject(info, parts, walker, BitConverter.GetBytes((ushort)cell.Id));
+            projectEntities = ReadLegacyProject(parts, walker, BitConverter.GetBytes((ushort)cell.Id));
         }
 
-        if (candidates.Length == 0) return;
+        if (candidates.Length == 0) return new(projectEntities, null);
         var uniqueKeys = parts.Where(part => part.FamilyKeys != null).SelectMany(part => part.FamilyKeys!)
             .GroupBy(key => key, StringComparer.Ordinal).Where(group => group.Count() == 1)
             .Select(group => group.Key).ToHashSet(StringComparer.Ordinal);
@@ -49,7 +63,7 @@ internal static class ExtensibleStorageReader
                     embedded.Add(new(key, owner.Key.ToString(CultureInfo.InvariantCulture), entities));
             }
         }
-        if (embedded.Count > 0) info.EmbeddedFamilyExtensibleStorage = embedded;
+        return new(projectEntities, embedded);
     }
 
     internal static void ConfigureFamily(WideBlockWalker walker, Dictionary<Guid, SchemaField[]?> project,
@@ -72,21 +86,21 @@ internal static class ExtensibleStorageReader
         walker.UseEntitySchemas(layouts, publicEntityNames: names);
     }
 
-    private static void ApplyLegacyProject(RevitFileInfo info, PartitionFraming.Framed[] parts, WideBlockWalker walker, byte[] cellTag)
+    private static Dictionary<ulong, IReadOnlyList<ExtensibleStorageEntity>> ReadLegacyProject(
+        PartitionFraming.Framed[] parts, WideBlockWalker walker, byte[] cellTag)
     {
         var recovered = new Dictionary<ulong, IReadOnlyList<ExtensibleStorageEntity>>();
         foreach (var part in parts)
             foreach (var item in part.Items)
                 if (item.Channel == 102 && ReadOwner(walker, part, item, cellTag) is { } entities)
                     recovered.TryAdd(item.Owner, entities);
-        if (recovered.Count == 0) return;
+        if (recovered.Count == 0) return recovered;
 
         // The framing index has already dropped any copies resolved by the increment table.
-        var owners = parts.SelectMany(part => part.Items).Where(item => item.Channel == 102 && recovered.ContainsKey(item.Owner))
-            .GroupBy(item => item.Owner).Where(group => group.Count() == 1).Select(group => group.Key).ToHashSet();
-        foreach (var element in info.Elements)
-            if (owners.Contains((ulong)element.ElementId) && recovered.TryGetValue((ulong)element.ElementId, out var entities))
-                element.ExtensibleStorage = entities;
+        foreach (var group in parts.SelectMany(part => part.Items)
+            .Where(item => item.Channel == 102 && recovered.ContainsKey(item.Owner)).GroupBy(item => item.Owner))
+            if (group.Count() != 1) recovered.Remove(group.Key);
+        return recovered;
     }
 
     private static IReadOnlyList<ExtensibleStorageEntity>? ReadOwner(WideBlockWalker walker, PartitionFraming.Framed part,

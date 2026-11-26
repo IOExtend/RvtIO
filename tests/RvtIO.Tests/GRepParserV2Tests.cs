@@ -8,18 +8,22 @@ namespace RvtIO.Tests;
 public class GRepParserV2Tests
 {
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public void ResyncRestoresTrialStateBeforeReturningAnAnchor(bool completeTrial)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void ResyncRestoresTrialStateBeforeReturningAnAnchor(bool truncate, bool invalidCategory)
     {
         // One Face with a surface pointer, followed by five GNodes with only GInfo.
         const int anchor = 1;
-        byte[] data = new byte[anchor + 50 + 5 * 16 - (completeTrial ? 0 : 8)];
+        bool completeTrial = !truncate && !invalidCategory;
+        byte[] data = new byte[anchor + 50 + 5 * 16 - (truncate ? 8 : 0)];
         BitConverter.GetBytes(5).CopyTo(data, anchor);
         BitConverter.GetBytes(-1).CopyTo(data, anchor + 8);
         BitConverter.GetBytes(0x80004).CopyTo(data, anchor + 12);
         BitConverter.GetBytes(17).CopyTo(data, anchor + 44);
         BitConverter.GetBytes((ushort)522).CopyTo(data, anchor + 48);
+        if (invalidCategory)
+            BitConverter.GetBytes(-3_000_001).CopyTo(data, anchor + 50 + 4 * 16 + 8);
 
         var parser = typeof(GRepParserV2);
         var cursorType = parser.GetNestedType("Cur", BindingFlags.NonPublic)!;
@@ -393,6 +397,19 @@ public class GRepParserV2Tests
         var ring = Assert.Single(rings);
         Assert.Equal(4, ring.Count);
         Assert.Equal(Math.PI, ring.Max(point => point[0]) - ring.Min(point => point[0]), 12);
+    }
+
+    [Fact]
+    public void PeriodicSurfaceEdges_KeepFirstPathAndSkipNonfiniteEdges()
+    {
+        List<(double U1, double V1, double U2, double V2)> edges =
+        [
+            (0, 0, 2, 1), (0, 0, -2, 2), (0, 0, 0, 0),
+            (2, 1, 3, 3), (-2, 2, 3, 3), (double.NaN, 0, 1, 0), (10, 4, 11, 5),
+        ];
+        var normalized = GRepParserV2.NormalizePeriodicEdges(edges, 2 * Math.PI);
+        // Reaching (3,3) through (-2,2) first would unwrap it to 3 - 2*pi.
+        Assert.Equal(edges.Where(edge => double.IsFinite(edge.U1)).ToArray(), normalized.ToArray());
     }
 
     [Fact]

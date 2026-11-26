@@ -207,19 +207,21 @@ public class AnalyticSolidMeasureTests
     }
 
     [Theory]
-    [InlineData(true, true, true)]
-    [InlineData(false, true, false)]
-    [InlineData(true, false, false)]
-    public void ShellMeasures_RequireAClosedShellAndEverySourceFace(bool complete, bool closed, bool expected)
+    [InlineData(true, true, false, true)]
+    [InlineData(false, true, false, false)]
+    [InlineData(true, false, false, false)]
+    [InlineData(true, true, true, false)]
+    public void ShellMeasures_RequireACompleteClosedNonCuttingNode(bool complete, bool closed, bool cutting, bool expected)
     {
         var geometry = new GeometryData
         {
             Faces = Enumerable.Range(1, 4).Select(i => new GeoFace
             {
-                SourceFace = (uint)i, GeometryNode = 7,
+                SourceFace = (uint)i, GeometryNode = 7, QuadratureArea = 2,
                 OuterVertices = [[0, 0, i], [1, 0, i], [1, 1, i], [0, 1, i]],
             }).ToList(),
             BrepSolids = [new GeoBrepSolid { IsClosed = closed, FaceIndices = [0, 1, 2, 3] }],
+            NodeMeasures = cutting ? [new MeshNodeMeasure(7, 12, -5)] : null,
             MeshNodes = [new GeometryNode(7, 0,
                 Enumerable.Range(1, complete ? 4 : 5).Select(i => new BrFace { Marker = i, SurfaceKind = SurfaceKind.Plane, Loops = [] }).ToList(), 1)
                 { SourceMeasures = (12, 5) }],
@@ -228,11 +230,8 @@ public class AnalyticSolidMeasureTests
         var shell = Assert.Single(BrepMeasures.ShellsOfCurrent(geometry));
         Assert.Equal(expected, shell.SourceMeasured);
         Assert.Equal(expected ? 12 : 4, shell.Area, 12);
-        if (expected)
-        {
-            Assert.Equal(5, shell.Volume, 12);
-            Assert.Equal(12, BrepMeasures.SurfaceAreaCurrent(geometry), 12);
-        }
+        Assert.Equal(expected ? 12 : 8, BrepMeasures.SurfaceAreaCurrent(geometry), 12);
+        if (expected) Assert.Equal(5, shell.Volume, 12);
     }
 
     [Fact]

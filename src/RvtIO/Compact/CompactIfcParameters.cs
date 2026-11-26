@@ -272,9 +272,11 @@ internal sealed class CompactIfcParameters : ICompactPropertySource
         string? operation = ListsOperation(recordClass, category, form) ? "" : null;
         foreach (Parameter parameter in element.Parameters)
         {
-            if (parameter.Id == (int)BuiltInParameter.DOOR_OPERATION_TYPE && operation != null)
-                operation = parameter.Value as string ?? "";
-            else if (Array.Exists(Entries, entry => entry.Id == parameter.Id))
+            if (parameter.Id == (int)BuiltInParameter.DOOR_OPERATION_TYPE)
+            {
+                if (operation != null) operation = parameter.Value as string ?? "";
+            }
+            else if (OwnedIds.Contains(parameter.Id))
                 (stored ??= []).Add(parameter.Id);
         }
         Guid? exportId = element.SerializedExportId;

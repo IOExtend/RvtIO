@@ -178,5 +178,5 @@ public class GElementTwoPointProjectionTests
         [new(100, 106, [], target is { } t ? new(t.H, t.Class, t.Q, null, [], 100, 106) : new(0, null, null, null, [], 100, 104), [])]);
     private static GElementGraphField Scalar(int cls, string name, long v) => new(cls, name, null, 100, 101, [new(100, 101, [v], null, [])]);
     private static OwnGElementGeometryGraph Replace(OwnGElementGeometryGraph g, int q, params GElementGraphField[] fs) => g with
-        { Nodes = g.Nodes.Select(n => n.QueueIndex != q ? n : n with { Fields = n.Fields.Select(f => fs.SingleOrDefault(x => x.Declaring == f.Declaring && x.Name == f.Name) ?? f).ToArray() }).ToArray() };
+        { Nodes = g.Nodes.Select(n => n.QueueIndex != q ? n : n with { Fields = n.Fields.Select(f => fs.Where(x => x.Declaring == f.Declaring && x.Name == f.Name).DefaultIfEmpty(f).Single()).ToArray() }).ToArray() };
 }

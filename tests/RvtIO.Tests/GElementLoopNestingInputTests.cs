@@ -230,7 +230,7 @@ public class GElementLoopNestingInputTests
         Endpoints([0, 0], [4, 0]), Interior([]));
     private static OwnGElementGeometryGraph Replace(OwnGElementGeometryGraph g, int q, params GElementGraphField[] fs)
         => g with { Nodes = g.Nodes.Select(n => n.QueueIndex != q ? n : n with
-            { Fields = n.Fields.Select(f => fs.SingleOrDefault(x => x.Declaring == f.Declaring && x.Name == f.Name) ?? f).ToArray() }).ToArray() };
+            { Fields = n.Fields.Select(f => fs.Where(x => x.Declaring == f.Declaring && x.Name == f.Name).DefaultIfEmpty(f).Single()).ToArray() }).ToArray() };
     private static GElementGraphField Weak(int cls, string name, params uint[] keys) => new(cls, name, keys.Length == 2 ? 2u : null, 100, 100 + keys.Length * 4,
         keys.Select((k, i) => new GElementGraphItem(100 + i * 4, 104 + i * 4, [k], null, [])).ToArray());
     private static GElementGraphField Owned(int cls, string name, (int Q, ushort Class, uint Handle)? target) => new(cls, name, null, 100, 106,

@@ -31,7 +31,7 @@ public static class CompactJsonExporter
         ArgumentException.ThrowIfNullOrEmpty(outputPath);
         readerOptions ??= new RvtReaderOptions();
         var diagnostics = readerOptions.DiagnosticOutput;
-        var reader = new RvtFileReader(readerOptions);
+        var reader = new RvtFileReader(readerOptions) { ReleaseExportPartitions = true };
         var info = reader.Read(rvtPath);
         var state = reader.LastParsingState ?? throw new InvalidOperationException("The reader kept no parsing state.");
         // The compact export reads Element.Name only where it is validated.

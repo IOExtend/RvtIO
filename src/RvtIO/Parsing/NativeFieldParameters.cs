@@ -520,14 +520,15 @@ internal static class NativeFieldParameters
     {
         rows.Clear();
         Collect(native.Fields, IntegerRows, rows, valuesByRow);
-        Collect(native.DoubleFields, DoubleRows, rows, valuesByRow);
-        Collect(native.StringFields, StringRows, rows, valuesByRow);
+        Collect(native.CapturedDoubleFields, DoubleRows, rows, valuesByRow);
+        Collect(native.CapturedStringFields, StringRows, rows, valuesByRow);
         // Several rows can set the same parameter, so replay the table's original order.
         rows.Sort();
 
-        static void Collect<T>(Dictionary<string, T> fields, Dictionary<string, int[]> index,
+        static void Collect<T>(Dictionary<string, T>? fields, Dictionary<string, int[]> index,
             List<int> rows, object?[] valuesByRow)
         {
+            if (fields == null) return;
             foreach (var field in fields)
             {
                 if (!index.TryGetValue(field.Key, out var matches)) continue;

@@ -103,16 +103,36 @@ internal static partial class TfStreamWalker
 
         void Emit(List<BlockSlice> matches)
         {
-            foreach (var match in matches)
+            // Markers are in stream order. Overlapping cross-chunk matches can refer
+            // to the same bytes, and the visitor may retain them for deferred decoding.
+            byte[] shared = [];
+            long sharedStart = 0;
+            for (int index = 0; index < matches.Count; index++)
             {
+                var match = matches[index];
                 byte[] data = chunks[match.Chunk];
                 int start = (int)(match.Start - offsets[match.Chunk]);
                 int length = (int)match.Size + 16;
                 if (length > data.Length - start)
                 {
-                    data = GC.AllocateUninitializedArray<byte>(length);
-                    CopyBlock(match.Chunk, match.Start, data);
-                    start = 0;
+                    long end = match.Start + length;
+                    if (end > sharedStart + shared.Length)
+                    {
+                        sharedStart = match.Start;
+                        for (int nextIndex = index + 1; nextIndex < matches.Count; nextIndex++)
+                        {
+                            var nextMatch = matches[nextIndex];
+                            if (nextMatch.Start >= end) break;
+                            long nextEnd = nextMatch.Start + 16 + nextMatch.Size;
+                            if (nextEnd <= offsets[nextMatch.Chunk + 1]) continue;
+                            if (nextEnd - sharedStart > MaxTargetBlock + 16) break;
+                            end = Math.Max(end, nextEnd);
+                        }
+                        shared = GC.AllocateUninitializedArray<byte>((int)(end - sharedStart));
+                        CopyBlock(match.Chunk, sharedStart, shared);
+                    }
+                    data = shared;
+                    start = (int)(match.Start - sharedStart);
                 }
                 visit(data, start, match.Size, match.Class, match.Owner);
             }

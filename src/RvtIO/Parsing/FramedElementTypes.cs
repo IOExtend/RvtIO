@@ -77,7 +77,18 @@ internal sealed class FramedElementTypes
         "RebarContainer", "RebarContainerType", "Rebar", "RebarBarType", "RoofSoffit", "RoofSoffitType", "Ramp", "RampAttributes",
     ];
 
-    private readonly record struct Source(PartitionFraming.Framed Frame, PartitionFraming.ProjectItem Item, SchemaClass Class);
+    private readonly record struct Source(PartitionFraming.Framed? Frame, PartitionFraming.ProjectItem Item,
+        SchemaClass Class, int IdWidth, int? Partition, byte[]? Raw)
+    {
+        internal (byte[] Data, int Start, bool Copied) Bytes() =>
+            Raw is { } bytes ? (bytes, 0, false) : Frame!.Bytes(Item);
+
+        internal Source Retain()
+        {
+            var (bytes, offset, _) = Bytes();
+            return this with { Frame = null, Raw = bytes.Length == Item.Length ? bytes : bytes.AsSpan(offset, Item.Length).ToArray() };
+        }
+    }
 
     private sealed record Root(SchemaClass Class, IReadOnlyList<Dictionary<string, long>> Copies)
     {
@@ -96,6 +107,7 @@ internal sealed class FramedElementTypes
     private readonly HashSet<int> _classes;
     private readonly bool _readGroupMembership;
     private readonly Dictionary<long, List<Source>> _sources = new();
+    private readonly HashSet<long> _requiresDetailCategory = new();
     private readonly Dictionary<long, Root?> _roots = new();
 
     private FramedElementTypes(SchemaDocument schema, IReadOnlyDictionary<Guid, SchemaField[]?> entities,
@@ -146,39 +158,51 @@ internal sealed class FramedElementTypes
         IReadOnlyList<PartitionFraming.Framed?> frames, ParsingState state, IReadOnlyList<Element> elements,
         IReadOnlyDictionary<ulong, int>? unroutedTypePartitions = null, bool recoverUnanchoredTypes = false)
     {
-        if (frames.Count == 0 || frames.Any(frame => frame == null)) return 0;
+        var details = DetailOwners(state, elements);
+        return Prepare(schema, entities, frames, state, unroutedTypePartitions, recoverUnanchoredTypes, details)
+            ?.Apply(state, elements, unroutedTypePartitions, recoverUnanchoredTypes, details) ?? 0;
+    }
+
+    private static HashSet<long> DetailOwners(ParsingState state, IReadOnlyList<Element> elements) =>
+        elements.Where(element => element.CategoryId == (int)BuiltInCategory.OST_DetailComponents)
+            .Select(element => state.ElementIds?.SourceId(element.Id) ?? element.Id).ToHashSet();
+
+    private static bool LocalId(ElementIdMap? ids, long sourceId, out int key)
+    {
+        key = 0;
+        return sourceId > 0 && (ids != null ? ids.TryGetKey(sourceId, out key)
+            : sourceId <= int.MaxValue && (key = (int)sourceId) > 0);
+    }
+
+    // When called before the model is built, keep only the candidate records and defer
+    // the detail-component filter until categories have been resolved.
+    internal static FramedElementTypes? Prepare(SchemaDocument schema, IReadOnlyDictionary<Guid, SchemaField[]?> entities,
+        IReadOnlyList<PartitionFraming.Framed?> frames, ParsingState state,
+        IReadOnlyDictionary<ulong, int>? unroutedTypePartitions, bool recoverUnanchoredTypes, HashSet<long>? details = null)
+    {
+        if (frames.Count == 0 || frames.Any(frame => frame == null)) return null;
         var routes = recoverUnanchoredTypes ? state.IncrementRoutedPartitions : null;
         var reader = new FramedElementTypes(schema, entities, recoverUnanchoredTypes, routes is { Count: > 0 });
-        var ids = state.ElementIds;
-        long SourceId(int key) => ids?.SourceId(key) ?? key;
-        bool LocalId(long sourceId, out int key)
-        {
-            key = 0;
-            return sourceId > 0 && (ids != null ? ids.TryGetKey(sourceId, out key)
-                : sourceId <= int.MaxValue && (key = (int)sourceId) > 0);
-        }
-
-        var details = elements.Where(element => element.CategoryId == (int)BuiltInCategory.OST_DetailComponents)
-            .Select(element => SourceId(element.Id)).ToHashSet();
         foreach (var frame in frames.Cast<PartitionFraming.Framed>())
             foreach (var item in frame.Items)
             {
                 int headerSize = frame.IdWidth + 8;
                 if (item.Channel != 102 || item.Length < headerSize + 6 || item.Owner > long.MaxValue
-                    || !LocalId((long)item.Owner, out int key) || !state.ElemTable.ContainsKey((uint)key)) continue;
+                    || !LocalId(state.ElementIds, (long)item.Owner, out int key) || !state.ElemTable.ContainsKey((uint)key)) continue;
                 var (header, start, _) = frame.Bytes(item with { Length = headerSize + 2 });
                 int tag = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(start + headerSize, 2));
                 if (!reader._classes.Contains(tag) || reader._walker.Class(tag) is not { } kind) continue;
                 bool routed = routes?.ContainsKey((uint)key) == true && RoutedTypes.ContainsKey(kind.Name);
+                bool needsDetail = !routed && kind.Name == "FamilyInstance" && unroutedTypePartitions?.ContainsKey(item.Owner) != true;
                 if (!routed && (!Classes.Contains(kind.Name) && !UnanchoredTypes.ContainsKey(kind.Name)
                         && RoutedTypes.ContainsKey(kind.Name)
                     || UnanchoredTypes.ContainsKey(kind.Name) && state.NativeParamsFromRootClass.Contains((uint)key)
-                    || kind.Name == "FamilyInstance" && (!details.Contains((long)item.Owner)
-                        && unroutedTypePartitions?.ContainsKey(item.Owner) != true
-                        || state.IncrementRoutedPartitions?.ContainsKey((uint)key) == true))) continue;
+                    || kind.Name == "FamilyInstance" && state.IncrementRoutedPartitions?.ContainsKey((uint)key) == true
+                    || needsDetail && details != null && !details.Contains((long)item.Owner))) continue;
+                if (needsDetail && details == null) reader._requiresDetailCategory.Add((long)item.Owner);
                 if (!reader._sources.TryGetValue((long)item.Owner, out var copies))
                     reader._sources.Add((long)item.Owner, copies = []);
-                copies.Add(new(frame, item, kind));
+                copies.Add(new(frame, item, kind, frame.IdWidth, frame.Partition, null));
             }
 
         // A second record of an unsupported class still makes the owner's type ambiguous.
@@ -190,44 +214,59 @@ internal sealed class FramedElementTypes
         foreach (var (owner, count) in recordCounts)
             if (reader._sources[owner].Count != count) reader._sources.Remove(owner);
 
+        if (details == null)
+            foreach (var copies in reader._sources.Values)
+                for (int i = 0; i < copies.Count; i++) copies[i] = copies[i].Retain();
+        return reader;
+    }
+
+    internal int Apply(ParsingState state, IReadOnlyList<Element> elements,
+        IReadOnlyDictionary<ulong, int>? unroutedTypePartitions, bool recoverUnanchoredTypes, HashSet<long>? details = null)
+    {
+        var routes = recoverUnanchoredTypes ? state.IncrementRoutedPartitions : null;
+        long SourceId(int key) => state.ElementIds?.SourceId(key) ?? key;
+        details ??= DetailOwners(state, elements);
+        foreach (long owner in _requiresDetailCategory)
+            if (!details.Contains(owner)) _sources.Remove(owner);
+
         int changed = 0;
         foreach (var element in elements)
         {
             long owner = SourceId(element.Id);
-            if (!reader._sources.TryGetValue(owner, out var copies)) continue;
+            if (!_sources.TryGetValue(owner, out var copies)) continue;
             long? type = copies[0].Class.Name switch
             {
-                "Viewer3d" => reader.ViewerType(owner),
-                "DBViewSection" => reader.ElevationType(owner),
-                "InteriorElevArrow" => reader.ElevationArrowType(owner),
-                "StairsRun" => reader.StairPartType(owner, "StairsRun", RunType),
-                "StairsLanding" => reader.StairPartType(owner, "StairsLanding", LandingType),
+                "Viewer3d" => ViewerType(owner),
+                "DBViewSection" => ElevationType(owner),
+                "InteriorElevArrow" => ElevationArrowType(owner),
+                "StairsRun" => StairPartType(owner, "StairsRun", RunType),
+                "StairsLanding" => StairPartType(owner, "StairsLanding", LandingType),
                 "StairsSupport" when state.ElemRecOwningElementIds?.TryGetValue((uint)element.Id, out int stairKey) == true
-                    => reader.StairSupportType(owner, SourceId(stairKey)),
-                "FabricSheet" => reader.DirectType(owner, "FabricSheet", FabricType, "FabricSheetType"),
-                "HandRail" => reader.DirectType(owner, "HandRail", RailType, "HandRailType"),
-                "TopRail" => reader.DirectType(owner, "TopRail", RailType, "TopRailType"),
-                "SpanDirectionSymbol" => reader.SpanType(owner),
-                "GridChain" => reader.DirectType(owner, "GridChain", GridChainType, "GridAttributes"),
-                "RebarContainer" => reader.DirectType(owner, "RebarContainer", RebarContainerType, "RebarContainerType"),
-                "Rebar" => reader.DirectType(owner, "Rebar", RebarType, "RebarBarType"),
-                "RoofSoffit" => reader.DirectType(owner, "RoofSoffit", SoffitType, "RoofSoffitType"),
-                "Ramp" => reader.DirectType(owner, "Ramp", RampType, "RampAttributes"),
+                    => StairSupportType(owner, SourceId(stairKey)),
+                "FabricSheet" => DirectType(owner, "FabricSheet", FabricType, "FabricSheetType"),
+                "HandRail" => DirectType(owner, "HandRail", RailType, "HandRailType"),
+                "TopRail" => DirectType(owner, "TopRail", RailType, "TopRailType"),
+                "SpanDirectionSymbol" => SpanType(owner),
+                "GridChain" => DirectType(owner, "GridChain", GridChainType, "GridAttributes"),
+                "RebarContainer" => DirectType(owner, "RebarContainer", RebarContainerType, "RebarContainerType"),
+                "Rebar" => DirectType(owner, "Rebar", RebarType, "RebarBarType"),
+                "RoofSoffit" => DirectType(owner, "RoofSoffit", SoffitType, "RoofSoffitType"),
+                "Ramp" => DirectType(owner, "Ramp", RampType, "RampAttributes"),
                 "FamilyInstance" when copies.Count == 1 && details.Contains(owner)
                     && state.IncrementRoutedPartitions?.ContainsKey((uint)element.Id) != true
-                    => reader.DirectType(owner, "FamilyInstance", MasterSymbol, "FamilySymbol"),
+                    => DirectType(owner, "FamilyInstance", MasterSymbol, "FamilySymbol"),
                 "FamilyInstance" when unroutedTypePartitions?.TryGetValue((ulong)owner, out int partition) == true
-                    => reader.UnroutedFamilyType(owner, copies, partition),
+                    => UnroutedFamilyType(owner, copies, partition),
                 // A single exact record can supply the type even when the stream walk never anchored on it.
                 var kind when copies.Count == 1 && UnanchoredTypes.TryGetValue(kind, out var link)
                     && !state.NativeParamsFromRootClass.Contains((uint)element.Id)
-                    => reader.DirectType(owner, kind, link.Field, link.Target),
+                    => DirectType(owner, kind, link.Field, link.Target),
                 _ => null,
             };
             if (type == null && copies.Count > 1 && element.TypeId > 0
                 && routes?.TryGetValue((uint)element.Id, out int current) == true)
-                type = reader.RoutedType(owner, copies, current, SourceId(element.TypeId));
-            if (type is not long sourceType || sourceType == owner || !LocalId(sourceType, out int typeKey)
+                type = RoutedType(owner, copies, current, SourceId(element.TypeId));
+            if (type is not long sourceType || sourceType == owner || !LocalId(state.ElementIds, sourceType, out int typeKey)
                 || element.TypeId == typeKey) continue;
             element.TypeId = typeKey;
             changed++;
@@ -251,13 +290,14 @@ internal sealed class FramedElementTypes
         if (!_sources.TryGetValue(owner, out var copies)) return null;
         var fields = new List<Dictionary<string, long>>(copies.Count);
         var kind = copies[0].Class;
-        foreach (var (frame, item, cls) in copies)
+        foreach (var source in copies)
         {
+            var cls = source.Class;
             if (cls.Id != kind.Id) return null;
-            var (data, start, _) = frame.Bytes(item);
-            int size = item.Length - frame.IdWidth - 12;
+            var (data, start, _) = source.Bytes();
+            int size = source.Item.Length - source.IdWidth - 12;
             _walker.StepBudget = 16L * size + 65536;
-            var walk = _walker.Run(data, start + frame.IdWidth + 8, size, cls.Id);
+            var walk = _walker.Run(data, start + source.IdWidth + 8, size, cls.Id);
             if (!walk.Exact) return null;
             int rebarInstance = kind.Name == "Rebar" && walk.RootPointers?.TryGetValue(RebarInstance, out int queued) == true
                 && _walker.IsA(walk.Queue[queued], "RebarInstBase") ? queued : -1;
@@ -267,7 +307,7 @@ internal sealed class FramedElementTypes
                     && (capture.Key == RebarType ? rebarInstance >= 0 && capture.QueueIndex == rebarInstance : capture.AtRoot)
                     && !values.TryAdd(capture.Key, capture.Integer)) return null;
             if (!values.TryGetValue(OwnerField, out long decodedOwner) || decodedOwner != owner) return null;
-            if (_readGroupMembership && kind.Name == "ElementGroup" && cls.Id == 1322 && frame.IdWidth == 4
+            if (_readGroupMembership && kind.Name == "ElementGroup" && cls.Id == 1322 && source.IdWidth == 4
                 && TfBlockDeserializer.ExtractParams(data, start, (uint)size, (ushort)cls.Id) is { } parameters
                 && NativeTypePointers.Of((ushort)cls.Id, parameters) is int groupType
                 && walk.Captures.Any(capture => capture.Key == GroupType && !capture.AtRoot
@@ -334,7 +374,7 @@ internal sealed class FramedElementTypes
         var holders = new HashSet<int>();
         for (int i = 0; i < copies.Count; i++)
         {
-            if (copies[i].Frame.Partition is not int holder || !holders.Add(holder)
+            if (copies[i].Partition is not int holder || !holders.Add(holder)
                 || root.Copies[i].GetValueOrDefault(MasterSymbol) <= 0) return null;
             if (holder == partition) latest = i;
         }
@@ -353,7 +393,7 @@ internal sealed class FramedElementTypes
         long type = 0;
         for (int i = 0; i < copies.Count; i++)
         {
-            if (copies[i].Frame.Partition is not int partition || !partitions.Add(partition)
+            if (copies[i].Partition is not int partition || !partitions.Add(partition)
                 || !root.Copies[i].TryGetValue(link.Field, out long storedType) || storedType <= 0) return null;
             if (partition == current) type = storedType;
             else if (storedType == oldType) retainedTypeMatches = true;

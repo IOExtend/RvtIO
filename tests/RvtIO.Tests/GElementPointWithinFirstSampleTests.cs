@@ -168,5 +168,5 @@ public class GElementPointWithinFirstSampleTests
     static GElementGraphField Scalar(int c, string name, long v) => new(c, name, null, 100, 101, [new(100, 101, [v], null, [])]);
     static long[] Bits(params double[] values) => values.Select(BitConverter.DoubleToInt64Bits).ToArray();
     internal static OwnGElementGeometryGraph Replace(OwnGElementGeometryGraph g, int q, params GElementGraphField[] fields) => g with
-    { Nodes = g.Nodes.Select(n => n.QueueIndex != q ? n : n with { Fields = n.Fields.Select(f => fields.SingleOrDefault(x => x.Declaring == f.Declaring && x.Name == f.Name) ?? f).ToArray() }).ToArray() };
+    { Nodes = g.Nodes.Select(n => n.QueueIndex != q ? n : n with { Fields = n.Fields.Select(f => fields.Where(x => x.Declaring == f.Declaring && x.Name == f.Name).DefaultIfEmpty(f).Single()).ToArray() }).ToArray() };
 }
