@@ -50,13 +50,13 @@ public class ElemScanStringsMergeTests
             StringScanner.ScanChunk(chunk.ToArray(), [ElementId], found, namesAndCaptionsOnly: true);
             return found;
         }
-        var first = Scan(B, C, "&first", "Group - one");
+        var first = Scan("autodesk.parameter.example", B, C, "&first", "Group - one", "&first", "&First");
         var second = Scan(A, "Group - one", "&second", "Group - two");
-        Assert.Equal([B, "&first", "Group - one"], first[ElementId]);
+        Assert.Equal([B, "&first", "Group - one", "&First"], first[ElementId]);
         Assert.Equal([A, "Group - one", "&second", "Group - two"], second[ElementId]);
         var merged = new Dictionary<uint, List<string>>();
         RvtFileReader.MergeElemScanStringsInChunkOrder([first, second], merged, namesAndCaptionsOnly: true);
-        Assert.Equal([B, "&first", "Group - one", "&second", "Group - two"], merged[ElementId]);
+        Assert.Equal([B, "&first", "Group - one", "&First", "&second", "Group - two"], merged[ElementId]);
     }
 
     private static Dictionary<uint, List<string>>?[] ReverseCompletedResults()
