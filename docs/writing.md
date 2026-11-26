@@ -271,11 +271,12 @@ the base, or falls below it. The writer also handles verified positions within R
 just beyond it that retain an interior cut or a cut through the base. It refuses the unverified positions at the
 tolerance limits, combined cuts outside these layouts, and unverified vertex projections.
 
-Fractional offsets can retain or rebuild the verified cuts when the writer can identify the wall endpoints and fixed
-opening elevations in the stored face coordinates. The writer preserves the opening elevations when it reprojects
-vertices onto the moved wall faces. A saved upper bound slightly above the solid is supported when the fourth wall
-reference plane and the matching auxiliary rectangle account for the extension. The writer verifies the tight bounds
-of the solid independently and resizes the auxiliary rectangle with the reference plane.
+Fractional offsets and Unconnected Height changes can retain or rebuild the verified cuts when the writer can identify
+the wall endpoints and fixed opening elevations in the stored face coordinates. The writer derives the nominal base
+from the saved level and Base Offset and checks the projected lower bound separately. Opening elevations stay the same
+when the vertices move onto the resized wall faces. A saved upper bound slightly above the solid is supported when the
+fourth wall reference plane and the matching auxiliary rectangle account for the extension. The writer verifies the tight
+bounds of the solid independently and resizes the auxiliary rectangle with the reference plane.
 
 ## Editing a standalone family
 
@@ -934,6 +935,15 @@ The extended-bound checks started from native files where the auxiliary rectangl
 without Audit. This included reactivating the rectangular cut. Revit 2027 checked the 2026-format files after upgrade.
 An inconsistent header, reference plane, solid bound, auxiliary loop, or auxiliary vertex caused the entire batch
 to be rejected in the tested files.
+
+Unconnected Height changes after fractional Base Offset assignments were also checked on a plain wall, an oblique
+wall, and walls with interior openings or a cut at the sill. The checks shortened the wall through an opening,
+removed the cut while preserving the opening, reactivated the cut, and restored an interior opening by raising
+the top. Revit 2020–2025 and 2027 confirmed the heights, offsets, geometry and warnings after Save As and reopening
+without Audit. Revit 2027 checked the 2026-format files after upgrade and a batch that set Base Offset followed by
+Unconnected Height. A later height edit with an invalid value or a level-constrained target rejected the whole
+batch. An inconsistent offset cache, outline, geometry bound, or split cutter vertex also caused rejection. In
+each case the source bytes stayed intact and no output was created.
 
 ## Remaining parameter coverage
 

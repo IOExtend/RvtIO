@@ -100,7 +100,7 @@ internal static partial class WallHeightWriter
                     throw ParameterWriter.Unverified("A global parameter has duplicate project records.");
                 if (name == "BasicWallType")
                     wallTypes.Add((long)record.Owner);
-                if (offsetEdit && name == "Level" && !levels.TryAdd((long)record.Owner, record.Body.ToArray()))
+                if (name == "Level" && !levels.TryAdd((long)record.Owner, record.Body.ToArray()))
                     levels[(long)record.Owner] = null;
                 if (name == "SWallRectOpening" && !openingRecords.TryAdd((long)record.Owner, record.Body.ToArray()))
                     openingRecords[(long)record.Owner] = null;
@@ -145,9 +145,8 @@ internal static partial class WallHeightWriter
         var mirror = ParameterWriter.FindValue(walker, wall.Walk, edit with { ParameterId = ComputedWallHeight }, StorageType.Double)?.Value
             ?? throw Layout();
         int outline = headerRecord.Target(-1, "ElementHeader.m_pBBox", "Outline");
-        var interval = offsetEdit ? PlanOffset(wall, walker, edit, topConstraint, value, mirror, LevelElevation)
-            : new HeightInterval(headerRecord.Real(outline, "Outline.m_minmax@0/2"), original.Real, value);
-        if (mirror.Real != interval.Before || !double.IsFinite(interval.Top) || interval.Top <= interval.Base
+        var interval = PlanInterval(wall, walker, edit, topConstraint, value, mirror, LevelElevation);
+        if (!double.IsFinite(interval.Top) || interval.Top <= interval.Base
             || headerRecord.Real(outline, "Outline.m_minmax@0/2") != interval.BoundsBase)
             throw Layout();
         double boundsTop = headerRecord.Real(outline, "Outline.m_minmax@1/2");
@@ -251,7 +250,7 @@ internal static partial class WallHeightWriter
             var resized = ReadBody(solid, "GElement", true);
             if (!GElementArchiveHandles.IsCanonical(resized.Walk))
                 throw Layout();
-            var finalHeight = new HeightInterval(interval.NewBase, interval.After, interval.After) { EditsOffset = interval.EditsOffset };
+            var finalHeight = new HeightInterval(interval.NewBase, interval.After, interval.After);
             byte[] topology = ResizeGeometry(resized, finalHeight,
                 openings.Select(o => o with { Cut = o.Destination }).ToArray());
             byte[] element = transition.Apply(topology, tables);
@@ -313,7 +312,7 @@ internal static partial class WallHeightWriter
         long OpeningId(OpeningInterval opening) => wall.Integer(opening.Step, "WallCutoutGStepBase.m_instId");
     }
 
-    private static HeightInterval PlanOffset(Archive wall, WideBlockWalker walker, ParameterWriter.Edit edit,
+    private static HeightInterval PlanInterval(Archive wall, WideBlockWalker walker, ParameterWriter.Edit edit,
         long topConstraint, double value, WideBlockWalker.Capture computedHeight, Func<long, double> levelElevation)
     {
         WideBlockWalker.Capture ReadDouble(int parameterId) =>
@@ -333,7 +332,7 @@ internal static partial class WallHeightWriter
         if (topConstraint == -1)
         {
             originalHeight = ReadDouble((int)BuiltInParameter.WALL_USER_HEIGHT_PARAM).Real;
-            newHeight = originalHeight;
+            newHeight = edit.Parameter == BuiltInParameter.WALL_USER_HEIGHT_PARAM ? value : originalHeight;
         }
         else
         {
@@ -346,7 +345,7 @@ internal static partial class WallHeightWriter
             throw Layout();
         if (moveBase)
             wall.Write(baseMirror, value);
-        return new(originalBase, originalHeight, newHeight) { NewBase = newBase, EditsOffset = true };
+        return new(originalBase, originalHeight, newHeight) { NewBase = newBase };
     }
 
     // Revit removes the base offset before subtracting the base level's elevation.
@@ -737,7 +736,7 @@ internal static partial class WallHeightWriter
             if (physicalSolidFaces.Select(face => solidFaces[face]).Where(handle =>
                     faces[handle] is { Axis: 1, Direction: -1 } frame && frame.Origin == height.Top).ToArray()
                 is not [var end])
-                throw ParameterWriter.Unverified("The offset would require projecting endpoints in an unverified wall shape.");
+                throw ParameterWriter.Unverified("The wall dimension would require projecting endpoints in an unverified shape.");
             reversedEnd = end;
             foreach (int edge in solidEdges.Values)
             {
@@ -826,10 +825,16 @@ internal static partial class WallHeightWriter
                     bool projectsBase = projectedSides.Contains(handle) && other == reversedEnd;
                     double oldBase = projectsBase ? height.ProjectedBase : height.Base;
                     double newBase = projectsBase ? height.NewProjectedBase : height.NewBase;
-                    bool cutoff = cutsThroughBase && openingLevels.Contains(frame.Origin)
-                        && faces.TryGetValue(other, out var otherFrame) && otherFrame.Axis >= 0 && openingLevels.Contains(otherFrame.Origin);
-                    ResizeProjectedUv(geometry, first, frame, height, oldBase, newBase, auxiliaryFaces.Contains(handle), openingLevels, cutoff);
-                    ResizeProjectedUv(geometry, last, frame, height, oldBase, newBase, auxiliaryFaces.Contains(handle), openingLevels, cutoff);
+                    bool cutterEdge = faces.TryGetValue(other, out var otherFrame) && otherFrame.Axis >= 0
+                        && openingLevels.Contains(frame.Origin) && openingLevels.Contains(otherFrame.Origin);
+                    bool projectedCutBase = cutterEdge && cutsThroughBase;
+                    // The split cutter edges under the top can record the projection of its preceding double.
+                    bool projectedCutTop = cutterEdge && frame == otherFrame && frame is { Axis: 0, Direction: -1 }
+                        && openings.Any(o => o.Cut == OpeningCut.ThroughTop && o.Top == frame.Origin);
+                    ResizeProjectedUv(geometry, first, frame, height, oldBase, newBase, auxiliaryFaces.Contains(handle), openingLevels,
+                        projectedCutBase, projectedCutTop);
+                    ResizeProjectedUv(geometry, last, frame, height, oldBase, newBase, auxiliaryFaces.Contains(handle), openingLevels,
+                        projectedCutBase, projectedCutTop);
                 }
                 else
                 {
@@ -972,20 +977,19 @@ internal static partial class WallHeightWriter
         return buffer.ToArray();
     }
 
-    private readonly record struct HeightInterval(double Base, double Before, double After)
+    internal readonly record struct HeightInterval(double Base, double Before, double After)
     {
         internal double Top => Base + Before;
         internal double NewBase { get; init; } = Base;
         internal double NewTop => NewBase + After;
-        internal bool EditsOffset { get; init; }
         // The end plane facing down from the top reprojects its lower vertices onto adjoining
         // sides. That round trip can move the stored lower bound by a floating-point rounding step.
         internal double ProjectedBase => Top - (Top - Base);
         internal double NewProjectedBase => NewTop - (NewTop - NewBase);
-        internal double BoundsBase => EditsOffset ? Math.Min(Base, ProjectedBase) : Base;
-        internal double NewBoundsBase => EditsOffset ? Math.Min(NewBase, NewProjectedBase) : NewBase;
-        internal bool NeedsEndpointProjection => EditsOffset && (Top - Base != Before || NewTop - NewBase != After
-            || ProjectedBase != Base || NewProjectedBase != NewBase);
+        internal double BoundsBase => Math.Min(Base, ProjectedBase);
+        internal double NewBoundsBase => Math.Min(NewBase, NewProjectedBase);
+        internal bool NeedsEndpointProjection => Top - Base != Before || NewTop - NewBase != After
+            || ProjectedBase != Base || NewProjectedBase != NewBase;
         internal double MoveEndpoint(double position) => position == Base ? NewBase : position == Top ? NewTop : position;
     }
 
@@ -1041,7 +1045,8 @@ internal static partial class WallHeightWriter
     }
 
     private static void ResizeProjectedUv(Archive record, WideBlockWalker.Capture point, PlaneFrame frame, HeightInterval height,
-        double oldBase, double newBase, bool auxiliary, IReadOnlyCollection<double> openingLevels, bool cutoff = false)
+        double oldBase, double newBase, bool auxiliary, IReadOnlyCollection<double> openingLevels, bool projectedCutBase = false,
+        bool projectedCutTop = false)
     {
         if (point.Kind != WideBlockWalker.CaptureKind.Real)
             throw Layout();
@@ -1050,12 +1055,13 @@ internal static partial class WallHeightWriter
         double destination;
         if (point.Real == (oldBase - frame.Origin) * frame.Direction)
             destination = newBase;
-        else if (point.Real == (height.Top - frame.Origin) * frame.Direction || auxiliary && SameCoordinate(world, height.Top))
+        else if (point.Real == (height.Top - frame.Origin) * frame.Direction || auxiliary && SameCoordinate(world, height.Top)
+            || projectedCutTop && point.Real == (Math.BitDecrement(height.Top) - frame.Origin) * frame.Direction)
             destination = height.NewTop;
         else
             destination = MatchProjectedOpeningLevel(point.Real, frame.Origin, frame.Direction, openingLevels)
                 // Split edges between vertical cutter faces can round at the base by one world-coordinate step.
-                ?? (cutoff && SameCoordinate(world, oldBase) ? newBase : throw Layout());
+                ?? (projectedCutBase && SameCoordinate(world, oldBase) ? newBase : throw Layout());
         double coordinate = (destination - height.MoveEndpoint(frame.Origin)) * frame.Direction;
         if (coordinate != point.Real)
             record.Write(point, coordinate);

@@ -16,6 +16,18 @@ public class WallHeightWriterTests
         double topElevation, double topOffset, double height) =>
         Assert.Equal(height, WallHeightWriter.ConstrainedHeight(baseElevation, baseOffset, topElevation, topOffset));
 
+    [Theory]
+    [InlineData(7.35, 0.09999999999999964)]
+    [InlineData(1.125, 0.1)]
+    public void UsesTheLowerOfTheWallBaseAndTheProjectedEndpointWhenChangingHeight(double newHeight, double newBoundsBase)
+    {
+        var interval = new WallHeightWriter.HeightInterval(0.1, 8, newHeight);
+        Assert.True(interval.NeedsEndpointProjection);
+        Assert.Equal(0.09999999999999964, interval.BoundsBase);
+        Assert.Equal(0.1, interval.NewBase);
+        Assert.Equal(newBoundsBase, interval.NewBoundsBase);
+    }
+
     [Fact]
     public void MatchesAnOpeningElevationInTheFaceCoordinates()
     {
