@@ -1929,33 +1929,57 @@ public sealed class SetParameterTests : IDisposable
         Assert.Equal(hash, SHA256.HashData(File.ReadAllBytes(source)));
     }
 
-    [Fact]
-    public void UpdatesAnImportedIdentityAndMirrorsTheVerifiedDerivedSymbol()
+    [Theory]
+    [InlineData(BuiltInCategory.OST_GenericModel, BuiltInParameter.ALL_MODEL_TYPE_COMMENTS, "Template", "Updated")]
+    [InlineData(BuiltInCategory.OST_Doors, BuiltInParameter.FIRE_RATING, "60 min", "90 min")]
+    [InlineData(BuiltInCategory.OST_Windows, BuiltInParameter.ALL_MODEL_DESCRIPTION, "Template", "")]
+    [InlineData(BuiltInCategory.OST_Furniture, BuiltInParameter.ALL_MODEL_COST, "17.25", "29.125")]
+    public void UpdatesAnImportedIdentityAndMirrorsTheVerifiedDerivedSymbol(BuiltInCategory category,
+        BuiltInParameter parameter, string before, string after)
     {
-        var identity = new StoredIdentity(BuiltInParameter.ALL_MODEL_TYPE_COMMENTS, "Template");
-        string source = CreateSource(family: new FamilyFixture(Category: BuiltInCategory.OST_GenericModel,
-            DerivedType: true, Identity: identity));
-        var result = RvtWriter.SetParameter(source, Output, ProjectId, identity.Parameter, "Updated");
+        var identity = new StoredIdentity(parameter, before);
+        string source = CreateSource(family: new FamilyFixture(Category: category, DerivedType: true, Identity: identity));
+        var result = RvtWriter.SetParameter(source, Output, ProjectId, identity.Parameter, after);
         Assert.Equal(2, result.RewrittenRecordCount);
 
         using var root = RootStorage.OpenRead(Output);
-        var expected = identity with { Value = "Updated" };
+        var expected = identity with { Value = after };
         Assert.Equal(SymbolBody(ProjectId, -1, "Old", identity: expected), ReadBody(root));
         Assert.Equal(SymbolBody(DerivedId, ProjectId, "Old", identity: expected), ReadBody(root, DerivedId));
     }
 
-    [Fact]
-    public void RejectsADirectNamedIdentityEditOnADerivedSymbol()
+    [Theory]
+    [InlineData(BuiltInCategory.OST_GenericModel)]
+    [InlineData(BuiltInCategory.OST_Doors)]
+    [InlineData(BuiltInCategory.OST_Windows)]
+    [InlineData(BuiltInCategory.OST_Furniture)]
+    public void RejectsADirectNamedIdentityEditOnADerivedSymbol(BuiltInCategory category)
     {
         var identity = new StoredIdentity(BuiltInParameter.ALL_MODEL_TYPE_COMMENTS, "Template");
-        string source = CreateSource(family: new FamilyFixture(Category: BuiltInCategory.OST_GenericModel,
-            DerivedType: true, Identity: identity));
+        string source = CreateSource(family: new FamilyFixture(Category: category, DerivedType: true, Identity: identity));
         byte[] hash = SHA256.HashData(File.ReadAllBytes(source));
         var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetParameters(source, Output,
             [new(ProjectId, (int)identity.Parameter, "Staged"), new(DerivedId, (int)identity.Parameter, "Rejected")]));
         Assert.Equal("unverified-parameter-storage", error.Kind);
         Assert.False(File.Exists(Output));
         Assert.Equal(hash, SHA256.HashData(File.ReadAllBytes(source)));
+    }
+
+    [Theory]
+    [InlineData(BuiltInCategory.OST_Doors)]
+    [InlineData(BuiltInCategory.OST_Windows)]
+    [InlineData(BuiltInCategory.OST_Furniture)]
+    public void ProjectIdentityAssignmentsKeepSeparatePrimaryAndDerivedValues(BuiltInCategory category)
+    {
+        string source = CreateSource(family: new FamilyFixture(Category: category, DerivedType: true));
+        int cost = (int)BuiltInParameter.ALL_MODEL_COST;
+        var result = RvtWriter.SetParameters(source, Output,
+            [new(ProjectId, cost, "17.25"), new(DerivedId, cost, "21.125"), new(ProjectId, cost, "32.125")]);
+        Assert.Equal(2, result.RewrittenRecordCount);
+
+        using var root = RootStorage.OpenRead(Output);
+        Assert.Equal(SymbolBody(ProjectId, -1, "Old", typedCost: 32.125), ReadBody(root));
+        Assert.Equal(SymbolBody(DerivedId, ProjectId, "Old", typedCost: 21.125), ReadBody(root, DerivedId));
     }
 
     [Theory]

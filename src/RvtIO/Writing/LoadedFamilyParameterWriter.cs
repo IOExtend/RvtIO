@@ -449,8 +449,8 @@ internal static class LoadedFamilyParameterWriter
         plan = null;
         var (family, target, symbols, masterIds) = ReadOwnership(root, tags, idWidth, walker, elementIds, category, edit.ElementId, walk, pending, instance: false);
         bool derivedTarget = Integer(target.Walk, "FamilySymbol.m_masterId") is > 0;
-        if ((symbols.Count != 1 && category != (int)BuiltInCategory.OST_GenericModel)
-            || (derivedTarget && (driven is null || masterIds.Contains(target.Id)))
+        if ((driven is not null && symbols.Count != 1 && category != (int)BuiltInCategory.OST_GenericModel)
+            || (derivedTarget && masterIds.Contains(target.Id))
             || family.EmptyEntityAt >= 0 || walk.EmptyEntityAt >= 0)
             throw ParameterWriter.Unverified("The loaded identity field requires a verified primary symbol and supported derived copies.");
         CheckFormulaDependencies(family, edit.ParameterId);
@@ -465,9 +465,12 @@ internal static class LoadedFamilyParameterWriter
         if (row is null)
         {
             if (symbols.Count != 1)
-                throw ParameterWriter.Unverified("The loaded identity field has no verified family value to mirror.");
+                VerifyLocalSymbolStores(walker, edit, walk, storage, target, symbols, masterIds);
             return false;
         }
+
+        if (derivedTarget && driven is null)
+            throw ParameterWriter.Unverified("An imported identity value must be edited on the primary symbol.");
 
         if (!HasIdentityStorage(declaration!) || !HasIdentityStorage(row) || ParameterWriter.FindValue(walker, walk, edit, storage) is not null)
             throw ParameterWriter.Unverified("The loaded identity field has an unverified value or competing typed store.");
@@ -549,13 +552,19 @@ internal static class LoadedFamilyParameterWriter
         }
         if (instance)
         {
-            VerifyStore(walk);
+            VerifyLocalStore(walk, edit.ParameterId);
             return;
         }
 
+        VerifyLocalSymbolStores(walker, edit, walk, storage, display, symbols, masterIds);
+    }
+
+    private static void VerifyLocalSymbolStores(WideBlockWalker walker, ParameterWriter.Edit edit, WideBlockWalker.Walk walk,
+        StorageType storage, ProjectRecord display, Dictionary<long, ProjectRecord?> symbols, HashSet<long> masterIds)
+    {
         // Revit edits the addressed symbol's own value in the element store.
         long masterId = Integer(display.Walk, "FamilySymbol.m_masterId") is > 0 and long master ? master : display.Id;
-        long? familyId = Integer(family, "m_id");
+        long? familyId = Integer(display.Walk, "FamilySymbol.m_familyId");
         foreach (var (id, symbol) in symbols)
         {
             bool primary = id == masterId;
@@ -565,17 +574,17 @@ internal static class LoadedFamilyParameterWriter
                 || Integer(symbol.Walk, "FamilySymbol.m_ownerInstanceId") != -1)))
                 throw ParameterWriter.Unverified("A derived family symbol could not be verified for editing.");
             var symbolWalk = id == edit.ElementId ? walk : walker.Run(symbol.Body, 0, symbol.Body.Length, symbol.ClassId);
-            VerifyStore(symbolWalk);
+            VerifyLocalStore(symbolWalk, edit.ParameterId);
             _ = ParameterWriter.FindValue(walker, symbolWalk, edit, storage);
         }
+    }
 
-        void VerifyStore(WideBlockWalker.Walk owner)
-        {
-            if (!owner.Exact || owner.EmptyEntityAt >= 0
-                || owner.Captures.Any(c => c.Field == "m_paramId" && c.Integer == edit.ParameterId
-                    && !c.DeclaringClass.StartsWith("ParamValue", StringComparison.Ordinal)))
-                throw ParameterWriter.Unverified("A family element has an unverified parameter store.");
-        }
+    private static void VerifyLocalStore(WideBlockWalker.Walk owner, long parameterId)
+    {
+        if (!owner.Exact || owner.EmptyEntityAt >= 0
+            || owner.Captures.Any(c => c.Field == "m_paramId" && c.Integer == parameterId
+                && !c.DeclaringClass.StartsWith("ParamValue", StringComparison.Ordinal)))
+            throw ParameterWriter.Unverified("A family element has an unverified parameter store.");
     }
 
     private static (WideBlockWalker.Walk Family, ProjectRecord Display, Dictionary<long, ProjectRecord?> Symbols, HashSet<long> MasterIds)
