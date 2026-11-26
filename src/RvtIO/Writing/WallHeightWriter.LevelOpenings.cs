@@ -32,19 +32,19 @@ internal static partial class WallHeightWriter
         return opening.Integer(-1, "OpeningBase.m_hostId");
     }
 
-    private static (HeightInterval Height, Dictionary<int, HeightInterval>? FaceHeights, List<RvtPartitionRecordEdit> Edits)
-        MoveOpenings(
+    private static (HeightInterval Height, Dictionary<int, HeightInterval>? FaceHeights,
+        List<RvtPartitionRecordEdit> Edits, OpeningInterval[]? Rebuild) MoveOpenings(
         RootStorage root, PartitionFraming.Tags tags, int idWidth, ParameterWriter.Pending pending,
         Archive wall, WideBlockWalker walker, HeightInterval wallHeight, IReadOnlyList<OpeningInterval> openings,
         LevelMove? move, ParameterWriter.Edit? openingEdit, long? openingLevel,
         Func<byte[], string, bool, Archive> read, Func<long, double> levelElevation)
     {
-        var owners = openings.ToDictionary(o => wall.Integer(o.Step, "WallCutoutGStepBase.m_instId"));
+        var owners = openings.Select(o => wall.Integer(o.Step, "WallCutoutGStepBase.m_instId")).ToHashSet();
         var records = new Dictionary<(long Id, int Channel), (int Partition, byte[] Body)>();
         ParameterWriter.ScanPartitions(root, tags, idWidth, (partition, record) =>
         {
             long id = (long)record.Owner;
-            if (record.Block == 0 && owners.ContainsKey(id)
+            if (record.Block == 0 && owners.Contains(id)
                 && !records.TryAdd((id, record.Channel), (partition, record.Body.ToArray())))
                 throw Layout();
         }, pending);
@@ -63,8 +63,9 @@ internal static partial class WallHeightWriter
         var openingHeights = new List<(OpeningInterval Before, OpeningInterval After)>();
         bool sharedElevationMovesApart = false;
         var edits = new List<RvtPartitionRecordEdit>();
-        foreach (var (id, cut) in owners)
+        foreach (var cut in openings)
         {
+            long id = wall.Integer(cut.Step, "WallCutoutGStepBase.m_instId");
             var (partition, body) = Record(id, ElementChannel);
             var (headerPartition, headerBody) = Record(id, HeaderChannel);
             var (geometryPartition, geometryBody) = Record(id, GeometryChannel);
@@ -74,7 +75,7 @@ internal static partial class WallHeightWriter
             var opening = read(body, "SWallRectOpening", false);
             var header = read(headerBody, "ElementHeader", false);
             var geometry = read(geometryBody, "GElement", true);
-            if (cut.Cut != OpeningCut.Interior || opening.Integer(-1, "Element.m_designOptionId") != -4
+            if (opening.Integer(-1, "Element.m_designOptionId") != -4
                 || opening.Integer(-1, "Element.m_constrInfo#") != 0
                 || opening.Walk.Queue.Any(tag => walker.IsA(tag, "GroupMembership") || walker.IsA(tag, "ParametrizedElemParamsCellBase"))
                 || header.Integer(-1, "ElementHeader.m_designOptionId") != -1
@@ -138,13 +139,18 @@ internal static partial class WallHeightWriter
                 || header.Real(outline, "Outline.m_minmax@0/2") != interval.BoundsBase
                 || header.Real(outline, "Outline.m_minmax@1/2") != cut.Top)
                 throw Layout();
-            if (!double.IsFinite(bottom) || !double.IsFinite(top) || top - bottom <= VertexTolerance
-                || CutAt(wallHeight.NewBase, wallHeight.NewTop, bottom, top) != OpeningCut.Interior)
-                throw ParameterWriter.Unverified("Changing the rectangular opening would take it outside its verified interior cut.");
+            var destination = CutAt(wallHeight.NewBase, wallHeight.NewTop, bottom, top);
+            if (top - bottom <= VertexTolerance || destination == OpeningCut.Unverified)
+                throw ParameterWriter.Unverified("Changing the rectangular opening would produce an unverified cut.");
+            if (!FitsModelRadius(header, outline, interval.NewBoundsBase, top))
+                throw new RvtWriteRefusedException("invalid-parameter-value", "The rectangular opening would extend beyond the verified model coordinate range.");
 
-            sharedElevationMovesApart |= !AddElevation(cut.Bottom, bottom);
-            sharedElevationMovesApart |= !AddElevation(cut.Top, top);
-            var resized = cut with { Bottom = bottom, Top = top };
+            if (!IsOutsideWall(cut.Cut))
+            {
+                sharedElevationMovesApart |= !AddElevation(cut.Bottom, bottom);
+                sharedElevationMovesApart |= !AddElevation(cut.Top, top);
+            }
+            var resized = cut with { Bottom = bottom, Top = top, Destination = destination };
             if (openingHeights.Any(other => !OpeningCutsRemainSeparate(other.After, resized)))
                 throw ParameterWriter.Unverified("Changing the rectangular opening would merge or touch another wall cut.");
             openingHeights.Add((cut, resized));
@@ -181,14 +187,22 @@ internal static partial class WallHeightWriter
             edits.AddRange([new(partition, HeaderChannel, (ulong)id, headerBody),
                 new(partition, ElementChannel, (ulong)id, body), new(partition, GeometryChannel, (ulong)id, geometryBody)]);
         }
+        bool hasBoundaryCut = openingHeights.Any(o =>
+            o.Before.Cut != OpeningCut.Interior && !IsOutsideWall(o.Before.Cut)
+            || o.After.Destination != OpeningCut.Interior && !IsOutsideWall(o.After.Destination)
+            || o.Before.Cut != o.After.Destination);
+        if (hasBoundaryCut && (edits.Count != 0 || wallHeight.Base != wallHeight.NewBase || wallHeight.Top != wallHeight.NewTop))
+            return (wallHeight, null, edits, openingHeights.Select(o => o.After).ToArray());
         if (!sharedElevationMovesApart)
-            return (wallHeight with { OpeningElevations = elevations }, null, edits);
+            return (wallHeight with { OpeningElevations = elevations }, null, edits, null);
 
         // Shared elevations have to be resolved through the original cutting faces.
         wallHeight = wallHeight with { OpeningElevationsRequiringOwner = elevations.Keys.ToHashSet() };
         var cuttingFaces = new Dictionary<int, HeightInterval>();
         foreach (var (before, after) in openingHeights)
         {
+            if (IsOutsideWall(before.Cut))
+                continue;
             var height = wallHeight with
             {
                 OpeningElevations = new Dictionary<double, double> { [before.Bottom] = after.Bottom, [before.Top] = after.Top },
@@ -200,7 +214,7 @@ internal static partial class WallHeightWriter
                     throw Layout();
             }
         }
-        return (wallHeight, cuttingFaces, edits);
+        return (wallHeight, cuttingFaces, edits, null);
 
         (int Partition, byte[] Body) Record(long id, int channel) =>
             records.TryGetValue((id, channel), out var record) ? record : throw Layout();

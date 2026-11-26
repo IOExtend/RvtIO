@@ -6,6 +6,30 @@ namespace RvtIO.Writing;
 
 internal static class WallOpeningWarnings
 {
+    internal static Dictionary<long, long> OpeningOwners(SchemaDocument schema, IReadOnlyDictionary<long, byte[]> warnings)
+    {
+        var owners = new Dictionary<long, long>();
+        if (warnings.Count == 0)
+            return owners;
+        var formats = new FormatsSchema(schema);
+        ushort warningTag = Tag(formats, "PostedWarningElem");
+        ushort rectWarningTag = Tag(formats, "WallRectOpeningWarning");
+        var walker = WarningWalker(schema);
+        foreach (var (id, body) in warnings)
+        {
+            if (!HasTag(body, warningTag))
+                continue;
+            var walk = walker.Run(body, 0, body.Length, warningTag);
+            if (walk.Exact && walk.Queue is [var kind] && kind == rectWarningTag
+                && walk.Captures.Where(c => c.AtRoot && c.DeclaringClass == "Element" && c.Field == "m_id")
+                    .Select(c => c.Integer).SequenceEqual([id])
+                && walk.Captures.Where(c => c.DeclaringClass == "WallRectOpeningWarning" && c.Field == "m_elemIds" && c.Key.Contains('@'))
+                    .Select(c => c.Integer).ToArray() is [> 0 and var opening])
+                owners.Add(id, opening);
+        }
+        return owners;
+    }
+
     internal static void Stage(RootStorage root, SchemaDocument schema, int idWidth, int partition, long wall,
         IReadOnlyList<long> openings, ulong highestStoredOwner, ParameterWriter.Pending pending)
     {

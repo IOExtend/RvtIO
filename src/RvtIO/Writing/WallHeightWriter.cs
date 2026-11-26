@@ -64,8 +64,8 @@ internal static partial class WallHeightWriter
         var globals = new HashSet<long>();
         var wallTypes = new HashSet<long>();
         var related = new HashSet<ulong>();
-        bool hasOpeningDependents = false;
-        var warnings = new List<byte[]>();
+        var openingDependents = new HashSet<long>();
+        var warnings = new Dictionary<long, byte[]>();
         ulong highestStoredOwner = 0;
         bool incompleteDependencies = false;
         bool hasSpatialContext = false;
@@ -106,7 +106,7 @@ internal static partial class WallHeightWriter
                         if (parent.Integer == edit.ElementId)
                             related.Add(record.Owner);
                         if (openingEdit is { } opened && record.Owner != (ulong)opened.ElementId && parent.Integer == opened.ElementId)
-                            hasOpeningDependents = true;
+                            openingDependents.Add((long)record.Owner);
                     }
                 }
             }
@@ -122,8 +122,8 @@ internal static partial class WallHeightWriter
             }
             if (record.Channel == ElementChannel && elementIds.Contains((long)record.Owner))
             {
-                if (name == "PostedWarningElem")
-                    warnings.Add(record.Body.ToArray());
+                if (name == "PostedWarningElem" && !warnings.TryAdd((long)record.Owner, record.Body.ToArray()))
+                    throw Layout();
                 if (name == "ParamElemGlobal" && !globals.Add((long)record.Owner))
                     throw ParameterWriter.Unverified("A global parameter has duplicate project records.");
                 if (name == "BasicWallType")
@@ -153,8 +153,6 @@ internal static partial class WallHeightWriter
                 throw new RvtWriteRefusedException("read-only-parameter", "The top of the wall has no level constraint.");
             GlobalParameterWriter.VerifyElementParameter(walker, wall.Walk, idWidth, elementIds, globals, edit.ParameterId);
         }
-        if (hasOpeningDependents)
-            throw ParameterWriter.Unverified("The rectangular wall opening has unverified dependent elements.");
         long roomBounding = wall.Integer(-1, "HostObj.m_roomBounding");
         if (topConstraint is 0 or < -1 || wall.Walk.Queue.Any(tag => walker.IsA(tag, "GroupMembership"))
             || roomBounding is not (0 or 1) || (roomBounding == 1 && hasSpatialContext)
@@ -209,12 +207,8 @@ internal static partial class WallHeightWriter
                     wall.Real(extendedReference, "Envelope.m_corners@1/1")))
                 throw Layout();
         }
-        double x = Math.Max(Math.Abs(headerRecord.Real(outline, "Outline.m_minmax@0/0")),
-            Math.Abs(headerRecord.Real(outline, "Outline.m_minmax@1/0")));
-        double y = Math.Max(Math.Abs(headerRecord.Real(outline, "Outline.m_minmax@0/1")),
-            Math.Abs(headerRecord.Real(outline, "Outline.m_minmax@1/1")));
-        double z = Math.Max(Math.Abs(interval.NewBoundsBase), Math.Abs(interval.NewTop));
-        if (interval.After < MinimumVerifiedHeight || interval.NewTop <= interval.NewBase || x * x + y * y + z * z > ModelRadius * ModelRadius)
+        if (interval.After < MinimumVerifiedHeight || interval.NewTop <= interval.NewBase
+            || !FitsModelRadius(headerRecord, outline, interval.NewBoundsBase, interval.NewTop))
             throw new RvtWriteRefusedException("invalid-parameter-value", "The wall would extend beyond the verified model coordinate range.");
 
         bool moveOpenings = levelMove is not null || openingEdit is not null;
@@ -222,8 +216,16 @@ internal static partial class WallHeightWriter
         if ((openingOnlyLevel && openings.Count == 0)
             || (openingEdit is { } target && !openings.Any(o => OpeningId(o) == target.ElementId)))
             throw Layout();
+        if (moveOpenings && openings.Count != 0 && (warnings.Count != 0 || openingDependents.Count != 0))
+        {
+            var warningOwners = WallOpeningWarnings.OpeningOwners(schema, warnings);
+            if ((openingEdit is { } opening && openingDependents.Any(id => warningOwners.GetValueOrDefault(id) != opening.ElementId))
+                || openings.Any(o => CutsHost(o.Cut) && warningOwners.ContainsValue(OpeningId(o))))
+                throw ParameterWriter.Unverified("The rectangular wall opening has unverified dependent elements or warnings.");
+        }
         List<RvtPartitionRecordEdit> openingEdits = [];
         Dictionary<int, HeightInterval>? openingFaceHeights = null;
+        OpeningInterval[]? movedCuts = null;
         if (moveOpenings && openings.Count != 0)
         {
             var openingPlan = MoveOpenings(root, tags, idWidth, pending, wall, walker, interval, openings,
@@ -231,23 +233,27 @@ internal static partial class WallHeightWriter
             interval = openingPlan.Height;
             openingFaceHeights = openingPlan.FaceHeights;
             openingEdits = openingPlan.Edits;
+            movedCuts = openingPlan.Rebuild;
+            if (movedCuts is not null)
+                openings = openings.Zip(movedCuts, (before, after) => before with { Destination = after.Destination }).ToArray();
         }
         var changes = openings.Where(o => o.Cut != o.Destination).ToArray();
-        bool rebuildCut = changes.Length != 0 || openings.Any(o => IsAtBoundary(o.Cut) || IsAtBaseBoundary(o.Cut));
+        bool rebuildCut = movedCuts is not null || changes.Length != 0
+            || openings.Any(o => IsAtBoundary(o.Cut) || IsAtBaseBoundary(o.Cut));
         bool onlyOpeningChanges = openingEdit is not null || openingOnlyLevel;
         bool changed = onlyOpeningChanges ? openingEdits.Count != 0
             : levelMove is { } move ? move.Previous != move.Destination : value != original?.Real;
         bool bottomTransition = CanChangeBottomOpening(openings);
         bool removesCuts = CanRemoveOpeningCuts(openings);
         bool activatesCuts = CanActivateOpeningCuts(openings);
-        bool replaysFloor = CanReplayBaseBoundaryCuts(openings);
+        bool replaysFloor = movedCuts is not null ? OpeningReplayUsesFloor(openings) : CanReplayBaseBoundaryCuts(openings);
         bool movesPastOpeningHead = changes.All(o =>
             o.Cut == OpeningCut.BelowWall && o.Destination is OpeningCut.Interior or OpeningCut.ThroughBottom
             || o.Destination == OpeningCut.BelowWall && o.Cut is OpeningCut.Interior or OpeningCut.ThroughBottom);
-        if (changed && interval.NewBase != interval.Base && rebuildCut && !bottomTransition && !replaysFloor
+        if (movedCuts is null && changed && interval.NewBase != interval.Base && rebuildCut && !bottomTransition && !replaysFloor
             && !(movesPastOpeningHead && (removesCuts || activatesCuts)))
             throw ParameterWriter.Unverified("Moving the wall base would require an unverified opening rebuild.");
-        bool replay = replaysFloor || CanReplayTopCuts(openings) || CanReplayBoundaryCuts(openings);
+        bool replay = movedCuts is not null || replaysFloor || CanReplayTopCuts(openings) || CanReplayBoundaryCuts(openings);
         if (changed && rebuildCut && !removesCuts && !activatesCuts && !replay
             && !bottomTransition && !CanChangeTopOpening(openings))
             throw ParameterWriter.Unverified("The opening topology change is outside the verified wall layout.");
@@ -278,24 +284,24 @@ internal static partial class WallHeightWriter
                 throw ParameterWriter.Unverified("The wall face topology does not match the cached solid.");
             tables[i] = (start.ValueOffset, end.ValueOffset);
         }
-        if (onlyOpeningChanges)
-            return changed ? new([Updated(GeometryChannel), .. openingEdits], null) : null;
-
-        if (original is { } editable && value is double requested)
-            wall.Write(editable, requested);
-        wall.Write(mirror, interval.After);
-        headerRecord.Write(outline, "Outline.m_minmax@0/2", interval.NewBoundsBase);
-        headerRecord.Write(outline, "Outline.m_minmax@1/2", interval.NewTop);
-
         if (!changed)
             return null;
+        if (!onlyOpeningChanges)
+        {
+            if (original is { } editable && value is double requested)
+                wall.Write(editable, requested);
+            wall.Write(mirror, interval.After);
+            headerRecord.Write(outline, "Outline.m_minmax@0/2", interval.NewBoundsBase);
+            headerRecord.Write(outline, "Outline.m_minmax@1/2", interval.NewTop);
+        }
         if (rebuildCut)
         {
             var cutters = new List<(OpeningInterval Opening, Archive Geometry)>();
             double baseOffset = 0;
             if (activatesCuts || replay)
             {
-                var sources = replay ? openings.Where(o => !IsOutsideWall(o.Destination)).ToArray() : changes;
+                var sources = replay
+                    ? (movedCuts ?? openings).Where(o => !IsOutsideWall(o.Destination)).ToArray() : changes;
                 long[] openingIds = sources.Select(OpeningId).ToArray();
                 baseOffset = ParameterWriter.FindValue(walker, wall.Walk,
                     edit with { ParameterId = (int)BuiltInParameter.WALL_BASE_OFFSET }, StorageType.Double)?.Value.Real ?? throw Layout();
@@ -305,7 +311,8 @@ internal static partial class WallHeightWriter
                     long id = (long)record.Owner;
                     if (record.Block != 0 || record.Channel != GeometryChannel || !openingIds.Contains(id))
                         return;
-                    var cutter = ReadBody(record.Body.ToArray(), "GElement", true);
+                    var updated = openingEdits.SingleOrDefault(e => e.Channel == GeometryChannel && e.OwnerId == record.Owner);
+                    var cutter = ReadBody((updated?.Body ?? record.Body).ToArray(), "GElement", true);
                     if (!GElementArchiveHandles.IsCanonical(cutter.Walk)
                         || cutter.Integer(-1, idWidth == sizeof(long) ? "GRep.m_elementId" : "GInfo.m_tag") != id
                         || !openingGeometry.TryAdd(id, cutter))
@@ -324,13 +331,13 @@ internal static partial class WallHeightWriter
                 throw Layout();
             var finalHeight = new HeightInterval(interval.NewBase, interval.After, interval.After);
             byte[] topology = ResizeGeometry(resized, finalHeight,
-                openings.Select(o => o with { Cut = o.Destination }).ToArray());
+                (movedCuts ?? openings).Select(o => o with { Cut = o.Destination }).ToArray());
             byte[] element = transition.Apply(topology, tables);
             _ = ReadBody(element, "SWall", false);
             var removedIds = changes.Where(o => CutsHost(o.Cut) && !CutsHost(o.Destination)).Select(OpeningId).ToArray();
             if (removedIds.Length != 0)
             {
-                foreach (byte[] warning in warnings)
+                foreach (byte[] warning in warnings.Values)
                 {
                     var saved = ReadBody(warning, "PostedWarningElem", false);
                     if (saved.Walk.Captures.Any(c => c.DeclaringClass == "WallRectOpeningWarning" && c.Field == "m_elemIds"
@@ -345,9 +352,13 @@ internal static partial class WallHeightWriter
             var activatedIds = changes.Where(o => !CutsHost(o.Cut) && CutsHost(o.Destination)).Select(OpeningId).ToArray();
             if (activatedIds.Length != 0)
                 WallOpeningWarnings.StageRemoval(root, schema, tags, idWidth, edit.ElementId, activatedIds, pending);
-            return new([Updated(HeaderChannel), Updated(ElementChannel, element), Updated(GeometryChannel, solid)], null);
+            return onlyOpeningChanges
+                ? new([Updated(ElementChannel, element), Updated(GeometryChannel, solid), .. openingEdits], null)
+                : new([Updated(HeaderChannel), Updated(ElementChannel, element), Updated(GeometryChannel, solid), .. openingEdits], null);
         }
-        return new([Updated(HeaderChannel), Updated(ElementChannel), Updated(GeometryChannel), .. openingEdits], null);
+        return onlyOpeningChanges
+            ? new([Updated(GeometryChannel), .. openingEdits], null)
+            : new([Updated(HeaderChannel), Updated(ElementChannel), Updated(GeometryChannel), .. openingEdits], null);
 
         Archive Read(int channel, string expectedClass)
         {
@@ -382,6 +393,14 @@ internal static partial class WallHeightWriter
             new(records[channel].Partition, channel, owner, body ?? records[channel].Body);
 
         long OpeningId(OpeningInterval opening) => wall.Integer(opening.Step, "WallCutoutGStepBase.m_instId");
+    }
+
+    private static bool FitsModelRadius(Archive header, int outline, double bottom, double top)
+    {
+        double x = Math.Max(Math.Abs(header.Real(outline, "Outline.m_minmax@0/0")), Math.Abs(header.Real(outline, "Outline.m_minmax@1/0")));
+        double y = Math.Max(Math.Abs(header.Real(outline, "Outline.m_minmax@0/1")), Math.Abs(header.Real(outline, "Outline.m_minmax@1/1")));
+        double z = Math.Max(Math.Abs(bottom), Math.Abs(top));
+        return x * x + y * y + z * z <= ModelRadius * ModelRadius;
     }
 
     private static HeightInterval PlanInterval(Archive wall, WideBlockWalker walker, ParameterWriter.Edit edit,
@@ -515,6 +534,18 @@ internal static partial class WallHeightWriter
     private static bool IsAtBaseBoundary(OpeningCut cut) => cut is OpeningCut.AtBaseSill or OpeningCut.AtBaseHead;
 
     private static bool IsOutsideWall(OpeningCut cut) => cut is OpeningCut.AboveWall or OpeningCut.BelowWall;
+
+    internal static bool OpeningReplayUsesFloor(IReadOnlyList<OpeningInterval> openings)
+    {
+        if (openings.Count is < 1 or > 2 || !SeparatedOpeningStations(openings))
+            throw ParameterWriter.Unverified("The wall's cuts cannot be replayed as separate rectangles.");
+        var cuts = openings.SelectMany(o => new[] { o.Cut, o.Destination }).ToArray();
+        if (cuts.All(IsBaseLayout))
+            return true;
+        if (cuts.All(c => c is OpeningCut.Interior or OpeningCut.ThroughTop or OpeningCut.AboveWall or OpeningCut.AtHead or OpeningCut.AtSill))
+            return false;
+        throw ParameterWriter.Unverified("Replaying cuts on both ends of the wall has not been verified.");
+    }
 
     internal static bool CanReplayBoundaryCuts(IReadOnlyList<OpeningInterval> openings) =>
         openings.Count is 1 or 2 && SeparatedOpeningStations(openings)

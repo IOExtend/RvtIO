@@ -37,6 +37,7 @@ internal static partial class LevelElevationWriter
         var dependents = new List<long>();
         var walls = new HashSet<long>();
         var planRecords = new Dictionary<long, (int Partition, byte[] Body)>();
+        var warnings = new Dictionary<long, byte[]>();
         var geometryPartitions = new Dictionary<long, int>();
         ParameterWriter.ScanPartitions(root, tags, idWidth, (partition, record) =>
         {
@@ -75,6 +76,8 @@ internal static partial class LevelElevationWriter
                 return;
             if (name == "SWall")
                 walls.Add(owner);
+            if (name == "PostedWarningElem" && !warnings.TryAdd(owner, record.Body.ToArray()))
+                throw ParameterWriter.Unverified("A warning has duplicate project records.");
             hasAnalyticalGeometry |= name is "EnergyAnalysisDetailModel" or "EnergyAnalysisSpaceElem" or "EnergyAnalysisSurface";
             if (name is ("Level" or "DBViewPlan" or "SketchPlane" or "SketchGrid" or "SunAndShadowSettings" or "EnergyDataSettings" or "SWallRectOpening")
                 && !planRecords.TryAdd(owner, (partition, record.Body.ToArray())))
@@ -92,7 +95,8 @@ internal static partial class LevelElevationWriter
 
         if (!target.TryGetValue(102, out var element) || Class(element.Body) != "Level")
             throw new RvtWriteRefusedException("unsupported-parameter-owner", "A level elevation edit requires a project level.");
-        if (headers.Count != elementIds.Count)
+        int removedOwners = pending.RemovedProjectOwners.Count(row => elementIds.Contains((long)row.Owner));
+        if (headers.Count != elementIds.Count - removedOwners)
             throw ParameterWriter.Unverified("The level's dependent elements require verification before changing its elevation.");
         if (target.Count != 3 || !target.TryGetValue(101, out var head) || !target.TryGetValue(103, out var geometry)
             || head.Partition != element.Partition || geometry.Partition != element.Partition
@@ -133,6 +137,7 @@ internal static partial class LevelElevationWriter
         bool retain = surface.Real == destination || IsRetainedElevation(surface.Real - origin, elevation);
         var wallDependents = dependents.Where(walls.Contains).ToHashSet();
         var openingHosts = new HashSet<long>();
+        Dictionary<long, long>? warningOwners = null;
         var openings = new HashSet<long>();
         foreach (var (id, record) in planRecords)
         {
@@ -146,7 +151,8 @@ internal static partial class LevelElevationWriter
                 || (!wallDependents.Contains(host) && !HasOpeningConstraint(opening, id))
                 || header.Category != (int)BuiltInCategory.OST_SWallRectOpening || header.Partition != record.Partition
                 || !header.Parents.Contains(host)
-                || headers.Any(pair => pair.Key != id && pair.Key != host && pair.Value.Parents.Contains(id)))
+                || headers.Any(pair => pair.Key != id && pair.Key != host && pair.Value.Parents.Contains(id)
+                    && (warningOwners ??= WallOpeningWarnings.OpeningOwners(schema, warnings)).GetValueOrDefault(pair.Key) != id))
                 throw ParameterWriter.Unverified("The level has an opening with unverified host or dependencies.");
             openingHosts.Add(host);
             openings.Add(id);

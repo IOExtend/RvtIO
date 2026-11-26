@@ -43,6 +43,31 @@ public class WallHeightWriterTests
         Assert.Equal(expected, WallHeightWriter.OpeningCutsRemainSeparate(second, first));
     }
 
+    [Theory]
+    [InlineData((int)WallHeightWriter.OpeningCut.ThroughTop, (int)WallHeightWriter.OpeningCut.Interior, false)]
+    [InlineData((int)WallHeightWriter.OpeningCut.Interior, (int)WallHeightWriter.OpeningCut.AtBaseSill, true)]
+    [InlineData((int)WallHeightWriter.OpeningCut.Interior, (int)WallHeightWriter.OpeningCut.ThroughTop, false)]
+    [InlineData((int)WallHeightWriter.OpeningCut.ThroughBottom, (int)WallHeightWriter.OpeningCut.Interior, true)]
+    [InlineData((int)WallHeightWriter.OpeningCut.AboveWall, (int)WallHeightWriter.OpeningCut.ThroughTop, false)]
+    [InlineData((int)WallHeightWriter.OpeningCut.AtBaseHead, (int)WallHeightWriter.OpeningCut.ThroughBottom, true)]
+    public void UsesTheBoundaryAffectedByTheOpeningMove(int before, int after, bool floor)
+    {
+        var cut = new WallHeightWriter.OpeningInterval(0, 3, 7, 2, 5, (WallHeightWriter.OpeningCut)before, (WallHeightWriter.OpeningCut)after);
+
+        Assert.Equal(floor, WallHeightWriter.OpeningReplayUsesFloor([cut]));
+    }
+
+    [Fact]
+    public void RefusesOpeningMovesRequiringBothWallBoundariesToBeRebuilt()
+    {
+        var cut = new WallHeightWriter.OpeningInterval(0, 3, 7, 2, 5,
+            WallHeightWriter.OpeningCut.ThroughTop, WallHeightWriter.OpeningCut.ThroughBottom);
+
+        var error = Assert.Throws<RvtWriteRefusedException>(() => WallHeightWriter.OpeningReplayUsesFloor([cut]));
+
+        Assert.Equal("unverified-parameter-storage", error.Kind);
+    }
+
     [Fact]
     public void MatchesAnOpeningElevationInTheFaceCoordinates()
     {
