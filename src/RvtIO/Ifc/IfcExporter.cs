@@ -67067,6 +67067,7 @@ public partial class IfcExporter
                 skippedLegacyPorts += connectors.Count;
                 continue;
             }
+            List<(int Index, int PortId)>? fixedPorts = schema == IfcSchema.Ifc4 ? [] : null;
             foreach (var (index, direction, systemType) in connectors)
             {
                 (string prefix, string flow)? kind = PortKind(direction, systemType)
@@ -67078,17 +67079,31 @@ public partial class IfcExporter
                 int portId = w.Add("IFCDISTRIBUTIONPORT",
                     $"{S(portGuid)},{R(ownerHistId)},{S($"{port.prefix}{id.ToString(CultureInfo.InvariantCulture)}_{index.ToString(CultureInfo.InvariantCulture)}")},"
                     + $"{S("Flow")},{(currentProfile ? "''" : "$")},$,$,.{port.flow}.");
+                if (fixedPorts != null)
+                {
+                    fixedPorts.Add((index, portId));
+                    continue;
+                }
                 string relGuid = IfcGuid.FromMd5($"IfcRelConnectsPortToElement:{index.ToString(CultureInfo.InvariantCulture)}:{portGuid}");
-                // The current profile names the relation after its own GlobalId, the legacy profile
-                // after the port's.
                 w.Add("IFCRELCONNECTSPORTTOELEMENT",
                     $"{S(relGuid)},{R(ownerHistId)},"
-                    + $"{S($"{id.ToString(CultureInfo.InvariantCulture)}|{(currentProfile ? relGuid : portGuid)}")},{S("Flow")},{R(portId)},{R(product.entityId)}");
+                    + $"{S($"{id.ToString(CultureInfo.InvariantCulture)}|{portGuid}")},{S("Flow")},{R(portId)},{R(product.entityId)}");
             }
+            if (fixedPorts is { Count: > 0 })
+                WriteFixedPortNest(w, ownerHistId, product.entityId, hostGlobalIds.GetValueOrDefault(product.entityId)
+                    ?? id.ToString(CultureInfo.InvariantCulture), fixedPorts);
         }
         if (skippedLegacyPorts > 0)
             diag?.WriteLine($"IFC4 port filter skipped {skippedLegacyPorts} legacy distribution port(s) on non-IfcDistributionElement hosts.");
         return [];
+    }
+
+    private static void WriteFixedPortNest(StepWriter w, int ownerHistId, int hostId, string hostKey,
+        List<(int Index, int PortId)> ports)
+    {
+        string guid = IfcGuid.FromMd5($"IfcRelNests:DistributionPorts:{hostKey}");
+        w.Add("IFCRELNESTS", $"{S(guid)},{R(ownerHistId)},$,$,{R(hostId)},"
+            + StepWriter.List(ports.OrderBy(port => port.Index).Select(port => R(port.PortId))));
     }
 
     private static readonly HashSet<string> PortHostClasses = new(StringComparer.Ordinal)
@@ -67176,6 +67191,20 @@ public partial class IfcExporter
         const int DirectionIn = 1, DirectionOut = 2;
         var connected = new HashSet<(int, int)>();
         var systemMembers = new SortedDictionary<int, SortedSet<int>>();
+        // The connectors defined by the host are fixed ports. IFC4 nests them in connector order.
+        SortedDictionary<int, List<(int Index, int PortId)>>? fixedPortsByHost = schema == IfcSchema.Ifc4 ? [] : null;
+
+        void AttachPort(int hostId, int index, int portId, string legacyRelGuid)
+        {
+            if (fixedPortsByHost != null)
+            {
+                if (!fixedPortsByHost.TryGetValue(hostId, out var ports)) fixedPortsByHost[hostId] = ports = [];
+                ports.Add((index, portId));
+                return;
+            }
+            w.Add("IFCRELCONNECTSPORTTOELEMENT",
+                $"{S(legacyRelGuid)},{R(ownerHistId)},{S($"{Invariant(hostId)}|{legacyRelGuid}")},{S("Flow")},{R(portId)},{R(products[hostId].entityId)}");
+        }
         void Join(int system, params int[] entityIds)
         {
             if (system <= 0) return;
@@ -67231,8 +67260,7 @@ public partial class IfcExporter
             int portId = w.Add("IFCDISTRIBUTIONPORT",
                 $"{S(portGuid)},{R(ownerHistId)},{S(PortName(flow, hostId, index))},{S("Flow")},'',$,$,.{flow}.");
             string relGuid = IfcGuid.FromMd5($"IfcRelConnectsPortToElement:{Invariant(index)}:{portGuid}");
-            w.Add("IFCRELCONNECTSPORTTOELEMENT",
-                $"{S(relGuid)},{R(ownerHistId)},{S($"{Invariant(hostId)}|{relGuid}")},{S("Flow")},{R(portId)},{R(entityId)}");
+            AttachPort(hostId, index, portId, relGuid);
             Join(system, entityId, portId);
         }
 
@@ -67248,16 +67276,16 @@ public partial class IfcExporter
             int portIn = w.Add("IFCDISTRIBUTIONPORT",
                 $"{S(portInGuid)},{R(ownerHistId)},{S(PortName(inFlow, inHost, index))},{S("Flow")},'',$,$,.{inFlow}.");
             string relInGuid = IfcGuid.FromMd5($"InPortRelConnects{Invariant(index)}{inGlobalId}{outGlobalId}");
-            w.Add("IFCRELCONNECTSPORTTOELEMENT",
-                $"{S(relInGuid)},{R(ownerHistId)},{S($"{Invariant(inHost)}|{relInGuid}")},{S("Flow")},{R(portIn)},{R(inEntity)}");
+            AttachPort(inHost, index, portIn, relInGuid);
             int portOut = w.Add("IFCDISTRIBUTIONPORT",
                 $"{S(portOutGuid)},{R(ownerHistId)},{S(PortName(outFlow, outHost, index))},{S("Flow")},'',$,$,.{outFlow}.");
             string relOutGuid = IfcGuid.FromMd5($"OutPortRelConnects{Invariant(index)}{outGlobalId}{inGlobalId}");
-            w.Add("IFCRELCONNECTSPORTTOELEMENT",
-                $"{S(relOutGuid)},{R(ownerHistId)},{S($"{Invariant(outHost)}|{relOutGuid}")},{S("Flow")},{R(portOut)},{R(outEntity)}");
+            AttachPort(outHost, index, portOut, relOutGuid);
+            // In IFC4 a directed connection relates the source to the sink.
+            var (relatingPort, relatedPort) = schema == IfcSchema.Ifc4 && !bidirectional ? (portOut, portIn) : (portIn, portOut);
             w.Add("IFCRELCONNECTSPORTS",
                 $"{S(IfcGuid.FromMd5($"IfcRelConnectsPorts:{portInGuid}{portOutGuid}"))},{R(ownerHistId)},"
-                + $"{S($"{portInGuid}|{portOutGuid}")},{S("Flow")},{R(portIn)},{R(portOut)},$");
+                + $"{S($"{portInGuid}|{portOutGuid}")},{S("Flow")},{R(relatingPort)},{R(relatedPort)},$");
             connected.Add((inHost, outHost));
             // A fitting stores no system of its own: the pair then belongs to the system of the connector it is paired with.
             Join(inSystem > 0 ? inSystem : outSystem, inEntity, outEntity, portIn, portOut);
@@ -67340,6 +67368,12 @@ public partial class IfcExporter
             }
         foreach (var (host, index, direction, system) in unpaired)
             if (!withPort.Contains((host, index))) Standalone(host, index, direction, system);
+        if (fixedPortsByHost != null)
+            foreach (var (host, ports) in fixedPortsByHost)
+            {
+                int entityId = products[host].entityId;
+                WriteFixedPortNest(w, ownerHistId, entityId, hostGlobalIds[entityId], ports);
+            }
         if (skippedIfc4NonDistributionHosts > 0)
             diag?.WriteLine($"IFC4 port compliance: skipped connector graph ports on {skippedIfc4NonDistributionHosts} non-IfcDistributionElement product(s)");
         return systemMembers;
