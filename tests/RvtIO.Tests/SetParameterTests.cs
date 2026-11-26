@@ -1007,12 +1007,15 @@ public sealed class SetParameterTests : IDisposable
     }
 
     [Theory]
-    [InlineData(OwnerKind.Wall, 1)]
-    [InlineData(OwnerKind.WallType, 2)]
-    [InlineData(OwnerKind.Room, 1)]
-    public void AGlobalCurrencyValueUpdatesAVerifiedSharedProjectParameter(OwnerKind owner, int binding)
+    [InlineData(OwnerKind.Wall, 1, true)]
+    [InlineData(OwnerKind.WallType, 2, true)]
+    [InlineData(OwnerKind.Room, 1, true)]
+    [InlineData(OwnerKind.Wall, 1, false)]
+    [InlineData(OwnerKind.WallType, 2, false)]
+    [InlineData(OwnerKind.Room, 1, false)]
+    public void AGlobalCurrencyValueUpdatesAVerifiedProjectParameter(OwnerKind owner, int binding, bool shared)
     {
-        var parameter = new UserParameter(Kind.Number, true, Binding: binding, Owner: owner, Currency: true);
+        var parameter = new UserParameter(Kind.Number, shared, Binding: binding, Owner: owner, Currency: true);
         var association = new ProjectAssociation((BuiltInParameter)DefinitionId, GlobalId: PropertyGlobalId);
         var global = new GlobalFixture(Kind.Number, InitialValue: "1.5", Currency: true);
         string source = CreateSource(wall: true, user: parameter, globalParameter: global, association: association);
@@ -1354,12 +1357,15 @@ public sealed class SetParameterTests : IDisposable
     }
 
     [Theory]
-    [InlineData(2020, OwnerKind.Wall, 1, "0")]
-    [InlineData(2022, OwnerKind.WallType, 2, "1e-300")]
-    [InlineData(2022, OwnerKind.Room, 1, "0")]
-    public void AssignsAnExplicitFirstCurrencyValue(int release, OwnerKind owner, int binding, string value)
+    [InlineData(2020, OwnerKind.Wall, 1, true, "0")]
+    [InlineData(2022, OwnerKind.WallType, 2, true, "1e-300")]
+    [InlineData(2022, OwnerKind.Room, 1, true, "0")]
+    [InlineData(2020, OwnerKind.Wall, 1, false, "0")]
+    [InlineData(2022, OwnerKind.WallType, 2, false, "1e-300")]
+    [InlineData(2022, OwnerKind.Room, 1, false, "0")]
+    public void AssignsAnExplicitFirstCurrencyValue(int release, OwnerKind owner, int binding, bool shared, string value)
     {
-        var parameter = new UserParameter(Kind.Number, true, Binding: binding, Store: StoreState.NullPointer,
+        var parameter = new UserParameter(Kind.Number, shared, Binding: binding, Store: StoreState.NullPointer,
             Owner: owner, Currency: true);
         string source = CreateSource(wall: true, user: parameter, release: release);
         RvtWriter.SetParameter(source, Output, ProjectId, DefinitionId, value);
@@ -1400,15 +1406,18 @@ public sealed class SetParameterTests : IDisposable
     }
 
     [Theory]
-    [InlineData(OwnerKind.Wall, "17.25000000001", "unverified-parameter-storage")]
-    [InlineData(OwnerKind.Wall, "42 $", "invalid-parameter-value")]
-    [InlineData(OwnerKind.Wall, null, "unsupported-parameter-clear")]
-    [InlineData(OwnerKind.Room, "17.25000000001", "unverified-parameter-storage")]
-    [InlineData(OwnerKind.Room, "42 $", "invalid-parameter-value")]
-    [InlineData(OwnerKind.Room, null, "unsupported-parameter-clear")]
-    public void RefusesInvalidCurrencyBatchesWithoutChangingTheProject(OwnerKind owner, string? value, string kind)
+    [InlineData(OwnerKind.Wall, true, "17.25000000001", "unverified-parameter-storage")]
+    [InlineData(OwnerKind.Wall, true, "42 $", "invalid-parameter-value")]
+    [InlineData(OwnerKind.Wall, true, null, "unsupported-parameter-clear")]
+    [InlineData(OwnerKind.Room, true, "17.25000000001", "unverified-parameter-storage")]
+    [InlineData(OwnerKind.Room, true, "42 $", "invalid-parameter-value")]
+    [InlineData(OwnerKind.Room, true, null, "unsupported-parameter-clear")]
+    [InlineData(OwnerKind.Wall, false, "17.25000000001", "unverified-parameter-storage")]
+    [InlineData(OwnerKind.Wall, false, "42 $", "invalid-parameter-value")]
+    [InlineData(OwnerKind.Wall, false, null, "unsupported-parameter-clear")]
+    public void RefusesInvalidCurrencyBatchesWithoutChangingTheProject(OwnerKind owner, bool shared, string? value, string kind)
     {
-        string source = CreateSource(wall: true, user: new(Kind.Number, true, Owner: owner, Currency: true));
+        string source = CreateSource(wall: true, user: new(Kind.Number, shared, Owner: owner, Currency: true));
         byte[] hash = SHA256.HashData(File.ReadAllBytes(source));
         var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetParameters(source, Output,
             [new(ProjectId, DefinitionId, "17.25"), new(ProjectId, DefinitionId, value)]));

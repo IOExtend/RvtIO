@@ -61,7 +61,7 @@ internal static class UserParameterWriter
         if (ownerClass == "FamilySymbol" && edit.Value == "-1"
             && definitionClass == "ParamElemProject")
             material = -1;
-        return Encode(walker, def, slot, edit, idWidth, material, includeCurrency: definitionClass == "ParamElemExternal");
+        return Encode(walker, def, slot, edit, idWidth, material, includeCurrency: true);
     }
 
     internal static (WideBlockWalker.Walk Walk, int Slot) ReadBoundDefinition(
