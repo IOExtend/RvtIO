@@ -49,26 +49,20 @@ internal static class StringScanner
 
     private static bool IsValidParamName(ReadOnlySpan<char> s)
     {
-        int len = s.Length;
-        if (len < 3 || len > 100) return false;
-        if (len >= 10 && char.IsDigit(s[0]) && char.IsDigit(s[1]) && s[2] == '.') return false;
+        if (s.Length < 3 || s.Length > 100) return false;
+        if (s.IndexOfAny('\\', '/') >= 0) return false;
+        if (s[0] == '(' && s.Contains(',')) return false;
+        if (s.Length >= 10 && char.IsDigit(s[0]) && char.IsDigit(s[1]) && s[2] == '.') return false;
         bool hasLetter = false;
-        bool hasNonAscii = false;
-        bool couldBeHexId = len >= 10;
-        bool startsWithParen = s[0] == '(';
-        for (int k = 0; k < len; k++)
+        bool couldBeHexId = s.Length >= 10;
+        foreach (char c in s)
         {
-            char c = s[k];
-            if (c == '\\' || c == '/') return false;
-            if (startsWithParen && c == ',') return false;
-            hasNonAscii |= c > 0x7F;
             hasLetter |= char.IsLetter(c);
             if (couldBeHexId) couldBeHexId = Uri.IsHexDigit(c) || c == '-';
+            if (hasLetter && !couldBeHexId)
+                return !s.StartsWith("autodesk.", StringComparison.CurrentCulture);
         }
-        if (!hasLetter || couldBeHexId) return false;
-        return hasNonAscii
-            ? !s.StartsWith("autodesk.", StringComparison.CurrentCulture)
-            : !s.StartsWith("autodesk.", StringComparison.Ordinal);
+        return false;
     }
 
     private static ReadOnlySpan<byte> ThreeZeros => [0, 0, 0];
@@ -85,10 +79,6 @@ internal static class StringScanner
 
         var seenPerEid = new Dictionary<uint, HashSet<string>>();
         var nearbyIds = new Queue<(int Offset, uint Id)>();
-#if NET9_0_OR_GREATER
-        var chunkPool = new HashSet<string>(StringComparer.Ordinal);
-        var chunkPoolLookup = chunkPool.GetAlternateLookup<ReadOnlySpan<char>>();
-#endif
         int lastIdOffset = -1;
         Span<char> text = stackalloc char[100];
         ReadOnlySpan<byte> span = d;
@@ -112,7 +102,6 @@ internal static class StringScanner
             int minPrintable = (int)(sLen * 0.6);
             int printable = 0;
             bool hasLetter = false;
-            bool hasNonAscii = false;
             bool couldBeHexId = sLen >= 10;
             bool rejected = false;
             bool startsWithParen = false;
@@ -122,33 +111,14 @@ internal static class StringScanner
                 int offset = payloadStart + k * 2;
                 byte lo = d[offset];
                 byte hi = d[offset + 1];
-                char c;
-                if (hi == 0x00)
-                {
-                    if (lo < 0x20) { rejected = true; break; }
-                    if (lo <= 0x7E) printable++;
-                    else hasNonAscii = true;
-                    c = lo == 0x9B ? '0' : (char)lo;
-                }
-                else if (hi == 0x04)
-                {
-                    printable++;
-                    hasNonAscii = true;
-                    c = (char)(0x0400 | lo);
-                }
-                else if (hi == 0xF7 || hi == 0x1B)
-                {
-                    if (lo < 0x20) { rejected = true; break; }
-                    hasNonAscii |= lo > 0x7F && lo != 0x9B;
-                    c = lo == 0x9B ? '0' : (char)lo;
-                }
-                else
+                if (hi is not (0x00 or 0x04 or 0xF7 or 0x1B))
                 {
                     rejected = true;
                     break;
                 }
-
-                if (c == '\\' || c == '/') { rejected = true; break; }
+                if (hi == 0x04 || hi == 0x00 && lo is >= 0x20 and <= 0x7E) printable++;
+                char c = DecodeUtf16Char(lo, hi);
+                if (c < ' ' || c == '\\' || c == '/') { rejected = true; break; }
                 if (k == 0) startsWithParen = c == '(';
                 else if (startsWithParen && c == ',') { rejected = true; break; }
 
@@ -160,10 +130,8 @@ internal static class StringScanner
             if (rejected || printable < minPrintable || !hasLetter || couldBeHexId) continue;
             if (sLen >= 10 && char.IsDigit(text[0]) && char.IsDigit(text[1]) && text[2] == '.') continue;
             var candidate = text[..(int)sLen];
-            bool startsAutodesk = hasNonAscii
-                ? candidate.StartsWith("autodesk.", StringComparison.CurrentCulture)
-                : candidate.StartsWith("autodesk.", StringComparison.Ordinal);
-            if (startsAutodesk) continue;
+            // Cultural collation can ignore even printable ASCII characters.
+            if (candidate.StartsWith("autodesk.", StringComparison.CurrentCulture)) continue;
 
             int lo2 = Math.Max(0, j - 599);
             int hi2 = Math.Min(d.Length - 4, j + 100);
@@ -177,15 +145,7 @@ internal static class StringScanner
             lastIdOffset = hi2;
             if (nearbyIds.Count == 0) continue;
 
-#if NET9_0_OR_GREATER
-            if (!chunkPoolLookup.TryGetValue(candidate, out string? s))
-            {
-                s = new string(candidate);
-                chunkPoolLookup.Add(s);
-            }
-#else
             string s = new(candidate);
-#endif
             foreach (var (_, eid) in nearbyIds)
             {
                 ref var list = ref CollectionsMarshal.GetValueRefOrAddDefault(elemStrings, eid, out bool exists);
