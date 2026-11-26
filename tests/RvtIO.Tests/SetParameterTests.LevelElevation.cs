@@ -13,7 +13,7 @@ namespace RvtIO.Tests;
 public sealed partial class SetParameterTests
 {
     private const int ElevationLevelId = 181, ElevationTypeId = 182, ElevationLocationId = 183, ElevationProjectLocationId = 184,
-        ElevationTrackingId = 185, ElevationDependentId = 186, ElevationPlanLevelId = 187;
+        ElevationTrackingId = 185, ElevationDependentId = 186, ElevationOtherLevelId = 187;
 
     [Theory]
     [InlineData(0, "3.25 ft", 3.25)]
@@ -78,7 +78,7 @@ public sealed partial class SetParameterTests
 
         using var output = RootStorage.OpenRead(Output);
         Assert.Equal(ElevationLevelBody(-4, -4), ReadBody(output, ElevationLevelId));
-        Assert.Equal(ElevationLevelBody(0, 0, ElevationPlanLevelId), ReadBody(output, ElevationPlanLevelId));
+        Assert.Equal(ElevationLevelBody(0, 0, ElevationOtherLevelId), ReadBody(output, ElevationOtherLevelId));
         Assert.Equal(ElevationPlanBody(6), ReadBody(output, ElevationDependentId));
     }
 
@@ -100,7 +100,26 @@ public sealed partial class SetParameterTests
         Assert.False(File.Exists(Output));
     }
 
-    private string CreateElevationSource(int elevationBase, bool dependent = false, bool differentFace = false, bool? renamedRangeFields = null)
+    [Fact]
+    public void RefusesAnUnverifiedDependentWallAfterAnEarlierValidLevelEdit()
+    {
+        string source = CreateElevationSource(0, dependentWall: true);
+        byte[] original = File.ReadAllBytes(source);
+
+        var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetParameters(source, Output,
+        [
+            new(ElevationOtherLevelId, (int)BuiltInParameter.LEVEL_ELEV, "5 ft"),
+            new(ElevationLevelId, (int)BuiltInParameter.LEVEL_ELEV, "3.25 ft"),
+        ]));
+
+        Assert.Equal("unverified-parameter-storage", error.Kind);
+        Assert.Contains("dependent geometry", error.Message);
+        Assert.Equal(original, File.ReadAllBytes(source));
+        Assert.False(File.Exists(Output));
+    }
+
+    private string CreateElevationSource(int elevationBase, bool dependent = false, bool differentFace = false,
+        bool? renamedRangeFields = null, bool dependentWall = false)
     {
         var tags = Tags(2022);
         var schema = new SchemaStreamEditorTests.Writer();
@@ -129,7 +148,7 @@ public sealed partial class SetParameterTests
         schema.Top(new("ActiveGeoLocationTrackingElement", new Back(18), 1,
             [R("m_activeGeoLocationId", 14), R("m_projectGeoLocationId", 14)], [])); // 30
         Add("SerializedDummy"); // 31
-        schema.Top(new("Dependent", new Back(18), 1, [], [])); // 32
+        schema.Top(new(dependentWall ? "SWall" : "Dependent", new Back(18), 1, [], [])); // 32
         if (renamedRangeFields.HasValue)
         {
             schema.Top(new("DBView", new Back(18), 1,
@@ -160,9 +179,11 @@ public sealed partial class SetParameterTests
         ];
         if (renamedRangeFields.HasValue)
             records = [.. records, (ElevationDependentId, (ushort)37, ElevationPlanBody(10)[2..]),
-                (ElevationPlanLevelId, (ushort)24, ElevationLevelBody(0, 0, ElevationPlanLevelId)[2..])];
-        else if (dependent)
+                (ElevationOtherLevelId, (ushort)24, ElevationLevelBody(0, 0, ElevationOtherLevelId)[2..])];
+        else if (dependent || dependentWall)
             records = [.. records, (ElevationDependentId, (ushort)32, Pack(w => Element(w, ElevationDependentId)))];
+        if (dependentWall)
+            records = [.. records, (ElevationOtherLevelId, (ushort)24, ElevationLevelBody(0, 0, ElevationOtherLevelId)[2..])];
 
         string file = Path.Combine(_folder, "elevation.rvt");
         using var root = RootStorage.Create(file, OpenMcdf.Version.V4);
@@ -188,8 +209,9 @@ public sealed partial class SetParameterTests
                 w.Write((ushort)20);
                 w.Write(owner switch
                 {
-                    ElevationLevelId or ElevationPlanLevelId => (int)BuiltInCategory.OST_Levels,
+                    ElevationLevelId or ElevationOtherLevelId => (int)BuiltInCategory.OST_Levels,
                     ElevationDependentId when renamedRangeFields.HasValue => (int)BuiltInCategory.OST_Views,
+                    ElevationDependentId when dependentWall => (int)BuiltInCategory.OST_Walls,
                     _ => 0,
                 });
                 w.Write(-1);
@@ -218,7 +240,7 @@ public sealed partial class SetParameterTests
     private static byte[] ElevationPlanBody(double top) => Pack(w =>
     {
         w.Write((ushort)37);
-        foreach (int value in new[] { ElevationDependentId, -1, ElevationPlanLevelId, -1, 0, -1, -1, 0, 0, -1, -1, 1 })
+        foreach (int value in new[] { ElevationDependentId, -1, ElevationOtherLevelId, -1, 0, -1, -1, 0, 0, -1, -1, 1 })
             w.Write(value);
         foreach (int tag in new[] { 36, 34, 35, 36 })
             WritePointer(w, tag);
@@ -229,7 +251,7 @@ public sealed partial class SetParameterTests
             w.Write(0);
         for (int i = 0; i < 5; i++)
             w.Write(0d);
-        foreach (int anchor in new[] { ElevationPlanLevelId, ElevationLevelId, ElevationPlanLevelId, ElevationPlanLevelId, -3 })
+        foreach (int anchor in new[] { ElevationOtherLevelId, ElevationLevelId, ElevationOtherLevelId, ElevationOtherLevelId, -3 })
             w.Write(anchor);
         foreach (double offset in new[] { 2d, 10, 0, -1, 0 })
             w.Write(offset);

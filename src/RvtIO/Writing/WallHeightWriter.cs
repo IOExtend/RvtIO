@@ -25,8 +25,11 @@ internal static partial class WallHeightWriter
     internal static bool IsWallDimension(BuiltInParameter parameter) =>
         parameter is BuiltInParameter.WALL_USER_HEIGHT_PARAM or BuiltInParameter.WALL_BASE_OFFSET or BuiltInParameter.WALL_TOP_OFFSET;
 
+    internal readonly record struct LevelMove(long Id, double Previous, double Destination);
+
     internal static ParameterWriter.PlanResult? Plan(RootStorage root, PartitionFraming.Tags tags, int idWidth,
-        SchemaDocument schema, IReadOnlySet<long> elementIds, ParameterWriter.Edit edit, ParameterWriter.Pending pending)
+        SchemaDocument schema, IReadOnlySet<long> elementIds, ParameterWriter.Edit edit, ParameterWriter.Pending pending,
+        LevelMove? levelMove = null)
     {
         var walker = new WideBlockWalker(schema, CaptureKey, []);
         var headerWalker = new WideBlockWalker(schema, (c, f) =>
@@ -135,17 +138,25 @@ internal static partial class WallHeightWriter
             || headerRecord.Integer(parents, "ElementParents.m_nonDetermRegenChildren#") != 0)
             throw ParameterWriter.Unverified("The wall can regenerate unverified dependent elements.");
 
-        double value = ParameterMeasurement.Parse(UnitType.UT_Length, edit.Value!) is double measured
-            && (offsetEdit || measured >= MinimumVerifiedHeight)
-            ? measured : throw new RvtWriteRefusedException("invalid-parameter-value", offsetEdit
-                ? "A wall offset requires a finite length with an explicit unit."
-                : "Unconnected Height requires an explicit unit and a length of at least 0.1 ft.");
-        var original = ParameterWriter.FindValue(walker, wall.Walk, edit, StorageType.Double)?.Value
-            ?? throw Layout();
+        double? value = null;
+        WideBlockWalker.Capture? original = null;
+        if (levelMove is null)
+        {
+            value = ParameterMeasurement.Parse(UnitType.UT_Length, edit.Value!) is double measured
+                && (offsetEdit || measured >= MinimumVerifiedHeight)
+                ? measured : throw new RvtWriteRefusedException("invalid-parameter-value", offsetEdit
+                    ? "A wall offset requires a finite length with an explicit unit."
+                    : "Unconnected Height requires an explicit unit and a length of at least 0.1 ft.");
+            original = ParameterWriter.FindValue(walker, wall.Walk, edit, StorageType.Double)?.Value
+                ?? throw Layout();
+        }
         var mirror = ParameterWriter.FindValue(walker, wall.Walk, edit with { ParameterId = ComputedWallHeight }, StorageType.Double)?.Value
             ?? throw Layout();
+        long baseConstraint = wall.Integer(-1, "Element.m_assocLevelId");
+        if (levelMove is { } moved && moved.Id != baseConstraint && moved.Id != topConstraint)
+            throw Layout();
         int outline = headerRecord.Target(-1, "ElementHeader.m_pBBox", "Outline");
-        var interval = PlanInterval(wall, walker, edit, topConstraint, value, mirror, LevelElevation);
+        var interval = PlanInterval(wall, walker, edit, baseConstraint, topConstraint, value, mirror, LevelElevation, levelMove);
         if (!double.IsFinite(interval.Top) || interval.Top <= interval.Base
             || headerRecord.Real(outline, "Outline.m_minmax@0/2") != interval.BoundsBase)
             throw Layout();
@@ -168,9 +179,11 @@ internal static partial class WallHeightWriter
             throw new RvtWriteRefusedException("invalid-parameter-value", "The wall would extend beyond the verified model coordinate range.");
 
         var openings = ReadOpenings(wall, walker, interval, edit.ElementId, related, openingRecords);
+        if (levelMove is not null && openings.Count != 0)
+            throw ParameterWriter.Unverified("Moving the level would require an unverified opening update.");
         var changes = openings.Where(o => o.Cut != o.Destination).ToArray();
         bool rebuildCut = changes.Length != 0 || openings.Any(o => IsAtBoundary(o.Cut) || IsAtBaseBoundary(o.Cut));
-        bool changed = value != original.Real;
+        bool changed = levelMove is { } move ? move.Previous != move.Destination : value != original?.Real;
         bool bottomTransition = CanChangeBottomOpening(openings);
         bool removesCuts = CanRemoveOpeningCuts(openings);
         bool activatesCuts = CanActivateOpeningCuts(openings);
@@ -195,8 +208,10 @@ internal static partial class WallHeightWriter
             NormalizeAuxiliaryTop(wall, geometry, interval, extendedReference, boundsTop);
             geometry = ReadBody(geometry.Body, "GElement", true);
         }
-        ResizeReferencePlanes(wall, interval, openings.Count, hasOtherWall, extendedReference);
-        byte[] faceTopology = ResizeGeometry(geometry, interval, openings);
+        LevelMove? baseMove = levelMove is { } movement && movement.Id == baseConstraint ? movement : null;
+        ResizeReferencePlanes(wall, interval, openings.Count, hasOtherWall, extendedReference, baseMove);
+        double fillingShift = baseMove is { } translated ? translated.Destination - translated.Previous : 0;
+        byte[] faceTopology = ResizeGeometry(geometry, interval, openings, fillingShift);
         int[] topologyNodes = wall.Nodes("GeometryTopology").ToArray();
         if (topologyNodes.Length != 2)
             throw ParameterWriter.Unverified("The wall does not have both verified face topology tables.");
@@ -210,7 +225,8 @@ internal static partial class WallHeightWriter
                 throw ParameterWriter.Unverified("The wall face topology does not match the cached solid.");
             tables[i] = (start.ValueOffset, end.ValueOffset);
         }
-        wall.Write(original, value);
+        if (original is { } editable && value is double requested)
+            wall.Write(editable, requested);
         wall.Write(mirror, interval.After);
         headerRecord.Write(outline, "Outline.m_minmax@0/2", interval.NewBoundsBase);
         headerRecord.Write(outline, "Outline.m_minmax@1/2", interval.NewTop);
@@ -313,7 +329,8 @@ internal static partial class WallHeightWriter
     }
 
     private static HeightInterval PlanInterval(Archive wall, WideBlockWalker walker, ParameterWriter.Edit edit,
-        long topConstraint, double value, WideBlockWalker.Capture computedHeight, Func<long, double> levelElevation)
+        long baseConstraint, long topConstraint, double? value, WideBlockWalker.Capture computedHeight,
+        Func<long, double> levelElevation, LevelMove? levelMove)
     {
         WideBlockWalker.Capture ReadDouble(int parameterId) =>
             ParameterWriter.FindValue(walker, wall.Walk, edit with { ParameterId = parameterId }, StorageType.Double)?.Value
@@ -324,28 +341,40 @@ internal static partial class WallHeightWriter
         if (baseOffset.Real != baseMirror.Real)
             throw Layout();
 
-        double datum = levelElevation(wall.Integer(-1, "Element.m_assocLevelId"));
+        double datum = levelElevation(baseConstraint);
+        double newDatum = Destination(baseConstraint, datum);
         double originalBase = datum + baseOffset.Real;
-        bool moveBase = edit.Parameter == BuiltInParameter.WALL_BASE_OFFSET;
-        double newBase = datum + (moveBase ? value : baseOffset.Real);
+        double newBaseOffset = edit.Parameter == BuiltInParameter.WALL_BASE_OFFSET ? value ?? baseOffset.Real : baseOffset.Real;
+        double newBase = newDatum + newBaseOffset;
         double originalHeight, newHeight;
         if (topConstraint == -1)
         {
             originalHeight = ReadDouble((int)BuiltInParameter.WALL_USER_HEIGHT_PARAM).Real;
-            newHeight = edit.Parameter == BuiltInParameter.WALL_USER_HEIGHT_PARAM ? value : originalHeight;
+            newHeight = edit.Parameter == BuiltInParameter.WALL_USER_HEIGHT_PARAM ? value ?? originalHeight : originalHeight;
         }
         else
         {
             double topDatum = levelElevation(topConstraint);
             double topOffset = ReadDouble((int)BuiltInParameter.WALL_TOP_OFFSET).Real;
+            double newTopOffset = edit.Parameter == BuiltInParameter.WALL_TOP_OFFSET ? value ?? topOffset : topOffset;
             originalHeight = ConstrainedHeight(datum, baseOffset.Real, topDatum, topOffset);
-            newHeight = ConstrainedHeight(datum, moveBase ? value : baseOffset.Real, topDatum, moveBase ? topOffset : value);
+            // A previously regenerated wall can store the difference between its two saved endpoints.
+            if (levelMove is not null && computedHeight.Real == topDatum + topOffset - originalBase)
+                originalHeight = computedHeight.Real;
+            newHeight = ConstrainedHeight(newDatum, newBaseOffset, Destination(topConstraint, topDatum), newTopOffset);
         }
         if (originalHeight != computedHeight.Real)
             throw Layout();
-        if (moveBase)
-            wall.Write(baseMirror, value);
+        if (edit.Parameter == BuiltInParameter.WALL_BASE_OFFSET)
+            wall.Write(baseMirror, newBaseOffset);
         return new(originalBase, originalHeight, newHeight) { NewBase = newBase };
+
+        double Destination(long id, double previous)
+        {
+            if (levelMove is not { } movement || movement.Id != id)
+                return previous;
+            return previous == movement.Previous ? movement.Destination : throw Layout();
+        }
     }
 
     // Revit removes the base offset before subtracting the base level's elevation.
@@ -548,10 +577,17 @@ internal static partial class WallHeightWriter
         return UserParameterWriter.Integer(walk, All + "PlanTopologies.m_set#", set) == 0;
     }
 
-    private static void ResizeReferencePlanes(Archive wall, HeightInterval height, int openingCount, bool hasOtherWall, int extendedReference)
+    private static void ResizeReferencePlanes(Archive wall, HeightInterval height, int openingCount, bool hasOtherWall,
+        int extendedReference, LevelMove? baseLevelMove)
     {
         int driver = wall.Target(-1, "VWall.m_pCurveDriver", "VWallDriver");
-        _ = wall.Target(driver, "CurveDriver.m_pCrv", "GLine");
+        int line = wall.Target(driver, "CurveDriver.m_pCrv", "GLine");
+        if (baseLevelMove is { } move)
+        {
+            if (wall.Real(line, "GLine.m_origin@2") != move.Previous || wall.Real(line, "GLine.m_dirVec@2") != 0)
+                throw Layout();
+            wall.Write(line, "GLine.m_origin@2", move.Destination);
+        }
         long startJoinDisabled = wall.Integer(driver, "VWallDriver.m_noJoinAtEnd@0");
         long endJoinDisabled = wall.Integer(driver, "VWallDriver.m_noJoinAtEnd@1");
         bool allowsEndJoins = startJoinDisabled == 0 || endJoinDisabled == 0;
@@ -668,7 +704,8 @@ internal static partial class WallHeightWriter
         }
     }
 
-    private static byte[] ResizeGeometry(Archive geometry, HeightInterval height, IReadOnlyList<OpeningInterval> openings)
+    private static byte[] ResizeGeometry(Archive geometry, HeightInterval height, IReadOnlyList<OpeningInterval> openings,
+        double fillingShift = 0)
     {
         var openingLevels = openings.Where(o => !IsOutsideWall(o.Cut)).SelectMany(o => new[] { o.Bottom, o.Top }).ToHashSet();
         int interiorCount = openings.Count(o => o.Cut == OpeningCut.Interior);
@@ -794,10 +831,12 @@ internal static partial class WallHeightWriter
                 if (!fillings.Add(filling) || geometry.Integer(filling, "GFilling.m_pGFace") != handle
                     || geometry.Integer(filling, "GFilling.m_data") != 0)
                     throw Layout();
-                if (newOrigin != frame.Origin && frame.Axis >= 0)
+                // Material patterns follow the base level when the wall's location line moves.
+                double relativeMove = newOrigin - frame.Origin - fillingShift;
+                if (relativeMove != 0 && frame.Axis >= 0)
                 {
                     var origin = geometry.Field(filling, $"FillPatternPlacer.m_origin@{frame.Axis}");
-                    geometry.Write(origin, origin.Real - (newOrigin - frame.Origin) * frame.Direction);
+                    geometry.Write(origin, origin.Real - relativeMove * frame.Direction);
                 }
             }
         }

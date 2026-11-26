@@ -34,6 +34,7 @@ internal static partial class LevelElevationWriter
         long? trackerId = null;
         bool hasAnalyticalGeometry = false;
         var dependents = new List<long>();
+        var walls = new HashSet<long>();
         var planRecords = new Dictionary<long, (int Partition, byte[] Body)>();
         var geometryPartitions = new Dictionary<long, int>();
         ParameterWriter.ScanPartitions(root, tags, idWidth, (partition, record) =>
@@ -71,6 +72,8 @@ internal static partial class LevelElevationWriter
             }
             if (record.Channel != 102)
                 return;
+            if (name == "SWall")
+                walls.Add(owner);
             hasAnalyticalGeometry |= name is "EnergyAnalysisDetailModel" or "EnergyAnalysisSpaceElem" or "EnergyAnalysisSurface";
             if (name is ("Level" or "DBViewPlan" or "SketchPlane" or "SketchGrid" or "SunAndShadowSettings" or "EnergyDataSettings")
                 && !planRecords.TryAdd(owner, (partition, record.Body.ToArray())))
@@ -127,10 +130,18 @@ internal static partial class LevelElevationWriter
         if (surface.Real != face.Real || surface.ValueOffset == face.ValueOffset)
             throw ParameterWriter.Unverified("The level's saved plane and face disagree.");
         bool retain = surface.Real == destination || IsRetainedElevation(surface.Real - origin, elevation);
-        var related = dependents.Count != 0
-            ? PlanViews(dependents, headers, planRecords, geometryPartitions, hasAnalyticalGeometry, edit.ElementId,
-                surface.Real, retain ? surface.Real : destination, Class, Read, Target, PlaneElevations)
+        long[] nonWallDependents = dependents.Where(id => !walls.Contains(id)).ToArray();
+        double nextElevation = retain ? surface.Real : destination;
+        var related = nonWallDependents.Length != 0
+            ? PlanViews(nonWallDependents, headers, planRecords, geometryPartitions, hasAnalyticalGeometry, edit.ElementId,
+                surface.Real, nextElevation, Class, Read, Target, PlaneElevations)
             : [];
+        foreach (long wall in dependents.Where(walls.Contains))
+        {
+            var move = new WallHeightWriter.LevelMove(edit.ElementId, surface.Real, nextElevation);
+            if (WallHeightWriter.Plan(root, tags, idWidth, schema, elementIds, edit with { ElementId = wall }, pending, move) is { } plan)
+                related.AddRange(plan.Records);
+        }
         if (retain)
             return null;
         byte[] updated = element.Body;
