@@ -258,13 +258,18 @@ internal static class ParameterMeasurement
         bool suppressLeadingZeros, bool suppressSpaces, string? atomUnit, NumberFormatInfo format, string inchSuffix)
     {
         const int InchesPerFoot = 12;
-        // Revit stores fractional accuracy in display units, to a resolution of 1/2^20 inch.
-        double inverseAccuracy = 1 / (inchesOnly ? accuracy : accuracy * InchesPerFoot);
-        if (!double.IsFinite(inverseAccuracy) || inverseAccuracy is < 1 or > (1 << 20))
+        const int TicksPerInch = 1 << 20;
+        const int TicksPerFoot = InchesPerFoot * TicksPerInch;
+        int ticksPerUnit = inchesOnly ? TicksPerInch : TicksPerFoot;
+        long maxTicks = (long)int.MaxValue * ticksPerUnit;
+        // Revit stores fractional accuracy in display units on a grid of 1/2^20 inch.
+        double encodedTicks = accuracy * ticksPerUnit;
+        double integralTicks = Math.Round(encodedTicks);
+        if (!(integralTicks >= 1 && integralTicks <= maxTicks)
+            || (integralTicks != encodedTicks && integralTicks / ticksPerUnit != accuracy))
             return null;
-        int denominator = (int)inverseAccuracy;
-        if (inverseAccuracy != denominator || (denominator & (denominator - 1)) != 0)
-            return null;
+        long ticksPerStep = (long)integralTicks;
+        bool wholeFeet = !inchesOnly && ticksPerStep % TicksPerFoot == 0;
 
         string? oldText = Render(before), newText = Render(after);
         return oldText is not null && newText is not null
@@ -278,20 +283,25 @@ internal static class ParameterMeasurement
             if (displayValue > int.MaxValue || steps >= (1L << 52))
                 return null;
             // The same midpoint tolerance as the Revit fractional display reader.
-            long ticks = (long)Math.Floor(steps + 0.5 + 1e-9);
-            long wholeInches = ticks / denominator;
+            long roundedSteps = (long)Math.Floor(steps + 0.5 + 1e-9);
+            if (roundedSteps > maxTicks / ticksPerStep)
+                return null;
+            long ticks = roundedSteps * ticksPerStep;
+            long wholeInches = ticks / TicksPerInch;
             long feet = inchesOnly ? 0 : wholeInches / InchesPerFoot;
             long inches = inchesOnly ? wholeInches : wholeInches % InchesPerFoot;
-            bool showFeet = !inchesOnly && (feet != 0 || !suppressLeadingZeros);
-            long numerator = ticks % denominator;
             string text = feetValue < 0 && ticks != 0 ? "-" : "";
+            if (wholeFeet)
+                return text + feet.ToString(CultureInfo.InvariantCulture) + "'";
+            bool showFeet = !inchesOnly && (feet != 0 || !suppressLeadingZeros);
+            long numerator = ticks % TicksPerInch;
             if (showFeet)
                 text += feet.ToString(CultureInfo.InvariantCulture) + (suppressSpaces ? "'-" : "' - ");
             if (showFeet || inches != 0 || numerator == 0)
                 text += inches.ToString(CultureInfo.InvariantCulture);
             if (numerator != 0)
             {
-                int reducedDenominator = denominator;
+                int reducedDenominator = TicksPerInch;
                 while ((numerator & 1) == 0)
                 {
                     numerator /= 2;

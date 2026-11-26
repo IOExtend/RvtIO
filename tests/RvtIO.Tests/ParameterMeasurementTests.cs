@@ -47,6 +47,11 @@ public sealed class ParameterMeasurementTests
     [InlineData(false, false, true, 1.0 / 192, 0.046875, "9/16\"", -0.000125, "0\"")]
     [InlineData(true, false, false, 0.125, -0.005208333333333334, "-1/8", 0.9947916666666667, "12")]
     [InlineData(true, true, false, 0.125, -0.005208333333333334, "-1/8\"", 0.9947916666666667, "12\"")]
+    [InlineData(false, false, false, 0.03125, 0.015625, "0' - 0 3/8\"", 0.984375, "1' - 0\"")]
+    [InlineData(true, false, false, 1.5, -0.0625, "-1 1/2", 0.9375, "12")]
+    [InlineData(true, false, false, 6, -0.25, "-6", 1.25, "18")]
+    [InlineData(false, false, false, 1, -0.5, "-1'", 1.5, "2'")]
+    [InlineData(false, false, true, 1, -0.01, "0'", 1.5, "2'")]
     public void FormatsFractionalLengthsInFamilyMetadata(bool inches, bool symbol, bool compactFeet, double accuracy,
         double before, string oldText, double after, string newText)
     {
@@ -74,7 +79,7 @@ public sealed class ParameterMeasurementTests
 
     [Theory]
     [InlineData(0, "m_bUseGrouping", 0L)]
-    [InlineData(0.375, "m_bUseGrouping", 0L)]
+    [InlineData(0.3, "m_bUseGrouping", 0L)]
     [InlineData(0.125, "m_bUseGrouping", 1L)]
     [InlineData(0.125, "m_bSuppressTrailingZeros", 1L)]
     [InlineData(0.125, "m_bSuppressSpaces", 2L)]
