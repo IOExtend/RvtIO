@@ -178,9 +178,15 @@ internal static partial class WallHeightWriter
         if (interval.After < MinimumVerifiedHeight || interval.NewTop <= interval.NewBase || x * x + y * y + z * z > ModelRadius * ModelRadius)
             throw new RvtWriteRefusedException("invalid-parameter-value", "The wall would extend beyond the verified model coordinate range.");
 
-        var openings = ReadOpenings(wall, walker, interval, edit.ElementId, related, openingRecords);
-        if (levelMove is not null && openings.Count != 0)
-            throw ParameterWriter.Unverified("Moving the level would require an unverified opening update.");
+        var openings = ReadOpenings(wall, walker, interval, edit.ElementId, related, openingRecords, levelMove is not null);
+        List<RvtPartitionRecordEdit> openingEdits = [];
+        if (levelMove is { } openingMove && openings.Count != 0)
+        {
+            var openingPlan = MoveLevelOpenings(root, tags, idWidth, pending, wall, walker, interval, openings,
+                openingMove, ReadBody, LevelElevation);
+            interval = interval with { OpeningElevations = openingPlan.Elevations };
+            openingEdits = openingPlan.Edits;
+        }
         var changes = openings.Where(o => o.Cut != o.Destination).ToArray();
         bool rebuildCut = changes.Length != 0 || openings.Any(o => IsAtBoundary(o.Cut) || IsAtBaseBoundary(o.Cut));
         bool changed = levelMove is { } move ? move.Previous != move.Destination : value != original?.Real;
@@ -291,7 +297,7 @@ internal static partial class WallHeightWriter
                 WallOpeningWarnings.StageRemoval(root, schema, tags, idWidth, edit.ElementId, activatedIds, pending);
             return new([Updated(HeaderChannel), Updated(ElementChannel, element), Updated(GeometryChannel, solid)], null);
         }
-        return new([Updated(HeaderChannel), Updated(ElementChannel), Updated(GeometryChannel)], null);
+        return new([Updated(HeaderChannel), Updated(ElementChannel), Updated(GeometryChannel), .. openingEdits], null);
 
         Archive Read(int channel, string expectedClass)
         {
@@ -382,7 +388,7 @@ internal static partial class WallHeightWriter
         topElevation + topOffset - baseOffset - baseElevation;
 
     private static IReadOnlyList<OpeningInterval> ReadOpenings(Archive wall, WideBlockWalker walker, HeightInterval height,
-        long owner, IReadOnlySet<ulong> related, IReadOnlyDictionary<long, byte[]?> openingRecords)
+        long owner, IReadOnlySet<ulong> related, IReadOnlyDictionary<long, byte[]?> openingRecords, bool moveWithLevel)
     {
         int[] steps = wall.Nodes("WallRectOpeningGStep").ToArray();
         var cutOwners = steps.Select(step => (ulong)wall.Integer(step, "WallCutoutGStepBase.m_instId")).ToHashSet();
@@ -427,7 +433,7 @@ internal static partial class WallHeightWriter
             double bottom = Math.Min(z0, z1);
             double top = Math.Max(z0, z1);
             var cut = CutAt(height.Base, height.Top, bottom, top);
-            var destination = CutAt(height.NewBase, height.NewTop, bottom, top);
+            var destination = moveWithLevel ? cut : CutAt(height.NewBase, height.NewTop, bottom, top);
             if (opening.Integer(rectangle, "RectOpeningData.m_nUvFaceId") != 0 || left <= leftLimit || right >= rightLimit
                 || right <= left || cut == OpeningCut.Unverified || destination == OpeningCut.Unverified)
                 throw ParameterWriter.Unverified("The opening may change topology at the requested height.");
@@ -705,7 +711,7 @@ internal static partial class WallHeightWriter
     }
 
     private static byte[] ResizeGeometry(Archive geometry, HeightInterval height, IReadOnlyList<OpeningInterval> openings,
-        double fillingShift = 0)
+        double fillingShift = 0, bool openingSolid = false)
     {
         var openingLevels = openings.Where(o => !IsOutsideWall(o.Cut)).SelectMany(o => new[] { o.Bottom, o.Top }).ToHashSet();
         int interiorCount = openings.Count(o => o.Cut == OpeningCut.Interior);
@@ -719,15 +725,16 @@ internal static partial class WallHeightWriter
             geometry.Write(-1, field + "@0/2", height.NewBoundsBase);
             geometry.Write(-1, field + "@1/2", height.NewTop);
         }
-        if (geometry.Integer(-1, "GGroup.m_subNodes#") != 5)
+        int auxiliaryCount = openingSolid ? 0 : 4;
+        if (geometry.Integer(-1, "GGroup.m_subNodes#") != 1 + auxiliaryCount)
             throw Layout();
-        int solid = geometry.Target(-1, "GGroup.m_subNodes@4", "Geometry");
+        int solid = geometry.Target(-1, $"GGroup.m_subNodes@{auxiliaryCount}", "Geometry");
         var groups = new HashSet<int>();
         var solids = new HashSet<int> { solid };
         var solidFaces = new Dictionary<int, uint>();
         var solidEdges = new Dictionary<uint, int>();
         var physicalSolidFaces = new HashSet<int>();
-        for (int i = 0; i < 4; i++)
+        for (int i = 0; i < auxiliaryCount; i++)
         {
             int group = geometry.Target(-1, $"GGroup.m_subNodes@{i}", "GGroup");
             if (!groups.Add(group) || geometry.Integer(group, "GGroup.m_subNodes#") != 1
@@ -1029,7 +1036,9 @@ internal static partial class WallHeightWriter
         internal double NewBoundsBase => Math.Min(NewBase, NewProjectedBase);
         internal bool NeedsEndpointProjection => Top - Base != Before || NewTop - NewBase != After
             || ProjectedBase != Base || NewProjectedBase != NewBase;
-        internal double MoveEndpoint(double position) => position == Base ? NewBase : position == Top ? NewTop : position;
+        internal IReadOnlyDictionary<double, double>? OpeningElevations { get; init; }
+        internal double MoveEndpoint(double position) => position == Base ? NewBase : position == Top ? NewTop
+            : OpeningElevations?.GetValueOrDefault(position, position) ?? position;
     }
 
     private readonly record struct PlaneFrame(int Axis, double Direction, double Origin);
@@ -1098,9 +1107,10 @@ internal static partial class WallHeightWriter
             || projectedCutTop && point.Real == (Math.BitDecrement(height.Top) - frame.Origin) * frame.Direction)
             destination = height.NewTop;
         else
-            destination = MatchProjectedOpeningLevel(point.Real, frame.Origin, frame.Direction, openingLevels)
+            destination = MatchProjectedOpeningLevel(point.Real, frame.Origin, frame.Direction, openingLevels) is double opening
+                ? height.MoveEndpoint(opening)
                 // Split edges between vertical cutter faces can round at the base by one world-coordinate step.
-                ?? (projectedCutBase && SameCoordinate(world, oldBase) ? newBase : throw Layout());
+                : projectedCutBase && SameCoordinate(world, oldBase) ? newBase : throw Layout();
         double coordinate = (destination - height.MoveEndpoint(frame.Origin)) * frame.Direction;
         if (coordinate != point.Real)
             record.Write(point, coordinate);

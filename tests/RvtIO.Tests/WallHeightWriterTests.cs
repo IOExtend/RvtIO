@@ -40,6 +40,22 @@ public class WallHeightWriterTests
     }
 
     [Fact]
+    public void MovesTheOpeningEdgesIndependentlyOfTheWallEnds()
+    {
+        var interval = new WallHeightWriter.HeightInterval(0.75, 12.875, 9.625)
+        {
+            NewBase = 4,
+            OpeningElevations = new Dictionary<double, double> { [2.75] = 6, [6.75] = 6.75 },
+        };
+
+        Assert.Equal(4, interval.MoveEndpoint(0.75));
+        Assert.Equal(13.625, interval.MoveEndpoint(13.625));
+        Assert.Equal(6, interval.MoveEndpoint(2.75));
+        Assert.Equal(6.75, interval.MoveEndpoint(6.75));
+        Assert.Equal(3.25, interval.MoveEndpoint(3.25));
+    }
+
+    [Fact]
     public void VerifiesAnAuxiliaryTopAgainstTheExactSavedReferenceHeight()
     {
         const double height = 0.9127000000000003, saved = 0.912700000000001, upper = 1.612700000000001;
