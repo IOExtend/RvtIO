@@ -144,6 +144,7 @@ extension and label helpers carry the ids and names stored in the file format.
 | `IfcUnitFamily` | Set `IfcExporter.LengthUnit` to `Millimetre`, `Centimetre`, `Metre`, `Inch` or `Foot`. `Centimetre` and `Inch` are explicit overrides only. `Inch` declares inch-based area and volume units; `Centimetre` declares the length as `CENTI` `METRE` and the area and volume as the conversion-based units `SQUARE CENTIMETRE` (factor 0.0001) and `CUBIC CENTIMETRE` (factor 0.000001) of the square and cubic metre, and writes square and cubic centimetres. Without an override, the current profile maps the stored project format to millimetres, metres or feet as before; the legacy profile defaults to millimetres. |
 | `CompactJsonExporter` | `Export(rvtPath, outputPath, readerOptions, options)` reads a file and writes the compact JSON. |
 | `CompactJsonExportOptions` | `JsonClassNamePrefix`: text put in front of every class name in the `name` field. |
+| `GlbExporter`, `GlbExportOptions`, `GlbExportResult` | `RvtIO.Gltf`: reads a Revit file or uses an opened `RvtDocument` / `MeshSet` (`ElementMeshes`) and writes a binary glTF 2.0 (`.glb`) asset in Y-up metres with shared symbol meshes, linear PBR materials, and element/material metadata in `extras`. See [GLB export](glb-export.md). |
 
 **Compact JSON unit policy.** `IfcExporter.LengthUnit` and `--ifc-length-unit` never affect JSON. Any future compact JSON
 override must be a separate opt-in setting. Convert only values with a resolved length, area or volume specification

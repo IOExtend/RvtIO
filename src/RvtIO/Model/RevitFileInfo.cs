@@ -8,6 +8,7 @@ namespace RvtIO.Model
 
         internal IReadOnlyList<GridAxis> CurvedGridAxes { get; set; } = [];
         internal IReadOnlySet<int>? GridChainMemberIds { get; set; }
+        internal bool IsStandaloneFamily { get; set; }
 
         /// <summary>The basic file information.</summary>
         public FileMetadata Metadata { get; set; } = new();

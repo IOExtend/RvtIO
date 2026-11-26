@@ -5,12 +5,13 @@ using RvtIO;
 using RvtIO.Compact;
 using RvtIO.BuiltIns;
 using RvtIO.Ifc;
+using RvtIO.Gltf;
 using RvtIO.Model;
 
 internal static partial class Program
 {
     /// <summary>The values of the command line that decide the export.</summary>
-    private sealed record ExportArguments(string[] Args, string RvtPath, string? IfcPath, string? CompactJsonPath, string? FullJsonPath, string? ScenePath,
+    private sealed record ExportArguments(string[] Args, string RvtPath, string? IfcPath, string? GlbPath, string? CompactJsonPath, string? FullJsonPath, string? ScenePath,
         string? ExternalDumpPath, string? ExternalDumpClassPrefix,
         IfcProfile Profile, string JsonClassPrefix,
         IfcExportConfiguration MergedIfcConfiguration, string? SaveIfcConfigPath);
@@ -31,14 +32,15 @@ internal static partial class Program
         return new(model, json, names, reader.WideState is { } wide ? new JsonReadFacts(wide, compact, debugNative) : names, quantities, state.ElemTable.Keys);
     }
 
-    // The export: reads the file and writes the IFC, the compact JSON or the full JSON dump.
+    // The export: reads the file and writes the requested formats (IFC, GLB, scene JSON, compact JSON, full JSON).
     private static int Export(ExportArguments arguments)
     {
-        var (args, rvtPath, ifcPath, compactJsonPath, fullJsonPath, scenePath, externalDumpPath, externalDumpClassPrefix, profile, jsonClassPrefix, mergedIfcConfig, saveIfcConfigPath) = arguments;
+        var (args, rvtPath, ifcPath, glbPath, compactJsonPath, fullJsonPath, scenePath, externalDumpPath, externalDumpClassPrefix, profile, jsonClassPrefix, mergedIfcConfig, saveIfcConfigPath) = arguments;
         WarnIfRevitLocalization(args);
 
         var exportOutputs = new List<(string Option, string Path)>();
         if (ifcPath != null) exportOutputs.Add(("--ifc", ifcPath));
+        if (glbPath != null) exportOutputs.Add(("--glb", glbPath));
         if (compactJsonPath != null) exportOutputs.Add(("--compact-json", compactJsonPath));
         if (fullJsonPath != null) exportOutputs.Add(("--full-json", fullJsonPath));
         if (scenePath != null) exportOutputs.Add(("--scene", scenePath));
@@ -69,7 +71,7 @@ internal static partial class Program
             }
         }
 
-        bool needIfcLayout = ifcPath != null || scenePath != null;
+        bool needIfcLayout = ifcPath != null || scenePath != null || glbPath != null;
         bool multiJson = compactJsonPath != null && fullJsonPath != null;
         bool needR22 = needIfcLayout || multiJson;
         bool hasJsonOutput = compactJsonPath != null || fullJsonPath != null;
@@ -162,20 +164,46 @@ internal static partial class Program
         var jsonModel = input.Json;
         var jsonState = input.JsonFacts;
         var ifcModel = input.Geometry;
+        GlbExportResult? glbResult = null;
 
-        if (scenePath != null)
+        if (scenePath != null || glbPath != null)
         {
-            var swScene = System.Diagnostics.Stopwatch.StartNew();
             var doc = RvtDocument.ForSceneExport(ifcModel);
-            var sceneResult = RvtIO.Scene.RvtSceneReader.Read(doc, new RvtIO.Scene.RvtSceneOptions
+            var sharedMeshes = RvtIO.Meshes.ElementMeshes.Extract(doc);
+            if (scenePath != null)
             {
-                ModelKey = Path.GetFileName(rvtPath)
-            });
-            foreach (var diag in sceneResult.Diagnostics)
-                Console.Error.WriteLine($"{diag.Severity} {diag.Code}: {diag.Message}");
-            IOScene.SceneJson.Save(sceneResult.Document, scenePath);
-            Console.Error.WriteLine($"Timing: scene {swScene.Elapsed.TotalSeconds:F1}s");
-            Console.Error.WriteLine($"Scene written to {scenePath}");
+                var swScene = System.Diagnostics.Stopwatch.StartNew();
+                var sceneResult = RvtIO.Scene.RvtSceneReader.Read(doc, sharedMeshes, new RvtIO.Scene.RvtSceneOptions
+                {
+                    ModelKey = Path.GetFileName(rvtPath)
+                });
+                foreach (var diag in sceneResult.Diagnostics)
+                    Console.Error.WriteLine($"{diag.Severity} {diag.Code}: {diag.Message}");
+                IOScene.SceneJson.Save(sceneResult.Document, scenePath);
+                Console.Error.WriteLine($"Timing: scene {swScene.Elapsed.TotalSeconds:F1}s");
+                Console.Error.WriteLine($"Scene written to {scenePath}");
+            }
+            if (glbPath != null)
+            {
+                var swGlb = System.Diagnostics.Stopwatch.StartNew();
+                try
+                {
+                    glbResult = GlbExporter.Export(doc, sharedMeshes, glbPath, new GlbExportOptions
+                    {
+                        DiagnosticOutput = Console.Error,
+                        CollectExportReport = reportPath != null,
+                    });
+                }
+                catch (GlbExporter.FamilyGeometryUnavailableException ex)
+                {
+                    report.Status = "failed";
+                    report.ExitCode = RvtExitCodes.DecodeError;
+                    report.Error = new ExportReport.ReportError { Kind = "glb-family-geometry-unavailable", Message = ex.Message };
+                    return EndRun(reportPath, report, $"error: {ex.Message}");
+                }
+                Console.Error.WriteLine($"Timing: glb {swGlb.Elapsed.TotalSeconds:F1}s");
+                Console.Error.WriteLine($"GLB written to {glbPath} ({glbResult.ElementCount} elements, {glbResult.MeshCount} meshes)");
+            }
         }
 
         if (ifcPath != null)
@@ -364,6 +392,8 @@ internal static partial class Program
             if (reportPath != null && ifcPath == null && compactJsonPath == null)
                 report.SetJsonExport(jsonModel, full: true);
         }
+        if (glbResult != null && reportPath != null)
+            report.SetGlbExport(glbResult);
         return EndRun(reportPath, report, null);
     }
 

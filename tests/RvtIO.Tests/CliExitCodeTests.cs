@@ -79,7 +79,7 @@ public class CliExitCodeTests
         return (process.ExitCode, error.Result);
     }
 
-    internal static void WriteSyntheticRvt(string path, byte[]? extraPartition = null)
+    internal static void WriteSyntheticRvt(string path, byte[]? extraPartition = null, bool standaloneFamily = false)
     {
         using var elemTable = new MemoryStream();
         using (var writer = new BinaryWriter(elemTable))
@@ -100,6 +100,8 @@ public class CliExitCodeTests
         };
         if (extraPartition != null)
             streams.Add(("Partitions/2", extraPartition));
+        if (standaloneFamily)
+            streams.Add(("PartAtom", "<entry/>"u8.ToArray()));
         CoverageCensusTests.WriteFile(path, streams.ToArray());
     }
 
