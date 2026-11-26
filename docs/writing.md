@@ -109,13 +109,12 @@ The same write path supports verified parameters declared by a loaded family whe
 as independent of geometry. An instance association updates the local value and its dependent formulas. A type
 association updates the primary symbol and recalculates affected instance results, including on placements with
 derived symbols. Derived symbol records retain their saved values in this case.
-A Text global can also update Type Comments, Description, Manufacturer, and Model on a primary Generic Model,
-Door, Window, or Furniture type, and Fire Rating on a primary Door type. A Currency global can update the
-type's Cost. The writer verifies the existing value in the typed element store
-or named family store. A Generic Model global updates the primary or directly derived symbols to which it is
-associated. Starting with the 2022 format, a Text global can also update Comments on a main-model wall
-or a top-level Generic Model instance. These edits require an existing association and use the global parameter's
-ID for both edit IDs.
+A Text global can also update Type Comments, Description, Manufacturer, and Model on Generic Model, Door,
+Window, and Furniture types, and Fire Rating on Door types. A Currency global can update the type's Cost.
+RvtIO verifies the existing value in the typed element store or named family store and updates each primary
+or directly linked derived symbol associated with that global. Starting with the 2022 format, a Text global
+can also update Comments on a main-model wall or a top-level Generic Model instance. These edits require an
+existing association and use the global parameter's ID for both edit IDs.
 Verified formulas support parentheses, negation, addition, subtraction, multiplication, and division with
 compatible units. They also support `=`, `>`, `<`, `and`, `or`, `not`, and `if` with numeric, Yes/No, or Text
 branches as permitted by the formula type. Only the selected branch of `if` is evaluated. In `and` and `or`,
@@ -636,6 +635,14 @@ the same global. Unassociated symbol records matched the source byte for byte. R
 the values and association IDs before and after SaveAs with Audit disabled. Revit 2027 upgraded the
 2026-format fixtures. All 88 rejected batches preserved the source bytes and left no output.
 
+Further Door, Window, and Furniture checks covered two derived copies per primary symbol. The fixtures linked
+the primary, one derived symbol, or both to the same global parameter in the project and imported family stores.
+The 24 edited files per format matched API writes for the first assignment, replacement, empty text, zero Cost,
+and ordered batches. Unassociated symbol records and instance geometry stayed unchanged. Revit 2020–2025 and 2027
+verified values and association IDs after opening, saving, and reopening without Audit. Revit 2027 upgraded and
+verified the 2026-format files. The 18 refused batches per format included direct writes to linked properties,
+non-finite Currency values, and attempts to clear a global. Each refusal preserved the source and produced no output.
+
 Non-shared project parameter checks matched 264 direct assignments and 48 global assignments that updated
 72 linked values. The Generic Model fixtures covered Text and Length on top-level instances and Text and
 Material on primary and directly derived symbols. They included first assignment, replacement, explicit
@@ -824,7 +831,7 @@ sample from Autodesk and controlled project and family fixtures converted to the
 | Additional parameter types and references | RvtIO supports the verified material, standalone family type image, and Family Type assignments described above. Revit 2025 accepted an ordinary top-level symbol even when the API candidate list omitted it. Revit activated inactive targets in both family-declared and project-bound tests. RvtIO still needs coverage for that regeneration, dependencies represented by unresolved `NestedFamilyTypeReference` proxies, and other combinations of categories and parameter definitions. In the shared nesting test, Revit committed the independent type assignment and rolled back the corresponding instance assignment after `Parameter.Set` returned true. RvtIO supports the described type scope. A return path without the verified direct nesting remains outside that scope. After a test assignment of a missing ID, the API read back the previous value on reopen. [Autodesk NestedFamilyTypeReference reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/ff71e3b0-4300-7d04-1356-a045b9a90407.htm) |
 | Driven global parameters | Revit API rejects direct assignments to global parameters driven by a formula or reporting dimension. [Autodesk GlobalParameter.SetValue reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/df012c22-6e65-8de5-1057-f15660d02288.htm) |
 | Global parameters with dependents | Revit API can assign a global value that drives a formula, dimension, or element property. RvtIO recalculates verified formulas and updates verified project-bound or geometry-independent loaded family parameters and the built-in properties described above. Dimension recalculation, family geometry updates, and other unverified formula or association layouts still require coverage. |
-| Global associations on built-in fields | Revit 2020 and 2021 refused the tested wall and family instance Comments associations. Revit 2022–2025 and 2027 accepted them. The tested wall Mark, BasicWallType Type Comments, Manufacturer, and Model, and type URL on Generic Model, Door, Window, and Furniture could not be associated in the tested releases. Associations on Door, Window, and Furniture types with derived symbols and other family categories still require coverage. |
+| Global associations on built-in fields | Revit 2020 and 2021 refused the tested wall and family instance Comments associations. Revit 2022–2025 and 2027 accepted them. The tested wall Mark, BasicWallType Type Comments, Manufacturer, and Model, and type URL on Generic Model, Door, Window, and Furniture could not be associated in the tested releases. More family categories and other layouts of derived symbols still require coverage. |
 | Family formulas | RvtIO can recalculate verified dependencies of inputs in standalone families and on primary types and top-level instances of loaded families. Direct assignments to standalone formula results are refused by the writer. In Revit 2025, `FamilyManager.Set` returned without an exception on the tested Mass and Slope results and left both the inputs and results unchanged after Save As and reopening without Audit. RvtIO supports the loaded type inverses described above. Nonlinear inverses, real-valued inverses that depend on the starting value, unverified instance storage, and geometry-driving formulas still require coverage. [Autodesk FamilyManager.Set reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/7fc40346-6188-66ff-4c00-bd4360e70c6f.htm) |
 | Geometry, formulas, groups, and other dependencies | The writer refuses unverified family geometry dependencies, formulas and associations, and unverified project model contexts. These checks are RvtIO write restrictions. |
 

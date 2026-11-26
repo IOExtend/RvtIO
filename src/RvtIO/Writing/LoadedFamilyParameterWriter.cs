@@ -449,8 +449,7 @@ internal static class LoadedFamilyParameterWriter
         plan = null;
         var (family, target, symbols, masterIds) = ReadOwnership(root, tags, idWidth, walker, elementIds, category, edit.ElementId, walk, pending, instance: false);
         bool derivedTarget = Integer(target.Walk, "FamilySymbol.m_masterId") is > 0;
-        if ((driven is not null && symbols.Count != 1 && category != (int)BuiltInCategory.OST_GenericModel)
-            || (derivedTarget && masterIds.Contains(target.Id))
+        if ((derivedTarget && masterIds.Contains(target.Id))
             || family.EmptyEntityAt >= 0 || walk.EmptyEntityAt >= 0)
             throw ParameterWriter.Unverified("The loaded identity field requires a verified primary symbol and supported derived copies.");
         CheckFormulaDependencies(family, edit.ParameterId);

@@ -920,15 +920,18 @@ public sealed class SetParameterTests : IDisposable
     }
 
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    public void AGlobalIdentityAssignmentChangesOnlyTheAssociatedSymbols(bool derived, bool both)
+    [InlineData(BuiltInCategory.OST_GenericModel, false, false)]
+    [InlineData(BuiltInCategory.OST_GenericModel, true, false)]
+    [InlineData(BuiltInCategory.OST_GenericModel, false, true)]
+    [InlineData(BuiltInCategory.OST_Doors, false, false)]
+    [InlineData(BuiltInCategory.OST_Windows, true, false)]
+    [InlineData(BuiltInCategory.OST_Furniture, false, true)]
+    public void AGlobalIdentityAssignmentChangesOnlyTheAssociatedSymbols(BuiltInCategory category, bool derived, bool both)
     {
         const BuiltInParameter parameter = BuiltInParameter.ALL_MODEL_TYPE_COMMENTS;
         var identity = new StoredIdentity(parameter, "Stored");
         var association = new ProjectAssociation(parameter, GlobalId: PropertyGlobalId, Derived: derived, PrimaryAndDerived: both);
-        var family = new FamilyFixture(Category: BuiltInCategory.OST_GenericModel, Identity: identity, DerivedType: derived || both);
+        var family = new FamilyFixture(Category: category, Identity: identity, DerivedType: true);
         string source = CreateSource(family: family, globalParameter: new(Kind.Text, InitialValue: identity.Value), association: association);
         var result = RvtWriter.SetParameter(source, Output, PropertyGlobalId, PropertyGlobalId, "New");
 
@@ -944,6 +947,30 @@ public sealed class SetParameterTests : IDisposable
             Assert.Equal(ReadBody(original, (ulong)unchanged), ReadBody(output, (ulong)unchanged));
         Assert.Equal(SymbolBody(target, derived ? ProjectId : -1, "Old", identity: identity with { Value = "New" },
             association: association, associationSlot: true), ReadBody(output, (ulong)target));
+    }
+
+    [Theory]
+    [InlineData(BuiltInCategory.OST_Doors, false, false)]
+    [InlineData(BuiltInCategory.OST_Windows, true, false)]
+    [InlineData(BuiltInCategory.OST_Furniture, false, true)]
+    public void AGlobalCurrencyAssignmentChangesOnlyTheAssociatedSymbolCosts(BuiltInCategory category, bool derived, bool both)
+    {
+        const double before = 17.25;
+        const double after = 58.625;
+        var association = new ProjectAssociation(BuiltInParameter.ALL_MODEL_COST, GlobalId: PropertyGlobalId, Derived: derived, PrimaryAndDerived: both);
+        var global = new GlobalFixture(Kind.Number, Currency: true, InitialValue: "17.25");
+        string source = CreateSource(family: new FamilyFixture(Category: category, DerivedType: true, TypedCost: before),
+            globalParameter: global, association: association);
+        var result = RvtWriter.SetParameters(source, Output,
+            [new(PropertyGlobalId, PropertyGlobalId, "0"), new(PropertyGlobalId, PropertyGlobalId, "58.625")]);
+
+        Assert.Equal(both ? 3 : 2, result.RewrittenRecordCount);
+        using var output = RootStorage.OpenRead(Output);
+        Assert.Equal(SymbolBody(ProjectId, -1, "Old", association: derived ? null : association, associationSlot: true,
+            typedCost: derived ? before : after), ReadBody(output));
+        Assert.Equal(SymbolBody(DerivedId, ProjectId, "Old", association: derived || both ? association : null, associationSlot: true,
+            typedCost: derived || both ? after : before), ReadBody(output, DerivedId));
+        Assert.Equal(GlobalBody(global, "58.625", PropertyGlobalId), ReadBody(output, PropertyGlobalId));
     }
 
     [Theory]
@@ -2827,6 +2854,7 @@ public sealed class SetParameterTests : IDisposable
                 formula: options.Formula, numericFormula: options.NumericFormula,
                 association: association is { Derived: true } or { PrimaryAndDerived: true } ? association : null,
                 associationSlot: association is not null && !options.Instance,
+                typedCost: options.TypedCost,
                 reference: options.Reference is { } nested ? options.Diverged ? OriginalMaterialId : nested.Value : null,
                 active: options.ProjectTarget is null ? null : true, referenceStore: options.BoundFamilyType)[2..]));
         if (options.Formula)

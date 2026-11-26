@@ -280,8 +280,8 @@ internal static class ParameterWriter
             bool supportedOwner = comments
                 ? SchemaRelease.FromSchema(formats) is >= 2022 && (ownerClass == "SWall" && category == (int)BuiltInCategory.OST_Walls
                     || ownerClass == "FamilyInstance" && category == (int)BuiltInCategory.OST_GenericModel)
-                : ownerClass == "FamilySymbol" && (master == -1 && doorWindowFurniture
-                    || category == (int)BuiltInCategory.OST_GenericModel && master is -1 or > 0);
+                : ownerClass == "FamilySymbol" && (doorWindowFurniture || category == (int)BuiltInCategory.OST_GenericModel)
+                    && master is -1 or > 0;
             if (!supportedOwner)
                 throw Unverified("This built-in global association has not been verified for the element class, category, and release.");
         }
