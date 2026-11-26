@@ -6,7 +6,7 @@ internal static partial class TfBlockDeserializer
 {
     internal sealed record GElementGraphPointer(uint Handle, ushort? ClassId, int? QueueIndex,
         ushort? HandToken, IReadOnlyList<long> HandBits, int Start, int End);
-    internal sealed record GElementGraphItem(int Start, int End, IReadOnlyList<long> Values,
+    internal readonly record struct GElementGraphItem(int Start, int End, IReadOnlyList<long> Values,
         GElementGraphPointer? Pointer, IReadOnlyList<GElementGraphField> Fields);
     internal sealed record GElementGraphField(int Declaring, string Name, uint? Count, int Start, int End,
         IReadOnlyList<GElementGraphItem> Items);
@@ -145,19 +145,11 @@ internal static partial class TfBlockDeserializer
             int high = field.Mods >> 4;
             uint? count = high == 5 ? (uint)Raw(4, false) : high == 1 ? (uint)field.Cnt!.Value : null;
             uint length = count ?? 1;
-            IReadOnlyList<GElementGraphItem> items = [];
-            if (length != uint.MaxValue)
-            {
-                if (length > 100_000 || length > (uint)((end - position) / Minimum(field))) throw Fail;
-                if (length == 1)
-                    items = new[] { Item(field, depth) };
-                else if (length > 1)
-                {
-                    var repeatedItems = new List<GElementGraphItem>();
-                    for (uint i = 0; i < length; i++) repeatedItems.Add(Item(field, depth));
-                    items = repeatedItems;
-                }
-            }
+            if (length == uint.MaxValue)
+                return new(field.Declaring, field.Name, count, first, position - start, []);
+            if (length > 100_000 || length > (uint)((end - position) / Minimum(field))) throw Fail;
+            GElementGraphItem[] items = length == 0 ? [] : new GElementGraphItem[length];
+            for (int i = 0; i < items.Length; i++) items[i] = Item(field, depth);
             return new(field.Declaring, field.Name, count, first, position - start, items);
         }
 

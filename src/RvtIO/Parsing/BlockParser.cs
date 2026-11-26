@@ -188,7 +188,7 @@ internal static class BlockParser
     /// <summary>Reads one block [elemId:4][hash:4][dataSize:4][classIdx:4][data] whose header the caller accepted: the block inventory, the
     /// category of its owner and every fact the block parser takes from a block. False when the class is 0 (no block).</summary>
     internal static bool ParseBlock(byte[] chunk, int pos, uint eid, uint dataSize, bool knownOwner, ParsingState state,
-        bool collectBlockOnlyIds, List<PendingGRep> pendingAll)
+        bool collectBlockOnlyIds, List<PendingGRep> pendingAll, bool textAlreadyScanned = false)
     {
         int dataStart = pos + 16;
         int dataEnd = dataStart + (int)dataSize;
@@ -287,7 +287,8 @@ internal static class BlockParser
 
         if (state.AllKnownIds.Contains(eid))
         {
-            ExtractBlockStrings(chunk, dataStart, dataEnd, eid, state.ElemStrings);
+            if (!textAlreadyScanned)
+                ExtractBlockStrings(chunk, dataStart, dataEnd, eid, state.ElemStrings);
 
             // Blocks with high classIdx word = 0xFFFF contain BIP key->double pairs at stride 12
             if ((classIdx >> 16) == 0xFFFF)
@@ -358,7 +359,7 @@ internal static class BlockParser
                 ExtractSheetInfo(chunk, dataStart, dataEnd, eid, state.SheetInfo);
 
             // View display name: name-field signature in the element's own block.
-            if (!state.ViewNames.ContainsKey(eid))
+            if (!textAlreadyScanned && !state.ViewNames.ContainsKey(eid))
                 ExtractViewName(chunk, dataStart, dataEnd, eid, state.ViewNames);
 
             // classIdx=0x0E17 blocks (R22): Level class-specific data.
@@ -1711,6 +1712,8 @@ internal static class BlockParser
         dims[eid] = data;
     }
 
+    private static readonly byte[] SketchCurveFlags = BitConverter.GetBytes(0x01080004u);
+
     /// <summary>
     /// Decode an OST_SketchLines (0x0346) curve. Sketch lines store their geometry in the
     /// same GInfoBlob form as wall location curves: a 16-byte header
@@ -1726,6 +1729,9 @@ internal static class BlockParser
     {
         for (int i = start; i + 16 <= end; i++)
         {
+            int skip = d.AsSpan(i + 12, end - i - 12).IndexOf(SketchCurveFlags);
+            if (skip < 0) return;
+            i += skip;
             int tag = BitConverter.ToInt32(d, i);
             if (tag != 0 && tag != 1) continue;
             if (BitConverter.ToInt32(d, i + 4) != 0) continue;             // CtrlCmd
@@ -1733,7 +1739,6 @@ internal static class BlockParser
             // detail/model lines (which reuse the same GInfoBlob encoding).
             int gStyle = BitConverter.ToInt32(d, i + 8);
             if (gStyle != -1 && (gStyle <= 0 || gStyle >= 0x01400000)) continue;
-            if (BitConverter.ToUInt32(d, i + 12) != 0x01080004) continue;  // Flags
 
             int pos = i + 16;
             if (pos + 16 > end) return;

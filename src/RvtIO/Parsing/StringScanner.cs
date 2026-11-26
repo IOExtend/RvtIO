@@ -63,8 +63,13 @@ internal static class StringScanner
         return false;
     }
 
+    // After the first valid name, only these strings can affect the Forge ID/caption passes.
+    internal static bool UsedForParameterCaption(string value) => value.StartsWith('&')
+        || (value.Length <= 80 && value.Contains(" - ")) || value.StartsWith("autodesk.parameter.");
+
     /// <summary>Scan a chunk for element name strings near element IDs.</summary>
-    public static void ScanChunk(byte[] d, HashSet<uint> elemSet, Dictionary<uint, List<string>> elemStrings)
+    public static void ScanChunk(byte[] d, HashSet<uint> elemSet, Dictionary<uint, List<string>> elemStrings,
+        bool namesAndCaptionsOnly = false)
     {
         // Each string is found once in a linear pass and attributed to the known ids at i in (j-600, j+100],
         // the positions whose window [i-100, i+600) contains the string at j. Scanning a window per id would
@@ -103,6 +108,7 @@ internal static class StringScanner
             var candidate = text[..characters];
             if (!IsValidParamName(candidate)) continue;
             string s = new(candidate);
+            bool firstOnly = namesAndCaptionsOnly && !UsedForParameterCaption(s);
 
             int lo2 = Math.Max(0, j - 599);
             int hi2 = Math.Min(d.Length - 4, j + 100);
@@ -116,6 +122,11 @@ internal static class StringScanner
             lastIdOffset = hi2;
             foreach (var (_, eid) in nearbyIds)
             {
+                if (firstOnly)
+                {
+                    if (!elemStrings.ContainsKey(eid)) elemStrings.Add(eid, [s]);
+                    continue;
+                }
                 if (!elemStrings.TryGetValue(eid, out var list))
                     elemStrings[eid] = list = new List<string>();
                 if (!seenPerEid.TryGetValue(eid, out var seen))

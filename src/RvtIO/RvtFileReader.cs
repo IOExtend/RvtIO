@@ -25,6 +25,10 @@ public partial class RvtFileReader
     /// Never read by production export code.</summary>
     internal ParsingState? LastParsingState { get; private set; }
 
+    // Export consumers keep the decoded legacy model and named maps. Diagnostic
+    // readers and the second wide-layout read can still need the original partitions.
+    internal bool ReleaseExportPartitions { get; init; }
+
     /// <summary>The wide-schema model when <see cref="RvtReaderOptions.PreserveWideLayout"/> was requested.</summary>
     internal RevitFileInfo? WideModel { get; private set; }
 
@@ -143,12 +147,15 @@ public partial class RvtFileReader
         diag?.WriteLine($"ElemRec histories: {(elemRecHistories != null ? $"{elemRecHistories.Count} (exact)" : "unavailable")}");
 
         LogPhase("Decompression done");
+        bool releasePartitions = ReleaseExportPartitions && wideSchema == null;
+        var storage = releasePartitions ? ExtensibleStorageReader.Read(root, elemTableIsExact, framedStreams) : null;
         var (rvtInfo, state) = ParseModel(root, chunks, readFrames, partitionChunkCount,
             r22View, partitionStreams, framedStreams, wideSchema, elemTable, elemWorksets, fileMetadata,
             projectInfo, transmissionData, episodeTable, elemRecHistories, elemRecOwners, tfSchemas, ownPartitionWallParts,
             staleCopiesRemoved, routing, elemTableIsExact, previewBase64, previewMime, diag, LogPhase, ids, progress);
         rvtInfo.IsStandaloneFamily = isStandaloneFamily;
-        ExtensibleStorageReader.Apply(root, rvtInfo, framedStreams);
+        if (!releasePartitions) storage = ExtensibleStorageReader.Read(root, elemTableIsExact, framedStreams);
+        storage?.Apply(rvtInfo);
         LastParsingState = state;
         progress?.Report(new("complete", 1, 1));
         return rvtInfo;
@@ -160,8 +167,8 @@ public partial class RvtFileReader
         IReadOnlyList<PartitionFraming.Framed?> readFrames,
         int partitionChunkCount,
         bool r22View,
-        IReadOnlyList<IReadOnlyList<byte[]>> partitionStreams,
-        IReadOnlyList<PartitionFraming.Framed?> framedStreams,
+        List<IReadOnlyList<byte[]>> partitionStreams,
+        List<PartitionFraming.Framed?> framedStreams,
         FileSchema? wideSchema,
         Dictionary<uint, uint> elemTable,
         Dictionary<uint, uint> elemWorksets,
@@ -226,6 +233,7 @@ public partial class RvtFileReader
         // ParseBlocks has finished adding record/block-only IDs. The scalar walk and
         // geometry recovery only read that set; neither consumes the scanned strings.
         // Snapshot the ID set: the background geometry decode still runs while the scan reads it.
+        bool releasePartitions = ReleaseExportPartitions && wideSchema == null;
         var scanIds = new HashSet<uint>(state.AllKnownIds);
         var stringScan = blockGeometry != null ? Task.Run(ScanElementStrings) : null;
         // The anchored walk reaches blocks spanning chunks and decodes the native parameter stores.
@@ -270,10 +278,10 @@ public partial class RvtFileReader
             Parallel.For(0, chunks.Count, chunkIndex =>
             {
                 var localStrings = new Dictionary<uint, List<string>>();
-                StringScanner.ScanChunk(chunks[chunkIndex], scanIds, localStrings);
+                StringScanner.ScanChunk(chunks[chunkIndex], scanIds, localStrings, namesAndCaptionsOnly: releasePartitions);
                 if (localStrings.Count > 0) partialResults[chunkIndex] = localStrings;
             });
-            MergeElemScanStringsInChunkOrder(partialResults, state.ElemScanStrings);
+            MergeElemScanStringsInChunkOrder(partialResults, state.ElemScanStrings, namesAndCaptionsOnly: releasePartitions);
         }
         LogPhase("Strings scanned");
         diag?.WriteLine($"Elements with BIP doubles: {state.ElemBipDoubles.Count}");
@@ -741,6 +749,36 @@ public partial class RvtFileReader
             if (cdrMapped > 0) diag?.WriteLine($"  0x0725 family to ParamElem pairing: {cdrMapped} names");
         }
 
+        FramedElementTypes? retainedTypes = null;
+        using var locationLog = releasePartitions && diag != null ? new StringWriter(diag.FormatProvider) : null;
+        (ActiveProjectLocation? Location, double[]? Transform) ReadLocation(TextWriter? writer)
+        {
+            var location = ResolveActiveProjectLocation(state, writer);
+            return (location, location?.SharedTransform ?? FindSharedTransform(
+                state.Chunks, state.BasePointCoordinates, state.Records, writer));
+        }
+        var earlyLocation = releasePartitions ? ReadLocation(locationLog) : default;
+        bool hasTypeSchema = false;
+        if (releasePartitions)
+        {
+            ExtractWallFunctions(state);
+            if (TfSchemaReader.Read(root) is { } schema)
+            {
+                hasTypeSchema = true;
+                retainedTypes = FramedElementTypes.Prepare(schema, EntitySchemaReader.Read(root, schema), framedStreams,
+                    state, routing.UnroutedTypePartitions, !_options.ResolveCurrentCopies);
+            }
+
+            foreach (var record in state.Records.Values) record.Body = default;
+            state.RecordChunks.Clear();
+            state.NonRecordChunks.Clear();
+            chunks.Clear();
+            partitionStreams.Clear();
+            framedStreams.Clear();
+            state.FramedPartitions = null;
+            state.PartitionChunkCount = 0;
+        }
+
         progress?.Report(new("build-model"));
         LogPhase("Building output");
         var rvtInfo = new RevitFileInfo
@@ -834,9 +872,10 @@ public partial class RvtFileReader
         var parameterIds = new HashSet<int>();
         foreach (var bid in state.BlockOnlyIds)
             ElementBuilder.BuildBlockOnlyElement(bid, state, rvtInfo, parameterIds);
+        if (releasePartitions) state.ElemScanStrings = [];
 
         // Wall function extraction: scan all chunks for classIdx=0x00012100 blocks
-        ExtractWallFunctions(state);
+        if (!releasePartitions) ExtractWallFunctions(state);
         diag?.WriteLine($"Wall type functions: {state.WallTypeFunctions.Count} entries");
 
         LogPhase("Block-only elements built");
@@ -847,7 +886,7 @@ public partial class RvtFileReader
             "Local" or "Central" => true,
             _ => null,
         };
-        var elementsById = ElementBuilder.PostProcess(rvtInfo, state, diag);
+        var elementsById = ElementBuilder.PostProcess(rvtInfo, state, diag, releaseExportData: releasePartitions);
         state.ReaderParameterDefinitions = null;
         state.SymbolPlacementGeometry = null;
         if (state.GridAxes is { } axes)
@@ -915,7 +954,12 @@ public partial class RvtFileReader
             ?? (lengthOptions == null ? null : ProjectLengthUnits.StoredLengthUnit(lengthOptions.Value, out lengthUnitIssue));
         if (rvtInfo.SerializedLengthUnit == null)
             rvtInfo.SerializedLengthUnitIssue = state.WideLengthUnitIssue ?? lengthUnitIssue;
-        if ((wideSchema?.Release != 2027 || r22View)
+        if (releasePartitions)
+        {
+            int typeLinks = retainedTypes?.Apply(state, rvtInfo.Elements, routing.UnroutedTypePartitions, !_options.ResolveCurrentCopies) ?? 0;
+            if (hasTypeSchema) diag?.WriteLine($"Framed type references: {typeLinks} corrected");
+        }
+        else if ((wideSchema?.Release != 2027 || r22View)
             && (wideSchema?.Document ?? TfSchemaReader.Read(root)) is { } typeSchema)
         {
             int typeLinks = FramedElementTypes.Apply(typeSchema, EntitySchemaReader.Read(root, typeSchema),
@@ -938,9 +982,13 @@ public partial class RvtFileReader
         // axis-aligned but exported (by Revit) rotated+offset into shared coords. The exact
         // source is the active project location; the survey-point / rotation-vote search
         // stays only as the fallback for files whose active location cannot be read.
-        var projectLocation = ResolveActiveProjectLocation(state, diag);
-        rvtInfo.SharedTransform = projectLocation?.SharedTransform ?? FindSharedTransform(
-            state.Chunks, state.BasePointCoordinates, state.Records, diag);
+        if (locationLog != null)
+        {
+            using var lines = new StringReader(locationLog.ToString());
+            while (lines.ReadLine() is { } line) diag!.WriteLine(line);
+        }
+        var (projectLocation, sharedTransform) = releasePartitions ? earlyLocation : ReadLocation(diag);
+        rvtInfo.SharedTransform = sharedTransform;
         if (projectLocation != null)
         {
             rvtInfo.SharedTransformIsActiveLocation = true;
@@ -981,7 +1029,7 @@ public partial class RvtFileReader
 
     internal static void MergeElemScanStringsInChunkOrder(
         Dictionary<uint, List<string>>?[] partialResults,
-        Dictionary<uint, List<string>> elemScanStrings)
+        Dictionary<uint, List<string>> elemScanStrings, bool namesAndCaptionsOnly = false)
     {
         // HashSet-backed dedupe: rebar-heavy models attribute thousands of strings per
         // element, and List.Contains per insert made this merge quadratic.
@@ -998,10 +1046,13 @@ public partial class RvtFileReader
                 // one; only owners seen in another chunk need a cross-chunk membership set.
                 if (elemScanStrings.TryAdd(eid, strings)) continue;
                 var list = elemScanStrings[eid];
-                if (!mergeSeen.TryGetValue(eid, out var seen))
-                    mergeSeen[eid] = seen = new HashSet<string>(list);
+                mergeSeen.TryGetValue(eid, out var seen);
                 foreach (var s in strings)
+                {
+                    if (namesAndCaptionsOnly && list.Count > 0 && !StringScanner.UsedForParameterCaption(s)) continue;
+                    if (seen == null) mergeSeen[eid] = seen = new HashSet<string>(list);
                     if (seen.Add(s)) list.Add(s);
+                }
             }
         }
     }
@@ -2563,7 +2614,8 @@ public partial class RvtFileReader
     /// geometry of the elements, in their current copy) instead of the blocks a scan of the partition chunks finds: the scan also takes the blocks
     /// of the documents of loaded families, whose ids repeat project ids, and it stops or jumps at a header-like byte run and at a block that runs
     /// into the next chunk.</summary>
-    internal static void ParseFramedBlocks(ParsingState state, bool collectBlockOnlyIds, List<BlockParser.PendingGRep> pending)
+    internal static void ParseFramedBlocks(ParsingState state, bool collectBlockOnlyIds, List<BlockParser.PendingGRep> pending,
+        bool repeatOfFirstPass = false)
     {
         foreach (var frame in state.FramedPartitions!)
             foreach (var record in frame!.Items)
@@ -2572,7 +2624,11 @@ public partial class RvtFileReader
                 var (data, start, copied) = frame.Bytes(record);
                 uint eid = (uint)record.Owner;
                 int queued = pending.Count;
-                BlockParser.ParseBlock(data, start, eid, (uint)(record.Length - 16), state.AllKnownIds.Contains(eid), state, collectBlockOnlyIds, pending);
+                // Replaying a frame visits identical byte ranges. Text extraction only appends unique
+                // strings and the first view name. Only owners added between the passes still need it.
+                bool textAlreadyScanned = repeatOfFirstPass && !state.BlockOnlyIds.Contains(eid);
+                BlockParser.ParseBlock(data, start, eid, (uint)(record.Length - 16), state.AllKnownIds.Contains(eid),
+                    state, collectBlockOnlyIds, pending, textAlreadyScanned);
                 // shortcut: the geometry of a record that runs into the next segment or is over the size limit of the scan is not decoded (the
                 // scan never reached such a block, and the decoder takes minutes on some of them: 28 to 180 s each for ten 0.7 to 0.9 MB geometry
                 // records of one model, none of which changed the output); decode it once the geometry decoder is linear in the block size.
@@ -2638,7 +2694,17 @@ public partial class RvtFileReader
         List<(byte[] Data, int Start, uint Size, ushort Class, uint Owner)>? unanchoredTypeRoots =
             framedRoots ? [] : null;
         if (framedRoots) RecordFramedRoots(state, unanchoredTypeRoots);
-        TfStreamWalker.Walk(state.Chunks, state.AllKnownIds, (seg, bs, ds, cls, eid) =>
+        if (progress is null && dumpGrepEids.Count == 0 && !TfBlockDeserializer.CaptureAllFields)
+            TfStreamWalker.WalkBounded(state.Chunks, state.AllKnownIds, VisitBlock, VisitRecord, segmentSources);
+        else
+            TfStreamWalker.Walk(state.Chunks, state.AllKnownIds, VisitBlock, VisitRecord,
+                progress is null ? null : (completed, total) => progress.Report(new("parameter-stream", completed, total)),
+                sources: segmentSources);
+        nativeBlocks.Flush();
+
+        void VisitRecord(byte[] segment, int start, uint id) => ElementHeaderCategory.Record(state, segment, start, id);
+
+        void VisitBlock(byte[] seg, int bs, uint ds, ushort cls, uint eid)
         {
             uint fullClassIdx = BitConverter.ToUInt32(seg, bs + 12);
             if (fullClassIdx is 0xFFFF0200 or 0xFFFF077B or 0xFFFF0286)
@@ -2769,10 +2835,7 @@ public partial class RvtFileReader
             }
             // Deliberately NOT expanded here: CurveBlockOwners (uncategorized owners were mislabeled OST_Lines),
             // AnalyticalNodeOwners, registry category assignment.
-        }, (seg, recordStart, eid) => ElementHeaderCategory.Record(state, seg, recordStart, eid),
-            progress is null ? null : (completed, total) => progress.Report(new("parameter-stream", completed, total)),
-            sources: segmentSources);
-        nativeBlocks.Flush();
+        }
 
         progress?.Report(new("recover-geometry"));
         if (unanchoredTypeRoots != null)
@@ -3052,7 +3115,7 @@ public partial class RvtFileReader
         {
             foreach (var bid in state.BlockOnlyIds)
                 state.AllKnownIds.Add(bid);
-            if (framedBlocks) ParseFramedBlocks(state, collectBlockOnlyIds: false, secondPassGReps);
+            if (framedBlocks) ParseFramedBlocks(state, collectBlockOnlyIds: false, secondPassGReps, repeatOfFirstPass: true);
             foreach (var chunk in state.NonRecordChunks.Where(Scanned))
                 BlockParser.ParseChunk(chunk, state, deferred: secondPassGReps);
             foreach (var chunk in state.RecordChunks.Where(Scanned))
@@ -3631,7 +3694,7 @@ public partial class RvtFileReader
     private static void FinalizeParameterValues(RevitFileInfo rvtInfo, ParsingState state)
     {
         var bySource = new System.Collections.Concurrent.ConcurrentDictionary<
-            (string? ForgeId, string? Name), Parameter.DisplayUnits?>();
+            (string? ForgeId, string? Name), Parameter.Metadata?>();
         var (hasZeroPhase, hasZeroDimStyle) = Parameter.ResolveZeroElementIdDomains(rvtInfo, state);
         Parallel.For(0, rvtInfo.Elements.Count, index =>
         {
@@ -3649,7 +3712,7 @@ public partial class RvtFileReader
                         unitCat = GetUnitCategoryFromBipName(bipName);
                     if (unitCat == null) return null;
                     var (symbol, factor) = GetUnitDisplay(unitCat);
-                    return new Parameter.DisplayUnits(specType, symbol, factor);
+                    return new Parameter.Metadata(SpecType: specType, Symbol: symbol, Factor: factor);
                 }, state);
                 if (units != null) param.SetDisplayUnits(units);
             }

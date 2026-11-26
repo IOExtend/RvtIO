@@ -241,8 +241,10 @@ public class SpatialPhaseTests
         Assert.True(phaseTwoFilter.Excludes(wallCreatedInZero));
     }
 
-    [Fact]
-    public void NativeR22Reader_AndDefaultCurrentIfcExport_RetainPhaseZeroAndExportPhaseZeroProducts()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NativeR22Reader_AndDefaultCurrentIfcExport_RetainPhaseZeroAndExportPhaseZeroProducts(bool releaseExportPartitions)
     {
         string tempDir = Path.Combine(Path.GetTempPath(), "rvtio_r22_phase0_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDir);
@@ -264,7 +266,7 @@ public class SpatialPhaseTests
                     ElemTableReader.Read(root).Keys.Order().ToArray());
             }
 
-            var reader = new RvtFileReader();
+            var reader = new RvtFileReader { ReleaseExportPartitions = releaseExportPartitions };
             var info = reader.Read(rvtPath);
 
             Assert.Null(reader.LastParsingState!.WideSchema);
@@ -284,7 +286,9 @@ public class SpatialPhaseTests
             var floor20 = Assert.Single(info.Elements, e => e.Id == 20);
             Assert.Equal(-2000032, floor20.CategoryId);
             Assert.Equal(0, floor20.SerializedCreatedPhaseId);
-            Assert.Equal(0, floor20.Parameters.Single(p => p.Id == -1012100).Value);
+            var phaseParameter = floor20.Parameters.Single(p => p.Id == -1012100);
+            Assert.Equal(0, phaseParameter.Value);
+            Assert.True(phaseParameter.HasResolvedZeroElementId);
             Assert.NotNull(floor20.SerializedExportId);
             Assert.NotNull(floor20.Geometry);
 

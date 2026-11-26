@@ -166,6 +166,35 @@ public class OwnElementClassTests
     }
 
     [Fact]
+    public void FramedBlockReplayCollectsStringsAndViewNamesForNewOwners()
+    {
+        byte[] first = Frame(3708);
+        byte[] signature = [0xFF, 0xFF, 0xFF, 0xFF, 0xB5, 0x0B, 1, 0, 0, 0];
+        signature.CopyTo(first, 16);
+        BitConverter.GetBytes(4).CopyTo(first, 34);
+        System.Text.Encoding.Unicode.GetBytes("East").CopyTo(first, 38);
+        byte[] second = (byte[])first.Clone();
+        BitConverter.GetBytes(456u).CopyTo(second, 0);
+        var state = new ParsingState
+        {
+            AllKnownIds = [123],
+            FramedPartitions = [new PartitionFraming.Framed([first, second],
+                [new(102, 123, 0, first.Length), new(102, 456, first.Length, second.Length)], 4)],
+        };
+
+        RvtFileReader.ParseFramedBlocks(state, collectBlockOnlyIds: true, []);
+        Assert.Equal("East", state.ViewNames[123]);
+        Assert.False(state.ElemStrings.ContainsKey(456));
+        Assert.False(state.ViewNames.ContainsKey(456));
+
+        state.AllKnownIds.UnionWith(state.BlockOnlyIds);
+        RvtFileReader.ParseFramedBlocks(state, collectBlockOnlyIds: false, [], repeatOfFirstPass: true);
+        Assert.Contains("East", state.ElemStrings[123]);
+        Assert.Equal(state.ElemStrings[123], state.ElemStrings[456]);
+        Assert.Equal("East", state.ViewNames[456]);
+    }
+
+    [Fact]
     public void ParseBlocks_OfAFileReadByItsFraming_TakesThePartitionRecords_AndScansOnlyTheOtherChunks()
     {
         // the partition chunk holds the project's record of element 123 and behind it a block of element 456 in the document of a loaded
@@ -378,5 +407,33 @@ public class OwnElementClassTests
         writer.Write(size);
         stream.Position = 8; writer.Write(size);
         return stream.ToArray();
+    }
+
+    [Fact]
+    public void ParameterRootPreservesBaseIdsFlagsAndRejectsATruncatedScalarTail()
+    {
+        byte[] frame = Frame(37);
+        const int scalarBytes = 8 * sizeof(int) + 3;
+        int start = frame.Length - sizeof(uint) - scalarBytes;
+        for (int i = 0; i < 8; i++)
+            BitConverter.TryWriteBytes(frame.AsSpan(start + i * sizeof(int)), -111 - i);
+        frame[^5] = 0xA5;
+
+        var root = Assert.IsType<TfBlockDeserializer.NativeParams>(TfBlockDeserializer.ExtractParams(frame, 0, Size(frame), 37));
+        Assert.Equal(-111, root.Fields["m_id"]);
+        Assert.Equal(-112, root.Fields["m_assocLevelId"]);
+        Assert.Equal(-112, root.Fields["37:m_assocLevelId"]);
+        Assert.Equal(-116, root.Fields["37:m_createdPhaseId"]);
+        Assert.Equal(-117, root.Fields["m_demolishedPhaseId"]);
+        Assert.Equal(0xA5, root.Fields["37:m_dummy"]);
+
+        for (int missing = 1; missing <= scalarBytes; missing++)
+        {
+            var truncated = (byte[])frame.Clone();
+            uint size = Size(frame) - (uint)missing;
+            BitConverter.TryWriteBytes(truncated.AsSpan(8), size);
+            BitConverter.TryWriteBytes(truncated.AsSpan(12 + (int)size), size);
+            Assert.Null(TfBlockDeserializer.ExtractParams(truncated, 0, size, 37));
+        }
     }
 }

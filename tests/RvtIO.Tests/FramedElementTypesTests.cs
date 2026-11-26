@@ -505,7 +505,12 @@ public class FramedElementTypesTests
             if (wasRouted) state.IncrementRoutedPartitions = new Dictionary<ulong, int> { [(uint)element.Id] = 1 };
             if (stairOwner is int stair) state.ElemRecOwningElementIds = new Dictionary<uint, int> { [(uint)element.Id] = stair };
             if (anchored) state.NativeParamsFromRootClass.Add((uint)element.Id);
-            FramedElementTypes.Apply(_schema, new Dictionary<Guid, SchemaField[]?>(), _frames, state, [element], typePartitions, recoverUnanchoredTypes);
+            var entities = new Dictionary<Guid, SchemaField[]?>();
+            var retained = FramedElementTypes.Prepare(_schema, entities, _frames, state, typePartitions, recoverUnanchoredTypes);
+            var copy = element.ShallowCopy();
+            int lateChanges = retained?.Apply(state, [copy], typePartitions, recoverUnanchoredTypes) ?? 0;
+            Assert.Equal(FramedElementTypes.Apply(_schema, entities, _frames, state, [element], typePartitions, recoverUnanchoredTypes), lateChanges);
+            Assert.Equal(element.TypeId, copy.TypeId);
             return ids.SourceId(element.TypeId);
         }
     }

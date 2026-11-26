@@ -3,7 +3,7 @@ using Xunit;
 
 namespace RvtIO.Tests;
 
-/// <summary>The ordinal-sorted face corner key partitions faces exactly like the culture-sorted key it replaced: two faces share a key
+/// <summary>The numeric face corner key partitions faces exactly like the text key it replaced: two faces share a key
 /// if and only if their corner multisets are equal (the key is only compared for equality).</summary>
 public class FaceCornerKeyTests
 {
@@ -33,5 +33,20 @@ public class FaceCornerKeyTests
             var b = Corners(random, random.Next(0, 7));
             Assert.Equal(Old(a) == Old(b), ElementBuilder.FaceCornerKey(a) == ElementBuilder.FaceCornerKey(b));
         }
+    }
+
+    [Theory]
+    [InlineData(32)]
+    [InlineData(33)]
+    public void Repeated_corners_and_quantization_boundaries_survive_reordering(int count)
+    {
+        var ring = Enumerable.Range(0, count).Select(i => new[] { (i % 3 - 1) * 0.00005, -2d, 0d }).ToList();
+        string key = ElementBuilder.FaceCornerKey(ring);
+        ring.Reverse();
+        Assert.Equal(key, ElementBuilder.FaceCornerKey(ring));
+        ring[0][0] = 0.000051;
+        Assert.NotEqual(key, ElementBuilder.FaceCornerKey(ring));
+        ring.RemoveAt(0);
+        Assert.NotEqual(key, ElementBuilder.FaceCornerKey(ring));
     }
 }

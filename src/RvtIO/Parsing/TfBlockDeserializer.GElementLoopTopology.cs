@@ -37,7 +37,7 @@ internal static partial class TfBlockDeserializer
         failure = "loop-topology-incomplete-references";
         if (!references.Complete) return null;
         var nodes = graph.Nodes.ToDictionary(n => n.QueueIndex);
-        var links = new Dictionary<(int, int, string, int, int), GElementArchiveReference>();
+        var links = new Dictionary<(int, int, string, int, int), GElementArchiveReference>(references.References.Count);
         var edgeData = new Dictionary<int, LoopEdgeData>();
         string? stage = null;
         int contextOwner = 0, contextTarget = 0;

@@ -33,6 +33,32 @@ public class ElemScanStringsMergeTests
         Assert.Equal(B, ElementBuilder.ResolveElementName(ElementId, state));
     }
 
+    [Fact]
+    public void ExportScanKeepsFirstNameAndOrderedCaptionCandidatesAcrossChunks()
+    {
+        Dictionary<uint, List<string>> Scan(params string[] values)
+        {
+            using var chunk = new MemoryStream();
+            using var writer = new BinaryWriter(chunk, System.Text.Encoding.Unicode, leaveOpen: true);
+            writer.Write(ElementId);
+            foreach (var value in values)
+            {
+                writer.Write(value.Length);
+                writer.Write(System.Text.Encoding.Unicode.GetBytes(value));
+            }
+            var found = new Dictionary<uint, List<string>>();
+            StringScanner.ScanChunk(chunk.ToArray(), [ElementId], found, namesAndCaptionsOnly: true);
+            return found;
+        }
+        var first = Scan(B, C, "&first", "Group - one");
+        var second = Scan(A, "Group - one", "&second", "Group - two");
+        Assert.Equal([B, "&first", "Group - one"], first[ElementId]);
+        Assert.Equal([A, "Group - one", "&second", "Group - two"], second[ElementId]);
+        var merged = new Dictionary<uint, List<string>>();
+        RvtFileReader.MergeElemScanStringsInChunkOrder([first, second], merged, namesAndCaptionsOnly: true);
+        Assert.Equal([B, "&first", "Group - one", "&second", "Group - two"], merged[ElementId]);
+    }
+
     private static Dictionary<uint, List<string>>?[] ReverseCompletedResults()
     {
         var partialResults = new Dictionary<uint, List<string>>?[2];

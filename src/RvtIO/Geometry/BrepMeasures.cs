@@ -26,12 +26,13 @@ internal static class BrepMeasures
 
     /// <summary>The total surface area (feet squared) of the solids of a geometry: the sum over its shells, the holes of the faces
     /// subtracted.</summary>
-    internal static double SurfaceAreaCurrent(GeometryData? geometry) => ShellsOfCurrent(geometry).Sum(shell => shell.SourceMeasured ? shell.Area :
+    internal static double SurfaceAreaCurrent(GeometryData? geometry) => ShellFaces(geometry).Sum(shell =>
+        (shell.Closed ? SourceMeasures(geometry!, shell.Faces)?.Area : null) ??
         shell.Faces.GroupBy(face => (face.GeometryNode, Marker: face.SourceFace != 0 ? face.SourceFace : face.MeshMarker))
             .Sum(group => group.Key.Marker != 0 && group.First().QuadratureArea is { } exact
                 ? exact : group.Sum(face => NetFaceArea(face) ?? 0)));
 
-    private static double[] RingNormal(IReadOnlyList<double[]> ring)
+    private static (double X, double Y, double Z) RingNormal(IReadOnlyList<double[]> ring)
     {
         double nx = 0, ny = 0, nz = 0;
         for (int i = 0; i < ring.Count; i++)
@@ -42,7 +43,7 @@ internal static class BrepMeasures
             ny += (a[2] - b[2]) * (a[0] + b[0]);
             nz += (a[0] - b[0]) * (a[1] + b[1]);
         }
-        return [nx, ny, nz];
+        return (nx, ny, nz);
     }
 
     /// <summary>Area of the polygon of a (planar) ring.</summary>
@@ -50,7 +51,7 @@ internal static class BrepMeasures
     {
         if (ring.Count < 3) return 0;
         var n = RingNormal(ring);
-        return 0.5 * Math.Sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+        return 0.5 * Math.Sqrt(n.X * n.X + n.Y * n.Y + n.Z * n.Z);
     }
 
     internal static double RingPerimeter(IReadOnlyList<double[]> ring)
@@ -80,8 +81,30 @@ internal static class BrepMeasures
     {
         if (face.OuterVertices is not { Count: >= 3 } outer) return null;
         var n = RingNormal(outer);
-        double length = Math.Sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
-        return length < 1e-12 ? null : [n[0] / length, n[1] / length, n[2] / length];
+        double length = Math.Sqrt(n.X * n.X + n.Y * n.Y + n.Z * n.Z);
+        return length < 1e-12 ? null : [n.X / length, n.Y / length, n.Z / length];
+    }
+
+    private static IEnumerable<(List<GeoFace> Faces, bool Closed)> ShellFaces(GeometryData? geometry)
+    {
+        if (geometry?.Faces is not { Count: > 0 } faces) yield break;
+        if (geometry.BrepSolids is not { Count: > 0 } solids)
+            yield return (faces, false);
+        else
+            foreach (var solid in solids)
+                yield return (solid.FaceIndices.Where(i => (uint)i < (uint)faces.Count).Select(i => faces[i]).ToList(), solid.IsClosed);
+    }
+
+    private static (double Area, double Volume)? SourceMeasures(GeometryData geometry, List<GeoFace> faces)
+    {
+        if (geometry.MeshNodes == null || faces.Count == 0) return null;
+        int nodeId = faces[0].GeometryNode;
+        if (faces.Any(face => face.GeometryNode != nodeId)
+            || geometry.NodeMeasures?.Any(measure => measure.Node == nodeId && measure.Volume < 0) == true
+            || geometry.MeshNodes.FirstOrDefault(node => node.Node == nodeId) is not { SourceMeasures: { } measures } source)
+            return null;
+        return faces.Select(face => face.SourceFace != 0 ? face.SourceFace : face.MeshMarker).ToHashSet()
+            .SetEquals(source.Faces.Select(face => (uint)face.Marker)) ? measures : null;
     }
 
     /// <summary>The shells of an element geometry (all faces as one shell when none are listed).</summary>
@@ -89,12 +112,13 @@ internal static class BrepMeasures
         HashSet<(long X, long Y, long Z)>? splitVertices = null)
     {
         var result = new List<ShellInfo>();
-        if (geometry?.Faces is not { Count: > 0 } faces) return result;
-        IEnumerable<(List<GeoFace> Faces, bool Closed)> shells = geometry.BrepSolids is { Count: > 0 } solids
-            ? solids.Select(solid => (solid.FaceIndices.Where(i => (uint)i < (uint)faces.Count).Select(i => faces[i]).ToList(), solid.IsClosed))
-            : [(faces, false)];
-        foreach (var (shellFaces, closed) in shells)
+        foreach (var (shellFaces, closed) in ShellFaces(geometry))
         {
+            if (closed && SourceMeasures(geometry!, shellFaces) is { } measures)
+            {
+                result.Add(new ShellInfo(shellFaces, closed, Math.Abs(measures.Volume), measures.Area) { SourceMeasured = true });
+                continue;
+            }
             double volume = 0, area = 0;
             // The signed volume needs every face wound the same way (outward); a closed shell that orients exactly is summed oriented.
             IReadOnlyList<GeoFace> computationFaces = shellFaces;
@@ -109,18 +133,7 @@ internal static class BrepMeasures
                 var p = face.OuterVertices![0];
                 volume += (p[0] * normal[0] + p[1] * normal[1] + p[2] * normal[2]) * net / 3;
             }
-            bool sourceMeasured = false;
-            if (closed && shellFaces.Select(face => face.GeometryNode).Distinct().ToList() is [var nodeId]
-                && geometry.NodeMeasures?.Any(measure => measure.Node == nodeId && measure.Volume < 0) != true  // a cutting node has no solid to measure
-                && geometry.MeshNodes?.FirstOrDefault(node => node.Node == nodeId) is { SourceMeasures: { } measures } source
-                && shellFaces.Select(face => face.SourceFace != 0 ? face.SourceFace : face.MeshMarker).ToHashSet()
-                    .SetEquals(source.Faces.Select(face => (uint)face.Marker)))
-            {
-                area = measures.Area;
-                volume = measures.Volume;
-                sourceMeasured = true;
-            }
-            result.Add(new ShellInfo(shellFaces, closed, Math.Abs(volume), area) { SourceMeasured = sourceMeasured });
+            result.Add(new ShellInfo(shellFaces, closed, Math.Abs(volume), area));
         }
         return result;
     }

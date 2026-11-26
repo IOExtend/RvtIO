@@ -11,6 +11,13 @@ namespace RvtIO.Model
     /// and X / Y vectors, feet.</summary>
     internal sealed record GridPlaneData(double[] Envelope, double[] Origin, double[] XVector, double[] YVector);
 
+    // A null Storage with Created == false means a later explicit rule owns the parameter.
+    internal readonly record struct NativeTableOriginal(bool Created, StorageType? Storage = null,
+        object? Value = null, bool HasNoRevitValue = false);
+
+    internal readonly record struct NativeTableRow(int ParamId, string[] Domains, StorageType Storage,
+        object Value, bool HasNoRevitValue, NativeTableOriginal Original = default);
+
     /// <summary>A Revit element: an instance or a type, with its identity, parameters and geometry.</summary>
     public class Element
     {
@@ -114,18 +121,10 @@ namespace RvtIO.Model
         [JsonIgnore]
         internal (int BaseLevel, double BaseOffset, int TopLevel, double TopOffset)? FamilyLevelRefs { get; set; }
 
-        /// <summary>Parameters set by the NativeFieldParameters table with their validated presence domains, the
-        /// parameter's state before the table set it (null: it did not exist) and the value the table left.</summary>
+        /// <summary>Domain-checked field rows in application order. The first row for each id also
+        /// records whether to remove or restore that parameter when no row matches its final domain.</summary>
         [JsonIgnore]
-        internal List<(int ParamId, string[] Domains, StorageType Storage, object Value, bool HasNoRevitValue)>? NativeTableAddedParams { get; set; }
-
-        /// <summary>Parameter ids the NativeFieldParameters table created (they did not exist before it).</summary>
-        [JsonIgnore]
-        internal HashSet<int>? NativeTableCreatedParams { get; set; }
-
-        /// <summary>Values the table's domain rows replaced (first touch per parameter id).</summary>
-        [JsonIgnore]
-        internal Dictionary<int, (object? Value, StorageType Storage, bool HasNoRevitValue)>? NativeTablePrevious { get; set; }
+        internal NativeTableRow[]? NativeTableAddedParams { get; set; }
 
         /// <summary>StructCurveDriverBase.m_rotation as stored.</summary>
         [JsonIgnore]

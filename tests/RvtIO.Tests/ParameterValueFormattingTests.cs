@@ -28,6 +28,34 @@ public class ParameterValueFormattingTests
     }
 
     [Fact]
+    public void ExternalIdsCanBeFilledAndEditedIndependentlyOfTheSharedDefinition()
+    {
+        var guid = Guid.NewGuid();
+        var definition = new Parameter.DefinitionData(7, "Width", guid: guid, forgeId: "source");
+        var original = new Parameter(definition) { NativeElementId = long.MaxValue };
+        var copy = original.ShallowCopy(1);
+
+        copy.Guid = null;
+        copy.ForgeId = "override";
+        copy.FillMissingExternalIds(definition);
+        Assert.Equal("override", copy.ForgeId);
+        Assert.Equal(guid, copy.Guid);
+
+        copy.Guid = Guid.Empty;
+        copy.ForgeId = null;
+        copy.FillMissingExternalIds(definition);
+        Assert.Equal("source", copy.ForgeId);
+        Assert.Equal(Guid.Empty, copy.Guid);
+        Assert.Equal(long.MaxValue, copy.NativeElementId);
+        copy.NativeElementId = null;
+        Assert.Equal(Guid.Empty, copy.Guid);
+        Assert.Equal("source", copy.ForgeId);
+        Assert.Equal(long.MaxValue, original.NativeElementId);
+        Assert.Equal("source", original.ForgeId);
+        Assert.Equal(guid, original.Guid);
+    }
+
+    [Fact]
     public void OptionalGuidCanBeUpdatedOrClearedIndependentlyOnAShallowCopy()
     {
         var first = new Parameter();
@@ -62,7 +90,7 @@ public class ParameterValueFormattingTests
     [Fact]
     public void SharedDisplayUnitsCanBeEditedOnEachParameterIndependently()
     {
-        var units = new Parameter.DisplayUnits("length", "mm", 304.8);
+        var units = new Parameter.Metadata(SpecType: "length", Symbol: "mm", Factor: 304.8);
         var original = new Parameter();
         original.SetDisplayUnits(units);
         var clone = original.ShallowCopy(7.0);
@@ -77,6 +105,31 @@ public class ParameterValueFormattingTests
         Assert.Null(original.SpecType);
         Assert.Equal("mm", original.UnitSymbol);
         Assert.Equal(304.8, original.ConversionFactor);
+    }
+
+    [Fact]
+    public void ChangingUnitsPreservesSourceIdsAndChangingIdsPreservesUnits()
+    {
+        var guid = Guid.Parse("57534d27-cdfe-486a-a5a2-bcc93db60035");
+        var definition = new Parameter.DefinitionData(9, "Height", guid: guid, forgeId: "spec");
+        var units = new Parameter.Metadata(SpecType: "length", Symbol: "mm", Factor: 304.8);
+        var first = new Parameter(definition) { NativeElementId = 1L << 40 };
+        first.SetDisplayUnits(units);
+        Assert.Equal((guid, "spec", 1L << 40), (first.Guid, first.ForgeId, first.NativeElementId));
+
+        var second = first.ShallowCopy(first.Value);
+        second.Guid = null;
+        second.ForgeId = null;
+        second.UnitSymbol = "cm";
+        second.FillMissingExternalIds(definition);
+        Assert.Equal((guid, "spec", 1L << 40), (second.Guid, second.ForgeId, second.NativeElementId));
+        Assert.Equal(("length", "cm", 304.8), (second.SpecType, second.UnitSymbol, second.ConversionFactor));
+        Assert.Equal("mm", first.UnitSymbol);
+
+        var third = new Parameter();
+        third.SetDisplayUnits(units);
+        third.FillMissingExternalIds(definition);
+        Assert.Equal((guid, "spec", "mm"), (third.Guid, third.ForgeId, third.UnitSymbol));
     }
 
     [Fact]

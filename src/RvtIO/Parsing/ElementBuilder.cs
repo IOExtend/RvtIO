@@ -1,4 +1,6 @@
+using System.Collections.Frozen;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using RvtIO.Geometry;
 using RvtIO.Internal;
 using RvtIO.Lookup;
@@ -8,6 +10,10 @@ namespace RvtIO.Parsing;
 
 internal static partial class ElementBuilder
 {
+    private static readonly FrozenDictionary<string, int> ListFactFieldOrder =
+        TfBlockDeserializer.ListFactFieldKeys.Select((key, index) => (key, index))
+            .ToFrozenDictionary(pair => pair.key, pair => pair.index, StringComparer.Ordinal);
+
     internal enum GeometryDetail { Fine, Coarse, Medium, CoarseQuantities }
 
     /// <summary>
@@ -792,15 +798,23 @@ internal static partial class ElementBuilder
     /// </summary>
     private static readonly bool GhostTriangleNodes = Environment.GetEnvironmentVariable("RVTIO_X_GHOSTNODE") != "0";
 
-    /// <summary>Key of a face by its quantized corners, independent of corner order. Used for equality only, so the parts are sorted ordinally
-    /// (the culture sort of strings costs far more and a key is never read for its order).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private readonly record struct QuantizedCorner(long X, long Y, long Z) : IComparable<QuantizedCorner>
+    {
+        public int CompareTo(QuantizedCorner other) => (X, Y, Z).CompareTo((other.X, other.Y, other.Z));
+    }
+
+    /// <summary>Equality key of the quantized corner multiset. Base64 keeps the opening separators outside the ring alphabet.</summary>
     internal static string FaceCornerKey(List<double[]> cs)
     {
-        var parts = new string[cs.Count];
-        for (int i = 0; i < cs.Count; i++)
-            parts[i] = $"{(long)Math.Round(cs[i][0] * 1e4)},{(long)Math.Round(cs[i][1] * 1e4)},{(long)Math.Round(cs[i][2] * 1e4)}";
-        Array.Sort(parts, StringComparer.Ordinal);
-        return string.Join(";", parts);
+        Span<QuantizedCorner> corners = cs.Count <= 32 ? stackalloc QuantizedCorner[cs.Count] : new QuantizedCorner[cs.Count];
+        for (int i = 0; i < corners.Length; i++)
+        {
+            var p = cs[i];
+            corners[i] = new((long)Math.Round(p[0] * 1e4), (long)Math.Round(p[1] * 1e4), (long)Math.Round(p[2] * 1e4));
+        }
+        corners.Sort();
+        return Convert.ToBase64String(MemoryMarshal.AsBytes(corners));
     }
 
     public static GeometryData? BuildGeometryData(GRepData grep, bool separateFacesWithDistinctOpenings = false) =>
@@ -891,7 +905,6 @@ internal static partial class ElementBuilder
         var grepFaceToGeoFace = new int[grep.Faces.Count];
         bool indexSourcePolygons = !grep.PreserveSourceFaceIdentity
             || grep.Faces.Any(face => face.Vertices is not { Count: >= 3 } && face.Envelope is { Length: 4 });
-        static string CornerKey(List<double[]> cs) => FaceCornerKey(cs);
 
         for (int grepFaceIndex = 0; grepFaceIndex < grep.Faces.Count; grepFaceIndex++)
         {
@@ -905,8 +918,8 @@ internal static partial class ElementBuilder
                 // with different openings).
                 if (indexSourcePolygons)
                 {
-                    var key = CornerKey(poly) + (separateFacesWithDistinctOpenings && fp.InnerVertices is { Count: > 0 } innerRings
-                        ? "#" + string.Join("|", innerRings.Select(CornerKey).Order(StringComparer.Ordinal)) : "");
+                    var key = FaceCornerKey(poly) + (separateFacesWithDistinctOpenings && fp.InnerVertices is { Count: > 0 } innerRings
+                        ? "#" + string.Join("|", innerRings.Select(FaceCornerKey).Order(StringComparer.Ordinal)) : "");
                     if (!grep.PreserveSourceFaceIdentity && seenFaces.TryGetValue(key, out int existing))
                     {
                         grepFaceToGeoFace[grepFaceIndex] = existing;
@@ -951,7 +964,7 @@ internal static partial class ElementBuilder
             if (fp.Envelope is { Length: 4 } envK)
             {
                 corners = EnvelopeToCorners(envK, fp.Origin, fp.XVector, fp.YVector);
-                var ck = CornerKey(corners);
+                var ck = FaceCornerKey(corners);
                 if (seenFaces.TryGetValue(ck, out int existing))
                 {
                     grepFaceToGeoFace[grepFaceIndex] = existing;
@@ -1601,13 +1614,13 @@ internal static partial class ElementBuilder
     }
 
     /// <summary>Start/end z of the FamInstCurveDriver drive line: origin + dirVec * endParam.</summary>
-    private static bool TryCurveDriverLineZ(TfBlockDeserializer.NativeParams np, out (double StartZ, double EndZ) z)
+    private static bool TryCurveDriverLineZ(Dictionary<string, double>? fields, out (double StartZ, double EndZ) z)
     {
         z = default;
-        if (!np.DoubleFields.TryGetValue("87:m_pCrv.origin@2", out double originZ)
-            || !np.DoubleFields.TryGetValue("87:m_pCrv.dirVec@2", out double directionZ)
-            || !np.DoubleFields.TryGetValue("87:m_pCrv.endParams@0", out double start)
-            || !np.DoubleFields.TryGetValue("87:m_pCrv.endParams@1", out double end))
+        if (fields == null || !fields.TryGetValue("87:m_pCrv.origin@2", out double originZ)
+            || !fields.TryGetValue("87:m_pCrv.dirVec@2", out double directionZ)
+            || !fields.TryGetValue("87:m_pCrv.endParams@0", out double start)
+            || !fields.TryGetValue("87:m_pCrv.endParams@1", out double end))
             return false;
         z = (originZ + directionZ * start, originZ + directionZ * end);
         return double.IsFinite(z.StartZ) && double.IsFinite(z.EndZ);
@@ -1932,7 +1945,7 @@ internal static partial class ElementBuilder
             }
             if (np.Fields.TryGetValue("3471:m_zoneElementId", out int spaceZone) && spaceZone > 0)
                 e.SerializedSpaceZoneId = spaceZone;
-            if (np.StringFields.TryGetValue("3170:m_strName", out string? ownName))
+            if (np.CapturedStringFields?.TryGetValue("3170:m_strName", out string? ownName) == true)
             {
                 SetParam(e, -1140324, "RBS_SYSTEM_NAME_PARAM", StorageType.String, ownName);
                 e.SerializedMepSystem = (ownName, np.Fields.GetValueOrDefault("3170:m_typeId"));
@@ -2177,9 +2190,11 @@ internal static partial class ElementBuilder
         if (classByElement == null) return;
         var byParameter = new Dictionary<int, (int First, int Last, int Matching)>();
         var domainNames = new Dictionary<(ushort? Class, int? Category), (string Root, string Domain)>();
+        var removeIds = new HashSet<int>();
+        Predicate<Parameter> removeParameter = parameter => removeIds.Contains(parameter.Id);
         foreach (var e in info.Elements)
         {
-            if (e.NativeTableAddedParams is not { Count: > 0 } added) continue;
+            if (e.NativeTableAddedParams is not { Length: > 0 } added) continue;
             var domainKey = (Class: classByElement.TryGetValue((uint)e.Id, out var cls) ? (ushort?)cls : null, Category: e.CategoryId);
             if (!domainNames.TryGetValue(domainKey, out var names))
             {
@@ -2189,7 +2204,8 @@ internal static partial class ElementBuilder
                 domainNames.Add(domainKey, names);
             }
             byParameter.Clear();
-            for (int i = 0; i < added.Count; i++)
+            removeIds.Clear();
+            for (int i = 0; i < added.Length; i++)
             {
                 var row = added[i];
                 ref var indices = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(
@@ -2203,7 +2219,7 @@ internal static partial class ElementBuilder
                     && (Array.IndexOf(row.Domains, names.Domain) >= 0 || Array.IndexOf(row.Domains, names.Root) >= 0))
                     indices.Matching = i;
             }
-            for (int i = 0; i < added.Count; i++)
+            for (int i = 0; i < added.Length; i++)
             {
                 int paramId = added[i].ParamId;
                 var indices = byParameter[paramId];
@@ -2214,14 +2230,15 @@ internal static partial class ElementBuilder
                     // No row of the table applies to this element: drop what the table created,
                     // give back what it overwrote (unless a later pass already replaced the table's
                     // value).
-                    if (e.NativeTableCreatedParams?.Contains(paramId) == true) e.Parameters.RemoveAll(p => p.Id == paramId);
-                    else if (e.NativeTablePrevious != null && e.NativeTablePrevious.TryGetValue(paramId, out var previous))
+                    var previous = added[i].Original;
+                    if (previous.Created) removeIds.Add(paramId);
+                    else if (previous.Storage is { } previousStorage)
                     {
                         var overwritten = FindParameterById(e.Parameters, paramId);
                         if (overwritten != null && Equals(overwritten.Value, last.Value))
                         {
                             overwritten.Value = previous.Value;
-                            overwritten.StorageType = previous.Storage;
+                            overwritten.StorageType = previousStorage;
                             overwritten.HasNoRevitValue = previous.HasNoRevitValue;
                         }
                     }
@@ -2238,9 +2255,8 @@ internal static partial class ElementBuilder
                     parameter.HasNoRevitValue = matching.HasNoRevitValue;
                 }
             }
+            if (removeIds.Count != 0) e.Parameters.RemoveAll(removeParameter);
             e.NativeTableAddedParams = null;
-            e.NativeTableCreatedParams = null;
-            e.NativeTablePrevious = null;
         }
     }
 
@@ -3311,7 +3327,7 @@ internal static partial class ElementBuilder
     private static readonly string[] NativeTypeAttributeFields = ["m_floorAttributesId", "m_roofAttributesId", "m_attrId"];
 
     internal static void ApplyNativeParams(RevitFileInfo info, ParsingState? state,
-        IReadOnlyDictionary<int, Element>? unique = null)
+        IReadOnlyDictionary<int, Element>? unique = null, bool deferZeroElementIds = false)
     {
         if (state == null
             || (state.NativeParams.Count == 0
@@ -3336,7 +3352,7 @@ internal static partial class ElementBuilder
         if (info.Elements.Count > 0)
             Parallel.ForEach(System.Collections.Concurrent.Partitioner.Create(0, info.Elements.Count),
                 range => ApplyRange(range.Item1, range.Item2));
-        Parameter.ResolveZeroElementIds(info, state);
+        if (!deferZeroElementIds) Parameter.ResolveZeroElementIds(info, state);
 
         void ApplyRange(int start, int end)
         {
@@ -3344,12 +3360,15 @@ internal static partial class ElementBuilder
             var nativeFieldRows = new List<int>();
             var nativeFieldValues = new object?[NativeFieldParameters.All.Length];
             var storeIds = new HashSet<int>();
+            var rows = new List<NativeTableRow>();
+            var originals = new Dictionary<int, NativeTableOriginal>();
             for (int index = start; index < end; index++)
-                ApplyElement(info.Elements[index], byId, nativeFieldRows, nativeFieldValues, storeIds);
+                ApplyElement(info.Elements[index], byId, nativeFieldRows, nativeFieldValues, storeIds, rows, originals);
         }
 
         void ApplyElement(Element e, Dictionary<int, Parameter> byId, List<int> nativeFieldRows,
-            object?[] nativeFieldValues, HashSet<int> storeIds)
+            object?[] nativeFieldValues, HashSet<int> storeIds, List<NativeTableRow> rows,
+            Dictionary<int, NativeTableOriginal> originals)
         {
             e.SerializedCurtainWallFunction = null;
             if (e.Id > 0 && state.NewCurtainWallTypeFunctions.TryGetValue(
@@ -3373,42 +3392,42 @@ internal static partial class ElementBuilder
             e.SerializedGroupId = groupOfMember.TryGetValue(e.Id, out int owningGroup) ? owningGroup : null;
             e.NativeRecordClass = state.ElemClassIdx.TryGetValue((uint)e.Id, out ushort recordClass) ? recordClass : null;
             if (!state.NativeParams.TryGetValue((uint)e.Id, out var np)) return;
+            rows.Clear();
+            originals.Clear();
+            if (e.NativeTableAddedParams is { } pending)
+            {
+                rows.AddRange(pending);
+                foreach (var row in pending)
+                    if (row.Original != default) originals.Add(row.ParamId, row.Original);
+            }
+            IReadOnlyDictionary<string, double> doubleFields = np.CapturedDoubleFields
+                ?? (IReadOnlyDictionary<string, double>)FrozenDictionary<string, double>.Empty;
+            IReadOnlyDictionary<string, string> stringFields = np.CapturedStringFields
+                ?? (IReadOnlyDictionary<string, string>)FrozenDictionary<string, string>.Empty;
             if (np.Fields.TryGetValue("3471:m_bIsLocationless", out int locationless))
                 e.SerializedRoomIsLocationless = locationless != 0;
-            if (np.StringFields.TryGetValue("388:m_areaElemName", out string? areaSchemeName)
-                && np.StringFields.TryGetValue("388:m_areaElemDescription", out string? areaSchemeDescription))
+            if (stringFields.TryGetValue("388:m_areaElemName", out string? areaSchemeName)
+                && stringFields.TryGetValue("388:m_areaElemDescription", out string? areaSchemeDescription))
                 e.SerializedAreaScheme = (areaSchemeName, areaSchemeDescription);
             // GroupMembership.m_groupId of a group instance (root class 1322) is its group TYPE
             // (the Type parameter, see NativeTypePointers), not a group it is a member of: the type
             // would be exported as a group holding the instances.
-            if (e.SerializedGroupId == null && StoredGroupMembership(state.ElemClassIdx.GetValueOrDefault((uint)e.Id), np) is int groupId)
+            if (e.SerializedGroupId == null && StoredGroupMembership(recordClass, np) is int groupId)
                 e.SerializedGroupId = groupId;
             if (np.Fields.TryGetValue("1080:m_mainDesignOption", out int primaryOption)) e.NativePrimaryDesignOptionId = primaryOption;
             if (np.Fields.TryGetValue("1074:m_DesignOptionSetId", out int optionSet)) e.NativeDesignOptionSetId = optionSet;
-            if (np.StringFields.TryGetValue("1080:m_strName", out string? setName) || np.StringFields.TryGetValue("1074:m_strName", out setName))
+            if (stringFields.TryGetValue("1080:m_strName", out string? setName) || stringFields.TryGetValue("1074:m_strName", out setName))
                 e.NativeDesignOptionName = setName;
             if (np.Fields.TryGetValue("1286:m_idRoom", out int roomId))
                 e.SerializedRoomId = roomId;
-            if (np.DoubleFields.TryGetValue("3742:m_minTreadWidthOnInsideBoundary", out double insideTread) && double.IsFinite(insideTread))
+            if (doubleFields.TryGetValue("3742:m_minTreadWidthOnInsideBoundary", out double insideTread) && double.IsFinite(insideTread))
                 e.SerializedStairsTypeMinInsideTreadFeet = insideTread;
-            if (np.DoubleFields.TryGetValue("3718:m_nosingLength", out double nosing) && double.IsFinite(nosing))
+            if (doubleFields.TryGetValue("3718:m_nosingLength", out double nosing) && double.IsFinite(nosing))
                 e.SerializedStairRunTypeNosingFeet = nosing;
             if (e.CategoryId == -2000011 && np.Fields.TryGetValue("362:m_isFlipped", out int wallFlipped))
                 e.SerializedWallFlipped = wallFlipped != 0;
             byId.Clear();
             foreach (var p in e.Parameters) byId.TryAdd(p.Id, p);
-            storeIds.Clear();
-            foreach (var (pid, _) in np.Doubles) storeIds.Add(pid);
-            foreach (var (pid, _) in np.Ints) storeIds.Add(pid);
-            foreach (var (pid, _) in np.Strings) storeIds.Add(pid);
-            foreach (var (pid, _) in np.ElementIds) storeIds.Add(pid);
-            var storeSnapshot = storeIds.ToArray();
-            e.NativeParameterStoreIds = storeSnapshot;
-            // Both properties describe stored provenance. Only named-only IDs need a second snapshot.
-            foreach (var named in np.NamedParams)
-                if (named.ParamId < 0) storeIds.Add(named.ParamId);
-            e.NativeStoredParameterIds = storeIds.Count == 0 ? null
-                : storeIds.Count == storeSnapshot.Length ? storeSnapshot : storeIds.ToArray();
             e.NativeParameterStoresComplete = np.RootParameterStoresComplete;
             e.NativeCellListTag = np.Fields.TryGetValue("37:m_cellList", out int cellListTag) ? cellListTag : null;
             e.NativeCellClasses = np.CellClasses;
@@ -3419,22 +3438,39 @@ internal static partial class ElementBuilder
             // the two element-base keys are only kept for family instances (they exist in every
             // record)
             bool familyInstanceRecord = np.Fields.ContainsKey("1794:m_masterSymbolId");
-            foreach (string key in TfBlockDeserializer.ListFactFieldKeys)
-                if (np.Fields.TryGetValue(key, out int listFieldValue) && (familyInstanceRecord || !key.StartsWith("37:", StringComparison.Ordinal)))
-                    (e.NativeListFields ??= new())[key] = listFieldValue;
+            nativeFieldRows.Clear();
+            List<KeyValuePair<string, int>>? extraHosts = null, explicitHosts = null;
+            const string extraHostPrefix = "m_extraHostIds@", explicitHostPrefix = "m_explicitHostIds@";
+            foreach (var field in np.Fields)
+            {
+                if (ListFactFieldOrder.TryGetValue(field.Key, out int ordinal)
+                    && (familyInstanceRecord || !field.Key.StartsWith("37:", StringComparison.Ordinal)))
+                    nativeFieldRows.Add(ordinal);
+                else if (field.Key.StartsWith("m_e", StringComparison.Ordinal))
+                {
+                    if (field.Key.StartsWith(extraHostPrefix, StringComparison.Ordinal)) (extraHosts ??= new()).Add(field);
+                    else if (field.Key.StartsWith(explicitHostPrefix, StringComparison.Ordinal)) (explicitHosts ??= new()).Add(field);
+                }
+            }
+            nativeFieldRows.Sort();
+            foreach (int ordinal in nativeFieldRows)
+            {
+                string key = TfBlockDeserializer.ListFactFieldKeys[ordinal];
+                (e.NativeListFields ??= new())[key] = np.Fields[key];
+            }
             foreach (string key in TfBlockDeserializer.RoomRuleFieldKeys)
             {
                 if (np.Fields.TryGetValue(key, out int roomRuleInt)) (e.NativeRoomFields ??= new())[key] = roomRuleInt;
-                else if (np.DoubleFields.TryGetValue(key, out double roomRuleReal) && double.IsFinite(roomRuleReal))
+                else if (doubleFields.TryGetValue(key, out double roomRuleReal) && double.IsFinite(roomRuleReal))
                     (e.NativeRoomFields ??= new())[key] = roomRuleReal;
             }
             if (TfBlockDeserializer.CaptureAllFields)
             {
                 e.DebugNativeFields = new Dictionary<string, object>();
-                if (state.ElemClassIdx.TryGetValue((uint)e.Id, out var debugClass)) e.DebugNativeFields["__class"] = (int)debugClass;
+                if (e.NativeRecordClass is { } debugClass) e.DebugNativeFields["__class"] = (int)debugClass;
                 foreach (var (key, value) in np.Fields) e.DebugNativeFields[key] = value;
-                foreach (var (key, value) in np.DoubleFields) e.DebugNativeFields[key] = value;
-                foreach (var (key, value) in np.StringFields) e.DebugNativeFields[key] = value;
+                foreach (var (key, value) in doubleFields) e.DebugNativeFields[key] = value;
+                foreach (var (key, value) in stringFields) e.DebugNativeFields[key] = value;
                 for (int named = 0; named < np.NamedParams.Count; named++)
                 {
                     var record = np.NamedParams[named];
@@ -3449,12 +3485,9 @@ internal static partial class ElementBuilder
             {
                 // An explicit rule that sets the parameter takes it over from the field table's
                 // domain bookkeeping.
-                if (!fromTable)
-                {
-                    e.NativeTableCreatedParams?.Remove(pid);
-                    e.NativeTablePrevious?.Remove(pid);
-                }
-                if (byId.TryGetValue(pid, out var existing))
+                if (!fromTable && originals.Count != 0) originals.Remove(pid);
+                ref var slot = ref CollectionsMarshal.GetValueRefOrAddDefault(byId, pid, out _);
+                if (slot is { } existing)
                 {
                     bool hollow = existing.Value is null
                         || (existing.Value is string es && es.Length == 0)
@@ -3474,7 +3507,7 @@ internal static partial class ElementBuilder
                 var par = BipHelpers.MakeStoredBipParam(pid, st, Parameter.BoxParsedValue(val), noRevitValue);
                 par.FromNativeFields = true;
                 e.Parameters.Add(par);
-                byId[pid] = par;
+                slot = par;
             }
             // Type/symbol params from stored ids override the heuristic.
             void ApplyType(int typeId)
@@ -3487,16 +3520,37 @@ internal static partial class ElementBuilder
             }
             // ELEM_PARTITION_PARAM (-1002053) is owned by the ElemTable workset decode
             // (authoritative); the element block's own copy is a stale -1 for packed elements.
+            storeIds.Clear();
             foreach (var (pid, v) in np.Doubles)
+            {
+                storeIds.Add(pid);
                 if (pid != -1002053) Apply(pid, StorageType.Double, v, noRevitValue: !double.IsFinite(v) || Math.Abs(v) >= 1e29);
-            foreach (var (pid, v) in np.Ints) if (pid != -1002053) Apply(pid, StorageType.Integer, v);
-            foreach (var (pid, v) in np.Strings) Apply(pid, StorageType.String, v);
+            }
+            foreach (var (pid, v) in np.Ints)
+            {
+                storeIds.Add(pid);
+                if (pid != -1002053) Apply(pid, StorageType.Integer, v);
+            }
+            foreach (var (pid, v) in np.Strings)
+            {
+                storeIds.Add(pid);
+                Apply(pid, StorageType.String, v);
+            }
             foreach (var (pid, v) in np.ElementIds)
+            {
+                storeIds.Add(pid);
                 if (pid != -1002053)
                     Apply(pid, StorageType.ElementId, v, noRevitValue: !Parameter.IsSetElementId(pid, v, Parameter.IsValidZeroElementIdTarget(e, pid, hasZeroPhase, hasZeroDimStyle)));
+            }
+            var storeSnapshot = storeIds.ToArray();
+            e.NativeParameterStoreIds = storeSnapshot;
+            // Both properties describe stored provenance. Only named-only IDs need a second snapshot.
+            foreach (var named in np.NamedParams)
+                if (named.ParamId < 0) storeIds.Add(named.ParamId);
+            e.NativeStoredParameterIds = storeIds.Count == 0 ? null
+                : storeIds.Count == storeSnapshot.Length ? storeSnapshot : storeIds.ToArray();
 
-            if (state.ElemClassIdx.TryGetValue((uint)e.Id, out ushort typedRootClass)
-                && NativeTypePointers.Of(typedRootClass, np) is int pointedType)
+            if (e.NativeRecordClass.HasValue && NativeTypePointers.Of(recordClass, np) is int pointedType)
             {
                 ApplyType(pointedType);
                 Apply(-1002051, StorageType.ElementId, pointedType, force: true, noRevitValue: pointedType <= 0); // ELEM_FAMILY_PARAM
@@ -3534,8 +3588,8 @@ internal static partial class ElementBuilder
                 e.HostId = serializedHostId > 0 ? serializedHostId : null;
                 Apply(-1002108, StorageType.ElementId, serializedHostId, force: true, noRevitValue: serializedHostId <= 0); // HOST_ID_PARAM
             }
-            e.ExtraHostIds = CapturedElementIds("m_extraHostIds@");
-            e.ExplicitHostIds = CapturedElementIds("m_explicitHostIds@");
+            e.ExtraHostIds = CapturedElementIds(extraHosts, extraHostPrefix);
+            e.ExplicitHostIds = CapturedElementIds(explicitHosts, explicitHostPrefix);
             if (np.Fields.TryGetValue("m_superInstanceId", out int superInstanceId)
                 && superInstanceId > 0)
                 e.SuperInstanceId = superInstanceId;
@@ -3552,7 +3606,7 @@ internal static partial class ElementBuilder
                 && (phd > 0 || phd == 0 && phaseZeroExists || phd == -1 && e.NativeRootClassName != null))
                 Apply(-1012101, StorageType.ElementId, phd, noRevitValue: phd < 0);
             if (e.Id == 0 && e.CategoryId == -2000112 && string.IsNullOrWhiteSpace(e.Name)
-                && np.StringFields.TryGetValue("3065:m_name", out string? phaseZeroName)
+                && stringFields.TryGetValue("3065:m_name", out string? phaseZeroName)
                 && !string.IsNullOrWhiteSpace(phaseZeroName))
                 e.Name = phaseZeroName;
             if (np.Fields.TryGetValue("m_WallAttributesId", out int wat) && wat > 0)
@@ -3577,7 +3631,7 @@ internal static partial class ElementBuilder
             // FamilyParams.m_params: built-in parameters stored by the element itself as NamedParam
             // (paramId + one value slot). The slot is chosen by the parameter's public API storage
             // type.
-            bool isSymbolRecord = state.ElemClassIdx.TryGetValue((uint)e.Id, out ushort namedElemCls) && namedElemCls == 1829;
+            bool isSymbolRecord = recordClass == 1829;
             bool symbolAnalyticNone = isSymbolRecord
                 && np.NamedParams.FirstOrDefault(r => r.ParamId == -1005437)?.Str is string acStr
                 && acStr == "<None>";
@@ -3661,9 +3715,11 @@ internal static partial class ElementBuilder
                 string[]? checkedDomains = tableSet ? (entry.Domains.Length > 0 ? entry.Domains : null) : entry.UnsetDomains;
                 if (checkedDomains != null)
                 {
-                    (e.NativeTableAddedParams ??= new()).Add((entry.ParamId, checkedDomains, entry.Storage, tableValue, !hasRevitValue));
-                    if (!byId.TryGetValue(entry.ParamId, out var before)) (e.NativeTableCreatedParams ??= new()).Add(entry.ParamId);
-                    else (e.NativeTablePrevious ??= new()).TryAdd(entry.ParamId, (before.Value, before.StorageType, before.HasNoRevitValue));
+                    rows.Add(new(entry.ParamId, checkedDomains, entry.Storage, tableValue, !hasRevitValue));
+                    if (!byId.TryGetValue(entry.ParamId, out var before))
+                        originals[entry.ParamId] = new(Created: true);
+                    else
+                        originals.TryAdd(entry.ParamId, new(false, before.StorageType, before.Value, before.HasNoRevitValue));
                 }
 
                 // An unset phase (-1) must not create PHASE_CREATED: FixUnresolvedPhaseCreated
@@ -3672,25 +3728,25 @@ internal static partial class ElementBuilder
                 if (!tableSet && entry.ParamId == -1012100 && !byId.ContainsKey(entry.ParamId)) continue;
                 Apply(entry.ParamId, entry.Storage, tableValue, force: tableSet, fromTable: true, noRevitValue: !hasRevitValue);
             }
-            if (state.ElemClassIdx.TryGetValue((uint)e.Id, out var mepCurveClass) && mepCurveClass is 3148 or 3210 or 3134 or 598)
-                ApplyMepCurveGeometry(np, mepCurveClass, (pid, st, val, force) => Apply(pid, st, val, force));
-            else if (mepCurveClass is 3177 or 3180)
-                ApplyFlexCurveGeometry(np, mepCurveClass, (pid, st, val, force) => Apply(pid, st, val, force));
-            if (np.DoubleFields.TryGetValue("1709:m_rotation", out double curveDriverRotation) && double.IsFinite(curveDriverRotation))
+            if (recordClass is 3148 or 3210 or 3134 or 598)
+                ApplyMepCurveGeometry(np, recordClass, (pid, st, val, force) => Apply(pid, st, val, force));
+            else if (recordClass is 3177 or 3180)
+                ApplyFlexCurveGeometry(np, recordClass, (pid, st, val, force) => Apply(pid, st, val, force));
+            if (doubleFields.TryGetValue("1709:m_rotation", out double curveDriverRotation) && double.IsFinite(curveDriverRotation))
                 e.CurveDriverRotation = curveDriverRotation;
             if (np.Fields.TryGetValue("1708:m_refLevelId", out int curveDriverLevel))
                 e.CurveDriverRefLevelId = curveDriverLevel;
             if (np.Fields.TryGetValue("1794:m_assocSketchPlaneId", out int sketchPlane))
                 e.AssocSketchPlaneId = sketchPlane;
-            if (state.ElemClassIdx.GetValueOrDefault((uint)e.Id) == 3607) // SketchPlane: on a datum plane, or on the plane reference Revit makes for a level or reference plane
+            if (recordClass == 3607) // SketchPlane: on a datum plane, or on the plane reference Revit makes for a level or reference plane
             {
                 if (np.Fields.TryGetValue("2604:m_datumPlaneId", out int datumPlane)) e.SketchPlaneDatumId = datumPlane;
                 else if (np.Fields.TryGetValue("140:m_elemId", out int referencedDatum) && referencedDatum > 0) e.SketchPlaneDatumId = referencedDatum;
             }
             if (np.Fields.TryGetValue("1801#0:m_elemId", out int baseLevelRef)
-                && np.DoubleFields.TryGetValue("1801#0:m_offset", out double baseLevelOffset)
+                && doubleFields.TryGetValue("1801#0:m_offset", out double baseLevelOffset)
                 && np.Fields.TryGetValue("1801#1:m_elemId", out int topLevelRef)
-                && np.DoubleFields.TryGetValue("1801#1:m_offset", out double topLevelOffset)
+                && doubleFields.TryGetValue("1801#1:m_offset", out double topLevelOffset)
                 && !np.Fields.ContainsKey("1801#2:m_elemId"))
                 e.FamilyLevelRefs = (baseLevelRef, baseLevelOffset, topLevelRef, topLevelOffset);
             // Curtain grid SpacingRuleInst pair: first horizontal, then vertical.
@@ -3708,9 +3764,9 @@ internal static partial class ElementBuilder
                         Apply(number, StorageType.Integer, fixedNumber, force: true);
                     if (np.Fields.TryGetValue(prefix + "m_justify", out int justify))
                         Apply(justification, StorageType.Integer, justify, force: true);
-                    if (np.DoubleFields.TryGetValue(prefix + "m_angle", out double gridAngle))
+                    if (doubleFields.TryGetValue(prefix + "m_angle", out double gridAngle))
                         Apply(angle, StorageType.Double, gridAngle, force: true);
-                    if (np.DoubleFields.TryGetValue(prefix + "m_origin", out double gridOrigin))
+                    if (doubleFields.TryGetValue(prefix + "m_origin", out double gridOrigin))
                         Apply(origin, StorageType.Double, gridOrigin, force: true);
                 }
             }
@@ -3724,19 +3780,19 @@ internal static partial class ElementBuilder
                 e.EnergyBuildingTypeId = buildingType;
             if (np.Fields.TryGetValue("2237:m_symbolId", out int instanceSymbol) && instanceSymbol > 0)
                 e.InstanceSymbolId = instanceSymbol;
-            if (np.DoubleFields.TryGetValue("3795#0:m_Length", out double startLength)
-                && np.DoubleFields.TryGetValue("3795#1:m_Length", out double endLength)
-                && !np.DoubleFields.ContainsKey("3795#2:m_Length")
+            if (doubleFields.TryGetValue("3795#0:m_Length", out double startLength)
+                && doubleFields.TryGetValue("3795#1:m_Length", out double endLength)
+                && !doubleFields.ContainsKey("3795#2:m_Length")
                 && startLength == endLength && double.IsFinite(startLength))
                 e.SymbolFramingLength = startLength;
             if (np.Fields.TryGetValue("1794:m_useOffsetPos", out int usesOffsetPosition))
                 e.InstanceUsesOffsetPosition = usesOffsetPosition != 0;
             if (np.Fields.TryGetValue("1794:m_bVertical", out int vertical))
                 e.InstanceIsVertical = vertical != 0;
-            if (np.DoubleFields.TryGetValue("1794:m_instOrigin@2", out double originZ) && double.IsFinite(originZ))
+            if (doubleFields.TryGetValue("1794:m_instOrigin@2", out double originZ) && double.IsFinite(originZ))
                 e.InstanceOriginZ = originZ;
-            if (np.DoubleFields.TryGetValue("1794:m_instOrigin@0", out double originX) && double.IsFinite(originX)
-                && np.DoubleFields.TryGetValue("1794:m_instOrigin@1", out double originY) && double.IsFinite(originY))
+            if (doubleFields.TryGetValue("1794:m_instOrigin@0", out double originX) && double.IsFinite(originX)
+                && doubleFields.TryGetValue("1794:m_instOrigin@1", out double originY) && double.IsFinite(originY))
                 e.InstanceOriginXY = (originX, originY);
             e.IsCurtainMemberInstance = np.Fields.ContainsKey("897:m_hostId") || np.Fields.ContainsKey("2518:m_hostId");
             if (np.Fields.TryGetValue("1829:m_familyId", out int symbolFamily))
@@ -3749,26 +3805,26 @@ internal static partial class ElementBuilder
                 && np.Fields.TryGetValue("1773:m_isCrvDriven", out int curveDriven))
                 e.FamilyAllowsRawHost = firstHostType != 0 || curtainPanel != 0 || familyCategory == -2000171
                     || curveDriven != 0 && familyCategory == -2001320;
-            if (TryCurveDriverLineZ(np, out var lineZ))
+            if (TryCurveDriverLineZ(np.CapturedDoubleFields, out var lineZ))
                 e.CurveDriverLineZ = lineZ;
-            if (np.DoubleFields.TryGetValue("87:m_pCrv.dirVec@0", out double lineX)
-                && np.DoubleFields.TryGetValue("87:m_pCrv.dirVec@1", out double lineY)
-                && np.DoubleFields.TryGetValue("87:m_pCrv.dirVec@2", out double lineDirZ))
+            if (doubleFields.TryGetValue("87:m_pCrv.dirVec@0", out double lineX)
+                && doubleFields.TryGetValue("87:m_pCrv.dirVec@1", out double lineY)
+                && doubleFields.TryGetValue("87:m_pCrv.dirVec@2", out double lineDirZ))
             {
                 double lineLength = Math.Sqrt(lineX * lineX + lineY * lineY + lineDirZ * lineDirZ);
                 if (double.IsFinite(lineLength) && lineLength > 0)
                 {
                     e.CurveDriverLineDirection = (lineX / lineLength, lineY / lineLength, lineDirZ / lineLength);
-                    if (np.DoubleFields.TryGetValue("87:m_pCrv.endParams@0", out double lineStart)
-                        && np.DoubleFields.TryGetValue("87:m_pCrv.endParams@1", out double lineEnd)
+                    if (doubleFields.TryGetValue("87:m_pCrv.endParams@0", out double lineStart)
+                        && doubleFields.TryGetValue("87:m_pCrv.endParams@1", out double lineEnd)
                         && double.IsFinite(lineStart) && double.IsFinite(lineEnd) && lineEnd != lineStart)
                         e.CurveDriverLineLength = Math.Abs(lineEnd - lineStart) * lineLength;
                 }
             }
-            if (np.DoubleFields.TryGetValue("3789:m_copingDistance", out double copingDistance) && double.IsFinite(copingDistance))
+            if (doubleFields.TryGetValue("3789:m_copingDistance", out double copingDistance) && double.IsFinite(copingDistance))
                 e.FramingCopingDistance = copingDistance;
             if (np.Fields.TryGetValue("699:m_baseOrTop", out int baseOrTop) && baseOrTop is 0 or 1
-                && np.DoubleFields.TryGetValue("699:m_attachOffset", out double attachOffset) && double.IsFinite(attachOffset)
+                && doubleFields.TryGetValue("699:m_attachOffset", out double attachOffset) && double.IsFinite(attachOffset)
                 && np.Fields.TryGetValue("699:m_justification", out int attachJustification))
                 e.ColumnAttachment = (baseOrTop == 1, attachOffset, attachJustification);
             if (np.Fields.TryGetValue("m_analyzesAs", out int aas))
@@ -3789,10 +3845,10 @@ internal static partial class ElementBuilder
             {
                 e.IsNativeLevel = true;
                 e.LevelPlane = state.LevelPlanes.GetValueOrDefault((uint)e.Id);
-                if (np.DoubleFields.TryGetValue("__levelElevation", out double levelElevation)
+                if (doubleFields.TryGetValue("__levelElevation", out double levelElevation)
                     && double.IsFinite(levelElevation))
                     Apply(-1007102, StorageType.Double, levelElevation, force: true);
-                if (np.StringFields.TryGetValue("m_text", out string? levelName)
+                if (stringFields.TryGetValue("m_text", out string? levelName)
                     && !string.IsNullOrWhiteSpace(levelName))
                 {
                     // DatumPlane.m_text is the authoritative Level.Name. Generic block-string
@@ -3802,28 +3858,22 @@ internal static partial class ElementBuilder
                 }
             }
 
-            List<int>? CapturedElementIds(string prefix)
-            {
-                List<KeyValuePair<string, int>>? matches = null;
-                foreach (var field in np.Fields)
-                    if (field.Key.StartsWith(prefix, StringComparison.Ordinal))
-                        (matches ??= new()).Add(field);
-                return matches?.OrderBy(pair => int.Parse(pair.Key.AsSpan(prefix.Length),
+            static List<int>? CapturedElementIds(List<KeyValuePair<string, int>>? matches, string prefix) =>
+                matches?.OrderBy(pair => int.Parse(pair.Key.AsSpan(prefix.Length),
                     System.Globalization.CultureInfo.InvariantCulture)).Select(pair => pair.Value).ToList();
-            }
             if (np.Fields.TryGetValue("m_useEqualityFormula", out int ueq))
                 Apply(-1004514, StorageType.Integer, ueq); // DIM_DISPLAY_EQ
             if (np.Fields.TryGetValue("m_displayElevation", out int sde))
                 Apply(-1006469, StorageType.Integer, sde); // SPOT_ELEV_DISPLAY_ELEVATIONS
             // DBView stored attributes (0x0E form rules fixed: lo=3 bare u32, containers of ref==20
             // = bare i32s). m_scale is stored as 1/scale (0.005 = 1:200).
-            if (np.DoubleFields.TryGetValue("m_scale", out double sc) && sc > 1e-9 && sc <= 1.0)
+            if (doubleFields.TryGetValue("m_scale", out double sc) && sc > 1e-9 && sc <= 1.0)
             {
                 int scale = (int)Math.Round(1.0 / sc);
                 if (scale >= 1 && scale <= 100000)
                     Apply(-1005150, StorageType.Integer, scale); // VIEW_SCALE
             }
-            if (np.StringFields.TryGetValue("m_viewName", out string? vn) && !string.IsNullOrEmpty(vn))
+            if (stringFields.TryGetValue("m_viewName", out string? vn) && !string.IsNullOrEmpty(vn))
                 Apply(-1005112, StorageType.String, vn); // VIEW_NAME
             if (np.Fields.TryGetValue("m_dbViewTypeId", out int vt) && vt > 0)
                 ApplyType(vt);
@@ -3838,7 +3888,7 @@ internal static partial class ElementBuilder
             if (np.Fields.TryGetValue("m_paramId", out int dlp))
                 Apply(-1004510, StorageType.ElementId, dlp); // DIM_LABEL (global param id, -1 none)
             // Stored per-segment dim values.
-            if (np.DoubleFields.TryGetValue("dimSegSum", out double dsum)
+            if (doubleFields.TryGetValue("dimSegSum", out double dsum)
                 && np.Fields.TryGetValue("dimSegN", out int dn) && dn > 0)
             {
                 Apply(-1006521, StorageType.Double, dsum); // DIM_TOTAL_LENGTH
@@ -3856,6 +3906,17 @@ internal static partial class ElementBuilder
                 Apply(-1005147, StorageType.ElementId, fsp); // VIEW_FIXED_SKETCH_PLANE
             if (np.Fields.TryGetValue("m_bUseTrueNorth", out int tn))
                 Apply(-1005168, StorageType.Integer, tn); // PLAN_VIEW_NORTH
+
+            if (rows.Count > 0)
+            {
+                var snapshot = rows.ToArray();
+                for (int i = 0; i < snapshot.Length; i++)
+                {
+                    originals.Remove(snapshot[i].ParamId, out var original);
+                    snapshot[i] = snapshot[i] with { Original = original };
+                }
+                e.NativeTableAddedParams = snapshot;
+            }
         }
     }
 
@@ -5924,7 +5985,8 @@ internal static partial class ElementBuilder
         }
     }
 
-    public static IReadOnlyDictionary<int, Element> PostProcess(RevitFileInfo rvtInfo, ParsingState? state = null, TextWriter? diag = null)
+    public static IReadOnlyDictionary<int, Element> PostProcess(RevitFileInfo rvtInfo, ParsingState? state = null,
+        TextWriter? diag = null, bool releaseExportData = false)
     {
         ApplyGridDatums(rvtInfo, state);
         rvtInfo.GraphicsStyles = state?.GraphicsStyles
@@ -6471,6 +6533,7 @@ internal static partial class ElementBuilder
             if (ampName != null)
                 paramDefNames[(int)pid] = ampName[1..];
         }
+        if (releaseExportData) state.ElemStrings = [];
         foreach (var e in rvtInfo.Elements)
         {
             foreach (var p in e.Parameters)
@@ -6602,7 +6665,8 @@ internal static partial class ElementBuilder
         ApplyBlockSignatureCategories(rvtInfo, state);
         // Native (schema-deserialized) params land BEFORE the default-emitting passes so
         // authoritative stored values are not blocked by add-if-missing defaults.
-        ApplyNativeParams(rvtInfo, state, elemByIdLookup);
+        // The compact reader resolves zero IDs together with display units after all parameters exist.
+        ApplyNativeParams(rvtInfo, state, elemByIdLookup, deferZeroElementIds: releaseExportData);
         TraceElement(rvtInfo, "after-native");
         if (state != null)
         {
@@ -6749,7 +6813,7 @@ internal static partial class ElementBuilder
         });
         CreateElemTablePlaceholders(rvtInfo, state, elemByIdLookup);
         ApplyHeaderBoundingBoxes(rvtInfo, state);
-        Parameter.ResolveZeroElementIds(rvtInfo, state);
+        if (!releaseExportData) Parameter.ResolveZeroElementIds(rvtInfo, state);
         // NOTE: PropagateFamilyTypeValues remains disabled. The chain rule that works perfectly for
         // instance 0x0702 values (value of entry K belongs to chain[K] = next entry's binKey) does
         // NOT generalize to type-level 0x0725 values.
@@ -6757,7 +6821,7 @@ internal static partial class ElementBuilder
 
         void ApplyParameterAndSketchPasses()
         {
-            var familyDefinitions = new Dictionary<uint, FamilyParameterDefinition>();
+            var familyDefinitions = new Dictionary<uint, Parameter.DefinitionData>();
             PropagateChainPlaceholders(rvtInfo, state, familyDefinitions);
             PropagateTypeElementIdParams(rvtInfo, state, elemByIdLookup);
             PropagateFamilySymbolBlockDoubles(rvtInfo, state, familyDefinitions);
@@ -7661,20 +7725,17 @@ internal static partial class ElementBuilder
         }
     }
 
-    private readonly record struct FamilyParameterDefinition(Parameter.DefinitionData Data, string? ForgeId);
-
-    private static FamilyParameterDefinition FamilyDefinition(uint id, ParsingState state,
-        Dictionary<uint, FamilyParameterDefinition> definitions)
+    private static Parameter.DefinitionData FamilyDefinition(uint id, ParsingState state,
+        Dictionary<uint, Parameter.DefinitionData> definitions)
     {
         if (definitions.TryGetValue(id, out var definition)) return definition;
-        var (data, forgeId) = DefinitionOf(id, state);
-        definition = new(data, forgeId);
+        definition = DefinitionOf(id, state);
         definitions.Add(id, definition);
         return definition;
     }
 
     private static void PropagateFamilySymbolBlockDoubles(RevitFileInfo rvtInfo, ParsingState? state,
-        Dictionary<uint, FamilyParameterDefinition> definitions)
+        Dictionary<uint, Parameter.DefinitionData> definitions)
     {
         if (state == null || state.FamilySymbolBlockDoubles.Count == 0) return;
         var candidates = new List<uint>();
@@ -7701,12 +7762,11 @@ internal static partial class ElementBuilder
                     if (p == null)
                     {
                         var definition = FamilyDefinition(projKey, state, definitions);
-                        e.Parameters.Add(new Parameter(definition.Data)
+                        e.Parameters.Add(new Parameter(definition)
                         {
                             Id = pid,
                             StorageType = StorageType.Double,
                             Value = value,
-                            ForgeId = definition.ForgeId,
                         });
                     }
                     else
@@ -7860,7 +7920,6 @@ internal static partial class ElementBuilder
                     StorageType = definition.Storage,
                     Value = definition.Value,
                     HasNoRevitValue = definition.Placeholder,
-                    ForgeId = definition.ForgeId,
                 });
             }
         }
@@ -7896,12 +7955,12 @@ internal static partial class ElementBuilder
                 else { storage = StorageType.String; value = ""; }
             }
             else (storage, value) = InferTypeFromName(name);
-            return new(new Parameter.DefinitionData(id, name, guid: guid), storage, value, true, forgeId);
+            return new(new Parameter.DefinitionData(id, name, guid: guid, forgeId: forgeId), storage, value, true);
         }
     }
 
     private readonly record struct InheritedTypeParameter(
-        Parameter.DefinitionData Data, StorageType Storage, object Value, bool Placeholder, string? ForgeId = null)
+        Parameter.DefinitionData Data, StorageType Storage, object Value, bool Placeholder)
     {
         internal int Id => Data.Id;
     }
@@ -7999,23 +8058,13 @@ internal static partial class ElementBuilder
                     }
                     continue;
                 }
-                string? forgeId = null, displayName = null;
-                Guid? guid = null;
-                if (state.ForgeParamDefs.TryGetValue(projKey, out var def))
-                { forgeId = def.ForgeId; displayName = def.DisplayName; }
-                if (state.ParamDefGuids.TryGetValue(projKey, out var binGuid)) guid = binGuid;
-                else guid = BipHelpers.ParseGuidFromForgeId(forgeId);
-                e.Parameters.Add(new Parameter
+                e.Parameters.Add(new Parameter(DefinitionOf(projKey, state))
                 {
                     Id = pid,
                     StorageType = value is string ? StorageType.String
                         : value is double ? StorageType.Double
                         : StorageType.None,
                     Value = value,
-                    IsReadOnly = false,
-                    ForgeId = forgeId,
-                    Guid = guid,
-                    Definition = new Definition { Id = pid, Name = displayName },
                 });
             }
         }
@@ -8368,7 +8417,7 @@ internal static partial class ElementBuilder
     /// placeholder.
     /// </summary>
     private static void PropagateChainPlaceholders(RevitFileInfo rvtInfo, ParsingState? state,
-        Dictionary<uint, FamilyParameterDefinition> definitions)
+        Dictionary<uint, Parameter.DefinitionData> definitions)
     {
         if (state == null || state.FamilyParamMaps.Count == 0) return;
         var byType = new Dictionary<uint, InheritedTypeParameter[]>();
@@ -8398,7 +8447,6 @@ internal static partial class ElementBuilder
                         StorageType = st,
                         Value = value,
                         HasNoRevitValue = true,
-                        ForgeId = placeholder.ForgeId,
                     });
                 }
                 else
@@ -8417,8 +8465,7 @@ internal static partial class ElementBuilder
                         if (wasNoRevitValue) existingParam.HasNoRevitValue = true;
                     }
                     // Also fill in missing metadata
-                    existingParam.ForgeId ??= placeholder.ForgeId;
-                    existingParam.UseGuidIfMissing(placeholder.Data);
+                    existingParam.FillMissingExternalIds(placeholder.Data);
                     if (string.IsNullOrEmpty(existingParam.DefinitionName))
                         existingParam.SetDefinitionData(placeholder.Data);
                 }
@@ -8431,7 +8478,7 @@ internal static partial class ElementBuilder
             var definition = FamilyDefinition(id, state, definitions);
             StorageType storage = StorageType.String;
             object value = "";
-            string? spec = definition.ForgeId is { } forgeId ? state.ForgeParamSpecs.GetValueOrDefault(forgeId) : null;
+            string? spec = definition.External?.ForgeId is { } forgeId ? state.ForgeParamSpecs.GetValueOrDefault(forgeId) : null;
             if (spec != null)
             {
                 if (spec.Contains("bool") || spec.Contains("int"))
@@ -8445,7 +8492,7 @@ internal static partial class ElementBuilder
                 else if (spec.Contains("material") || spec.Contains("reference") || spec.Contains("category"))
                 { storage = StorageType.ElementId; value = -1; }
             }
-            else if (definition.Data.Name is { } displayName)
+            else if (definition.Name is { } displayName)
             {
                 // Heuristic by display name (Russian Revit family params)
                 string name = displayName.ToLowerInvariant();
@@ -8467,7 +8514,7 @@ internal static partial class ElementBuilder
                 else if (name.Contains("материал") || name.StartsWith("тип") || name.StartsWith("обозначение "))
                 { storage = StorageType.ElementId; value = -1; }
             }
-            placeholder = new(definition.Data, storage, value, true, definition.ForgeId);
+            placeholder = new(definition, storage, value, true);
             byId.Add(id, placeholder);
             return placeholder;
         }
@@ -8760,31 +8807,28 @@ internal static partial class ElementBuilder
 
     // The field and GUID maps are complete before building elements in parallel. Share the
     // immutable metadata, not the Parameter or its publicly editable Definition.
-    internal static Dictionary<uint, (Parameter.DefinitionData, string?)> ReaderParameterDefinitions(ParsingState state)
+    internal static Dictionary<uint, Parameter.DefinitionData> ReaderParameterDefinitions(ParsingState state)
     {
-        var definitions = new Dictionary<uint, (Parameter.DefinitionData, string?)>(state.ForgeParamDefs.Count);
+        var definitions = new Dictionary<uint, Parameter.DefinitionData>(state.ForgeParamDefs.Count);
         foreach (uint id in state.ForgeParamDefs.Keys) definitions.Add(id, ReadDefinition(id, state));
         foreach (var (id, guid) in state.ParamDefGuids)
-            if (!definitions.ContainsKey(id)) definitions.Add(id, (new((int)id, null, guid: guid), null));
+            if (!definitions.ContainsKey(id)) definitions.Add(id, new((int)id, null, guid: guid));
         return definitions;
     }
 
-    private static (Parameter.DefinitionData, string?) ReadDefinition(uint id, ParsingState state)
+    private static Parameter.DefinitionData ReadDefinition(uint id, ParsingState state)
     {
         var (forgeId, name) = state.ForgeParamDefs.GetValueOrDefault(id);
         Guid? guid = state.ParamDefGuids.TryGetValue(id, out var stored) ? stored : BipHelpers.ParseGuidFromForgeId(forgeId);
-        return (new((int)id, name, guid: guid), forgeId);
+        return new((int)id, name, guid: guid, forgeId: forgeId);
     }
 
-    private static (Parameter.DefinitionData, string?) DefinitionOf(uint id, ParsingState state) =>
+    private static Parameter.DefinitionData DefinitionOf(uint id, ParsingState state) =>
         state.ReaderParameterDefinitions?.TryGetValue(id, out var definition) == true
             ? definition : ReadDefinition(id, state);
 
-    private static Parameter CreateUserParameter(uint id, ParsingState state)
-    {
-        var (data, forgeId) = DefinitionOf(id, state);
-        return new Parameter(data) { Id = (int)id, ForgeId = forgeId };
-    }
+    private static Parameter CreateUserParameter(uint id, ParsingState state) =>
+        new(DefinitionOf(id, state)) { Id = (int)id };
 
     private static void AddBodyBipParams(Element elem, ElementRecord rec, uint elemId, ParsingState state, HashSet<int> seenIds)
     {
