@@ -328,16 +328,16 @@ public class MetadataInventoryTests
                 basicFileInfoText:
                     "Worksharing: Central\r\n" +
                     "Username: alice_ivanova\r\n" +
-                    "Central Model Path: \\\\corp-fileserver\\BIM\\alice_ivanova\\Центр.rvt\r\n" +
+                    "Central Model Path: \\\\corp-fileserver\\BIM\\alice_ivanova\\Анна Смирнова\\Центр.rvt\r\n" +
                     "Format: 2024\r\n" +
                     "Build: 20240101_1500(x64)\r\n" +
-                    "Last Save Path: C:\\Users\\alice_ivanova\\OneDrive - Acme Corp\\Документы\\Модель \"А\", ч.2.rvt\r\n" +
+                    "Last Save Path: C:\\Users\\alice_ivanova\\OneDrive - Acme Corp\\Мария Сидорова\\Документы\\Модель \"А\", ч.2.rvt\r\n" +
                     "Locale when saved: RUS\r\n" +
                     "Author: Мария Сидорова\r\n",
                 projectXml:
                     "<?xml version=\"1.0\" encoding=\"UTF-8\"?><entry><title>Проект \"Альфа\", 1</title><updated>2026-03-10T08:30:00Z</updated>" +
                     "<Наименование_проекта>ЖК \"Север\"</Наименование_проекта>" +
-                    "<Разработал>Мария Сидорова</Разработал>" +
+                    "<Разработал>Анна Смирнова</Разработал>" +
                     "<Заказчик>bob@example.com</Заказчик></entry>",
                 transmissionData: BuildTransmissionDataBytes("alice_ivanova", @"C:\Users\alice_ivanova\Links\Ось.rvt"));
 
@@ -361,16 +361,164 @@ public class MetadataInventoryTests
             Assert.DoesNotContain("alice_ivanova", redacted.FileName, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("alice_ivanova", redacted.LastSavePath, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("Acme Corp", redacted.LastSavePath, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("Мария Сидорова", redacted.LastSavePath, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("corp-fileserver", redacted.CentralModelPath, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("alice_ivanova", redacted.CentralModelPath, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("Анна Смирнова", redacted.CentralModelPath, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("alice_ivanova", redacted.TransmissionData.ExternalReferences[0].Path, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("alice_ivanova", redacted.BasicFileInfoFields["Username"], StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("Мария Сидорова", redacted.BasicFileInfoFields["Author"], StringComparison.OrdinalIgnoreCase);
             Assert.Contains("Документы", redacted.LastSavePath);
+            Assert.Equal("$&", raw.Redact("$&").ProjectInfo.Client);
         }
         finally
         {
             Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public void ReadMetadata_PreservesSupplementaryCharacters()
+    {
+        var dir = Directory.CreateTempSubdirectory("rvtio-info-unicode-");
+        try
+        {
+            string input = Path.Combine(dir.FullName, "model.rvt");
+            const string username = "Before\U0001F600After";
+            CreateSyntheticRevitFile(input, isFamily: false, basicFileInfoText: $"Username: {username}\r\nFormat: 2023\r\n");
+
+            var summary = new RvtFileReader().ReadMetadata(input);
+
+            Assert.Equal(username, summary.Username);
+            Assert.Equal("2023", summary.RevitVersion);
+        }
+        finally { dir.Delete(recursive: true); }
+    }
+
+    [Theory]
+    [InlineData(16)]
+    [InlineData(int.MaxValue)]
+    public void CliInfo_DistinguishesDamagedTransmissionDataFromNoLinks(int declaredLength)
+    {
+        var dir = Directory.CreateTempSubdirectory("rvtio-info-transmission-");
+        try
+        {
+            string broken = Path.Combine(dir.FullName, "broken.rvt");
+            byte[] truncated = new byte[8];
+            BitConverter.GetBytes(declaredLength).CopyTo(truncated, 0);
+            CreateSyntheticRevitFile(broken, isFamily: false, basicFileInfoText: "Format: 2023\r\n", transmissionData: truncated);
+            string good = Path.Combine(dir.FullName, "good.rvt");
+            CreateSyntheticRevitFile(good, isFamily: false, basicFileInfoText: "Format: 2023\r\n",
+                transmissionData: BuildTransmissionDataBytes(""));
+            using (var stream = File.OpenRead(broken))
+            using (var container = RootStorage.Open(stream, StorageModeFlags.LeaveOpen))
+                Assert.Null(Parsing.TransmissionDataReader.Read(container));
+            var output = new StringWriter();
+
+            int exitCode = InfoCommand.Run([dir.FullName, "--json"], output, TextWriter.Null);
+
+            Assert.Equal(RvtExitCodes.InputError, exitCode);
+            using var report = JsonDocument.Parse(output.ToString());
+            var rows = report.RootElement.GetProperty("files");
+            Assert.Equal("broken.rvt", rows[0].GetProperty("fileName").GetString());
+            Assert.Equal("error", rows[0].GetProperty("status").GetString());
+            Assert.Equal("truncated-or-damaged", rows[0].GetProperty("errorKind").GetString());
+            Assert.Contains("TransmissionData", rows[0].GetProperty("error").GetString());
+            Assert.Equal("ok", rows[1].GetProperty("status").GetString());
+        }
+        finally { dir.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public void CliInfo_FolderOutputCannotReplaceAnInputModel()
+    {
+        var dir = Directory.CreateTempSubdirectory("rvtio-info-collision-");
+        try
+        {
+            string input = Path.Combine(dir.FullName, "model.rvt");
+            CreateSyntheticRevitFile(input, isFamily: false, basicFileInfoText: "Format: 2023\r\n");
+            byte[] original = File.ReadAllBytes(input);
+            var error = new StringWriter();
+
+            int exitCode = InfoCommand.Run([dir.FullName, "--json", "--output", input], TextWriter.Null, error);
+
+            Assert.Equal(RvtExitCodes.Usage, exitCode);
+            Assert.Contains("output path is an input file", error.ToString());
+            Assert.Equal(original, File.ReadAllBytes(input));
+        }
+        finally { dir.Delete(recursive: true); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CliInfo_RedactsFileNamesInReadErrors(bool fileExists)
+    {
+        var dir = Directory.CreateTempSubdirectory("rvtio-info-error-");
+        try
+        {
+            const string email = "probe.author@example.test";
+            string input = Path.Combine(dir.FullName, email + ".rvt");
+            if (fileExists) File.WriteAllText(input, "Invalid CFB file");
+            var error = new StringWriter();
+
+            int exitCode = InfoCommand.Run([input, "--redact"], TextWriter.Null, error);
+
+            Assert.Equal(RvtExitCodes.InputError, exitCode);
+            Assert.StartsWith("Cannot read <redacted>", error.ToString());
+            Assert.DoesNotContain(email, error.ToString(), StringComparison.OrdinalIgnoreCase);
+        }
+        finally { dir.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public void CliInfo_RedactsFileNamesInWriteErrors()
+    {
+        var dir = Directory.CreateTempSubdirectory("rvtio-info-output-error-");
+        try
+        {
+            string input = Path.Combine(dir.FullName, "model.rvt");
+            CreateSyntheticRevitFile(input, isFamily: false, basicFileInfoText: "Format: 2023\r\n");
+            const string email = "probe.author@example.test";
+            string output = Path.Combine(dir.FullName, email + ".json");
+            Directory.CreateDirectory(output);
+            var error = new StringWriter();
+
+            int exitCode = InfoCommand.Run([input, "--output", output, "--redact"], TextWriter.Null, error);
+
+            Assert.Equal(RvtExitCodes.Usage, exitCode);
+            Assert.StartsWith("Cannot write ", error.ToString());
+            Assert.DoesNotContain(email, error.ToString(), StringComparison.OrdinalIgnoreCase);
+        }
+        finally { dir.Delete(recursive: true); }
+    }
+
+    [SkippableFact]
+    public void CliInfo_DoesNotTraverseDirectoryLinks()
+    {
+        var root = Directory.CreateTempSubdirectory("rvtio-info-linked-");
+        string inventory = Path.Combine(root.FullName, "inventory");
+        string outside = Path.Combine(root.FullName, "outside");
+        string link = Path.Combine(inventory, "link");
+        try
+        {
+            Directory.CreateDirectory(inventory);
+            Directory.CreateDirectory(outside);
+            CreateSyntheticRevitFile(Path.Combine(outside, "outside.rvt"), isFamily: false, basicFileInfoText: "Format: 2023\r\n");
+            if (OperatingSystem.IsWindows()) ExportReportTests.Junction(link, outside);
+            else ExportReportTests.DirectorySymlink(link, outside);
+            var output = new StringWriter();
+
+            int exitCode = InfoCommand.Run([inventory, "--json"], output, TextWriter.Null);
+
+            Assert.Equal(RvtExitCodes.Success, exitCode);
+            using var report = JsonDocument.Parse(output.ToString());
+            Assert.Empty(report.RootElement.GetProperty("files").EnumerateArray());
+        }
+        finally
+        {
+            if (Directory.Exists(link)) Directory.Delete(link);
+            root.Delete(recursive: true);
         }
     }
 

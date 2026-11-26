@@ -70,7 +70,7 @@ public class ExportReportTests
     }
 
     // mklink /J needs no privilege; the junction is removed without touching its target.
-    private static string Junction(string link, string target)
+    internal static string Junction(string link, string target)
     {
         if (!OperatingSystem.IsWindows()) throw new SkipException("junctions exist on Windows only");
         var start = new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c mklink /J \"{link}\" \"{target}\"") { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
@@ -82,7 +82,7 @@ public class ExportReportTests
         return link;
     }
 
-    private static string DirectorySymlink(string link, string target)
+    internal static string DirectorySymlink(string link, string target)
     {
         try { Directory.CreateSymbolicLink(link, target); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { throw new SkipException("symbolic links cannot be created here"); }

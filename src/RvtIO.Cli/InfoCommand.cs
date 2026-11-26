@@ -19,6 +19,12 @@ internal static partial class InfoCommand
 {
     private static readonly string[] RevitExtensions = [".rvt", ".rfa", ".rte", ".rft"];
 
+    private static readonly EnumerationOptions ChildDirectoryOptions = new()
+    {
+        AttributesToSkip = FileAttributes.ReparsePoint,
+        IgnoreInaccessible = false,
+    };
+
     private static readonly JsonSerializerOptions CompactJsonOptions = new()
     {
         WriteIndented = false,
@@ -186,9 +192,8 @@ internal static partial class InfoCommand
         if (File.Exists(targetPath))
             return RunSingleFile(targetPath, outputPath, effectiveFormat, reader, metadataOptions, output, error);
 
-        string missingMsg = $"'{targetPath}' does not exist.";
-        if (redact) missingMsg = RvtPiiRedactor.RedactText(missingMsg, metadataOptions.RedactionToken, RvtPiiRedactor.CollectSensitiveTokens(targetPath)) ?? missingMsg;
-        error.WriteLine($"Cannot read {Path.GetFileName(targetPath)}: {missingMsg}");
+        error.WriteLine(RedactPathText($"Cannot read {Path.GetFileName(targetPath)}: '{targetPath}' does not exist.",
+            targetPath, metadataOptions));
         return RvtExitCodes.InputError;
     }
 
@@ -208,18 +213,12 @@ internal static partial class InfoCommand
         }
         catch (RvtInputException exception)
         {
-            string msg = options.RedactPersonalData
-                ? RvtPiiRedactor.RedactText(exception.Message, options.RedactionToken, RvtPiiRedactor.CollectSensitiveTokens(filePath)) ?? exception.Message
-                : exception.Message;
-            error.WriteLine($"Cannot read {Path.GetFileName(filePath)}: {msg}");
+            error.WriteLine(RedactPathText($"Cannot read {Path.GetFileName(filePath)}: {exception.Message}", filePath, options));
             return RvtExitCodes.InputError;
         }
         catch (RvtLimitException exception)
         {
-            string msg = options.RedactPersonalData
-                ? RvtPiiRedactor.RedactText(exception.Message, options.RedactionToken, RvtPiiRedactor.CollectSensitiveTokens(filePath)) ?? exception.Message
-                : exception.Message;
-            error.WriteLine($"Cannot read {Path.GetFileName(filePath)}: {msg}");
+            error.WriteLine(RedactPathText($"Cannot read {Path.GetFileName(filePath)}: {exception.Message}", filePath, options));
             return RvtExitCodes.LimitExceeded;
         }
 
@@ -232,7 +231,7 @@ internal static partial class InfoCommand
             _ => RenderSingleText(row),
         };
 
-        return WriteOutput(rendered, outputPath, output, error, RvtExitCodes.Success);
+        return WriteOutput(rendered, outputPath, options, output, error, RvtExitCodes.Success);
     }
 
     private static int RunDirectory(
@@ -248,6 +247,11 @@ internal static partial class InfoCommand
         var files = new List<string>();
         var enumerationErrors = new List<string>();
         CollectRevitFiles(directoryPath, recursive, files, enumerationErrors);
+        if (outputPath != null && files.Any(file => FileIdentity.SameFile(file, outputPath)))
+        {
+            error.WriteLine("The output path is an input file. Nothing was read or written.");
+            return RvtExitCodes.Usage;
+        }
         files.Sort(StringComparer.OrdinalIgnoreCase);
 
         var rows = new List<InventoryRow>(files.Count);
@@ -255,16 +259,10 @@ internal static partial class InfoCommand
         bool hasLimitError = false;
 
         foreach (string enumErr in enumerationErrors)
-        {
-            string msg = options.RedactPersonalData
-                ? RvtPiiRedactor.RedactText(enumErr, options.RedactionToken, RvtPiiRedactor.CollectSensitiveTokens(directoryPath)) ?? enumErr
-                : enumErr;
-            error.WriteLine(msg);
-        }
+            error.WriteLine(RedactPathText(enumErr, directoryPath, options));
 
         foreach (string file in files)
         {
-            if (outputPath != null && FileIdentity.SameFile(file, outputPath)) continue;
             try
             {
                 var summary = reader.ReadMetadata(file, options);
@@ -289,9 +287,7 @@ internal static partial class InfoCommand
 
         int failed = rows.Count(r => r.Status != "ok");
         int succeeded = rows.Count - failed;
-        string displayDir = options.RedactPersonalData
-            ? RvtPiiRedactor.RedactText(directoryPath, options.RedactionToken, RvtPiiRedactor.CollectSensitiveTokens(directoryPath)) ?? directoryPath
-            : directoryPath;
+        string displayDir = RedactPathText(directoryPath, directoryPath, options);
 
         string rendered = format switch
         {
@@ -313,7 +309,7 @@ internal static partial class InfoCommand
             ? RvtExitCodes.InputError
             : hasLimitError ? RvtExitCodes.LimitExceeded : RvtExitCodes.Success;
 
-        int writeResult = WriteOutput(rendered, outputPath, output, error, finalExit);
+        int writeResult = WriteOutput(rendered, outputPath, options, output, error, finalExit);
         if (writeResult != finalExit) return writeResult;
 
         if (rows.Count == 0)
@@ -331,10 +327,14 @@ internal static partial class InfoCommand
         while (pending.Count > 0)
         {
             string current = pending.Pop();
-            IEnumerable<string> entries;
             try
             {
-                entries = Directory.EnumerateFiles(current);
+                foreach (string file in Directory.EnumerateFiles(current))
+                {
+                    string ext = Path.GetExtension(file);
+                    if (RevitExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase))
+                        results.Add(file);
+                }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -342,17 +342,10 @@ internal static partial class InfoCommand
                 continue;
             }
 
-            foreach (string file in entries)
-            {
-                string ext = System.IO.Path.GetExtension(file);
-                if (RevitExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase))
-                    results.Add(file);
-            }
-
             if (!recursive) continue;
             try
             {
-                foreach (string sub in Directory.EnumerateDirectories(current))
+                foreach (string sub in Directory.EnumerateDirectories(current, "*", ChildDirectoryOptions))
                     pending.Push(sub);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -589,7 +582,13 @@ internal static partial class InfoCommand
         return sb.ToString().TrimEnd();
     }
 
-    private static int WriteOutput(string payload, string? outputPath, TextWriter output, TextWriter error, int exitCode)
+    private static string RedactPathText(string text, string path, RvtMetadataOptions options) =>
+        options.RedactPersonalData
+            ? RvtPiiRedactor.RedactText(text, options.RedactionToken, RvtPiiRedactor.CollectSensitiveTokens(path))!
+            : text;
+
+    private static int WriteOutput(string payload, string? outputPath, RvtMetadataOptions options, TextWriter output,
+        TextWriter error, int exitCode)
     {
         if (outputPath == null)
         {
@@ -610,7 +609,7 @@ internal static partial class InfoCommand
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
         {
             if (File.Exists(temporary)) File.Delete(temporary);
-            error.WriteLine($"Cannot write {outputPath}: {exception.Message}");
+            error.WriteLine(RedactPathText($"Cannot write {outputPath}: {exception.Message}", outputPath, options));
             return RvtExitCodes.Usage;
         }
     }

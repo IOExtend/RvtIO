@@ -51,6 +51,13 @@ internal static partial class BasicFileInfoReader
             for (int i = parity; i < data.Length - 1; i += 2)
             {
                 char ch = (char)(data[i] | (data[i + 1] << 8));
+                if (char.IsHighSurrogate(ch) && i + 3 < data.Length
+                    && char.IsLowSurrogate((char)(data[i + 2] | (data[i + 3] << 8))))
+                {
+                    if (runStart < 0) runStart = i;
+                    i += 2;
+                    continue;
+                }
                 bool isText = ch is '\t' or '\r' or '\n'
                     || (ch >= 0x20 && ch < 0xFFFE && !char.IsControl(ch) && !char.IsSurrogate(ch));
                 if (isText) { if (runStart < 0) runStart = i; }

@@ -23,6 +23,8 @@ internal static partial class RvtPiiRedactor
     {
         var sensitiveTokens = CollectSensitiveTokens(
             summary.Username,
+            summary.Author,
+            summary.ProjectInfo.Author,
             summary.TransmissionData?.UserData,
             summary.FilePath,
             summary.LastSavePath,
@@ -33,7 +35,7 @@ internal static partial class RvtPiiRedactor
         string? lastSavePath = RedactText(summary.LastSavePath, token, sensitiveTokens);
         string? centralModelPath = RedactText(summary.CentralModelPath, token, sensitiveTokens);
         string? username = RedactUsernameField(summary.Username, token);
-        string? author = RedactAuthorField(summary.Author, token, sensitiveTokens);
+        string? author = RedactAuthorField(summary.Author, token);
 
         var metadata = new FileMetadata
         {
@@ -56,7 +58,7 @@ internal static partial class RvtPiiRedactor
             IssueDate = RedactText(summary.ProjectInfo.IssueDate, token, sensitiveTokens),
             Title = RedactText(summary.ProjectInfo.Title, token, sensitiveTokens),
             RevitVersion = summary.ProjectInfo.RevitVersion,
-            Author = RedactAuthorField(summary.ProjectInfo.Author, token, sensitiveTokens),
+            Author = RedactAuthorField(summary.ProjectInfo.Author, token),
             BuildingName = RedactText(summary.ProjectInfo.BuildingName, token, sensitiveTokens),
             OrganizationName = RedactText(summary.ProjectInfo.OrganizationName, token, sensitiveTokens),
         };
@@ -91,7 +93,7 @@ internal static partial class RvtPiiRedactor
             }
             else if (string.Equals(key, "Author", StringComparison.OrdinalIgnoreCase))
             {
-                redactedFields[key] = RedactAuthorField(value, token, sensitiveTokens) ?? "";
+                redactedFields[key] = RedactAuthorField(value, token) ?? "";
             }
             else
             {
@@ -190,16 +192,16 @@ internal static partial class RvtPiiRedactor
             char sep = root.Length > 0 && (root[0] == '\\' || root.Contains('\\')) ? '\\' : '/';
             return $"{drive}{root}{sep}{token}";
         });
-        result = OneDriveTenant().Replace(result, $"$1{token}");
-        result = UncHost().Replace(result, $"$1{token}");
-        result = EmailAddress().Replace(result, token);
+        result = OneDriveTenant().Replace(result, match => match.Groups[1].Value + token);
+        result = UncHost().Replace(result, match => match.Groups[1].Value + token);
+        result = EmailAddress().Replace(result, _ => token);
         if (extraTokens is { Count: > 0 })
         {
             foreach (string rawToken in extraTokens)
             {
                 if (string.Equals(rawToken, token, StringComparison.OrdinalIgnoreCase)) continue;
                 string pattern = $@"(?<![\p{{L}}\p{{N}}]){Regex.Escape(rawToken)}(?![\p{{L}}\p{{N}}])";
-                result = Regex.Replace(result, pattern, token, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                result = Regex.Replace(result, pattern, _ => token, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
             }
         }
         return result;
@@ -208,14 +210,13 @@ internal static partial class RvtPiiRedactor
     private static string? RedactUsernameField(string? value, string token) =>
         string.IsNullOrWhiteSpace(value) ? value : token;
 
-    private static string? RedactAuthorField(string? value, string token, IReadOnlyList<string> sensitiveTokens)
+    private static string? RedactAuthorField(string? value, string token)
     {
         if (string.IsNullOrWhiteSpace(value)) return value;
         string trimmed = value.Trim();
         if (trimmed.Equals("Autodesk Revit", StringComparison.OrdinalIgnoreCase)
             || trimmed.Equals("Autodesk", StringComparison.OrdinalIgnoreCase))
             return value;
-        _ = sensitiveTokens;
         return token;
     }
 
