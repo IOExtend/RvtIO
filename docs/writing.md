@@ -235,7 +235,9 @@ Low-level `Rewrite` accepts raw stream or record payloads and does not perform p
 ### Wall unconnected height
 
 RvtIO verifies the wall body, bounds, and saved face references before applying a height edit. The wall must be in
-the main model with both end joins disabled and room bounding turned off. A wall with a verified rectangular
+the main model. Room Bounding can be enabled when the project has no rooms, spaces, areas, or saved spatial
+topology. For a project with a single wall, an end can allow joins if the stored join and healing records are
+empty. With multiple walls, both end joins must be disabled on the edited wall. A wall with a verified rectangular
 opening can retain its cut as its height changes. RvtIO also rebuilds verified cut transitions for one or two
 separated rectangular openings. This covers paths across the sill and head, activation of a dormant opening,
 and removal of a cut. When Revit would add or remove an opening warning, the writer updates its records and
@@ -243,7 +245,7 @@ registries in the same batch. [Autodesk built-in parameter reference](https://he
 
 Pass a finite length of at least `0.1 ft` in `mm`, `cm`, `m`, `in`, or `ft`. Revit exposes the parameter as
 read-only on the tested level-constrained walls. RvtIO also refuses ambiguous positions near a cut boundary,
-unverified dependents such as dimensioned or room-bounding walls, and unverified joins and geometry.
+unverified dependencies such as a dimension or room topology, and unverified joins and geometry.
 
 ## Editing a standalone family
 
@@ -832,12 +834,25 @@ quantities, and, for the cut transitions, face references and warnings. They ran
 Revit 2027 upgraded and verified the files in the 2026 format. All 59 refused batches preserved their source
 files and produced no destination.
 
+Additional wall-height checks covered a single wall allowing both end joins, the same wall with a rectangular
+opening, and a wall with Room Bounding and both ends disallowed in a multi-wall project with empty spatial
+topology. Revit 2020–2025 and 2027 matched the API controls for height, bounds, area, volume, joins, and opening
+count after opening, saving, and reopening without Audit. Revit 2027 also verified upgraded 2026-format files.
+Batches containing a later clear or invalid height left the source byte-for-byte intact and wrote no output.
+The Revit 2025 controls showed that a wall can form a new join at the same plan endpoints when its height reaches
+a wall above it, and that an unoccupied saved circuit can still modify a spatial plan. RvtIO refused batches
+with those dependencies, as well as existing joins and room boundaries.
+In a closed footprint with no saved plan, Revit 2025 also confirmed a reduction to `0.5 ft` after saving and
+reopening without Audit. At that height the API quantities matched and the saved `GInfo.m_controlCommand` flags
+of five curves differed from those written by Revit. The flags also differed on a short wall with Room Bounding
+disabled.
+
 ## Remaining parameter coverage
 
 | Case | Current boundary |
 | --- | --- |
 | Read-only values | Revit API rejects assignments to parameters such as computed wall area. RvtIO also rejects these assignments. |
-| Wall Unconnected Height | RvtIO supports the verified straight wall and rectangular opening cases above. Joined walls, walls that bound rooms, other host cuts, constrained geometry, and changes through unverified cut boundaries still require coverage. A level-constrained top is read-only through the tested Revit API. |
+| Wall Unconnected Height | RvtIO supports the verified straight wall and rectangular opening cases above, including a single wall with joins allowed and Room Bounding when there is no saved spatial context. Joined walls, walls that can form a new join, changes affecting spatial topology, other host cuts, and constrained geometry still require coverage. A level-constrained top is read-only through the tested Revit API. |
 | Clearing an RVT value | Revit API `ClearValue()` requires a shared definition with `HideWhenNoValue`. RvtIO also checks the binding and stored value layout. |
 | Additional writable RVT built-ins and element classes | The RVT parameter writer supports the combinations in the table above. Other built-in fields, loaded family categories, and layouts beyond verified directly linked derived symbols still require coverage. |
 | Additional built-ins in standalone families | The verified Generic Model, Door, Window, and Furniture fields are listed above. Other built-ins, other family categories, and selecting an unnamed family type still require coverage. |

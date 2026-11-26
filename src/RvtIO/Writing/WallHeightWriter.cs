@@ -24,7 +24,11 @@ internal static partial class WallHeightWriter
         SchemaDocument schema, IReadOnlySet<long> elementIds, ParameterWriter.Edit edit, ParameterWriter.Pending pending)
     {
         var walker = new WideBlockWalker(schema, CaptureKey, []);
-        var headerWalker = new WideBlockWalker(schema, (c, f) => c.Name is "ElementParents" or "ElementRegenerationInfo"
+        var headerWalker = new WideBlockWalker(schema, (c, f) =>
+            c.Name is "ElementParents" or "ElementRegenerationInfo" or "ClassDefinitionRef"
+            || (c.Name, f.Name) is ("ElementHeader", "m_categroryId") ? CaptureKey(c, f) : null, []);
+        var planWalker = new WideBlockWalker(schema, (c, f) =>
+            (c.Name, f.Name) is ("AreaPlanTopologiesInterface", "m_pSet") or ("PlanTopologies", "m_set")
             ? CaptureKey(c, f) : null, []);
         var records = new Dictionary<int, (int Partition, byte[] Body)>();
         var openingRecords = new Dictionary<long, byte[]?>();
@@ -34,6 +38,8 @@ internal static partial class WallHeightWriter
         var warnings = new List<byte[]>();
         ulong highestStoredOwner = 0;
         bool incompleteDependencies = false;
+        bool hasSpatialContext = false;
+        bool hasOtherWall = false;
         ulong owner = (ulong)edit.ElementId;
         ulong terminator = idWidth == sizeof(long) ? ulong.MaxValue : uint.MaxValue;
         ParameterWriter.ScanPartitions(root, tags, idWidth, (partition, record) =>
@@ -52,10 +58,32 @@ internal static partial class WallHeightWriter
                 var header = headerWalker.Run(record.Body.ToArray(), 0, record.Body.Length, classTag);
                 if (name != "ElementHeader" || !header.Exact)
                     incompleteDependencies = true;
-                else if (header.Captures.Any(c => c.Kind == WideBlockWalker.CaptureKind.Integer && c.Integer == edit.ElementId
-                    && (c.DeclaringClass == "ElementParents" && c.Key.Contains('@')
-                        || c.DeclaringClass == "ElementRegenerationInfo" && c.Field == "m_otherElementId")))
-                    related.Add(record.Owner);
+                else
+                {
+                    long? category = UserParameterWriter.Integer(header, All + "ElementHeader.m_categroryId");
+                    hasSpatialContext |= category is null or (int)BuiltInCategory.OST_Rooms or (int)BuiltInCategory.OST_MEPSpaces
+                        or (int)BuiltInCategory.OST_Areas;
+                    if (!hasOtherWall && category is null or (int)BuiltInCategory.OST_Walls)
+                    {
+                        long? elementClass = UserParameterWriter.Integer(header, All + "ClassDefinitionRef.m_ref");
+                        hasOtherWall |= elementClass is not (>= 0 and <= ushort.MaxValue and long tag)
+                            || !walker.IsA((int)tag, "WallType");
+                    }
+                    if (header.Captures.Any(c => c.Kind == WideBlockWalker.CaptureKind.Integer && c.Integer == edit.ElementId
+                        && (c.DeclaringClass == "ElementParents" && c.Key.Contains('@')
+                            || c.DeclaringClass == "ElementRegenerationInfo" && c.Field == "m_otherElementId")))
+                        related.Add(record.Owner);
+                }
+            }
+            if (record.Channel == ElementChannel)
+            {
+                hasOtherWall = hasOtherWall || (record.Owner != owner && (name is null || walker.IsA(classTag, "VWall")));
+                hasSpatialContext |= name is null or "LevelRoomPlan" or "EnergyAnalysisSpaceElem";
+                if (!hasSpatialContext && walker.IsA(classTag, "AreaPlanTopologiesInterface"))
+                {
+                    var body = record.Body.ToArray();
+                    hasSpatialContext = !HasEmptyPlanTopologies(planWalker.Run(body, 0, body.Length, classTag), planWalker);
+                }
             }
             if (record.Channel == ElementChannel && elementIds.Contains((long)record.Owner))
             {
@@ -83,8 +111,10 @@ internal static partial class WallHeightWriter
         if (topConstraint > 0)
             throw new RvtWriteRefusedException("read-only-parameter", "A level constrains the top of the wall.");
         GlobalParameterWriter.VerifyElementParameter(walker, wall.Walk, idWidth, elementIds, globals, edit.ParameterId);
+        long roomBounding = wall.Integer(-1, "HostObj.m_roomBounding");
         if (topConstraint != -1 || wall.Walk.Queue.Any(tag => walker.IsA(tag, "GroupMembership"))
-            || wall.Integer(-1, "HostObj.m_roomBounding") != 0 || wall.Integer(-1, "Element.m_constrInfo#") != 0
+            || roomBounding is not (0 or 1) || (roomBounding == 1 && hasSpatialContext)
+            || wall.Integer(-1, "Element.m_constrInfo#") != 0
             || wall.Integer(-1, "VWall.m_embeddedTo#") != 0 || wall.Integer(-1, "VWall.m_isStructuralSignificant") != 0
             || incompleteDependencies)
             throw ParameterWriter.Unverified("The wall has dependencies that have not been verified for height changes.");
@@ -126,7 +156,7 @@ internal static partial class WallHeightWriter
             throw Layout();
         if (geometry.Integer(-1, idWidth == sizeof(long) ? "GRep.m_elementId" : "GInfo.m_tag") != edit.ElementId)
             throw Layout();
-        ResizeReferencePlanes(wall, interval, openings.Count);
+        ResizeReferencePlanes(wall, interval, openings.Count, hasOtherWall);
         byte[] faceTopology = ResizeGeometry(geometry, interval, openings);
         int[] topologyNodes = wall.Nodes("GeometryTopology").ToArray();
         if (topologyNodes.Length != 2)
@@ -364,11 +394,25 @@ internal static partial class WallHeightWriter
     internal readonly record struct OpeningInterval(int Step, double Left, double Right, double Bottom, double Top,
         OpeningCut Cut, OpeningCut Destination);
 
-    private static void ResizeReferencePlanes(Archive wall, HeightInterval height, int openingCount)
+    internal static bool HasEmptyPlanTopologies(WideBlockWalker.Walk walk, WideBlockWalker walker)
+    {
+        if (!walk.Exact || walk.EmptyEntityAt >= 0 || walk.Captures.Where(c =>
+            c.QueueIndex == -1 && c.Key == All + "AreaPlanTopologiesInterface.m_pSet").ToArray()
+            is not [{ Kind: WideBlockWalker.CaptureKind.PointerClass, QueuePosition: >= 0 and int set, Integer: var tag }]
+            || set >= walk.Queue.Count || walk.Queue[set] != tag || walker.Class((int)tag)?.Name != "PlanTopologies")
+            return false;
+        return UserParameterWriter.Integer(walk, All + "PlanTopologies.m_set#", set) == 0;
+    }
+
+    private static void ResizeReferencePlanes(Archive wall, HeightInterval height, int openingCount, bool hasOtherWall)
     {
         int driver = wall.Target(-1, "VWall.m_pCurveDriver", "VWallDriver");
         _ = wall.Target(driver, "CurveDriver.m_pCrv", "GLine");
-        if (wall.Integer(driver, "VWallDriver.m_noJoinAtEnd@0") != 1 || wall.Integer(driver, "VWallDriver.m_noJoinAtEnd@1") != 1
+        long startJoinDisabled = wall.Integer(driver, "VWallDriver.m_noJoinAtEnd@0");
+        long endJoinDisabled = wall.Integer(driver, "VWallDriver.m_noJoinAtEnd@1");
+        bool allowsEndJoins = startJoinDisabled == 0 || endJoinDisabled == 0;
+        // Extending a wall into the elevation of another wall can create a join at unchanged plan endpoints.
+        if (startJoinDisabled is not (0 or 1) || endJoinDisabled is not (0 or 1) || (allowsEndJoins && hasOtherWall)
             || wall.Integer(driver, "CurveDriver.m_sideJoins#") != 0 || wall.Integer(driver, "CurveDriver.m_controlJoinsSet#") != 0
             || wall.Integer(driver, "CurveDriver.m_sideAlignments#") != 0 || wall.Integer(-1, "VWall.m_pRefFaces#") != 4
             || wall.Integer(-1, "VWall.m_oDefiningFaceRefs") != 0 || wall.Integer(-1, "HostObj.m_oGeomToElemMap") != 0
@@ -383,7 +427,12 @@ internal static partial class WallHeightWriter
         _ = wall.Target(steps, "GeomStepList.m_bRepFormGList@0", "BaseWallGStep");
         _ = wall.Target(steps, "GeomStepList.m_bRepAdjustGList@0", "VerticalExtensionOfLayersGStep");
         _ = wall.Target(steps, "GeomStepList.m_nonBRepGList@0", "WallRefPlanesGStep");
-        _ = wall.Target(steps, "GeomStepList.m_bRepTweakGList@0", "WallJoinTweakGStep");
+        int join = wall.Target(steps, "GeomStepList.m_bRepTweakGList@0", "WallJoinTweakGStep");
+        if (allowsEndJoins && (wall.Integer(driver, "VWallDriver.m_noJoinAtMidEnds#") != 0
+            || wall.Integer(join, "WallJoinTweakGStep.m_affectedEdgesTags#") != 0
+            || wall.Integer(join, "WallJoinTweakGStep.m_idGeomJoined#") != 0
+            || wall.Integer(join, "WallJoinTweakGStep.m_healingParents#") != 0))
+            throw Layout();
         _ = wall.Target(steps, "GeomStepList.m_bRepTweakGList@1", "VCWSplitFaceGStep");
         if (wall.Nodes("GeometryTopology").Any(q => wall.Integer(q, "GBRep.m_pFaces#") != 0
                 || wall.Integer(q, "Geometry.m_pEdges#") != 0
