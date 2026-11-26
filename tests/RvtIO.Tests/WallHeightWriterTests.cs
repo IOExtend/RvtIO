@@ -25,7 +25,23 @@ public class WallHeightWriterTests
         Assert.Equal(WallHeightWriter.OpeningCut.Unverified, WallHeightWriter.CutAt(2, 10, 2, 5));
         Assert.Equal(WallHeightWriter.OpeningCut.Unverified, WallHeightWriter.CutAt(2.00048828125, 10.00048828125, 2, 5));
         Assert.Equal(WallHeightWriter.OpeningCut.Unverified, WallHeightWriter.CutAt(2.25, 4, 2, 5));
-        Assert.Equal(WallHeightWriter.OpeningCut.Unverified, WallHeightWriter.CutAt(5.25, 13.25, 2, 5));
+        Assert.Equal(WallHeightWriter.OpeningCut.Unverified, WallHeightWriter.CutAt(5, 13, 2, 5));
+        Assert.Equal(WallHeightWriter.OpeningCut.BelowWall, WallHeightWriter.CutAt(5.25, 13.25, 2, 5));
+    }
+
+    [Fact]
+    public void RemovesAndReactivatesACutWhenTheOpeningFallsBelowTheWall()
+    {
+        var removal = new WallHeightWriter.OpeningInterval(0, 4, 8, 2, 5,
+            WallHeightWriter.OpeningCut.Interior, WallHeightWriter.OpeningCut.BelowWall);
+        Assert.True(WallHeightWriter.CanRemoveOpeningCuts([removal]));
+        Assert.True(WallHeightWriter.CanRemoveOpeningCuts([removal with { Cut = WallHeightWriter.OpeningCut.ThroughBottom }]));
+        Assert.True(WallHeightWriter.CanActivateOpeningCuts(
+            [removal with { Cut = WallHeightWriter.OpeningCut.BelowWall, Destination = WallHeightWriter.OpeningCut.Interior }]));
+        var notch = removal with { Cut = WallHeightWriter.OpeningCut.BelowWall, Destination = WallHeightWriter.OpeningCut.ThroughBottom };
+        Assert.True(WallHeightWriter.CanActivateOpeningCuts([notch]));
+        Assert.False(WallHeightWriter.CanActivateOpeningCuts([notch, notch with { Left = 12, Right = 16 }]));
+        Assert.False(WallHeightWriter.CanRemoveOpeningCuts([removal with { Cut = WallHeightWriter.OpeningCut.AboveWall }]));
     }
 
     [Theory]

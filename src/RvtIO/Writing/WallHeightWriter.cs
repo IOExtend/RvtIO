@@ -163,10 +163,14 @@ internal static partial class WallHeightWriter
         bool rebuildCut = changes.Length != 0 || openings.Any(o => IsAtBoundary(o.Cut));
         bool changed = value != original.Real;
         bool bottomTransition = CanChangeBottomOpening(openings);
-        if (changed && interval.NewBase != interval.Base && rebuildCut && !bottomTransition)
-            throw ParameterWriter.Unverified("Moving the wall base would require an unverified opening rebuild.");
         bool removesCuts = CanRemoveOpeningCuts(openings);
         bool activatesCuts = CanActivateOpeningCuts(openings);
+        bool movesPastOpeningHead = changes.All(o =>
+            o.Cut == OpeningCut.BelowWall && o.Destination is OpeningCut.Interior or OpeningCut.ThroughBottom
+            || o.Destination == OpeningCut.BelowWall && o.Cut is OpeningCut.Interior or OpeningCut.ThroughBottom);
+        if (changed && interval.NewBase != interval.Base && rebuildCut && !bottomTransition
+            && !(movesPastOpeningHead && (removesCuts || activatesCuts)))
+            throw ParameterWriter.Unverified("Moving the wall base would require an unverified opening rebuild.");
         bool replay = CanReplayTopCuts(openings) || CanReplayBoundaryCuts(openings);
         if (changed && rebuildCut && !removesCuts && !activatesCuts && !replay
             && !bottomTransition && !CanChangeTopOpening(openings))
@@ -204,7 +208,7 @@ internal static partial class WallHeightWriter
             double baseOffset = 0;
             if (activatesCuts || replay)
             {
-                var sources = replay ? openings.Where(o => o.Destination != OpeningCut.AboveWall).ToArray() : changes;
+                var sources = replay ? openings.Where(o => !IsOutsideWall(o.Destination)).ToArray() : changes;
                 long[] openingIds = sources.Select(OpeningId).ToArray();
                 baseOffset = ParameterWriter.FindValue(walker, wall.Walk,
                     edit with { ParameterId = (int)BuiltInParameter.WALL_BASE_OFFSET }, StorageType.Double)?.Value.Real ?? throw Layout();
@@ -226,7 +230,7 @@ internal static partial class WallHeightWriter
 
             var transition = new OpeningTransition(wall, changes.Length == 0 ? openings[0] : changes[0], removesCuts, activatesCuts || replay);
             byte[] solid = transition.Rebuild(geometry, interval, openings, removesCuts, cutters, idWidth, baseOffset, replay);
-            transition.ClearCutSteps(changes.Where(o => o.Destination == OpeningCut.AboveWall && CutsHost(o.Cut)));
+            transition.ClearCutSteps(changes.Where(o => IsOutsideWall(o.Destination) && CutsHost(o.Cut)));
             var resized = ReadBody(solid, "GElement", true);
             if (!GElementArchiveHandles.IsCanonical(resized.Walk))
                 throw Layout();
@@ -398,17 +402,19 @@ internal static partial class WallHeightWriter
         return openings;
     }
 
-    internal enum OpeningCut { Unverified, Interior, ThroughTop, AboveWall, AtSill, AtHead, ThroughBottom }
+    internal enum OpeningCut { Unverified, Interior, ThroughTop, AboveWall, AtSill, AtHead, ThroughBottom, BelowWall }
 
     private static bool CutsHost(OpeningCut cut) =>
         cut is OpeningCut.Interior or OpeningCut.ThroughTop or OpeningCut.AtHead or OpeningCut.ThroughBottom;
 
     private static bool IsAtBoundary(OpeningCut cut) => cut is OpeningCut.AtSill or OpeningCut.AtHead;
 
+    private static bool IsOutsideWall(OpeningCut cut) => cut is OpeningCut.AboveWall or OpeningCut.BelowWall;
+
     internal static bool CanReplayBoundaryCuts(IReadOnlyList<OpeningInterval> openings) =>
         openings.Count is 1 or 2 && SeparatedOpeningStations(openings)
-        && openings.All(o => o.Cut is not (OpeningCut.Unverified or OpeningCut.ThroughBottom)
-            && o.Destination is not (OpeningCut.Unverified or OpeningCut.ThroughBottom))
+        && openings.All(o => o.Cut is not (OpeningCut.Unverified or OpeningCut.ThroughBottom or OpeningCut.BelowWall)
+            && o.Destination is not (OpeningCut.Unverified or OpeningCut.ThroughBottom or OpeningCut.BelowWall))
         && openings.Any(o => IsAtBoundary(o.Cut) || IsAtBoundary(o.Destination));
 
     internal static bool CanChangeTopOpening(IReadOnlyList<OpeningInterval> openings) =>
@@ -430,19 +436,29 @@ internal static partial class WallHeightWriter
     internal static bool CanRemoveOpeningCuts(IReadOnlyList<OpeningInterval> openings) =>
         openings.Count is 1 or 2 && SeparatedOpeningStations(openings)
         && openings.All(o => o.Cut != OpeningCut.Unverified
-            && (o.Destination == OpeningCut.AboveWall || o.Cut == OpeningCut.Interior && o.Destination == OpeningCut.Interior))
+            && (IsOutsideWall(o.Destination) && (!IsOutsideWall(o.Cut) || o.Cut == o.Destination)
+                || o.Cut == OpeningCut.Interior && o.Destination == OpeningCut.Interior))
         && openings.Any(o => o.Cut != o.Destination);
 
-    internal static bool CanActivateOpeningCuts(IReadOnlyList<OpeningInterval> openings) =>
-        openings.Count is 1 or 2 && SeparatedOpeningStations(openings)
-        && openings.All(o => o.Cut is OpeningCut.AboveWall or OpeningCut.Interior
-            && o.Destination is OpeningCut.AboveWall or OpeningCut.Interior or OpeningCut.ThroughTop
-            && (o.Cut == o.Destination || o.Cut == OpeningCut.AboveWall))
-        && openings.Any(o => o.Cut != o.Destination);
+    internal static bool CanActivateOpeningCuts(IReadOnlyList<OpeningInterval> openings)
+    {
+        if (openings.Count is < 1 or > 2 || !SeparatedOpeningStations(openings))
+            return false;
+        bool opensBottom = openings.Any(o => o.Cut == OpeningCut.BelowWall && o.Destination == OpeningCut.ThroughBottom);
+        if (opensBottom && openings.Count(o => o.Cut != o.Destination) != 1)
+            return false;
+        return openings.All(o => (IsOutsideWall(o.Cut) || o.Cut == OpeningCut.Interior)
+                && (o.Cut == o.Destination || IsOutsideWall(o.Cut)
+                    && (o.Destination == OpeningCut.Interior
+                        || o.Cut == OpeningCut.AboveWall && o.Destination == OpeningCut.ThroughTop
+                        || o.Cut == OpeningCut.BelowWall && o.Destination == OpeningCut.ThroughBottom)))
+            && openings.Any(o => o.Cut != o.Destination);
+    }
 
     internal static bool CanReplayTopCuts(IReadOnlyList<OpeningInterval> openings) =>
         openings.Count == 2 && SeparatedOpeningStations(openings)
-        && openings.All(o => o.Cut != OpeningCut.Unverified && o.Destination != OpeningCut.Unverified)
+        && openings.All(o => o.Cut is not (OpeningCut.Unverified or OpeningCut.BelowWall)
+            && o.Destination is not (OpeningCut.Unverified or OpeningCut.BelowWall))
         && (openings.All(o => o.Cut == OpeningCut.ThroughTop)
             || openings.All(o => o.Destination == OpeningCut.ThroughTop) && openings.Any(o => o.Cut != OpeningCut.AboveWall))
         && openings.Any(o => o.Destination != OpeningCut.AboveWall)
@@ -455,6 +471,8 @@ internal static partial class WallHeightWriter
     {
         if (!double.IsFinite(openingBottom) || !double.IsFinite(openingTop) || openingTop <= openingBottom)
             return OpeningCut.Unverified;
+        if (wallBase > openingTop + VertexTolerance)
+            return OpeningCut.BelowWall;
         if (openingBottom < wallBase + MinimumVerifiedHeight)
             return wallBase > Math.BitIncrement(openingBottom + MinimumNotchGap) && openingTop >= wallBase + MinimumVerifiedHeight
                 && wallTop > openingTop + VertexTolerance ? OpeningCut.ThroughBottom : OpeningCut.Unverified;
@@ -541,7 +559,7 @@ internal static partial class WallHeightWriter
 
     private static byte[] ResizeGeometry(Archive geometry, HeightInterval height, IReadOnlyList<OpeningInterval> openings)
     {
-        var openingLevels = openings.Where(o => o.Cut != OpeningCut.AboveWall).SelectMany(o => new[] { o.Bottom, o.Top }).ToHashSet();
+        var openingLevels = openings.Where(o => !IsOutsideWall(o.Cut)).SelectMany(o => new[] { o.Bottom, o.Top }).ToHashSet();
         int interiorCount = openings.Count(o => o.Cut == OpeningCut.Interior);
         int boundaryCutCount = openings.Count(o => o.Cut is OpeningCut.ThroughTop or OpeningCut.ThroughBottom);
         int atSillCount = openings.Count(o => o.Cut == OpeningCut.AtSill);

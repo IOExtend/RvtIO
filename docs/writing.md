@@ -260,8 +260,12 @@ Verified existing rectangular openings keep their absolute elevations. RvtIO can
 Top Offset moves the wall top through an opening. Base Offset can move the wall base through the sill of an interior
 opening, adjust an existing cut through the base, or restore the sill when the opening becomes interior again. A second
 separated interior opening can remain in place during the transition. RvtIO preserves the assigned edge tags in the
-geometry history so that a later transition can reuse them. Coincident boundaries, base movement across the entire
-opening, simultaneous transitions of two bottom cuts, and unverified vertex projections are still refused.
+geometry history so that a later transition can reuse them. When the base moves above the entire opening, RvtIO
+retains the opening element, removes the cut and writes Revit's "Rectangular opening doesn't cut its host" warning.
+Moving the base back through the opening restores the cut and removes that warning. Reactivation directly through the
+base requires verified saved cut history. Coincident boundaries, simultaneous transitions of two bottom cuts, and
+unverified vertex projections are still refused. Revit 2024 accepted positioning the base exactly at the sill or head
+of the tested opening.
 
 ## Editing a standalone family
 
@@ -880,6 +884,12 @@ The 2026-format files were verified after upgrade in Revit 2027. Computed areas 
 floating-point rounding. Revit 2025 also verified a level-constrained top and a second, unchanged rectangular
 opening on the same wall. Revit 2027 verified a base crossing less than 0.2 mm past the sill. A later attempt to
 place the base at the sill refused the whole batch.
+
+Base Offset edits past the full height of an opening were compared with saved Revit API controls in Revit
+2020–2025 and 2027. The 2026-format files were verified after upgrade in Revit 2027. Opening, saving and reopening
+without Audit preserved the parameter values, geometry, opening ownership and warning state. Revit 2024 and 2027
+also verified removal and reactivation of a cut through the base. The Revit 2027 batch added and removed warnings
+on two separate walls. A later unsupported boundary edit left the source byte-for-byte intact and produced no output.
 
 ## Remaining parameter coverage
 

@@ -50,7 +50,7 @@ internal static partial class WallHeightWriter
                         throw Layout();
                     faces = faces.Where(p => !cutGenerators.Contains(Generator(p.Key))).ToDictionary();
                     edges = edges.Where(p => !cutGenerators.Contains(Generator(p.Key))).ToDictionary();
-                    var contours = UncutContours(faces, edges, true);
+                    var contours = UncutContours(faces, edges, _roof);
                     if (faces.Count != 6 || edges.Count != 12 || contours.Count != 6)
                         throw Layout();
                     foreach (var (tag, loops) in contours)
@@ -70,7 +70,12 @@ internal static partial class WallHeightWriter
                     throw Layout();
                 faces = faces.Where(p => !removed.Contains(Generator(p.Key))).ToDictionary();
                 edges = edges.Where(p => !removed.Contains(Generator(p.Key))).ToDictionary();
-                RebuildSolid(faces, edges, UncutContours(faces, edges, openings.Any(o => o.Cut == OpeningCut.ThroughTop)));
+                bool restoresRoof = openings.Any(o => o.Cut == OpeningCut.ThroughTop);
+                bool restoresFloor = openings.Any(o => o.Cut == OpeningCut.ThroughBottom);
+                if (restoresRoof && restoresFloor)
+                    throw Layout();
+                int? boundary = restoresFloor ? _baseFaces.Get((3, 2, -1, 0)) : restoresRoof ? _roof : null;
+                RebuildSolid(faces, edges, UncutContours(faces, edges, boundary));
             }
             else if (_opening.Cut == OpeningCut.Interior)
             {
@@ -98,7 +103,7 @@ internal static partial class WallHeightWriter
                 ? -1 : byNode.TryGetValue(node, out int tag) ? tag : throw Layout();
         }
 
-        private Dictionary<int, List<int[]>> UncutContours(Dictionary<int, Face> faces, Dictionary<int, Edge> edges, bool restoreRoof)
+        private Dictionary<int, List<int[]>> UncutContours(Dictionary<int, Face> faces, Dictionary<int, Edge> edges, int? boundary)
         {
             if (!faces.Keys.Where(tag => Generator(tag) == _baseGenerator).ToHashSet().SetEquals(_baseFaces.Tags)
                 || !edges.Keys.Where(tag => Generator(tag) == _baseGenerator).ToHashSet().SetEquals(_baseEdges.Tags)
@@ -115,13 +120,13 @@ internal static partial class WallHeightWriter
                     continue;
                 }
 
-                if (restoreRoof && tag == _roof)
+                if (tag == boundary)
                 {
-                    contours.Add(tag, [BaseRoofOutline()]);
+                    contours.Add(tag, [tag == _roof ? BaseRoofOutline() : BaseFloorOutline()]);
                     continue;
                 }
 
-                bool restoreSide = restoreRoof && (tag == _sideA || tag == _sideB);
+                bool restoreSide = boundary.HasValue && (tag == _sideA || tag == _sideB);
                 var kept = new List<int[]>();
                 if (restoreSide)
                     kept.Add(BaseSideOutline(tag == _sideA ? 0 : 1));

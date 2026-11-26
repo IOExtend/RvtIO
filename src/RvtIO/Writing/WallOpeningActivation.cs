@@ -35,9 +35,12 @@ internal static partial class WallHeightWriter
                 int priorCount = generators.Count;
                 bool first = !faceHistory.Tags.Any() && !edgeHistory.Tags.Any();
                 bool throughTop = opening.Destination == OpeningCut.ThroughTop;
+                bool throughBottom = opening.Destination == OpeningCut.ThroughBottom;
                 bool atHead = opening.Destination == OpeningCut.AtHead;
                 bool atSill = opening.Destination == OpeningCut.AtSill;
                 bool missingHead = !faceHistory.Contains((5, 0, -1, 0));
+                if (throughBottom && (first || missingHead || !faceHistory.Contains((5, 1, -1, 0))))
+                    throw Layout();
                 bool virtualHead = (throughTop || atSill) && missingHead;
                 var archive = new GeometryArchive(cutter);
                 if (archive.Root.OwnedList("GGroup.m_subNodes") is not [var solid]
@@ -71,6 +74,8 @@ internal static partial class WallHeightWriter
                 int splitStart = generators.Count;
                 int nextSplit = splitStart;
                 bool missingSides = !edgeHistory.Contains((17, _sideA, faceIds[1], 0));
+                if (throughBottom && missingSides)
+                    throw Layout();
                 // An existing notch can allocate new roof splits before it gains permanent head edges.
                 bool deferHeadSides = atHead && missingHead && !missingSides;
                 int splitCount = missingSides && throughTop ? 16 : missingSides && atHead ? 8 : 0;
@@ -161,10 +166,12 @@ internal static partial class WallHeightWriter
                     contours.Add(faceIds[13], [[edgeIds[14], boundaryIds[(_sideB, 13)], edgeIds[15], boundaryIds[(_sideA, 13)]]]);
                 }
 
-                if (throughTop || atHead)
+                if (throughTop || atHead || throughBottom)
                 {
-                    var notch = new Notch(opening, edgeHistory, faceIds[0], boundaryIds[(_sideA, 0)], boundaryIds[(_sideB, 0)],
-                        faceIds[1], faceIds[5], faceIds[13], faceIds[2], faceIds[9]);
+                    int crossedFace = throughBottom ? 1 : 0;
+                    var notch = new Notch(opening, edgeHistory, faceIds[crossedFace],
+                        boundaryIds[(_sideA, crossedFace)], boundaryIds[(_sideB, crossedFace)],
+                        faceIds[1 - crossedFace], faceIds[5], faceIds[13], faceIds[2], faceIds[9]);
                     int added = 0, addedRoofSplits = 0, addedRevealSplits = 0;
                     edges = OpenCut(faces, edges, contours, topCut, height, notch, AllocateNotchEdge);
                     int full = atHead ? 12 : 20;
@@ -215,7 +222,8 @@ internal static partial class WallHeightWriter
                     throw Layout();
                 if (cut != destination)
                     _edits.Add((flag.ValueOffset, flag.ValueOffset + 1, [destination]));
-                int[] openingSlots = atSill ? [-1, -1, -1, -1] : [faceIds[1], throughTop || atHead ? -1 : faceIds[0], faceIds[5], faceIds[13]];
+                int[] openingSlots = atSill ? [-1, -1, -1, -1]
+                    : [throughBottom ? -1 : faceIds[1], throughTop || atHead ? -1 : faceIds[0], faceIds[5], faceIds[13]];
                 for (int i = 0; i < openingSlots.Length; i++)
                 {
                     var slot = _wall.Field(opening.Step, $"WallRectOpeningGStep.m_OpeningFacesIds@{i}");
