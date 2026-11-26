@@ -8,6 +8,12 @@ API between minor releases.
 
 ### Fixed
 
+- Omit RPC planting cut by an active 3D section box plane using the placed type outline.
+- Draw and light both sides of RPC planting meshes in shaded views.
+- Print the saved daily and hourly boundaries of multi-day solar studies with their geometric horizon times.
+- Shade the exposed solar band from the saved sunlight intensity over the model and paper background.
+- Opaque model geometry can hide the solar compass markings behind it on the saved ground plane.
+- Shaded solar-study views use the saved sunlight intensity and active sun direction to tint vertical terrain cuts.
 - Orthographic shaded views print the saved soil cut hatch and colour on the section box's terrain faces.
 - Evaluated schedule rows with a supported uniform Arial style print with their Revit row pitch and text baseline.
 - Elevations and sections print supported drafting patterns on saved planar wall paint regions.

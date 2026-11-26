@@ -32,4 +32,4 @@ internal sealed record ViewModelBounds(double[] Origin, double[][] Axes, double[
 
 internal sealed record ViewSolarStudy(double[] Outline, int SizePercent, int GroundLevelId, int AnnotationId,
     uint Start, uint End, int Interval, double ActiveFrame, int ShadowIntensity = 0,
-    bool ShowSurfacePatterns = false, bool ShowEdges = false);
+    bool ShowSurfacePatterns = false, bool ShowEdges = false, int? SunlightIntensity = null);

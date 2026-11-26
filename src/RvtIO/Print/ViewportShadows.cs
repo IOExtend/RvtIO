@@ -5,6 +5,13 @@ namespace RvtIO.Print;
 
 internal sealed class ViewportShadows
 {
+    internal enum Receiver : byte
+    {
+        FacingAway,
+        FacingSun,
+        Prelit,
+    }
+
     private const int GridSize = 64;
     private readonly (double X, double Y, double Z) _direction, _right, _up;
     private readonly ViewCropFrame _camera;
@@ -69,13 +76,13 @@ internal sealed class ViewportShadows
         }
     }
 
-    internal void Apply(byte[] rgb, double[] depth, bool[] facesLight, int columns, int rows,
+    internal void Apply(byte[] rgb, double[] depth, Receiver[] receivers, int columns, int rows,
         double left, double top, double stepX, double stepY, double anchorX, double anchorY, double scale,
         Func<double, double, double, bool>? containsGroundPoint = null)
     {
         // Approximate the tone of surfaces facing away from the active sun with the saved shadow strength.
         for (int pixel = 0; pixel < depth.Length; pixel++)
-            if (!facesLight[pixel] && double.IsFinite(depth[pixel]))
+            if (receivers[pixel] == Receiver.FacingAway && double.IsFinite(depth[pixel]))
                 Shade(pixel);
         if (_casters.Count == 0) return;
         double minX = _casters.Min(p => p.MinX), maxX = _casters.Max(p => p.MaxX);
@@ -102,7 +109,7 @@ internal sealed class ViewportShadows
                 int pixel = row * columns + column;
                 double z = depth[pixel];
                 bool groundPixel = double.IsPositiveInfinity(z) && _ground.HasValue;
-                if (!facesLight[pixel] && !groundPixel) continue;
+                if (receivers[pixel] != Receiver.FacingSun && !groundPixel) continue;
                 double x = (left + (column + 0.5) * stepX - anchorX) / scale;
                 if (groundPixel)
                 {

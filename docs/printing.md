@@ -93,10 +93,21 @@ appears and casts shadows. The section box clips the geometry in model space. Wi
 its vertical terrain cuts use the soil material's drafting hatch and colour. The camera foreshortens
 the saved paper-sized grid on each cut plane. The grid starts from the model origin projected onto
 that plane.
+RPC planting appears and casts shadows when its saved outline fits the active section box. Oblique
+planes use the type outline in its saved instance placement when it reproduces the saved world outline.
+Both sides of its polygon meshes draw and cast shadows. In the supported shaded lighting mode, an
+unassigned mesh material uses a neutral gray shaded by the active sun and the visible side's normal.
+In the supported shaded lighting mode with zero configured ambient light, the cut faces use a diffuse tint based
+on the active sun direction, the saved sunlight setting and each face's normal. The hatch keeps its material colour.
 For a multi-day study with fixed hours, the saved study settings supply the compass size, ground level, dates,
 time range and active frame. The compass follows true north from the active project location. The latitude,
 longitude and time zone drive the solar band and dates. Hourly studies show the active sun and its time,
 and shade the exposed side of the solar band that faces away from the active sun.
+The start and end dates mark the daily guides. The saved clock times and the geometric horizon form the
+time boundaries of the study area. The active date supplies its geometric sunrise and sunset labels.
+Opaque model geometry hides the compass ring and ticks where they lie behind the model on the saved ground plane.
+In the supported shaded lighting mode, the exposed single layer of the solar band blends its sunlit tint
+with the model or paper background using the same transmission.
 When the view enables lighting and cast shadows, opaque geometry casts shadows on model faces, terrain and the
 saved ground plane at the active hour using the saved shadow intensity. The section box also clips shadows on
 the saved ground plane. The solar annotation can be hidden independently.

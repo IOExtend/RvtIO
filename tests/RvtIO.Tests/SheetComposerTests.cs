@@ -1018,8 +1018,89 @@ public class SheetComposerTests
         Assert.Equal(hidden ? 0 : 1, page.Images.Count);
     }
 
-    [Fact]
-    public void ShadedViewport_UsesTheModelBoxBottomForTerrainCuts()
+    [Theory]
+    [InlineData(1, true, true, true, false, true)]
+    [InlineData(2, true, true, true, false, false)]
+    [InlineData(2, true, true, true, true, true)]
+    [InlineData(2, true, true, false, false, true)]
+    [InlineData(2, false, true, true, false, true)]
+    [InlineData(2, true, false, true, false, true)]
+    public void ShadedViewport_UsesTheSavedRpcOutlineAgainstActiveBoxPlanes(
+        int upperOutline, bool rpc, bool headerOutline, bool upperPlaneActive, bool alignsWithBox, bool visible)
+    {
+        var view = View(300, "Solar Analysis", 0);
+        view.ViewCrop = new(0, 0, 10, [1, 0, 0], [0, 1, 0], [0, 0, -1], -100, -100, 100, 100, false);
+        double diagonal = Math.Sqrt(0.5);
+        view.OrthographicModelBounds = new([0, 0, 0], [[diagonal, diagonal, 0], [-diagonal, diagonal, 0], [0, 0, 1]],
+            [2, -2, 4, -4, 5, 0], [upperPlaneActive, true, true, true, true, true]);
+        var type = new Element
+        {
+            Id = 401, BoundingBox = [-1, -1, 0, upperOutline, upperOutline, 2], BoundingBoxIsHeaderOutline = true,
+        };
+        if (rpc) Add(type, BuiltInParameter.RENDER_RPC_FILENAME, StorageType.String, "rpc");
+        var model = new Element
+        {
+            Id = 400, TypeId = type.Id, CategoryId = (int)BuiltInCategory.OST_Planting,
+            BoundingBox = alignsWithBox
+                ? [-diagonal * (1 + upperOutline), -2 * diagonal, 0,
+                    diagonal * (1 + upperOutline), 2 * diagonal * upperOutline, 2]
+                : type.BoundingBox!.ToArray(),
+            BoundingBoxIsHeaderOutline = headerOutline,
+            Transform = new()
+            {
+                SymbolId = type.Id,
+                BasisX = alignsWithBox ? [diagonal, diagonal, 0] : [1, 0, 0],
+                BasisY = alignsWithBox ? [-diagonal, diagonal, 0] : [0, 1, 0],
+                BasisZ = [0, 0, 1],
+            },
+            Geometry = new()
+            {
+                Faces = [new() { Normal = [0, 0, 1], OuterVertices = [[-1, -1, 1], [1, -1, 1], [0, 1, 1]] }],
+            },
+        };
+        var document = RvtDocument.FromInfo(new RevitFileInfo { Elements = [view, model, type] });
+        var page = new PdfDocument().AddPage(new PdfPageSize(200, 200));
+
+        Assert.Equal(visible, ShadedViewport.Render(page, document, view, 100, 100, 100).HasValue);
+        Assert.Equal(visible ? 1 : 0, page.Images.Count);
+    }
+
+    [Theory]
+    [InlineData(true, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    public void ShadedViewport_DrawsTheBackOfRpcPolygonMeshes(bool rpc, bool polygonMesh, bool visible)
+    {
+        var view = View(300, "Solar Analysis", 0);
+        view.ViewCrop = new(0, 0, 10, [1, 0, 0], [0, 1, 0], [0, 0, -1], -100, -100, 100, 100, false);
+        view.OrthographicModelBounds = new([0, 0, 0], [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+            [2, -2, 2, -2, 5, 0], [true, true, true, true, true, true]);
+        var type = new Element { Id = 401 };
+        if (rpc) Add(type, BuiltInParameter.RENDER_RPC_FILENAME, StorageType.String, "rpc");
+        var face = new GeoFace
+        {
+            Normal = [0, 0, -1], PolygonMesh = polygonMesh,
+            OuterVertices = [[-1, -1, 1], [0, 1, 1], [1, -1, 1]],
+        };
+        var model = new Element
+        {
+            Id = 400, TypeId = type.Id, CategoryId = (int)BuiltInCategory.OST_Planting,
+            Geometry = new() { Faces = [face] },
+        };
+        var document = RvtDocument.FromInfo(new RevitFileInfo { Elements = [view, model, type] });
+        var page = new PdfDocument().AddPage(new PdfPageSize(200, 200));
+
+        Assert.Equal(visible, ShadedViewport.Render(page, document, view, 100, 100, 100).HasValue);
+        Assert.Equal(new double[] { 0, 0, -1 }, face.Normal);
+    }
+
+    [Theory]
+    [InlineData(null, 0, 7, 0x243858)]
+    [InlineData(20, 0, 7, 0x0d1521)]
+    [InlineData(20, 50, 7, 0x0d1521)]
+    [InlineData(100, 50, 12, 0x34517f)]
+    public void ShadedViewport_UsesTheModelBoxBottomAndSavedLightForTerrainCuts(
+        int? sunlightIntensity, int shadowIntensity, int month, int expectedColor)
     {
         var view = View(300, "Solar Analysis", 0);
         view.ViewCrop = new(0, 0, 10, [1, 0, 0], [0, 0.6, 0.8], [0, 0.8, -0.6], -100, -100, 100, 100, false);
@@ -1036,10 +1117,25 @@ public class SheetComposerTests
         };
         var soil = new Element { Id = 501 };
         Add(soil, BuiltInParameter.MATERIAL_PARAM_COLOR, StorageType.Integer, 0x243858);
+        var level = new Element { Id = 502 };
+        Add(level, BuiltInParameter.LEVEL_ELEV, StorageType.Double, 4d);
+        if (sunlightIntensity.HasValue)
+        {
+            uint packedMonth = (2024u << 20) | ((uint)month << 16);
+            uint firstNoon = packedMonth | (14u << 11) | (12u << 6);
+            uint lastAfternoon = packedMonth | (21u << 11) | (14u << 6);
+            view.SolarStudy = new([0, 0, 0, 4, 4, 4], 100, level.Id, 0, firstNoon, lastAfternoon,
+                3, 1, shadowIntensity, SunlightIntensity: sunlightIntensity);
+        }
         var document = RvtDocument.FromInfo(new RevitFileInfo
         {
-            Elements = [view, terrain, soil],
+            Elements = [view, terrain, soil, level],
             SiteCutGraphics = (-10, 501),
+            SharedTransformIsActiveLocation = true,
+            SharedTransform = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],
+            SiteLatitudeRadians = 0,
+            SiteLongitudeRadians = 0,
+            SiteTimeZoneHours = 0,
         });
         var page = new PdfDocument().AddPage(new PdfPageSize(200, 200));
 
@@ -1048,7 +1144,7 @@ public class SheetComposerTests
         var bounds = Assert.IsType<(double X, double Y, double Width, double Height)>(frame);
         Assert.Equal(60 + 0.6 * 3.048 - 8 * 3.048, bounds.Y, 8);
         var image = Assert.IsType<PdfRasterImage>(Assert.Single(page.Images));
-        Assert.Equal(new byte[] { 88, 56, 36 }, image.Rgb[^3..]);
+        Assert.Equal(new byte[] { (byte)expectedColor, (byte)(expectedColor >> 8), (byte)(expectedColor >> 16) }, image.Rgb[^3..]);
     }
 
     [Fact]

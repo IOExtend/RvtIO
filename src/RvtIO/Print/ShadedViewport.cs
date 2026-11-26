@@ -1,14 +1,16 @@
+using System.Numerics;
 using RvtIO.BuiltIns;
 using RvtIO.Model;
 using RvtIO.Pdf;
+using ShadowReceiver = RvtIO.Print.ViewportShadows.Receiver;
 
 namespace RvtIO.Print;
 
 internal static class ShadedViewport
 {
     private readonly record struct Point(double X, double Y, double Depth);
-    private sealed record Surface(Point[][] Rings, double DepthX, double DepthY, int Rgb, bool FacesLight, double Transmission,
-        ViewportSurfacePattern? Pattern, ViewportSurfaceEdges? Edges);
+    private sealed record Surface(Point[][] Rings, double DepthX, double DepthY, int Rgb, ShadowReceiver Receiver,
+        double Transmission, ViewportSurfacePattern? Pattern, ViewportSurfaceEdges? Edges);
     private readonly record struct Pane(Surface Surface, int Order, int FirstRow, int LastRow);
     private readonly record struct PaneSpan(Pane Pane, int Start, int End);
     private readonly record struct PaneHit(Pane Pane, double Depth, double PatternInk, double EdgeInk);
@@ -30,11 +32,13 @@ internal static class ShadedViewport
         var solar = SolarStudyOverlay.Create(document, view, camera, factor, point =>
         {
             var p = Project(point);
-            return (p.X, p.Y);
+            return (p.X, p.Y, p.Depth);
         });
         var shadows = view.SolarStudy?.ShadowIntensity is > 0 and <= 100 and int intensity
             && solar?.ModelSunDirection is { Z: > 0 } sun
             ? new ViewportShadows(camera, sun, intensity, solar.GroundElevation) : null;
+        (Vector3 Sun, int Intensity)? sceneLight = view.SolarStudy?.SunlightIntensity is int sunlight
+            && solar?.ModelSunDirection is { Z: > 0 } terrainSun ? (terrainSun, sunlight) : null;
         var annotation = solar is { AnnotationVisible: true } ? solar : null;
         bool showPatterns = view.SolarStudy?.ShowSurfacePatterns == true;
         bool showEdges = view.SolarStudy?.ShowEdges == true;
@@ -63,6 +67,28 @@ internal static class ShadedViewport
             foreach (var (_, outward, offset) in planes)
                 if (Dot(x, y, z, outward) > offset + 1e-7) return false;
             return true;
+        }
+
+        bool ClipsRpcOutline(Element element, Element type)
+        {
+            if (!element.BoundingBoxIsHeaderOutline || !ValidOutline(element.BoundingBox)) return false;
+            var bounds = element.BoundingBox!;
+            var placement = VerifiedRpcPlacement(element.Transform, type, bounds);
+            foreach (var (_, outward, offset) in planes)
+            {
+                double depth;
+                if (placement != null)
+                    depth = Dot(placement.Origin[0], placement.Origin[1], placement.Origin[2], outward)
+                        + OutlineSupport(type.BoundingBox!, Along(placement.BasisX), Along(placement.BasisY), Along(placement.BasisZ));
+                // shortcut: the world outline is exact along Cartesian axes when the placed type outline is unverified.
+                else if (outward.Count(value => Math.Abs(value) > 1e-8) == 1)
+                    depth = OutlineSupport(bounds, outward[0], outward[1], outward[2]);
+                else continue;
+                if (depth > offset + 1e-7) return true;
+
+                double Along(double[] axis) => Dot(axis[0], axis[1], axis[2], outward);
+            }
+            return false;
         }
 
         double Distance(double[] point, double[] outward, double offset) =>
@@ -104,7 +130,7 @@ internal static class ShadedViewport
         double left = double.PositiveInfinity, right = double.NegativeInfinity;
         double bottom = double.PositiveInfinity, top = double.NegativeInfinity;
         void AddSurface(Point[][] rings, double[] normal, double facing, int rgb, double transmission = 0,
-            ViewportSurfacePattern? pattern = null, ViewportSurfaceEdges? edges = null)
+            ViewportSurfacePattern? pattern = null, ViewportSurfaceEdges? edges = null, bool prelit = false)
         {
             var outer = rings[0];
             if (transmission >= 1 || outer.Length < 3 || outer.Any(point => !double.IsFinite(point.X)
@@ -113,27 +139,34 @@ internal static class ShadedViewport
             right = Math.Max(right, outer.Max(p => p.X));
             bottom = Math.Min(bottom, outer.Min(p => p.Y));
             top = Math.Max(top, outer.Max(p => p.Y));
+            var receiver = prelit ? ShadowReceiver.Prelit
+                : shadows?.FacesLight(normal) == true ? ShadowReceiver.FacingSun : ShadowReceiver.FacingAway;
             surfaces.Add(new(rings, -Dot(normal[0], normal[1], normal[2], camera.Right) / (factor * facing),
-                -Dot(normal[0], normal[1], normal[2], camera.Up) / (factor * facing), rgb,
-                shadows?.FacesLight(normal) == true, transmission, pattern, edges));
+                -Dot(normal[0], normal[1], normal[2], camera.Up) / (factor * facing), rgb, receiver, transmission, pattern, edges));
         }
 
         double terrainBase = box.Origin[2] + box.Offsets[5];
         int cutMaterial = document.RawData.SiteCutGraphics?.MaterialId ?? -1;
         var terrainSides = box.Active[5] && box.Axes[2][2] > 1 - 1e-8 && cutMaterial > 0
             ? planes.Where(plane => plane.Index < 4 && Math.Abs(plane.Outward[2]) < 1e-8
-                && Dot(plane.Outward[0], plane.Outward[1], plane.Outward[2], camera.Look) < -1e-8).ToArray()
+                && Dot(plane.Outward[0], plane.Outward[1], plane.Outward[2], camera.Look) < -1e-8)
+                .Select(side =>
+                {
+                    var outward = side.Outward;
+                    int soil = Material(cutMaterial).Color;
+                    int color = sceneLight is { } light ? ShadeTerrainCut(soil, outward, light.Sun, light.Intensity) : soil;
+                    ViewportSurfacePattern? pattern = null;
+                    if (showPatterns)
+                    {
+                        var origin = Project([outward[0] * side.Offset, outward[1] * side.Offset, 0]);
+                        // Drafting dimensions are paper sizes before the cut plane is foreshortened by the camera.
+                        var u = ProjectVector([-outward[1] * scale, outward[0] * scale, 0]);
+                        var v = ProjectVector([0, 0, scale]);
+                        pattern = ViewportSurfacePattern.CreateDraftingCut(document, cutMaterial, (origin.X, origin.Y), u, v, 0.1);
+                    }
+                    return (side.Outward, side.Offset, Color: color, Pattern: pattern);
+                }).ToArray()
             : [];
-        var terrainPatterns = showPatterns && terrainSides.Length > 0
-            ? terrainSides.ToDictionary(side => side.Index, side =>
-            {
-                var outward = side.Outward;
-                var origin = Project([outward[0] * side.Offset, outward[1] * side.Offset, 0]);
-                // Drafting dimensions are paper sizes before the cut plane is foreshortened by the camera.
-                var u = ProjectVector([-outward[1] * scale, outward[0] * scale, 0]);
-                var v = ProjectVector([0, 0, scale]);
-                return ViewportSurfacePattern.CreateDraftingCut(document, cutMaterial, (origin.X, origin.Y), u, v, 0.1);
-            }) : null;
         foreach (var element in document.Elements)
         {
             if (element.Geometry is not { Faces.Count: > 0 } geometry || element.IsDiscovered
@@ -143,22 +176,39 @@ internal static class ShadedViewport
                 || hiddenCategories?.Contains(category) == true
                 || element.CategoryId is (int)BuiltInCategory.OST_Constraints or (int)BuiltInCategory.OST_CLines
                     or (int)BuiltInCategory.OST_Cameras or (int)BuiltInCategory.OST_LightingFixtureSource) continue;
+            Element? rpcType = category == (int)BuiltInCategory.OST_Planting && document.GetElement(element.TypeId) is { } type
+                && type.LookupParameter(BuiltInParameter.RENDER_RPC_FILENAME)?.Value is string { Length: > 0 } ? type : null;
+            if (rpcType != null && ClipsRpcOutline(element, rpcType)) continue;
             foreach (var face in geometry.Faces)
             {
                 if (face.OuterVertices is not { Count: >= 3 } ring) continue;
+                bool rpcMesh = rpcType != null && face.PolygonMesh;
                 var normal = face.Normal;
                 double facing = Dot(normal[0], normal[1], normal[2], camera.Look);
-                bool visible = facing < -1e-8, facesLight = shadows?.FacesLight(normal) == true;
-                if (!visible && !facesLight) continue;
+                if (rpcMesh && facing > 1e-8)
+                {
+                    normal = [-normal[0], -normal[1], -normal[2]];
+                    facing = -facing;
+                }
+                bool visible = facing < -1e-8;
+                double[]? casterNormal = null;
+                if (shadows?.FacesLight(normal) == true) casterNormal = normal;
+                else if (rpcMesh && shadows != null)
+                {
+                    double[] otherSide = [-normal[0], -normal[1], -normal[2]];
+                    if (shadows.FacesLight(otherSide)) casterNormal = otherSide;
+                }
+                if (!visible && casterNormal == null) continue;
                 var clipped = Clip(ring);
                 if (clipped.Count < 3) continue;
                 var rings = new List<double[][]> { clipped.Select(vertex => vertex.Point).ToArray() };
                 if (face.InnerVertices != null)
                     rings.AddRange(face.InnerVertices.Select(Clip).Where(hole => hole.Count >= 3)
                         .Select(hole => hole.Select(vertex => vertex.Point).ToArray()));
-                var material = Material(face.RenderStyleId ?? face.NestedRenderStyleId ?? 0);
+                int materialId = face.RenderStyleId ?? face.NestedRenderStyleId ?? 0;
+                var material = Material(materialId);
                 // shortcut: opaque casters, until the renderer can accumulate transmission through separate panes.
-                if (facesLight && !material.TransmitsLight) shadows!.AddCaster(rings, normal);
+                if (casterNormal != null && !material.TransmitsLight) shadows!.AddCaster(rings, casterNormal);
                 if (!visible) continue;
                 ViewportSurfacePattern? pattern = null;
                 if (showPatterns && face.ModelPattern != null)
@@ -170,23 +220,29 @@ internal static class ShadedViewport
                 // shortcut: saved planar boundary loops, until non-planar source edges are projected.
                 ViewportSurfaceEdges? edges = showEdges && face.PlaneSurface && face.SourceLoops is { Count: > 0 } loops
                     ? SourceEdges(loops, category) : null;
+                int surfaceColor = material.Color;
+                if (rpcMesh && materialId <= 0 && sceneLight is { } light)
+                {
+                    // Native unassigned RPC meshes use neutral gray under the shaded viewport light.
+                    double diffuse = Math.Max(0, Dot(light.Sun.X, light.Sun.Y, light.Sun.Z, normal));
+                    surfaceColor = ShadeColor(0x808080, SolarStudyOverlay.LightFloor(light.Sun, light.Intensity) + diffuse);
+                }
                 AddSurface(rings.Select(loop => loop.Select(Project).ToArray()).ToArray(), normal, facing,
-                    material.Color, material.Transmission, pattern, edges);
+                    surfaceColor, material.Transmission, pattern, edges);
                 if (terrainSides.Length == 0 || element.CategoryId != (int)BuiltInCategory.OST_Topography
                     || normal[2] <= 0) continue;
-                int soil = Material(cutMaterial).Color;
                 for (int i = 0; i < clipped.Count; i++)
                 {
                     var a = clipped[i].Point;
                     var b = clipped[(i + 1) % clipped.Count].Point;
-                    foreach (var (index, outward, offset) in terrainSides)
+                    foreach (var (outward, offset, color, cutPattern) in terrainSides)
                     {
                         if (Math.Abs(Distance(a, outward, offset)) >= 1e-7
                             || Math.Abs(Distance(b, outward, offset)) >= 1e-7) continue;
                         AddSurface([[Project(a), Project(b), Project([b[0], b[1], terrainBase]),
                             Project([a[0], a[1], terrainBase])]], outward,
-                            Dot(outward[0], outward[1], outward[2], camera.Look), soil,
-                            pattern: terrainPatterns?.GetValueOrDefault(index));
+                            Dot(outward[0], outward[1], outward[2], camera.Look), color,
+                            pattern: cutPattern, prelit: sceneLight.HasValue);
                     }
                 }
             }
@@ -237,7 +293,7 @@ internal static class ShadedViewport
         int rows = (int)Math.Clamp(Math.Ceiling(height * pixelsPerMillimetre), 1, 2048);
         var depth = new double[columns * rows];
         var rgbBytes = new byte[depth.Length * 3];
-        var facesLightMask = shadows != null ? new bool[depth.Length] : null;
+        var shadowReceivers = shadows != null ? new ShadowReceiver[depth.Length] : null;
         Array.Fill(depth, double.PositiveInfinity);
         Array.Fill(rgbBytes, byte.MaxValue);
         double stepX = width / columns, stepY = height / rows;
@@ -265,7 +321,7 @@ internal static class ShadedViewport
                         int pixel = row * columns + column;
                         if (!(z < depth[pixel])) continue;
                         depth[pixel] = z;
-                        if (facesLightMask != null) facesLightMask[pixel] = surface.FacesLight;
+                        if (shadowReceivers != null) shadowReceivers[pixel] = surface.Receiver;
                         if (surface.Pattern == null && surface.Edges == null)
                         {
                             rgbBytes[3 * pixel] = (byte)surface.Rgb;
@@ -284,11 +340,11 @@ internal static class ShadedViewport
                 }
             }
         }
-        if (shadows != null && facesLightMask != null)
-            shadows.Apply(rgbBytes, depth, facesLightMask, columns, rows, left, top, stepX, stepY, anchorX, anchorY,
+        if (shadows != null && shadowReceivers != null)
+            shadows.Apply(rgbBytes, depth, shadowReceivers, columns, rows, left, top, stepX, stepY, anchorX, anchorY,
                 factor, InsideModelBox);
         CompositePanes();
-        annotation?.Paint(rgbBytes, columns, rows, left, top, stepX, stepY);
+        annotation?.Paint(rgbBytes, columns, rows, left, top, stepX, stepY, depth);
         page.DrawImage(new PdfRasterImage(columns, rows, rgbBytes) { TransparentWhite = true }, left, bottom, width, height);
         if (annotation != null)
         {
@@ -364,6 +420,47 @@ internal static class ShadedViewport
                 }
             }
         }
+    }
+
+    private static InstanceTransform? VerifiedRpcPlacement(InstanceTransform? candidate, Element type, double[] worldBounds)
+    {
+        if (candidate is not { Origin.Length: 3, BasisX.Length: 3, BasisY.Length: 3, BasisZ.Length: 3 } placement
+            || placement.SymbolId != type.Id || !type.BoundingBoxIsHeaderOutline || !ValidOutline(type.BoundingBox))
+            return null;
+
+        // Check that the placed type outline reproduces the saved world box before applying an oblique plane.
+        var local = type.BoundingBox!;
+        for (int axis = 0; axis < 3; axis++)
+        {
+            double x = placement.BasisX[axis], y = placement.BasisY[axis], z = placement.BasisZ[axis];
+            double max = placement.Origin[axis] + OutlineSupport(local, x, y, z);
+            double min = placement.Origin[axis] - OutlineSupport(local, -x, -y, -z);
+            if (!(Math.Abs(max - worldBounds[3 + axis]) <= 1e-6 && Math.Abs(min - worldBounds[axis]) <= 1e-6))
+                return null;
+        }
+        return placement;
+    }
+
+    private static bool ValidOutline(double[]? bounds) =>
+        bounds is { Length: 6 } && bounds.All(double.IsFinite)
+        && bounds[0] <= bounds[3] && bounds[1] <= bounds[4] && bounds[2] <= bounds[5];
+
+    private static double OutlineSupport(double[] bounds, double x, double y, double z) =>
+        x * bounds[x < 0 ? 0 : 3] + y * bounds[y < 0 ? 1 : 4] + z * bounds[z < 0 ? 2 : 5];
+
+    private static int ShadeTerrainCut(int color, double[] normal, Vector3 sun, int intensity)
+    {
+        // shortcut: calibrated for vertical terrain cuts with zero configured ambient light.
+        double sky = SolarStudyOverlay.LightFloor(sun, intensity);
+        double direct = Math.Max(0, sun.X * normal[0] + sun.Y * normal[1]);
+        return ShadeColor(color, sky + direct);
+    }
+
+    private static int ShadeColor(int color, double light)
+    {
+        // Saturate each colour channel, reserving pure white for the viewport background.
+        int Scale(int channel) => Math.Min(254, (int)Math.Round(((color >> channel) & 255) * light));
+        return Scale(0) | Scale(8) << 8 | Scale(16) << 16;
     }
 
     private static double ApplyInk(Surface surface, int channel, double color, double patternInk, double edgeInk)

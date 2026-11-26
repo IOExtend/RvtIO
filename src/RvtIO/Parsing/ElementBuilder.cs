@@ -3049,13 +3049,18 @@ internal static partial class ElementBuilder
                     && display.Fields.GetValueOrDefault("4110:m_castShadows") == 1
                     && display.Fields.GetValueOrDefault("4106:m_shadowIntensity") is > 0 and <= 100 and int intensity
                     ? intensity : 0;
+                int? sunlightIntensity = display.Fields.GetValueOrDefault("4107:m_lighting") == 1
+                    && display.Fields.GetValueOrDefault("4108:m_surfaces") == 4
+                    && display.Fields.GetValueOrDefault("4106:m_ambientLightIntensity", -1) == 0
+                    && display.Fields.GetValueOrDefault("4106:m_sunlightIntensity", -1) is >= 0 and <= 100 and int sunlight
+                    ? sunlight : null;
                 view.SolarStudy = new(outline, size, level, annotation,
                     unchecked((uint)study.Fields.GetValueOrDefault("3878:m_startDateTime")),
                     unchecked((uint)study.Fields.GetValueOrDefault("3878:m_endDateTime")),
                     study.Fields.GetValueOrDefault("3878:m_eSunStudyTimeInterval", -1),
                     study.DoubleFields.GetValueOrDefault("3878:m_activeFrame"), shadowIntensity,
                     display.Fields.GetValueOrDefault("4108:m_bShowSurfacePatterns") == 1,
-                    display.Fields.GetValueOrDefault("4108:m_edges") == 1);
+                    display.Fields.GetValueOrDefault("4108:m_edges") == 1, sunlightIntensity);
             }
             if (state.NativeParams.TryGetValue(viewerId, out var viewer)
                 && viewer.Fields.TryGetValue("621:m_bAnnotationCropActive", out int annotationActive)
