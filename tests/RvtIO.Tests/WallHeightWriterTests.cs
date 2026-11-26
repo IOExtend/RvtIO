@@ -17,6 +17,17 @@ public class WallHeightWriterTests
         Assert.Equal(height, WallHeightWriter.ConstrainedHeight(baseElevation, baseOffset, topElevation, topOffset));
 
     [Fact]
+    public void MatchesAnOpeningElevationInTheFaceCoordinates()
+    {
+        const double origin = 5.1251;
+        double coordinate = origin - 2;
+        Assert.Equal(2d, WallHeightWriter.MatchProjectedOpeningLevel(coordinate, origin, -1, [2, 5]));
+        Assert.Null(WallHeightWriter.MatchProjectedOpeningLevel(Math.BitIncrement(coordinate), origin, -1, [2, 5]));
+        Assert.Throws<RvtWriteRefusedException>(() =>
+            WallHeightWriter.MatchProjectedOpeningLevel(8194, -8192, 1, [2, Math.BitIncrement(2)]));
+    }
+
+    [Fact]
     public void ClassifiesARectangularOpeningCrossingTheWallBase()
     {
         Assert.Equal(WallHeightWriter.OpeningCut.Interior, WallHeightWriter.CutAt(0, 8, 2, 5));

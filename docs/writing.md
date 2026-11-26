@@ -271,6 +271,10 @@ the base, or falls below it. The writer also handles verified positions within R
 just beyond it that retain an interior cut or a cut through the base. It refuses the unverified positions at the
 tolerance limits, combined cuts outside these layouts, and unverified vertex projections.
 
+Fractional offsets can retain or rebuild the verified cuts when the writer can identify the wall endpoints and fixed
+opening elevations in the stored face coordinates. The writer preserves the opening elevations when it reprojects
+vertices onto the moved wall faces.
+
 ## Editing a standalone family
 
 `SetFamilyParameter` saves a new local Revit 2020–2027 `.rfa` without Revit installed. Pass the exact family type name,
@@ -915,6 +919,14 @@ without Audit in Revit 2020–2025 and 2027. The 2026-format files were checked 
 checked oblique walls, level-constrained walls and two openings on the same wall. At the lower tolerance limit of
 the head, Revit 2027 saved an uncut wall with additional edges. That layout still requires coverage. In the tested
 batches, a later edit that reached this boundary left the source byte-for-byte intact and produced no output.
+
+The fractional-offset checks compared an interior opening and two cuts through the base with Revit API controls
+after opening, saving and reopening without Audit in Revit 2020–2025 and 2027. The 2026-format files were checked
+after upgrade in Revit 2027. Further checks in Revit 2024 and 2027 covered oblique and level-constrained walls,
+two openings, and replacements starting from native and offline files. Revit 2027 also checked Top Offset cut
+transitions and an ordered batch. The offsets matched exactly and the vertical bounds differed by at most four
+floating-point steps. One native Top Offset control left an auxiliary face extending above the solid's top.
+Further edits of that saved layout still require coverage.
 
 ## Remaining parameter coverage
 

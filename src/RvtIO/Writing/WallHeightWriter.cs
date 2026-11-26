@@ -236,7 +236,7 @@ internal static partial class WallHeightWriter
             var resized = ReadBody(solid, "GElement", true);
             if (!GElementArchiveHandles.IsCanonical(resized.Walk))
                 throw Layout();
-            var finalHeight = new HeightInterval(interval.NewBase, interval.After, interval.After);
+            var finalHeight = new HeightInterval(interval.NewBase, interval.After, interval.After) { EditsOffset = interval.EditsOffset };
             byte[] topology = ResizeGeometry(resized, finalHeight,
                 openings.Select(o => o with { Cut = o.Destination }).ToArray());
             byte[] element = transition.Apply(topology, tables);
@@ -651,7 +651,7 @@ internal static partial class WallHeightWriter
             foreach (var (face, handle) in solidFaces)
                 if (!physicalSolidFaces.Contains(face))
                     auxiliaryFaces.Add(handle);
-            if (openings.Count != 0 || physicalSolidFaces.Select(face => solidFaces[face]).Where(handle =>
+            if (physicalSolidFaces.Select(face => solidFaces[face]).Where(handle =>
                     faces[handle] is { Axis: 1, Direction: -1 } frame && frame.Origin == height.Top).ToArray()
                 is not [var end])
                 throw ParameterWriter.Unverified("The offset would require projecting endpoints in an unverified wall shape.");
@@ -669,6 +669,7 @@ internal static partial class WallHeightWriter
         }
         var loops = new HashSet<int>();
         var fillings = new HashSet<int>();
+        bool cutsThroughBase = openings.Any(o => o.Cut == OpeningCut.ThroughBottom);
         var faceTopology = new SortedDictionary<int, List<List<int>>>();
         foreach (var (face, handle) in solidFaces)
         {
@@ -738,12 +739,14 @@ internal static partial class WallHeightWriter
                     throw Layout();
                 if (project)
                 {
-                    bool projectsBase = projectedSides.Contains(handle)
-                        && geometry.BackReference(edge, $"GEdge.m_pFace@{1 - side}") == reversedEnd;
+                    uint other = geometry.BackReference(edge, $"GEdge.m_pFace@{1 - side}");
+                    bool projectsBase = projectedSides.Contains(handle) && other == reversedEnd;
                     double oldBase = projectsBase ? height.ProjectedBase : height.Base;
                     double newBase = projectsBase ? height.NewProjectedBase : height.NewBase;
-                    ResizeProjectedUv(geometry, first, frame, height, oldBase, newBase, auxiliaryFaces.Contains(handle));
-                    ResizeProjectedUv(geometry, last, frame, height, oldBase, newBase, auxiliaryFaces.Contains(handle));
+                    bool cutoff = cutsThroughBase && openingLevels.Contains(frame.Origin)
+                        && faces.TryGetValue(other, out var otherFrame) && otherFrame.Axis >= 0 && openingLevels.Contains(otherFrame.Origin);
+                    ResizeProjectedUv(geometry, first, frame, height, oldBase, newBase, auxiliaryFaces.Contains(handle), openingLevels, cutoff);
+                    ResizeProjectedUv(geometry, last, frame, height, oldBase, newBase, auxiliaryFaces.Contains(handle), openingLevels, cutoff);
                 }
                 else
                 {
@@ -766,8 +769,8 @@ internal static partial class WallHeightWriter
             double oldBase = projectedSides.Contains(handle) ? height.BoundsBase : height.Base;
             double newBase = projectedSides.Contains(handle) ? height.NewBoundsBase : height.NewBase;
             bool auxiliary = auxiliaryFaces.Contains(handle);
-            ResizeProjectedUv(geometry, geometry.Field(index, $"Envelope.m_corners@0/{frame.Axis}"), frame, height, oldBase, newBase, auxiliary);
-            ResizeProjectedUv(geometry, geometry.Field(index, $"Envelope.m_corners@1/{frame.Axis}"), frame, height, oldBase, newBase, auxiliary);
+            ResizeProjectedUv(geometry, geometry.Field(index, $"Envelope.m_corners@0/{frame.Axis}"), frame, height, oldBase, newBase, auxiliary, openingLevels);
+            ResizeProjectedUv(geometry, geometry.Field(index, $"Envelope.m_corners@1/{frame.Axis}"), frame, height, oldBase, newBase, auxiliary, openingLevels);
         }
     }
 
@@ -955,18 +958,39 @@ internal static partial class WallHeightWriter
     }
 
     private static void ResizeProjectedUv(Archive record, WideBlockWalker.Capture point, PlaneFrame frame, HeightInterval height,
-        double oldBase, double newBase, bool auxiliary)
+        double oldBase, double newBase, bool auxiliary, IReadOnlyCollection<double> openingLevels, bool cutoff = false)
     {
         if (point.Kind != WideBlockWalker.CaptureKind.Real)
             throw Layout();
         // An auxiliary face can project the upper vertex one world-coordinate rounding step away from the physical solid.
         double world = frame.Origin + point.Real * frame.Direction;
-        double destination = point.Real == (oldBase - frame.Origin) * frame.Direction ? newBase
-            : point.Real == (height.Top - frame.Origin) * frame.Direction || auxiliary && SameCoordinate(world, height.Top)
-                ? height.NewTop : throw Layout();
+        double destination;
+        if (point.Real == (oldBase - frame.Origin) * frame.Direction)
+            destination = newBase;
+        else if (point.Real == (height.Top - frame.Origin) * frame.Direction || auxiliary && SameCoordinate(world, height.Top))
+            destination = height.NewTop;
+        else
+            destination = MatchProjectedOpeningLevel(point.Real, frame.Origin, frame.Direction, openingLevels)
+                // Split edges between vertical cutter faces can round at the base by one world-coordinate step.
+                ?? (cutoff && SameCoordinate(world, oldBase) ? newBase : throw Layout());
         double coordinate = (destination - height.MoveEndpoint(frame.Origin)) * frame.Direction;
         if (coordinate != point.Real)
             record.Write(point, coordinate);
+    }
+
+    internal static double? MatchProjectedOpeningLevel(double coordinate, double origin, double direction,
+        IReadOnlyCollection<double> openingLevels)
+    {
+        double? match = null;
+        foreach (double level in openingLevels)
+        {
+            if (coordinate != (level - origin) * direction)
+                continue;
+            if (match.HasValue)
+                throw Layout();
+            match = level;
+        }
+        return match;
     }
 
     // Revit can round a cut's top coordinate to the adjacent double when projecting it onto a face.
