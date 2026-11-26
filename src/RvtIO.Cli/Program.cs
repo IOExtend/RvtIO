@@ -65,6 +65,8 @@ internal static partial class Program
           --sketch-owner-dump <path.csv>    write the closed sketch loops of every sketch-owning element
           --inspect-batch <ids-file> <out.csv>    inspect many ids in one pass (ids: one per line or comma separated)
           --list-category <categoryId> <out.csv>  list the elements of one category
+          info <file-or-dir> [output] [--format text|json|jsonl|csv] [--csv|--jsonl|--json] [--output <path>] [--no-recursive] [--redact]
+                                            inspect metadata without reading geometry or Partitions (single file or recursive folder inventory)
           sheets <file.rvt|file.rfa> [output.json] [--r22-layout] [--where FILTER] [--params] [--csv] [--json]
                                             write the sheet catalog (sheets, viewports, parameters, limits not decoded) as JSON
           print <file.rvt> <out.pdf|out.svg> [--level <id|name>] [--view <id|name>] [--sheet <id|number>] [--where FILTER] [--scale <n>]
@@ -177,6 +179,7 @@ internal static partial class Program
         if (args[0] == "set-family-parameter") return RvtIO.Cli.SetParameterCommand.Run(args[1..], Console.Out, Console.Error, familyFile: true);
         if (args[0] == "edit-parameters") return RvtIO.Cli.SetParameterCommand.RunBatch(args[1..], Console.Out, Console.Error);
         if (args[0] == "coverage") return RvtIO.Cli.CoverageCommand.Run(args[1..], Console.Out, Console.Error);
+        if (args[0] == "info") return RvtIO.Cli.InfoCommand.Run(args[1..], Console.Out, Console.Error);
         if (args[0] == "sheets") return RvtIO.Cli.SheetsCommand.Run(args[1..], Console.Out, Console.Error);
         if (args[0] == "print") return RvtIO.Cli.PrintCommand.Run(args[1..], Console.Out, Console.Error);
         if (args[0] == "--rebar-dump") return RvtIO.RebarDump.Run(args[1..]);
