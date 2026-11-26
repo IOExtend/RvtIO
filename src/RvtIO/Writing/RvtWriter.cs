@@ -145,7 +145,7 @@ public sealed class RvtWriteResult
     /// <summary>Number of container streams replaced during the write (<c>0</c> for an unchanged <see cref="RvtWriter.SaveAs"/>).</summary>
     public required int ReplacedStreamCount { get; init; }
 
-    /// <summary>Number of partition records replaced across all <c>Partitions/&lt;n&gt;</c> streams.</summary>
+    /// <summary>Number of partition records replaced, added, or removed across all <c>Partitions/&lt;n&gt;</c> streams.</summary>
     public required int RewrittenRecordCount { get; init; }
 }
 
@@ -291,6 +291,7 @@ public static class RvtWriter
         string fullSource = Path.GetFullPath(sourcePath);
 
         Dictionary<string, byte[]>? replacements = null;
+        int rewrittenRecordCount;
         RvtWriteCapabilities capabilities;
         using var sourceFile = new FileStream(fullSource, FileMode.Open, FileAccess.Read, FileShare.Read);
         using (var root = RootStorage.Open(sourceFile, StorageModeFlags.LeaveOpen))
@@ -327,7 +328,9 @@ public static class RvtWriter
                 request = new RvtWriteRequest { PartitionRecordEdits = pending.Records.Values.ToArray() };
             }
             if (request.PagedStreamEdits.Count > 0 || request.PartitionRecordEdits.Count > 0)
-                replacements = BuildReplacements(root, inspection, request);
+                replacements = BuildReplacements(root, inspection, request, pending);
+            rewrittenRecordCount = checked(request.PartitionRecordEdits.Count
+                + 3 * (pending.AddedProjectOwners.Count + pending.RemovedProjectOwners.Count));
             foreach (var (path, bytes) in pending.Metadata)
                 (replacements ??= new(StringComparer.OrdinalIgnoreCase)).Add(inspection.CanonicalStreamPaths[path], bytes);
         }
@@ -350,7 +353,7 @@ public static class RvtWriter
             EffectiveRelease = capabilities.EffectiveRelease!.Value,
             StreamCount = containerResult.Entries.Values.Count(e => e.IsStream),
             ReplacedStreamCount = containerResult.Replaced,
-            RewrittenRecordCount = request.PartitionRecordEdits.Count,
+            RewrittenRecordCount = rewrittenRecordCount,
         };
     }
 
@@ -997,7 +1000,8 @@ public static class RvtWriter
     private static Dictionary<string, byte[]> BuildReplacements(
         RootStorage root,
         Inspection inspection,
-        RvtWriteRequest request)
+        RvtWriteRequest request,
+        ParameterWriter.Pending pending)
     {
         var replacements = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
 
@@ -1032,16 +1036,21 @@ public static class RvtWriter
                     throw new RvtWriteRefusedException("invalid-record-target", $"Partition number {recEdit.PartitionNumber} cannot be negative.");
             }
 
-            foreach (var group in request.PartitionRecordEdits.GroupBy(e => e.PartitionNumber))
+            var additions = pending.AddedProjectOwners.ToLookup(owner => owner.Partition);
+            var removals = pending.RemovedProjectOwners.ToLookup(owner => owner.Partition, owner => owner.Owner);
+            var recordGroups = request.PartitionRecordEdits.ToLookup(edit => edit.PartitionNumber);
+            if (additions.Any(group => !recordGroups.Contains(group.Key)))
+                throw ParameterWriter.Unverified("An added project owner has no corresponding edit in its partition.");
+            foreach (int partition in recordGroups.Select(group => group.Key).Concat(removals.Select(group => group.Key)).Distinct())
             {
-                string partKey = "Partitions/" + group.Key.ToString(CultureInfo.InvariantCulture);
+                string partKey = "Partitions/" + partition.ToString(CultureInfo.InvariantCulture);
                 if (!inspection.CanonicalStreamPaths.TryGetValue(partKey, out string? canonical))
                     throw new RvtWriteRefusedException("missing-partition", $"Partition stream '{partKey}' does not exist in the source container.");
                 if (replacements.ContainsKey(canonical))
                     throw new RvtWriteRefusedException("duplicate-edit", $"Stream '{canonical}' is targeted more than once.");
 
                 byte[] originalStored = ReadStreamByPath(root, canonical);
-                var internalEdits = group
+                var internalEdits = recordGroups[partition]
                     .Select(e => new PartitionRecordEdit(e.Block, e.Channel, e.OwnerId, e.Body))
                     .ToList();
 
@@ -1051,7 +1060,13 @@ public static class RvtWriter
                         originalStored,
                         inspection.FramingTags!.Value,
                         inspection.Capabilities.ElementIdWidth!.Value,
-                        internalEdits);
+                        internalEdits,
+                        additions[partition].ToArray(),
+                        removals[partition].ToHashSet());
+                }
+                catch (InvalidDataException ex) when (additions.Contains(partition) || removals.Contains(partition))
+                {
+                    throw new RvtWriteRefusedException("unverified-parameter-storage", $"In '{canonical}': {ex.Message}", ex);
                 }
                 catch (ArgumentException ex)
                 {

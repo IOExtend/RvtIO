@@ -47,6 +47,7 @@ readable project record for the element and a verified source for the parameter 
 | Straight wall or top-level loaded family instance | `ALL_MODEL_MARK` (Mark). The writer verifies the main-model owner and the element's text store. |
 | Straight wall or top-level loaded Generic Model, Door, Window, or Furniture instance | `ALL_MODEL_INSTANCE_COMMENTS` (Comments). |
 | Straight wall, room, or top-level loaded Generic Model, Door, Window, or Furniture instance | `ALL_MODEL_IMAGE` (Image). |
+| Verified straight basic wall with an unconnected top | `WALL_USER_HEIGHT_PARAM` (Unconnected Height). Pass a length with units, such as `"3200 mm"`. |
 | Basic wall type | `ALL_MODEL_TYPE_IMAGE` (Type Image). |
 | Basic wall type, primary or directly linked derived family symbol | `ALL_MODEL_TYPE_MARK` (Type Mark). Pass the ID of the type or symbol whose value you want to write. |
 | Basic wall type or verified loaded family type | `ALL_MODEL_TYPE_COMMENTS`, `ALL_MODEL_DESCRIPTION`, `ALL_MODEL_MANUFACTURER`, `ALL_MODEL_MODEL`, `ALL_MODEL_URL`, and `ALL_MODEL_COST`. Cost takes a finite invariant number with no currency symbol; a change that Revit can suppress within its numeric comparison tolerance is refused. |
@@ -230,6 +231,19 @@ An identical value produces a lossless copy. The input and existing destination 
 
 The command uses exit code 0 for success, 1 for invalid arguments, 2 for input or I/O errors, and 5 for a refused edit.
 Low-level `Rewrite` accepts raw stream or record payloads and does not perform parameter editability checks.
+
+### Wall unconnected height
+
+RvtIO verifies the wall body, bounds, and saved face references before applying a height edit. The wall must be in
+the main model with both end joins disabled and room bounding turned off. A wall with a verified rectangular
+opening can retain its cut as its height changes. RvtIO also rebuilds verified cut transitions for one or two
+separated rectangular openings. This covers paths across the sill and head, activation of a dormant opening,
+and removal of a cut. When Revit would add or remove an opening warning, the writer updates its records and
+registries in the same batch. [Autodesk built-in parameter reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/fb011c91-be7e-f737-28c7-3f1e1917a0e0.htm)
+
+Pass a finite length of at least `0.1 ft` in `mm`, `cm`, `m`, `in`, or `ft`. Revit exposes the parameter as
+read-only on the tested level-constrained walls. RvtIO also refuses ambiguous positions near a cut boundary,
+unverified dependents such as dimensioned or room-bounding walls, and unverified joins and geometry.
 
 ## Editing a standalone family
 
@@ -811,12 +825,19 @@ The single-assignment round-trip checks open edited projects and families with A
 then save and reopen in Revit. These checks ran in Revit 2020–2025 and 2027. For the 2026 format, Revit 2027 upgraded and verified a project
 sample from Autodesk and controlled project and family fixtures converted to the 2026 format.
 
+The wall-height checks reproduced 334 files byte for byte from inputs to earlier Revit open, Save As, and reopen
+checks with Audit disabled. The cases covered plain walls, existing cuts, changes across the sill and head,
+separated openings, and warning creation and removal. The API checks compared the saved height, bounds,
+quantities, and, for the cut transitions, face references and warnings. They ran in Revit 2020–2025 and 2027.
+Revit 2027 upgraded and verified the files in the 2026 format. All 59 refused batches preserved their source
+files and produced no destination.
+
 ## Remaining parameter coverage
 
 | Case | Current boundary |
 | --- | --- |
 | Read-only values | Revit API rejects assignments to parameters such as computed wall area. RvtIO also rejects these assignments. |
-| Wall Unconnected Height | The Revit API permits some assignments on unconnected walls. The writer requires further coverage of the affected wall, opening, and geometry records. |
+| Wall Unconnected Height | RvtIO supports the verified straight wall and rectangular opening cases above. Joined walls, walls that bound rooms, other host cuts, constrained geometry, and changes through unverified cut boundaries still require coverage. A level-constrained top is read-only through the tested Revit API. |
 | Clearing an RVT value | Revit API `ClearValue()` requires a shared definition with `HideWhenNoValue`. RvtIO also checks the binding and stored value layout. |
 | Additional writable RVT built-ins and element classes | The RVT parameter writer supports the combinations in the table above. Other built-in fields, loaded family categories, and layouts beyond verified directly linked derived symbols still require coverage. |
 | Additional built-ins in standalone families | The verified Generic Model, Door, Window, and Furniture fields are listed above. Other built-ins, other family categories, and selecting an unnamed family type still require coverage. |
@@ -853,6 +874,8 @@ Every write call inspects the source file first and checks the requested operati
 Cross-stream tables in a Revit container (`Global/ElemTable`, `Global/DocumentIncrementTable`, `Global/PartitionTable`) store
 element identifiers, episode numbers, and partition identifiers, never byte offsets or compressed stream lengths. Changing the
 byte length of a record inside `Partitions/<n>` therefore requires no cross-stream offset table edits.
+When a height edit creates or removes an opening warning, the writer also updates the matching record in
+`Global/ElemTable` and the warning registry in `Global/Latest`.
 
 When rewriting data, `RvtWriter` enforces the following invariants:
 
@@ -870,7 +893,7 @@ When rewriting data, `RvtWriter` enforces the following invariants:
    - Within an edited block, untouched segment chains (including untouched chains on the same channel) are copied verbatim.
    - Within an edited chain, untouched records (including records whose class tag has no known field layout or carries opaque
      trailing bytes) are copied verbatim in file order.
-   - Edited records receive updated `[size][body][size]` framing and fresh Adler-32 checksums on channels `102` and `103`
+   - Replaced and added records receive updated `[size][body][size]` framing and fresh Adler-32 checksums on channels `102` and `103`
      (channel `101` carries no record checksum).
    - Edited chains respect Revit's `131,072`-byte (`128 KB`) segment body bound, emitting standalone segments (`flags & 3 == 0`)
      for batches up to `131,072` bytes and multi-segment chains (`2 -> 3 -> 1`) for larger record bodies while preserving the
@@ -878,7 +901,8 @@ When rewriting data, `RvtWriter` enforces the following invariants:
    - Edited blocks write an empty `SignatureMarker` (`n = 0, m = 0`) because their bytes are no longer signed by Revit.
 4. **Post-encode verification.** Every rewritten partition stream is verified in memory before container assembly: page parity
    must pass, full `PartitionFraming` must walk every block and segment without error, Adler-32 checksums must match on every
-   record, every unedited record must match the input byte-for-byte, and every edited record must match its requested body.
+   record, every unedited record must match the input byte-for-byte, and every replacement or addition must match its requested
+   body. A removed owner must have no records left in the edited project block.
 5. **Atomic persistence and source immutability.** Output is written to a sibling `.tmp` file, re-inspected against the capability
    matrix when edits were applied, read back from disk to verify every storage's directory-entry metadata and every stream's
    declared length and SHA-256 hash, and moved to the destination with `overwrite: false`. Existing files (including the source

@@ -24,6 +24,8 @@ internal static class ParameterWriter
     {
         internal readonly Dictionary<(int Partition, int Block, int Channel, ulong Owner), RvtPartitionRecordEdit> Records = new();
         internal readonly Dictionary<string, byte[]> Metadata = new(StringComparer.OrdinalIgnoreCase);
+        internal readonly List<PartitionOwnerAddition> AddedProjectOwners = [];
+        internal readonly HashSet<(int Partition, ulong Owner)> RemovedProjectOwners = [];
         internal GlobalParameterWriter.ProjectDependencies? GlobalParameterDependencies;
 
         internal void Apply(PlanResult? plan)
@@ -74,7 +76,7 @@ internal static class ParameterWriter
         if (parameterId == (int)BuiltInParameter.HOST_AREA_COMPUTED)
             throw new RvtWriteRefusedException("read-only-parameter", "Revit computes HOST_AREA_COMPUTED and exposes it as read-only.");
         if (parameterId <= 0 && parameter is not (BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS or BuiltInParameter.ALL_MODEL_MARK)
-            && !IsTypeIdentity(parameter) && !IsImage(parameter)
+            && parameter != BuiltInParameter.WALL_USER_HEIGHT_PARAM && !IsTypeIdentity(parameter) && !IsImage(parameter)
             && !Fields.ContainsKey(parameter))
             throw new RvtWriteRefusedException("unsupported-parameter", $"Writing {parameter} has not been verified.");
         if (value is null)
@@ -118,6 +120,8 @@ internal static class ParameterWriter
         var elementIds = elements.Select(row => row.Id).ToHashSet();
         if (!elementIds.Contains(edit.ElementId))
             throw new RvtWriteRefusedException("missing-element", $"Element {edit.ElementId} was not found in the element table.");
+        if (edit.ParameterId == (int)BuiltInParameter.WALL_USER_HEIGHT_PARAM)
+            return WallHeightWriter.Plan(root, tags, idWidth, schema, elementIds, edit, pending);
         if (edit.UserDefined && !elementIds.Contains(edit.ParameterId))
             throw new RvtWriteRefusedException("missing-parameter-definition", $"Parameter definition {edit.ParameterId} was not found in the element table.");
 
@@ -459,6 +463,8 @@ internal static class ParameterWriter
             stream.ReadExactly(raw);
             if (!PartitionFraming.Walk(raw, tags, idWidth, record =>
                 {
+                    if (record.Block == 0 && pending.RemovedProjectOwners.Contains((number, record.Owner)))
+                        return;
                     if (pending.Records.TryGetValue((number, record.Block, record.Channel, record.Owner), out var edit))
                         record = record with { Body = edit.Body };
                     visit(number, record);

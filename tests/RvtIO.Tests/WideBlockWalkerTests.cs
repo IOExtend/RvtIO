@@ -112,6 +112,45 @@ public class WideBlockWalkerTests
         Assert.Equal(1u, System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(block.AsSpan(backReference.ValueOffset)));
     }
 
+    [Theory]
+    [InlineData(3u, 4u, 3u, true)]
+    [InlineData(4u, 3u, 4u, false)]
+    [InlineData(3u, 4u, 5u, false)]
+    [InlineData(3u, 3u, 3u, false)]
+    public void GeometryArchiveHandlesFollowTheFirstReferenceBeforeTheOwningPointer(uint forward, uint firstOwner, uint secondOwner,
+        bool canonical)
+    {
+        var schema = new SchemaDocument
+        {
+            Classes =
+            [
+                new(1, "Geometry", 0, 1,
+                    [Field("m_document", 14, 3), Field("m_forward", 14, 3), Field("m_first", 14, 1), Field("m_second", 14, 1)], []),
+                new(2, "Node", 0, 1, [Field("m_value", 4)], []),
+            ],
+        };
+        var block = Block(1, writer =>
+        {
+            writer.Write(1u);
+            writer.Write(forward);
+            writer.Write(firstOwner);
+            writer.Write((ushort)2);
+            writer.Write(secondOwner);
+            writer.Write((ushort)2);
+            writer.Write(17);
+            writer.Write(23);
+        });
+        var walker = new WideBlockWalker(schema, (_, _) => null, []);
+        var walk = walker.Run(block, 0, block.Length, 1, traceArchiveReferences: true);
+
+        Assert.True(walk.Exact);
+        Assert.Equal(new WideBlockWalker.ArchiveReference[]
+        {
+            new(2, -1, 1), new(6, -1, forward), new(10, -1, firstOwner, 0), new(16, -1, secondOwner, 1),
+        }, walk.ArchiveReferences);
+        Assert.Equal(canonical, GElementArchiveHandles.IsCanonical(walk));
+    }
+
     [Fact]
     public void Walk_RecordsWhereEachCapturedValueStartsAndWhereAQueuedObjectIsExpected()
     {

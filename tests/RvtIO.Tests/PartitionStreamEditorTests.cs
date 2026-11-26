@@ -385,6 +385,75 @@ public sealed class PartitionStreamEditorTests
         Assert.Equal(new103, rec103.Body.ToArray());
     }
 
+    [Theory]
+    [InlineData(4)]
+    [InlineData(8)]
+    public void Apply_AddsOwnerAcrossAllProjectChannels(int idWidth)
+    {
+        ulong owner = idWidth == 4 ? 12UL : (ulong)uint.MaxValue + 12;
+        ulong terminator = idWidth == 4 ? uint.MaxValue : ulong.MaxValue;
+        var project = MakeStandardBlock(idWidth, keyed: false, [(5UL, 20, [1, 2]), (6UL, 21, [4])], splitChannel102IntoTwoChains: true);
+        var family = MakeStandardBlock(idWidth, keyed: true, [(owner, 40, [3, 4])]);
+        byte[] raw = BuildPartitionStream(idWidth, SampleTags, project, family);
+        byte[] snapshot = [.. raw];
+        byte[][] bodies = [TaggedBody(51, [5]), TaggedBody(52, [6]), TaggedBody(53, [7])];
+        var addition = new PartitionOwnerAddition(0, owner, bodies);
+        byte[] replacement = TaggedBody(20, [8]);
+
+        byte[] updated = PartitionStreamEditor.Apply(raw, SampleTags, idWidth, [new(0, 102, 5, replacement)], [addition]);
+
+        var records = new List<PartitionFraming.Record>();
+        Assert.True(PartitionFraming.Walk(updated, SampleTags, idWidth,
+            record => records.Add(record with { Body = record.Body.ToArray() }), out string? failure, out int blocks), failure);
+        Assert.Equal(2, blocks);
+        foreach (int channel in new[] { 101, 102, 103 })
+        {
+            var local = records.Where(record => record.Block == 0 && record.Channel == channel).ToArray();
+            Assert.Equal([5UL, 6UL, owner, terminator], local.Select(record => record.Owner));
+            var added = local[2];
+            Assert.Equal(bodies[channel - 101], added.Body.ToArray());
+            Assert.Equal(channel == 101 ? 0u : ComputeAdler(bodies[channel - 101]), added.Extra);
+            Assert.Equal(family.Chains.Single(chain => chain.Channel == channel).Records[0].Body,
+                Assert.Single(records, record => record.Block == 1 && record.Channel == channel && record.Owner == owner).Body.ToArray());
+        }
+        Assert.Equal(replacement, Assert.Single(records, record => record is { Block: 0, Channel: 102, Owner: 5 }).Body.ToArray());
+
+        Assert.Throws<InvalidDataException>(() => PartitionStreamEditor.Apply(raw, SampleTags, idWidth, [], [addition, addition]));
+        Assert.Throws<InvalidDataException>(() => PartitionStreamEditor.Apply(raw, SampleTags, idWidth, [], [addition with { Owner = 5 }]));
+        Assert.Throws<InvalidDataException>(() => PartitionStreamEditor.Apply(raw, SampleTags, idWidth, [], [addition with { Bodies = [bodies[0]] }]));
+        Assert.Equal(snapshot, raw);
+    }
+
+    [Theory]
+    [InlineData(4)]
+    [InlineData(8)]
+    public void Apply_RemovesProjectOwnerAndPreservesMatchingFamilyOwner(int idWidth)
+    {
+        var project = MakeStandardBlock(idWidth, keyed: false, [(5UL, 20, [1, 2]), (6UL, 21, [4])],
+            splitChannel102IntoTwoChains: true);
+        var family = MakeStandardBlock(idWidth, keyed: true, [(5UL, 40, [3, 4])]);
+        byte[] raw = BuildPartitionStream(idWidth, SampleTags, project, family);
+        byte[] snapshot = [.. raw];
+        byte[][] bodies = [TaggedBody(51, [5]), TaggedBody(52, [6]), TaggedBody(53, [7])];
+        var replacement = new PartitionRecordEdit(0, 102, 6, TaggedBody(21, [8]));
+        byte[] updated = PartitionStreamEditor.Apply(raw, SampleTags, idWidth, [replacement],
+            [new(0, 7, bodies)], new HashSet<ulong> { 5 });
+
+        var records = new List<PartitionFraming.Record>();
+        Assert.True(PartitionFraming.Walk(updated, SampleTags, idWidth,
+            record => records.Add(record with { Body = record.Body.ToArray() }), out string? failure, out _), failure);
+        Assert.DoesNotContain(records, record => record.Block == 0 && record.Owner == 5);
+        Assert.Equal(3, records.Count(record => record.Block == 1 && record.Owner == 5));
+        Assert.Equal(3, records.Count(record => record.Block == 0 && record.Owner == 7));
+        Assert.Equal(replacement.Body.ToArray(),
+            Assert.Single(records, record => record is { Block: 0, Channel: 102, Owner: 6 }).Body.ToArray());
+        Assert.Throws<InvalidDataException>(() => PartitionStreamEditor.Apply(raw, SampleTags, idWidth,
+            [], removals: new HashSet<ulong> { 99 }));
+        Assert.Throws<InvalidDataException>(() => PartitionStreamEditor.Apply(raw, SampleTags, idWidth,
+            [replacement], removals: new HashSet<ulong> { 6 }));
+        Assert.Equal(snapshot, raw);
+    }
+
     [Fact]
     public void Apply_RefusesInvalidEditsAndDamagedInputs()
     {

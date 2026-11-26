@@ -9,12 +9,14 @@ namespace RvtIO.Writing;
 /// element map, <c>&gt; 0</c> = a loaded-family keyed block), channel (<c>101..103</c>), and owner element identifier.</summary>
 internal sealed record PartitionRecordEdit(int Block, int Channel, ulong Owner, ReadOnlyMemory<byte> Body);
 
+internal sealed record PartitionOwnerAddition(int Partition, ulong Owner, byte[][] Bodies);
+
 /// <summary>
 /// Lossless editor of a stored <c>Partitions/&lt;n&gt;</c> stream (<see cref="PartitionFraming"/>).
 ///
 /// Untouched blocks (including loaded-family keyed blocks) and untouched segment chains within an edited block are copied byte-for-byte
 /// from the page-stripped stream, preserving their original deflate payloads, segment flags, opaque dwords, and block signatures.
-/// Only segment chains that hold an edited record are rebuilt: untouched records in that chain are copied byte-for-byte, edited records
+/// Only segment chains affected by a record replacement, addition, or removal are rebuilt. Untouched records are copied byte-for-byte, edited records
 /// receive updated <c>[size]...[size]</c> framing and channel 102/103 Adler-32 checksums, and the chain is emitted in 128 KB-bounded
 /// segments (<c>flags &amp; 3</c> = <c>0</c> for batches up to 131,072 body bytes, or <c>2 -&gt; 3 -&gt; 1</c> slices for larger bodies) with the
 /// upper flag bits and opaque dword of the original chain preserved. An edited block carries an empty <c>SignatureMarker</c> (<c>n = 0, m = 0</c>)
@@ -33,7 +35,8 @@ internal static class PartitionStreamEditor
     /// copy of <paramref name="raw"/> once its parity and framing are verified.</summary>
     /// <exception cref="ArgumentException">An edit has an invalid block, channel, terminator owner, tagless body, duplicate target, or missing target.</exception>
     /// <exception cref="InvalidDataException">The input stream fails page parity or partition framing, or post-write verification detects any divergence.</exception>
-    internal static byte[] Apply(byte[] raw, PartitionFraming.Tags tags, int idWidth, IReadOnlyList<PartitionRecordEdit> edits)
+    internal static byte[] Apply(byte[] raw, PartitionFraming.Tags tags, int idWidth, IReadOnlyList<PartitionRecordEdit> edits,
+        IReadOnlyList<PartitionOwnerAddition>? additions = null, IReadOnlySet<ulong>? removals = null)
     {
         ArgumentNullException.ThrowIfNull(raw);
         ArgumentNullException.ThrowIfNull(edits);
@@ -51,12 +54,40 @@ internal static class PartitionStreamEditor
         ulong terminator = idWidth == 8 ? ulong.MaxValue : uint.MaxValue;
         VerifyChecksums(before, terminator);
         var editMap = ValidateEdits(before, blocks, idWidth, terminator, edits);
-        if (edits.Count == 0) return [.. raw];
+        additions ??= [];
+        if (edits.Count == 0 && additions.Count == 0 && removals is not { Count: > 0 }) return [.. raw];
+        if (removals is { Count: > 0 })
+        {
+            var requested = before.Where(record => record.Block == 0 && removals.Contains(record.Owner))
+                .ToLookup(record => record.Owner);
+            if (removals.Contains(terminator) || removals.Any(owner =>
+                    !requested[owner].Select(record => record.Channel).Order().SequenceEqual([101, 102, 103]))
+                || editMap.Keys.Any(key => key.Block == 0 && removals.Contains(key.Owner)))
+                throw new InvalidDataException("Removing a project owner requires exactly one record in each channel and no replacement edit.");
+        }
+        var newRecords = new Dictionary<TargetKey, byte[]>();
+        if (additions.Count != 0)
+        {
+            var local = before.Where(record => record.Block == 0).ToArray();
+            if (local.GroupBy(record => record.Channel).Any(channel => channel.SkipLast(1).Any(record => record.Owner == terminator)))
+                throw new InvalidDataException("A project channel has records after its terminator.");
+            var owners = local.Select(record => record.Owner).ToHashSet();
+            foreach (var addition in additions)
+            {
+                if (addition.Owner == 0 || addition.Owner >= terminator || !owners.Add(addition.Owner) || addition.Bodies.Length != 3
+                    || addition.Bodies.Any(bytes => bytes.Length < sizeof(ushort)))
+                    throw new InvalidDataException("An added project owner requires a distinct ID and three tagged records.");
+                for (int channel = 101; channel <= 103; channel++)
+                    newRecords.Add(new TargetKey(0, channel, addition.Owner), addition.Bodies[channel - 101]);
+            }
+        }
 
         byte[] body = PartitionFraming.RemoveTails(raw)
             ?? throw new InvalidDataException("Partition stream page tails could not be removed.");
 
         var editedBlocks = editMap.Keys.Select(k => k.Block).ToHashSet();
+        if (newRecords.Count != 0 || removals is { Count: > 0 })
+            editedBlocks.Add(0);
         using var rebuiltStream = new MemoryStream(body.Length);
         rebuiltStream.Write(body, 0, 8); // format 9, 0
 
@@ -99,15 +130,32 @@ internal static class PartitionStreamEditor
                 continue;
             }
 
+            var appendChains = new Dictionary<int, ChainSpan>();
+            var removedHere = blockIndex == 0 ? removals : null;
+            if (blockIndex == 0 && (additions.Count != 0 || removedHere is { Count: > 0 }))
+            {
+                if (pointer != 0 || chains.Select(chain => chain.Channel).Distinct().Count() != 3)
+                    throw new InvalidDataException("Changing project owners requires all three channels in the local block.");
+                BinaryPrimitives.WriteUInt32LittleEndian(body.AsSpan(blockStart + sizeof(ushort) + sizeof(uint)),
+                    checked(expectedOwners - (uint)(removedHere?.Count ?? 0) + (uint)additions.Count));
+                if (additions.Count != 0)
+                    foreach (var group in chains.GroupBy(chain => chain.Channel))
+                        appendChains.Add(group.Key, group.Last());
+            }
             rebuiltStream.Write(body, blockStart, headerEnd - blockStart);
             foreach (var chain in chains)
             {
-                if (!ChainHasEdit(chain, blockIndex, idWidth, editMap))
+                if (ReferenceEquals(appendChains.GetValueOrDefault(chain.Channel), chain))
+                {
+                    var appended = AppendOwners(chain, idWidth, terminator, additions);
+                    WriteEditedChain(rebuiltStream, appended, blockIndex, tags, idWidth, editMap, removedHere);
+                }
+                else if (!ChainHasEdit(chain, blockIndex, idWidth, editMap, removedHere))
                 {
                     rebuiltStream.Write(body, chain.SegmentStart, chain.SegmentEnd - chain.SegmentStart);
-                    continue;
                 }
-                WriteEditedChain(rebuiltStream, chain, blockIndex, tags, idWidth, editMap);
+                else
+                    WriteEditedChain(rebuiltStream, chain, blockIndex, tags, idWidth, editMap, removedHere);
             }
 
             rebuiltStream.Write(body, emptySegmentStart, 18);
@@ -115,8 +163,45 @@ internal static class PartitionStreamEditor
         }
 
         byte[] encoded = PageCodec.EncodePadded(rebuiltStream.ToArray());
-        VerifyOutput(encoded, tags, idWidth, terminator, blocks, before, editMap);
+        if (removals is { Count: > 0 })
+            before.RemoveAll(record => record.Block == 0 && removals.Contains(record.Owner));
+        VerifyOutput(encoded, tags, idWidth, terminator, blocks, before, editMap, newRecords);
         return encoded;
+    }
+
+    private static ChainSpan AppendOwners(ChainSpan chain, int idWidth, ulong terminator, IReadOnlyList<PartitionOwnerAddition> additions)
+    {
+        byte[] input = chain.Inflated;
+        int sizeOffset = idWidth + (chain.Channel == 101 ? 0 : sizeof(uint));
+        int at = 0;
+        while (at < input.Length)
+        {
+            var record = input.AsSpan(at);
+            ulong owner = idWidth == 8 ? BinaryPrimitives.ReadUInt64LittleEndian(record) : BinaryPrimitives.ReadUInt32LittleEndian(record);
+            if (owner == terminator)
+            {
+                if (record.Length != sizeOffset + 2 * sizeof(uint) || BinaryPrimitives.ReadUInt32LittleEndian(record[sizeOffset..]) != 0)
+                    throw new InvalidDataException("Unexpected project channel terminator.");
+                break;
+            }
+            int size = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(record[sizeOffset..]));
+            at += checked(sizeOffset + size + 2 * sizeof(uint));
+        }
+
+        using var buffer = new MemoryStream();
+        buffer.Write(input.AsSpan(0, at));
+        var header = new byte[20];
+        var adler = new Adler32();
+        foreach (var addition in additions)
+        {
+            byte[] record = addition.Bodies[chain.Channel - 101];
+            int length = BuildRecordHeader(header, idWidth, chain.Channel, addition.Owner, record, adler);
+            buffer.Write(header.AsSpan(0, length));
+            buffer.Write(record);
+            buffer.Write(header.AsSpan(length - sizeof(uint), sizeof(uint)));
+        }
+        buffer.Write(input.AsSpan(at));
+        return chain with { Inflated = buffer.ToArray() };
     }
 
     private readonly record struct TargetKey(int Block, int Channel, ulong Owner);
@@ -242,7 +327,7 @@ internal static class PartitionStreamEditor
         }
     }
 
-    private static bool ChainHasEdit(ChainSpan chain, int block, int idWidth, Dictionary<TargetKey, byte[]> editMap)
+    private static bool ChainHasEdit(ChainSpan chain, int block, int idWidth, Dictionary<TargetKey, byte[]> editMap, IReadOnlySet<ulong>? removals)
     {
         ReadOnlySpan<byte> inf = chain.Inflated;
         int at = 0;
@@ -254,7 +339,7 @@ internal static class PartitionStreamEditor
             at += idWidth + (chain.Channel != 101 ? 4 : 0);
             int bodySize = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(inf.Slice(at, 4)));
             at += 4 + bodySize + 4;
-            if (editMap.ContainsKey(new TargetKey(block, chain.Channel, owner))) return true;
+            if (removals?.Contains(owner) == true || editMap.ContainsKey(new TargetKey(block, chain.Channel, owner))) return true;
         }
         return false;
     }
@@ -265,7 +350,8 @@ internal static class PartitionStreamEditor
         int block,
         PartitionFraming.Tags tags,
         int idWidth,
-        Dictionary<TargetKey, byte[]> editMap)
+        Dictionary<TargetKey, byte[]> editMap,
+        IReadOnlySet<ulong>? removals)
     {
         var adler = new Adler32();
         using var batch = new MemoryStream();
@@ -296,6 +382,8 @@ internal static class PartitionStreamEditor
             int storedBodyAt = at + 4;
             at = storedBodyAt + storedBodySize + 4;
 
+            if (removals?.Contains(owner) == true)
+                continue;
             if (!editMap.TryGetValue(new TargetKey(block, chain.Channel, owner), out byte[]? replacement))
             {
                 int itemLength = at - itemStart;
@@ -427,7 +515,8 @@ internal static class PartitionStreamEditor
         ulong terminator,
         int expectedBlocks,
         List<SnapshotRecord> before,
-        Dictionary<TargetKey, byte[]> editMap)
+        Dictionary<TargetKey, byte[]> editMap,
+        Dictionary<TargetKey, byte[]> newRecords)
     {
         var pageCheck = PageCodec.Verify(encoded);
         if (pageCheck.Status != PageCheckStatus.Valid)
@@ -437,6 +526,20 @@ internal static class PartitionStreamEditor
         if (!PartitionFraming.Walk(encoded, tags, idWidth, r => after.Add(SnapshotRecord.Capture(r)), out string? failure, out int actualBlocks))
             throw new InvalidDataException($"Rewritten partition stream failed framing verification: {failure}.");
 
+        if (newRecords.Count != 0)
+        {
+            VerifyChecksums(after, terminator);
+            after.RemoveAll(record =>
+            {
+                if (!newRecords.Remove(new TargetKey(record.Block, record.Channel, record.Owner), out byte[]? expected))
+                    return false;
+                if (!record.Body.AsSpan().SequenceEqual(expected))
+                    throw new InvalidDataException("An added project record differs from its verified body.");
+                return true;
+            });
+            if (newRecords.Count != 0)
+                throw new InvalidDataException("An added project record is missing after rewriting.");
+        }
         if (actualBlocks != expectedBlocks)
             throw new InvalidDataException($"Block count changed from {expectedBlocks} to {actualBlocks}.");
         if (after.Count != before.Count)

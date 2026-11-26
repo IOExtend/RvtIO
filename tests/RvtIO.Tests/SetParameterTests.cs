@@ -1200,8 +1200,8 @@ public sealed class SetParameterTests : IDisposable
     }
 
     [Theory]
-    [InlineData("12.75 ft", "unsupported-parameter")]
-    [InlineData(null, "unsupported-parameter")]
+    [InlineData("12.75 ft", "unverified-parameter-storage")]
+    [InlineData(null, "unsupported-parameter-clear")]
     public void RefusesAWholeBatchWhenWallHeightCannotBeWritten(string? height, string errorCode)
     {
         string source = CreateSource(builtIn: BuiltInParameter.ALL_MODEL_MARK);
