@@ -376,6 +376,15 @@ internal static partial class Program
             return 1;
         }
 
+        if (cliIfcOptions.SaveConfigPath is { } saveConfigPath
+            && !RvtIO.Cli.IfcConfigurationOptions.CanSaveConfiguration(
+                saveConfigPath, hasIfcOutput || !rvtPath.StartsWith("--", StringComparison.Ordinal) ? rvtPath : null,
+                cliIfcOptions.ConfigPath, hasIfcOutput ? [
+                    ifcPath, compactJsonPath, fullJsonPath, scenePath, ValueOf(args, "--report"), ValueOf(args, "--dev-external-dump"),
+                    ..RvtIO.Cli.ReportPathOption.DumpOptions.Select(option => ValueOf(args, option)),
+                ] : []))
+            return 1;
+
         if (!RvtIO.Cli.IfcConfigurationOptions.TryBuildConfiguration(
                 cliIfcOptions,
                 profile,
@@ -402,12 +411,7 @@ internal static partial class Program
             return 1;
         }
         if (cliIfcOptions.SaveConfigPath != null && !hasIfcOutput)
-        {
-            File.WriteAllText(cliIfcOptions.SaveConfigPath, mergedIfcConfiguration.ToJson() + Environment.NewLine, System.Text.Encoding.UTF8);
-            Console.Error.WriteLine($"IFC configuration written to {cliIfcOptions.SaveConfigPath}");
-            return 0;
-        }
-        _ = resolvedIfcConfiguration;
+            return RvtIO.Cli.IfcConfigurationOptions.SaveConfiguration(cliIfcOptions.SaveConfigPath, mergedIfcConfiguration) ? 0 : 1;
         for (int i = 0; i < args.Length - 1; i++)
         {
             if (args[i] == "--dev-external-dump") externalDumpPath = args[i + 1];
@@ -474,9 +478,8 @@ internal static partial class Program
         if (listCategoryOutPath != null) return ListCategory(rvtPath, listCategoryId, listCategoryOutPath);
 
         return Export(new ExportArguments(args, rvtPath, ifcPath, compactJsonPath, fullJsonPath, scenePath,
-            externalDumpPath, externalDumpClassPrefix, profile,
-            exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, openingLegacyAxes, ifcTimestamp, ifcLengthUnit,
-            mergedIfcConfiguration, cliIfcOptions.SaveConfigPath));
+            externalDumpPath, externalDumpClassPrefix, resolvedIfcConfiguration.Profile,
+            jsonClassPrefix, mergedIfcConfiguration, cliIfcOptions.SaveConfigPath));
     }
 
     /// <summary>The value after the last occurrence of <paramref name="option"/>, null when the option is absent or ends the arguments.</summary>

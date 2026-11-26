@@ -1,5 +1,6 @@
 using System.Globalization;
 using RvtIO.Ifc;
+using RvtIO.Internal;
 
 namespace RvtIO.Cli;
 
@@ -224,6 +225,45 @@ internal static class IfcConfigurationOptions
             error = ex.Message;
             return false;
         }
+        return true;
+    }
+
+    public static bool CanSaveConfiguration(string path, string? rvtPath, string? configPath, IEnumerable<string?> outputPaths)
+    {
+        try
+        {
+            if ((rvtPath != null && FileIdentity.SameFile(path, rvtPath))
+                || (configPath != null && FileIdentity.SameFile(path, configPath))
+                || outputPaths.Any(output => !string.IsNullOrWhiteSpace(output) && FileIdentity.SameFile(path, output)))
+            {
+                Console.Error.WriteLine("--ifc-save-config must not name an input or another output of the run; nothing was read or written.");
+                return false;
+            }
+            return true;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            Console.Error.WriteLine($"Invalid IFC configuration destination '{path}': {ex.Message}");
+            return false;
+        }
+    }
+
+    public static bool SaveConfiguration(string path, IfcExportConfiguration configuration)
+    {
+        // Write beside the destination so replacing it cannot mutate an aliased file.
+        string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllText(temporary, configuration.ToJson() + Environment.NewLine, System.Text.Encoding.UTF8);
+            File.Move(temporary, path, overwrite: true);
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            if (File.Exists(temporary)) File.Delete(temporary);
+            Console.Error.WriteLine($"IFC configuration could not be written to '{path}': {ex.Message}");
+            return false;
+        }
+        Console.Error.WriteLine($"IFC configuration written to {path}");
         return true;
     }
 

@@ -158,7 +158,7 @@ public class IfcExportConfigurationTests
         var diags = cfg.Validate();
         Assert.Contains(diags, d => d.Code == expectedCode && d.Severity == IfcConfigurationDiagnosticSeverity.Error);
         Assert.Throws<InvalidOperationException>(() => cfg.Resolve());
-        Assert.Throws<InvalidOperationException>(() => new IfcExporter(cfg).Export(MinimalDocument(), new StringWriter()));
+        Assert.Throws<InvalidOperationException>(() => new IfcExporter(cfg, null).Export(MinimalDocument(), new StringWriter()));
     }
 
     [Fact]
@@ -231,6 +231,78 @@ public class IfcExportConfigurationTests
     }
 
     [Fact]
+    public void ExistingNullDiagnosticsConstructorRemainsUnambiguous()
+    {
+        var exporter = new IfcExporter(null);
+        Assert.Null(exporter.DiagnosticOutput);
+        Assert.Equal(IfcSchema.Ifc2x3, exporter.Schema);
+    }
+
+    [Theory]
+    [InlineData("schema")]
+    [InlineData("scope")]
+    [InlineData("phases")]
+    [InlineData("unitsAndCoordinates")]
+    [InlineData("geometry")]
+    [InlineData("spatial")]
+    [InlineData("quantities")]
+    [InlineData("propertySets")]
+    [InlineData("mappings")]
+    public void FromJson_RejectsNullSections(string section)
+    {
+        var error = Assert.Throws<JsonException>(() => IfcExportConfiguration.FromJson($"{{\"{section}\":null}}"));
+        Assert.Contains(section, error.Message);
+    }
+
+    [Fact]
+    public void Cli_SaveConfigurationRejectsCollidingPaths()
+    {
+        using var temp = new ConfigurationTestDirectory();
+        string model = Path.Combine(temp.Path, "model.rvt");
+        string ifc = Path.Combine(temp.Path, "model.ifc");
+        string report = Path.Combine(temp.Path, "report.json");
+        string sourceConfig = Path.Combine(temp.Path, "input.json");
+        File.WriteAllText(model, "model bytes");
+        File.WriteAllText(sourceConfig, "{}");
+
+        Assert.Equal(1, Program.Main([model, "--ifc", ifc, "--ifc-save-config", model]));
+        Assert.Equal(1, Program.Main([model, "--ifc-save-config", model]));
+        Assert.Equal(1, Program.Main([model, "--ifc", ifc, "--ifc-save-config", ifc]));
+        Assert.Equal(1, Program.Main([model, "--ifc", ifc, "--report", report, "--ifc-save-config", report]));
+        Assert.Equal(1, Program.Main(["--ifc-config", sourceConfig, "--ifc-save-config", sourceConfig]));
+
+        Assert.Equal("model bytes", File.ReadAllText(model));
+        Assert.Equal("{}", File.ReadAllText(sourceConfig));
+        Assert.False(File.Exists(ifc));
+        Assert.False(File.Exists(report));
+    }
+
+    [SkippableFact]
+    public void Cli_ExportsLastPhasesAndSavesAReusableSetup()
+    {
+        string model = TestFiles.FileFromEnvironment("RVTIO_SCHEMA_SAMPLE_2022");
+        using var temp = new ConfigurationTestDirectory();
+        string ifc = Path.Combine(temp.Path, "model.ifc");
+        string setup = Path.Combine(temp.Path, "setup.json");
+
+        Assert.Equal(0, Program.Main([model, "--ifc", ifc, "--ifc-phase", "last", "--ifc-room-phase", "last", "--ifc-save-config", setup]));
+
+        Assert.StartsWith("ISO-10303-21;", File.ReadLines(ifc).First());
+        var phases = IfcExportConfiguration.FromJson(File.ReadAllText(setup)).Resolve();
+        Assert.Equal(IfcPhaseScope.LastPhase, phases.PhaseScope);
+        Assert.Equal(IfcRoomPhaseScope.LastPhase, phases.RoomPhaseScope);
+        Assert.Null(phases.ExportPhaseId);
+        Assert.Null(phases.RoomExportPhaseId);
+    }
+
+    private sealed class ConfigurationTestDirectory : IDisposable
+    {
+        public string Path { get; } = Directory.CreateTempSubdirectory("rvtio-ifc-config-").FullName;
+
+        public void Dispose() => Directory.Delete(Path, recursive: true);
+    }
+
+    [Fact]
     public void CapabilitiesMatrix_ListsSupportedScopedAndUnsupportedSettings()
     {
         Assert.NotEmpty(IfcExportCapabilities.All);
@@ -250,11 +322,11 @@ public class IfcExportConfigurationTests
         };
 
         var withSpaces = new StringWriter();
-        new IfcExporter(config with { Spatial = new IfcSpatialAndRoomConfiguration { ExportRoomsAsSpaces = true } }).Export(MinimalDocument(), withSpaces);
+        new IfcExporter(config with { Spatial = new IfcSpatialAndRoomConfiguration { ExportRoomsAsSpaces = true } }, null).Export(MinimalDocument(), withSpaces);
         Assert.Contains("IFCSPACE(", withSpaces.ToString());
 
         var withoutSpaces = new StringWriter();
-        new IfcExporter(config).Export(MinimalDocument(), withoutSpaces);
+        new IfcExporter(config, null).Export(MinimalDocument(), withoutSpaces);
         string step = withoutSpaces.ToString();
         Assert.DoesNotContain("IFCSPACE(", step);
         Assert.Contains("IFCSLAB(", step);
@@ -297,6 +369,13 @@ public class IfcExportConfigurationTests
                 int badCode = Program.Main(["model.rvt", "--ifc", Path.Combine(tempDir, "bad.ifc"), "--ifc-schema", "ifc2x3", "--ifc-mvd", "reference-view-1.2"]);
                 Assert.Equal(1, badCode);
                 Assert.Contains("incompatible-schema-model-view", errSw.ToString());
+
+                File.WriteAllText(configFile, "{\"schema\":null}");
+                string rejectedFile = Path.Combine(tempDir, "rejected.json");
+                errSw.GetStringBuilder().Clear();
+                Assert.Equal(1, Program.Main(["--ifc-config", configFile, "--ifc-save-config", rejectedFile]));
+                Assert.Contains("section 'schema' must be an object", errSw.ToString());
+                Assert.False(File.Exists(rejectedFile));
             }
             finally
             {

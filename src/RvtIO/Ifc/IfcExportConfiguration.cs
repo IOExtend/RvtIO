@@ -464,8 +464,24 @@ public sealed record IfcExportConfiguration
     public static IfcExportConfiguration FromJson(string json)
     {
         ArgumentNullException.ThrowIfNull(json);
-        return JsonSerializer.Deserialize<IfcExportConfiguration>(json, SerializerOptions)
+        var configuration = JsonSerializer.Deserialize<IfcExportConfiguration>(json, SerializerOptions)
             ?? throw new JsonException("Configuration JSON must represent an object.");
+        string? nullSection = configuration switch
+        {
+            { Schema: null } => "schema",
+            { Scope: null } => "scope",
+            { Phases: null } => "phases",
+            { UnitsAndCoordinates: null } => "unitsAndCoordinates",
+            { Geometry: null } => "geometry",
+            { Spatial: null } => "spatial",
+            { Quantities: null } => "quantities",
+            { PropertySets: null } => "propertySets",
+            { Mappings: null } => "mappings",
+            _ => null,
+        };
+        if (nullSection != null)
+            throw new JsonException($"IFC configuration section '{nullSection}' must be an object.");
+        return configuration;
     }
 
     /// <summary>

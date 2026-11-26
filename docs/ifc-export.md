@@ -21,6 +21,7 @@ RvtIO exports BIM geometry, spatial structure, materials, openings, distribution
    - Designed for reference coordination, clash detection, and viewer consumption (`ViewDefinition [ReferenceView_V1.2]`).
    - Preserves parametric sweeps (`IfcExtrudedAreaSolid` / `'SweptSolid'`) and mapped items (`IfcMappedItem` / `'MappedRepresentation'`).
    - Converts faceted BRep (`IfcFacetedBrep`) and surface-model (`IfcFaceBasedSurfaceModel`, `IfcShellBasedSurfaceModel`) representations into IFC4 `'Tessellation'` items (`IfcTriangulatedFaceSet` for pure triangle meshes without inner bounds; `IfcPolygonalFaceSet` / `IfcIndexedPolygonalFaceWithVoids` for general or voided polygonal faces), preserving `IfcStyledItem` material/surface styles.
+   - Exports reinforcement centre lines as `IfcIndexedPolyCurve` with straight and circular arc segments.
    - Downgrades `IfcWallStandardCase` to `IfcWall` with `PredefinedType = .NOTDEFINED.`.
 2. **`DesignTransferView_V1.0` (`IfcModelView.DesignTransferView10`)**:
    - Designed for editable model transfer (`ViewDefinition [DesignTransferView_V1.0]`).
@@ -60,6 +61,8 @@ Settings resolve deterministically in the following order (later layers override
 4. **Explicit API properties / CLI flags** (`Schema`, `ModelView`, `Profile`, `LengthUnit`, `Timestamp`, `ExportPhaseId`, `ExportAllPhases`, `RoomExportPhaseId`, `ExportRoomsOfAllPhases`, `ExportRoomsAsSpaces` / `--ifc-no-spaces`, `BaseQuantities` / `--ifc-no-base-quantities`, `OpeningQuantitiesSwapped` / `--ifc-opening-legacy-axes`, Revit parameter flags).
 
 When an explicit `Schema` or `ModelView` override changes away from a base preset's schema/view without explicitly setting `PreferTessellation`, geometry defaults re-resolve to match the target MVD (`true` for `ReferenceView_V1.2`, `false` otherwise). Unknown JSON properties fail deserialization (`JsonUnmappedMemberHandling.Disallow`).
+
+When saving a setup during export, `--ifc-phase last` and `--ifc-room-phase last` remain reusable last-phase selectors in the JSON. The CLI resolves them against the project used for each export.
 
 ### Named Presets (`--ifc-preset`)
 
@@ -129,7 +132,7 @@ var info = new RvtFileReader(new RvtReaderOptions { R22Layout = true }).Read("mo
 
 // 1. IFC4 Reference View 1.2 (Current profile) via preset
 var rvConfig = IfcExportConfiguration.FromPreset(IfcExportPresetKind.Ifc4ReferenceView12);
-new IfcExporter(rvConfig).Export(info, "model-rv12.ifc");
+new IfcExporter(rvConfig, diagnosticOutput: null).Export(info, "model-rv12.ifc");
 
 // 2. IFC4 Design Transfer View 1.0 under Legacy profile (profiles remain orthogonal)
 var dtvLegacy = new IfcExportConfiguration
@@ -146,7 +149,7 @@ var dtvLegacy = new IfcExportConfiguration
         HeaderTimestamp = DateTimeOffset.Parse("2026-01-01T00:00:00Z"),
     },
 };
-new IfcExporter(dtvLegacy).Export(info, "model-dtv10-legacy.ifc");
+new IfcExporter(dtvLegacy, diagnosticOutput: null).Export(info, "model-dtv10-legacy.ifc");
 ```
 
 ### CLI Usage

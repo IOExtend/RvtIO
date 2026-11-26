@@ -240,7 +240,7 @@ public partial class IfcExporter
     private ResolvedIfcExportConfiguration _resolvedConfig = new IfcExportConfiguration().Resolve();
 
     /// <summary>Creates an exporter driven by a unified <see cref="IfcExportConfiguration"/>.</summary>
-    public IfcExporter(IfcExportConfiguration configuration, TextWriter? diagnosticOutput = null)
+    public IfcExporter(IfcExportConfiguration configuration, TextWriter? diagnosticOutput)
     {
         ArgumentNullException.ThrowIfNull(configuration);
         _diag = diagnosticOutput;

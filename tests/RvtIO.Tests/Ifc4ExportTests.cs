@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.RegularExpressions;
 using RvtIO.Ifc;
 using RvtIO.Model;
+using RvtIO.Parsing;
 using Xunit;
 
 namespace RvtIO.Tests;
@@ -124,13 +125,13 @@ public class Ifc4ExportTests
     {
         var doc = SyntheticArchAndMepDocument();
         string defaultOut = ExportText(doc, new IfcExporter { Timestamp = FixedTime });
-        string explicit2x3Current = ExportText(doc, new IfcExporter(IfcExportConfiguration.FromPreset(IfcExportPresetKind.Ifc2x3CoordinationView20)) { Timestamp = FixedTime });
+        string explicit2x3Current = ExportText(doc, new IfcExporter(IfcExportConfiguration.FromPreset(IfcExportPresetKind.Ifc2x3CoordinationView20), null) { Timestamp = FixedTime });
         Assert.Equal(defaultOut, explicit2x3Current);
         Assert.Contains("FILE_SCHEMA(('IFC2X3'));", defaultOut);
         Assert.Contains("ViewDefinition [CoordinationView_V2.0, QuantityTakeOffAddOnView]", defaultOut);
 
         string legacyDefault = ExportText(doc, new IfcExporter { Profile = IfcProfile.Legacy, Timestamp = FixedTime });
-        string legacyPreset = ExportText(doc, new IfcExporter(IfcExportConfiguration.FromPreset(IfcExportPresetKind.Ifc2x3CoordinationViewLegacy)) { Timestamp = FixedTime });
+        string legacyPreset = ExportText(doc, new IfcExporter(IfcExportConfiguration.FromPreset(IfcExportPresetKind.Ifc2x3CoordinationViewLegacy), null) { Timestamp = FixedTime });
         Assert.Equal(legacyDefault, legacyPreset);
         Assert.Contains("FILE_SCHEMA(('IFC2X3'));", legacyDefault);
         Assert.Contains("ViewDefinition [CoordinationView]", legacyDefault);
@@ -380,6 +381,64 @@ public class Ifc4ExportTests
         Assert.InRange(maxM / maxFt, 0.3047, 0.3049);
     }
 
+    [Theory]
+    [InlineData(IfcUnitFamily.Millimetre, 304.8)]
+    [InlineData(IfcUnitFamily.Metre, 0.3048)]
+    public void ReferenceViewRebarUsesConnectedLinearAndCircularSegments(IfcUnitFamily unit, double unitsPerFoot)
+    {
+        var info = new RevitFileInfo();
+        info.Elements.Add(RebarReaderTests.Bar(500, 0));
+        string step = ExportText(info, new IfcExporter
+        {
+            Schema = IfcSchema.Ifc4,
+            ModelView = IfcModelView.ReferenceView12,
+            LengthUnit = unit,
+        });
+
+        Assert.DoesNotContain("IFCCOMPOSITECURVE(", step);
+        var curves = Regex.Matches(step, @"^#(\d+)=IFCINDEXEDPOLYCURVE\(#(\d+),\(IFCLINEINDEX\(\(1,2\)\),IFCARCINDEX\(\(2,3,4\)\)\),\$\);", RegexOptions.Multiline);
+        Assert.Equal(2, curves.Count);
+        foreach (Match curve in curves)
+        {
+            var pointList = Regex.Match(step, $@"^#{curve.Groups[2].Value}=IFCCARTESIANPOINTLIST3D\((.+)\);", RegexOptions.Multiline);
+            Assert.True(pointList.Success);
+            var points = Regex.Matches(pointList.Groups[1].Value, @"\(([^()]+)\)")
+                .Select(p => p.Groups[1].Value.Split(',').Select(v => double.Parse(v, CultureInfo.InvariantCulture)).ToArray()).ToArray();
+            Assert.Equal(4, points.Length);
+            Assert.Equal(unitsPerFoot, points[1][0], 9);
+            Assert.Equal((1 + Math.Sqrt(0.125)) * unitsPerFoot, points[2][0], 9);
+            Assert.Equal((0.5 - Math.Sqrt(0.125)) * unitsPerFoot, points[2][1], 9);
+            Assert.Equal(1.5 * unitsPerFoot, points[3][0], 9);
+            Assert.Equal(0.5 * unitsPerFoot, points[3][1], 9);
+            Assert.Matches($@"IFCSWEPTDISKSOLID\(#{curve.Groups[1].Value},[^,]+,\$,\$,\$\);", step);
+        }
+
+        string designTransfer = ExportText(info, new IfcExporter { Schema = IfcSchema.Ifc4, ModelView = IfcModelView.DesignTransferView10 });
+        Assert.Contains("IFCCOMPOSITECURVE(", designTransfer);
+        Assert.DoesNotContain("IFCINDEXEDPOLYCURVE(", designTransfer);
+    }
+
+    [Fact]
+    public void ReferenceViewRebarClosesFullCirclesAndSeparatesDisconnectedPieces()
+    {
+        var bar = RebarReaderTests.Bar(500, 0);
+        RebarSegment[] pieces =
+        [
+            new(true, [0, 0, 0], [1, 0, 0], [0, 1, 0], 1, 0, 2 * Math.PI),
+            new(false, [2, 0, 0], [1, 0, 0], [0, 0, 0], 0, 0, 1),
+            new(false, [3, 0, 0], [1, 0, 0], [0, 0, 0], 0, 0, 1e-10),
+        ];
+        bar.RebarBars = bar.RebarBars! with { Bars = [pieces] };
+        var info = new RevitFileInfo();
+        info.Elements.Add(bar);
+
+        string step = ExportText(info, new IfcExporter { Schema = IfcSchema.Ifc4 });
+        Assert.Contains("IFCARCINDEX((1,2,3)),IFCARCINDEX((3,4,1))", step);
+        Assert.Single(Regex.Matches(step, @"IFCLINEINDEX\("));
+        Assert.Contains("IFCLINEINDEX((1,2))", step);
+        Assert.Equal(2, Regex.Matches(step, "IFCSWEPTDISKSOLID\\(").Count);
+    }
+
     [SkippableFact]
     public void SampleRvtFilesFromTestRoots_ExportValidIfc4ReferenceViewAndDesignTransferViewWhenPresent()
     {
@@ -391,14 +450,14 @@ public class Ifc4ExportTests
             throw new SkipException("No .rvt fixture files found under RVTIO_TEST_FILES.");
 
         var info = new RvtFileReader(new RvtReaderOptions { R22Layout = true }).Read(firstRvt);
-        string rvStep = ExportText(info, new IfcExporter(IfcExportConfiguration.FromPreset(IfcExportPresetKind.Ifc4ReferenceView12)) { Timestamp = FixedTime });
+        string rvStep = ExportText(info, new IfcExporter(IfcExportConfiguration.FromPreset(IfcExportPresetKind.Ifc4ReferenceView12), null) { Timestamp = FixedTime });
         Assert.Contains("FILE_SCHEMA(('IFC4'));", rvStep);
         Assert.Contains("ViewDefinition [ReferenceView_V1.2]", rvStep);
         Assert.DoesNotContain("IFCFACETEDBREP(", rvStep);
         Assert.DoesNotContain("IFCELECTRICDISTRIBUTIONPOINT(", rvStep);
         Assert.DoesNotContain("IFCDOORSTYLE(", rvStep);
 
-        string dtvStep = ExportText(info, new IfcExporter(IfcExportConfiguration.FromPreset(IfcExportPresetKind.Ifc4DesignTransferView10)) { Timestamp = FixedTime });
+        string dtvStep = ExportText(info, new IfcExporter(IfcExportConfiguration.FromPreset(IfcExportPresetKind.Ifc4DesignTransferView10), null) { Timestamp = FixedTime });
         Assert.Contains("FILE_SCHEMA(('IFC4'));", dtvStep);
         Assert.Contains("ViewDefinition [DesignTransferView_V1.0]", dtvStep);
         Assert.DoesNotContain("IFCPOLYGONALFACESET(", dtvStep);
