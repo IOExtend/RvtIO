@@ -97,6 +97,14 @@ List the sheets and the viewports placed on them:
 rvtio sheets project.rvt sheets.json
 ```
 
+Compare two revisions of a project by persistent identity (`UniqueId`), reporting additions, removals, parameter/type/placement/geometry/relationship/link changes and affected type instances as summary text or deterministic JSON (`--json`):
+
+```sh
+rvtio diff rev1.rvt rev2.rvt --json changes.json
+```
+
+See [revision comparison](docs/diff.md) for matching rules, tolerances, local vs. world coordinates, partial decoding, and version-upgrade handling.
+
 The catalog has the sheet number, name, issue date, by-lines and scale, the viewports of each sheet and the elements each sheet owns, plus the text and whole-number project/shared parameters of each sheet (`--params`, `--csv`, `--where NAME=VALUE` with `!=`/`~` and `*`/`?` wildcards). Page size, view placement, the displayed view and 2D content are not decoded; every limit is reported in the catalog itself. See [sheets and viewports](docs/sheets.md).
 
 Print the plan of a level to PDF or SVG — walls with their stored width, column footprints and grids, on the smallest paper that holds the drawing at the scale:
