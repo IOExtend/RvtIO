@@ -166,6 +166,40 @@ public class OwnElementClassTests
     }
 
     [Fact]
+    public void CrossingGeometryUsesOnlyItsOwnBytesAndLeavesContiguousGeometryQueued()
+    {
+        var contiguous = Frame(2007);
+        var large = new byte[144];
+        Frame(2006).CopyTo(large, 0);
+        byte[] signature = [0xFF, 0xFF, 0xFF, 0xFF, 0xB5, 0x0B, 1, 0, 0, 0];
+        signature.CopyTo(large, 92);
+        BitConverter.GetBytes(4).CopyTo(large, 110);
+        System.Text.Encoding.Unicode.GetBytes("East").CopyTo(large, 114);
+        var small = Frame(2007);
+        BitConverter.GetBytes(456u).CopyTo(large, 0);
+        BitConverter.GetBytes((uint)(large.Length - 16)).CopyTo(large, 8);
+        BitConverter.GetBytes((uint)(large.Length - 16)).CopyTo(large, large.Length - 4);
+        BitConverter.GetBytes(789u).CopyTo(small, 0);
+        var state = new ParsingState
+        {
+            AllKnownIds = [123, 456, 789],
+            FramedPartitions = [new PartitionFraming.Framed(
+                [contiguous, large[..20], [], large[20..], small[..24], small[24..]],
+                [new(102, 123, 0, contiguous.Length), new(102, 456, contiguous.Length, large.Length),
+                 new(102, 789, contiguous.Length + large.Length, small.Length)], 4)],
+        };
+        var pending = new List<BlockParser.PendingGRep>();
+
+        RvtFileReader.ParseFramedBlocks(state, collectBlockOnlyIds: true, pending);
+
+        Assert.Same(contiguous, Assert.Single(pending).Chunk);
+        Assert.Equal("East", state.ViewNames[456]);
+        Assert.False(state.ViewNames.ContainsKey(789));
+        Assert.Equal(2, state.BlockClassInventory[2007].Count);
+        Assert.Equal(1, state.BlockClassInventory[2006].Count);
+    }
+
+    [Fact]
     public void FramedBlockReplayCollectsStringsAndViewNamesForNewOwners()
     {
         byte[] first = Frame(3708);

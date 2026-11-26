@@ -40,6 +40,8 @@ internal static class PartitionFraming
 
     internal readonly record struct FamilyItem(string ContentKey, ProjectItem Item);
 
+    internal delegate byte[]? CrossingRecordBuffer(ReadOnlySpan<byte> prefix, int length);
+
     /// <summary>A partition stream read by its framing: the output of every segment in file order, and the records of the project's own block
     /// (the null-key map) in file order, without the chain terminators. The records of the keyed blocks (loaded family documents) are not listed.
     /// <see cref="IdWidth"/> is the byte width of the owner the walk read; <see cref="Partition"/> is the partition stream number when known.</summary>
@@ -52,7 +54,10 @@ internal static class PartitionFraming
 
         /// <summary>Where the bytes of the item are: in its segment when it lies in one, else in a copy (an item can run into the next segment
         /// of its chain); Copied tells which.</summary>
-        internal (byte[] Data, int Start, bool Copied) Bytes(ProjectItem item)
+        internal (byte[] Data, int Start, bool Copied) Bytes(ProjectItem item) => Bytes(item, null);
+
+        // A synchronous consumer can lend storage for a crossing record. Only item.Length bytes belong to it.
+        internal (byte[] Data, int Start, bool Copied) Bytes(ProjectItem item, CrossingRecordBuffer? borrow)
         {
             if (starts == null)
             {
@@ -65,7 +70,7 @@ internal static class PartitionFraming
             while (s < starts.Length - 1 && starts[s + 1] <= item.Offset && Segments[s].Length == 0) s++;
             int from = (int)(item.Offset - starts[s]);
             if (from + (long)item.Length <= Segments[s].Length) return (Segments[s], from, false);
-            var copy = new byte[item.Length];
+            var copy = borrow?.Invoke(Segments[s].AsSpan(from), item.Length) ?? new byte[item.Length];
             for (int done = 0; done < item.Length; s++, from = 0)
             {
                 int n = Math.Min(item.Length - done, Segments[s].Length - from);
