@@ -5,15 +5,16 @@ using RvtIO;
 using RvtIO.Compact;
 using RvtIO.BuiltIns;
 using RvtIO.Ifc;
+using RvtIO.Gltf;
 using RvtIO.Model;
 
 internal static partial class Program
 {
     /// <summary>The values of the command line that decide the export.</summary>
-    private sealed record ExportArguments(string[] Args, string RvtPath, string? IfcPath, string? CompactJsonPath, string? FullJsonPath, string? ScenePath,
+    private sealed record ExportArguments(string[] Args, string RvtPath, string? IfcPath, string? GlbPath, string? CompactJsonPath, string? FullJsonPath, string? ScenePath,
         string? ExternalDumpPath, string? ExternalDumpClassPrefix,
-        IfcProfile Profile, string? ExportPhaseOption, string? RoomPhaseOption, bool IncludeIfcRevitParameters, bool RevitParameterGroups, bool BaseQuantities,
-        string JsonClassPrefix, bool OpeningLegacyAxes, DateTimeOffset? IfcTimestamp, IfcUnitFamily? IfcLengthUnit);
+        IfcProfile Profile, string JsonClassPrefix,
+        IfcExportConfiguration MergedIfcConfiguration, string? SaveIfcConfigPath);
 
     private sealed record ExportInput(RevitFileInfo Geometry, RevitFileInfo Json, JsonReadFacts GeometryNames,
         JsonReadFacts JsonFacts, ParsingState? QuantityState, IReadOnlyCollection<uint> TableRows);
@@ -31,14 +32,15 @@ internal static partial class Program
         return new(model, json, names, reader.WideState is { } wide ? new JsonReadFacts(wide, compact, debugNative) : names, quantities, state.ElemTable.Keys);
     }
 
-    // The export: reads the file and writes the IFC, the compact JSON or the full JSON dump.
+    // The export: reads the file and writes the requested formats (IFC, GLB, scene JSON, compact JSON, full JSON).
     private static int Export(ExportArguments arguments)
     {
-        var (args, rvtPath, ifcPath, compactJsonPath, fullJsonPath, scenePath, externalDumpPath, externalDumpClassPrefix, profile, exportPhaseOption, roomPhaseOption, includeIfcRevitParameters, revitParameterGroups, baseQuantities, jsonClassPrefix, openingLegacyAxes, ifcTimestamp, ifcLengthUnit) = arguments;
+        var (args, rvtPath, ifcPath, glbPath, compactJsonPath, fullJsonPath, scenePath, externalDumpPath, externalDumpClassPrefix, profile, jsonClassPrefix, mergedIfcConfig, saveIfcConfigPath) = arguments;
         WarnIfRevitLocalization(args);
 
         var exportOutputs = new List<(string Option, string Path)>();
         if (ifcPath != null) exportOutputs.Add(("--ifc", ifcPath));
+        if (glbPath != null) exportOutputs.Add(("--glb", glbPath));
         if (compactJsonPath != null) exportOutputs.Add(("--compact-json", compactJsonPath));
         if (fullJsonPath != null) exportOutputs.Add(("--full-json", fullJsonPath));
         if (scenePath != null) exportOutputs.Add(("--scene", scenePath));
@@ -69,7 +71,7 @@ internal static partial class Program
             }
         }
 
-        bool needIfcLayout = ifcPath != null || scenePath != null;
+        bool needIfcLayout = ifcPath != null || scenePath != null || glbPath != null;
         bool multiJson = compactJsonPath != null && fullJsonPath != null;
         bool needR22 = needIfcLayout || multiJson;
         bool hasJsonOutput = compactJsonPath != null || fullJsonPath != null;
@@ -162,41 +164,68 @@ internal static partial class Program
         var jsonModel = input.Json;
         var jsonState = input.JsonFacts;
         var ifcModel = input.Geometry;
+        GlbExportResult? glbResult = null;
 
-        if (scenePath != null)
+        if (scenePath != null || glbPath != null)
         {
-            var swScene = System.Diagnostics.Stopwatch.StartNew();
             var doc = RvtDocument.ForSceneExport(ifcModel);
-            var sceneResult = RvtIO.Scene.RvtSceneReader.Read(doc, new RvtIO.Scene.RvtSceneOptions
+            var sharedMeshes = RvtIO.Meshes.ElementMeshes.Extract(doc);
+            if (scenePath != null)
             {
-                ModelKey = Path.GetFileName(rvtPath)
-            });
-            foreach (var diag in sceneResult.Diagnostics)
-                Console.Error.WriteLine($"{diag.Severity} {diag.Code}: {diag.Message}");
-            IOScene.SceneJson.Save(sceneResult.Document, scenePath);
-            Console.Error.WriteLine($"Timing: scene {swScene.Elapsed.TotalSeconds:F1}s");
-            Console.Error.WriteLine($"Scene written to {scenePath}");
+                var swScene = System.Diagnostics.Stopwatch.StartNew();
+                var sceneResult = RvtIO.Scene.RvtSceneReader.Read(doc, sharedMeshes, new RvtIO.Scene.RvtSceneOptions
+                {
+                    ModelKey = Path.GetFileName(rvtPath)
+                });
+                foreach (var diag in sceneResult.Diagnostics)
+                    Console.Error.WriteLine($"{diag.Severity} {diag.Code}: {diag.Message}");
+                IOScene.SceneJson.Save(sceneResult.Document, scenePath);
+                Console.Error.WriteLine($"Timing: scene {swScene.Elapsed.TotalSeconds:F1}s");
+                Console.Error.WriteLine($"Scene written to {scenePath}");
+            }
+            if (glbPath != null)
+            {
+                var swGlb = System.Diagnostics.Stopwatch.StartNew();
+                try
+                {
+                    glbResult = GlbExporter.Export(doc, sharedMeshes, glbPath, new GlbExportOptions
+                    {
+                        DiagnosticOutput = Console.Error,
+                        CollectExportReport = reportPath != null,
+                    });
+                }
+                catch (GlbExporter.FamilyGeometryUnavailableException ex)
+                {
+                    report.Status = "failed";
+                    report.ExitCode = RvtExitCodes.DecodeError;
+                    report.Error = new ExportReport.ReportError { Kind = "glb-family-geometry-unavailable", Message = ex.Message };
+                    return EndRun(reportPath, report, $"error: {ex.Message}");
+                }
+                Console.Error.WriteLine($"Timing: glb {swGlb.Elapsed.TotalSeconds:F1}s");
+                Console.Error.WriteLine($"GLB written to {glbPath} ({glbResult.ElementCount} elements, {glbResult.MeshCount} meshes)");
+            }
         }
 
         if (ifcPath != null)
         {
             // Without the option the current profile exports the rooms of the last project phase that exists as a phase element (the
             // exporter resolves it); the legacy profile target exports every room. "all" keeps every room, "last" and an ID are explicit.
-            int? roomPhase = roomPhaseOption is "last" ? ifcModel.SerializedDefaultExportPhaseId
-                : roomPhaseOption is not (null or "all") ? int.Parse(roomPhaseOption, System.Globalization.CultureInfo.InvariantCulture) : null;
+            var phases = mergedIfcConfig.Phases;
+            bool lastRoomPhase = phases.RoomScope == IfcRoomPhaseScope.LastPhase;
+            int? roomPhase = lastRoomPhase ? ifcModel.SerializedDefaultExportPhaseId : phases.RoomPhaseId;
             if (ifcModel.SerializedProjectPhaseIds is { } authoredPhases)
                 Console.Error.WriteLine($"Project phases (authored order): {string.Join(",", authoredPhases)}");
-            bool roomPhaseValidated = roomPhase != null && ifcModel.SerializedProjectPhaseIds?.Contains(roomPhase.Value) == true;
-            if (roomPhaseOption is not (null or "all") && !roomPhaseValidated)
+            if ((lastRoomPhase || roomPhase.HasValue)
+                && (roomPhase is not int roomId || ifcModel.SerializedProjectPhaseIds?.Contains(roomId) != true))
             {
                 Console.Error.WriteLine("Room export phase cannot be resolved from the validated project phase order.");
                 return 1;
             }
-            if (!roomPhaseValidated) roomPhase = null;
-            // The phase of the whole export (elements and rooms). Without the option the current profile exports the last phase and the legacy profile all of them.
-            int? exportPhase = exportPhaseOption is "last" ? ifcModel.SerializedDefaultExportPhaseId
-                : exportPhaseOption is not (null or "all") ? int.Parse(exportPhaseOption, System.Globalization.CultureInfo.InvariantCulture) : null;
-            if (exportPhaseOption is not (null or "all") && (exportPhase == null || ifcModel.SerializedProjectPhaseIds?.Contains(exportPhase.Value) != true))
+
+            bool lastExportPhase = phases.Scope == IfcPhaseScope.LastPhase;
+            int? exportPhase = lastExportPhase ? ifcModel.SerializedDefaultExportPhaseId : phases.PhaseId;
+            if ((lastExportPhase || exportPhase.HasValue)
+                && (exportPhase is not int phaseId || ifcModel.SerializedProjectPhaseIds?.Contains(phaseId) != true))
             {
                 Console.Error.WriteLine("Export phase cannot be resolved from the validated project phase order.");
                 return 1;
@@ -206,13 +235,27 @@ internal static partial class Program
             // A 64-bit-id file has no scanned fallback names: the exporter reads the validated ones, as the JSON dump does.
             if (ifcModel.GeometryUndecoded)
                 RvtIO.Export.ValidatedElementNames.Apply(ifcModel, input.GeometryNames);
+
+            // Pin the validated phase for this export and keep "last" in the reusable setup.
+            var runtimeConfig = mergedIfcConfig with
+            {
+                Phases = phases with
+                {
+                    Scope = lastExportPhase ? IfcPhaseScope.SpecificPhase : phases.Scope,
+                    PhaseId = exportPhase,
+                    RoomScope = lastRoomPhase ? IfcRoomPhaseScope.SpecificPhase : phases.RoomScope,
+                    RoomPhaseId = roomPhase,
+                },
+            };
             var skipLog = new SkipLog();
-            var exporter = new IfcExporter(Console.Error, includeIfcRevitParameters) { SkipLog = skipLog, ExportPhaseId = exportPhase, ExportAllPhases = exportPhaseOption == "all", RoomExportPhaseId = roomPhase, ExportRoomsOfAllPhases = roomPhaseOption == "all", RevitParameterGroups = revitParameterGroups, Profile = profile, BaseQuantities = baseQuantities, OpeningQuantitiesSwapped = openingLegacyAxes, Timestamp = ifcTimestamp, LengthUnit = ifcLengthUnit };
+            var exporter = new IfcExporter(runtimeConfig, Console.Error) { SkipLog = skipLog };
             var swExport = System.Diagnostics.Stopwatch.StartNew();
             exporter.Export(ifcModel, ifcPath);
             Console.Error.WriteLine($"Timing: export {swExport.Elapsed.TotalSeconds:F1}s");
             Console.Error.WriteLine($"IFC written to {ifcPath}");
             report.SetExport("ifc", exporter.ExportedProducts, skipLog, exporter.ExportedElementQualities);
+            if (saveIfcConfigPath != null && !RvtIO.Cli.IfcConfigurationOptions.SaveConfiguration(saveIfcConfigPath, mergedIfcConfig))
+                return RvtExitCodes.Usage;
         }
 
         if (compactJsonPath != null)
@@ -349,6 +392,8 @@ internal static partial class Program
             if (reportPath != null && ifcPath == null && compactJsonPath == null)
                 report.SetJsonExport(jsonModel, full: true);
         }
+        if (glbResult != null && reportPath != null)
+            report.SetGlbExport(glbResult);
         return EndRun(reportPath, report, null);
     }
 

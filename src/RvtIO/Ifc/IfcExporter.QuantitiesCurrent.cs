@@ -20,10 +20,17 @@ public partial class IfcExporter
     private const int FoundationWidthParameterId = -1001568;
     private const int PipeInsulationCategoryId = -2008122, DuctInsulationCategoryId = -2008123, DuctLiningCategoryId = -2008124;
 
+    private bool? _baseQuantities;
+    private bool? _openingQuantitiesSwapped;
+
     /// <summary>Whether every product that the current profile gives a quantity set receives an IfcElementQuantity
-    /// "BaseQuantities". On by default for the current profile; products without a quantity description (pipes, fittings,
+    /// "BaseQuantities" (or <c>Qto_*BaseQuantities</c> in IFC4). On by default for the current profile; products without a quantity description (pipes, fittings,
     /// valves, equipment, cables) are unaffected. Set it to false (CLI: --ifc-no-base-quantities) to leave the sets out.</summary>
-    public bool BaseQuantities { get; init; } = true;
+    public bool BaseQuantities
+    {
+        get => _baseQuantities ?? _resolvedConfig.ExportBaseQuantities;
+        init => _baseQuantities = value;
+    }
 
     /// <summary>Write the legacy (swapped) Width and Height quantities of the opening of a door or window: Height the side of the cut
     /// loop along the wall and Width the vertical side, named by the frame they are measured in, so a door 0.8 wide and 2.1 high
@@ -32,12 +39,20 @@ public partial class IfcExporter
     /// Height) and Depth across the wall, whatever the direction of the wall in the model; an opening of a door or window that holds
     /// no dimension is measured as the extents of its solid in the frame of the wall. Unfilled straight-wall openings use the same
     /// geometric frame by default; true keeps their former model-frame quantities too (CLI: --ifc-opening-legacy-axes).</summary>
-    public bool OpeningQuantitiesSwapped { get; init; }
+    public bool OpeningQuantitiesSwapped
+    {
+        get => _openingQuantitiesSwapped ?? !_resolvedConfig.OpeningQuantitiesInHostAxes;
+        init => _openingQuantitiesSwapped = value;
+    }
 
     /// <summary>The opposite of <see cref="OpeningQuantitiesSwapped"/>, kept so that code written against the earlier opt-in keeps
     /// compiling. True by default; set it to false to get the legacy swapped quantities (CLI: --ifc-opening-host-axes is accepted
     /// and does nothing).</summary>
-    public bool OpeningQuantitiesInHostAxes { get => !OpeningQuantitiesSwapped; init => OpeningQuantitiesSwapped = !value; }
+    public bool OpeningQuantitiesInHostAxes
+    {
+        get => !OpeningQuantitiesSwapped;
+        init => _openingQuantitiesSwapped = !value;
+    }
 
     internal enum QuantityKind { Length, Area, Volume }
 

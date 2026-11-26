@@ -11,7 +11,7 @@ public sealed class PlanPrintOptions
     /// <summary>The paper size; null chooses the smallest of A4 to A0 that holds the drawing at the view scale.</summary>
     public PdfPageSize? PaperSize { get; set; }
 
-    /// <summary>The margin around the drawing, in millimetres.</summary>
+    /// <summary>The non-negative, finite margin around the drawing, in millimetres.</summary>
     public double MarginMillimetres { get; set; } = 10;
 
     /// <summary>The width in millimetres a wall is drawn with when neither the wall nor its type stores one.</summary>
@@ -149,6 +149,7 @@ public static class PlanPrinter
     /// <param name="options">The paper and margin; null uses the defaults.</param>
     /// <exception cref="InvalidOperationException">The document has no level with a wall or column, or the level has
     /// nothing with a location line to draw.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The scale is not positive, or the paper and margin cannot fit the plan.</exception>
     public static PdfDocument Render(RvtDocument document, int? levelId = null, int scale = 100,
         PlanPrintOptions? options = null)
     {
@@ -156,25 +157,88 @@ public static class PlanPrinter
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(scale);
         options ??= new PlanPrintOptions();
 
-        if (levelId == null)
-        {
-            int? best = null;
-            int bestCount = 0;
-            var counts = new Dictionary<int, int>();
-            foreach (var element in document.Elements)
-            {
-                if (!IsWallOrColumn(element) || !HasDrawableGeometry(element)) continue;
-                if (LevelOf(element) is not int level) continue;
-                counts[level] = counts.TryGetValue(level, out int count) ? count + 1 : 1;
-                if (counts[level] > bestCount) { best = level; bestCount = counts[level]; }
-            }
-            if (best == null) throw new InvalidOperationException("The document has no level with a wall or column.");
-            levelId = best;
-        }
-
+        int resolvedLevelId = ResolveLevelId(document, levelId);
         var pdf = new PdfDocument { Font = PdfFonts.TryFind(out _), Compress = true };
-        AddPlanPage(pdf, document, levelId.Value, scale, document.GetElement(levelId.Value)?.Name, options);
+        AddPlanPage(pdf, document, resolvedLevelId, scale, document.GetElement(resolvedLevelId)?.Name, options);
         return pdf;
+    }
+
+    /// <summary>Prints the plan of a level to a UTF-8 SVG document sharing the geometry, layout, and scale rules of
+    /// <see cref="Render"/>.</summary>
+    /// <param name="document">The opened document.</param>
+    /// <param name="levelId">The level to print; null prints the level with the most walls and columns.</param>
+    /// <param name="scale">The view scale denominator: 100 prints 1:100, one model metre to ten millimetres of paper.</param>
+    /// <param name="options">The paper and margin; null uses the defaults.</param>
+    /// <exception cref="InvalidOperationException">The document has no level with a wall or column, or the level has
+    /// nothing with a location line to draw.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The scale is not positive, or the paper and margin cannot fit the plan.</exception>
+    public static string RenderSvg(RvtDocument document, int? levelId = null, int scale = 100,
+        PlanPrintOptions? options = null)
+    {
+        using var stream = new MemoryStream();
+        WriteSvg(document, stream, levelId, scale, options);
+        return System.Text.Encoding.UTF8.GetString(stream.ToArray());
+    }
+
+    /// <summary>Prints the plan of a level as UTF-8 SVG XML to <paramref name="output"/> (leaving the stream open).</summary>
+    /// <param name="document">The opened document.</param>
+    /// <param name="output">Writable destination stream.</param>
+    /// <param name="levelId">The level to print; null prints the level with the most walls and columns.</param>
+    /// <param name="scale">The view scale denominator: 100 prints 1:100, one model metre to ten millimetres of paper.</param>
+    /// <param name="options">The paper and margin; null uses the defaults.</param>
+    /// <exception cref="InvalidOperationException">The document has no level with a wall or column, or the level has
+    /// nothing with a location line to draw.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The scale is not positive, or the paper and margin cannot fit the plan.</exception>
+    public static void WriteSvg(RvtDocument document, Stream output, int? levelId = null, int scale = 100,
+        PlanPrintOptions? options = null) =>
+        WriteSvg(document, output, levelId, scale, options, out _, out _);
+
+    internal static void WriteSvg(RvtDocument document, Stream output, int? levelId, int scale,
+        PlanPrintOptions? options, out PdfPageSize paper, out double effectiveScale)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(output);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(scale);
+        options ??= new PlanPrintOptions();
+
+        int resolvedLevelId = ResolveLevelId(document, levelId);
+        string? title = document.GetElement(resolvedLevelId)?.Name;
+        var layout = ComputePageLayout(document, resolvedLevelId, scale, options);
+        paper = layout.Paper;
+        effectiveScale = layout.EffectiveScale;
+
+        using var svg = new SvgPlanCanvas(
+            output,
+            layout.Paper,
+            resolvedLevelId,
+            title,
+            scale,
+            layout.EffectiveScale,
+            options.MarginMillimetres,
+            layout.OffsetX,
+            layout.OffsetY,
+            layout.Content.MinX,
+            layout.Content.MinY,
+            layout.Content.MaxX,
+            layout.Content.MaxY);
+        DrawPlanSurface(svg, layout, title, options);
+    }
+
+    private static int ResolveLevelId(RvtDocument document, int? levelId)
+    {
+        if (levelId.HasValue) return levelId.Value;
+
+        int? best = null;
+        int bestCount = 0;
+        var counts = new Dictionary<int, int>();
+        foreach (var element in document.Elements)
+        {
+            if (!IsWallOrColumn(element) || !HasDrawableGeometry(element)) continue;
+            if (LevelOf(element) is not int level) continue;
+            counts[level] = counts.TryGetValue(level, out int count) ? count + 1 : 1;
+            if (counts[level] > bestCount) { best = level; bestCount = counts[level]; }
+        }
+        return best ?? throw new InvalidOperationException("The document has no level with a wall or column.");
     }
 
     /// <summary>Prints one view to a one-page PDF document, at the view's own scale.</summary>
@@ -513,7 +577,50 @@ public static class PlanPrinter
         return type?.LookupParameter(BuiltInParameter.ALL_MODEL_TYPE_MARK)?.Value as string;
     }
 
+    internal sealed record PlanLayout(
+        PlanContent Content,
+        PdfPageSize Paper,
+        double EffectiveScale,
+        double OffsetX,
+        double OffsetY);
+
+    internal static PlanLayout ComputePageLayout(RvtDocument document, int levelId, int scale, PlanPrintOptions options)
+    {
+        double margin = options.MarginMillimetres;
+        if (!double.IsFinite(margin) || margin < 0)
+            throw new ArgumentOutOfRangeException(nameof(options), "The plan margin must be finite and non-negative.");
+
+        PlanContent content = CollectLevel(document, levelId)
+            ?? throw new InvalidOperationException("The level has no wall or column with a location line to draw.");
+        double contentWidth = (content.MaxX - content.MinX) / scale;
+        double contentHeight = (content.MaxY - content.MinY) / scale;
+        PdfPageSize paper = options.PaperSize ?? SmallestPaper(contentWidth + 2 * margin, contentHeight + 2 * margin);
+        double usableWidth = paper.WidthMillimetres - 2 * margin;
+        double usableHeight = paper.HeightMillimetres - 2 * margin;
+        if (!double.IsFinite(usableWidth) || !double.IsFinite(usableHeight) || usableWidth <= 0 || usableHeight <= 0)
+            throw new ArgumentOutOfRangeException(nameof(options), "The paper must leave a positive, finite area inside the margins.");
+
+        double effectiveScale = scale;
+        if (contentWidth > usableWidth || contentHeight > usableHeight)
+        {
+            double factor = Math.Min(usableWidth / Math.Max(contentWidth, 1e-9),
+                                     usableHeight / Math.Max(contentHeight, 1e-9));
+            effectiveScale = scale / factor;
+        }
+        if (!double.IsFinite(effectiveScale))
+            throw new ArgumentOutOfRangeException(nameof(options), "The plan cannot fit on the paper at a finite scale.");
+
+        double offsetX = (paper.WidthMillimetres - (content.MaxX - content.MinX) / effectiveScale) / 2;
+        double offsetY = (paper.HeightMillimetres - (content.MaxY - content.MinY) / effectiveScale) / 2;
+        return new PlanLayout(content, paper, effectiveScale, offsetX, offsetY);
+    }
+
     internal static void DrawContent(PdfPage page, PlanContent content, double scale, double originX,
+        double originY, double floorFill = 0.9,
+        IReadOnlyList<(double X, double Y, double Dx, double Dy, string Name)>? sectionMarks = null) =>
+        DrawContent(new PdfPlanCanvas(page), content, scale, originX, originY, floorFill, sectionMarks);
+
+    internal static void DrawContent(IPlanCanvas canvas, PlanContent content, double scale, double originX,
         double originY, double floorFill = 0.9,
         IReadOnlyList<(double X, double Y, double Dx, double Dy, string Name)>? sectionMarks = null)
     {
@@ -521,18 +628,18 @@ public static class PlanPrinter
         double ToY(double y) => (y - content.MinY) / scale + originY;
 
         foreach (var floor in content.FloorLoops)
-            page.DrawPolyline(floor.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0, true, floorFill);
+            canvas.DrawPolyline(floor.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0, true, floorFill);
 
         foreach (var room in content.Rooms)
-            page.DrawPolyline(room.Polygon.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0, true,
+            canvas.DrawPolyline(room.Polygon.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0, true,
                 RoomFill(room.Name));
 
         foreach (var grid in content.Grids)
         {
-            page.DrawLine(ToX(grid.X1), ToY(grid.Y1), ToX(grid.X2), ToY(grid.Y2), 0.18, 0.45);
-            if (page.Owner.Font == null || grid.Name.Length == 0) continue;
-            Bubble(page, ToX(grid.X1), ToY(grid.Y1), grid.Name);
-            Bubble(page, ToX(grid.X2), ToY(grid.Y2), grid.Name);
+            canvas.DrawLine(ToX(grid.X1), ToY(grid.Y1), ToX(grid.X2), ToY(grid.Y2), 0.18, 0.45);
+            if (!canvas.CanDrawText || grid.Name.Length == 0) continue;
+            Bubble(canvas, ToX(grid.X1), ToY(grid.Y1), grid.Name);
+            Bubble(canvas, ToX(grid.X2), ToY(grid.Y2), grid.Name);
         }
 
         var wallById = new Dictionary<int, (int Id, double X1, double Y1, double X2, double Y2, double Width)>();
@@ -551,7 +658,7 @@ public static class PlanPrinter
                 double bx = wall.X1 + ux * to, by = wall.Y1 + uy * to;
                 // The wall is poche: the stretch between its two sides is filled, the way a printed plan fills a cut
                 // wall, and the four edges are inked over it.
-                page.DrawPolyline(
+                canvas.DrawPolyline(
                 [
                     (ToX(ax + nx), ToY(ay + ny)), (ToX(bx + nx), ToY(by + ny)),
                     (ToX(bx - nx), ToY(by - ny)), (ToX(ax - nx), ToY(ay - ny)),
@@ -567,12 +674,12 @@ public static class PlanPrinter
             double length = Math.Sqrt(dx * dx + dy * dy);
             if (length < 1e-6) continue;
             double ux = dx / length, uy = dy / length;
-            page.DrawLine(ToX(wall.X1 + ux * from), ToY(wall.Y1 + uy * from),
+            canvas.DrawLine(ToX(wall.X1 + ux * from), ToY(wall.Y1 + uy * from),
                 ToX(wall.X1 + ux * to), ToY(wall.Y1 + uy * to), 0.15, 0.35);
         }
 
         // The room names and areas, at the centre of the footprint, in plan millimetres.
-        if (page.Owner.Font != null)
+        if (canvas.CanDrawText)
         {
             foreach (var room in content.Rooms)
             {
@@ -585,17 +692,17 @@ public static class PlanPrinter
                 // The room tag of the reference plan: the number and the area in a rounded white box at the middle of
                 // the room (the legend carries the names).
                 double boxWidth = 16, boxHeight = 5.2;
-                page.DrawPolyline(RoundedBox(pageX - boxWidth / 2, pageY - boxHeight / 2, boxWidth, boxHeight, 1.2),
+                canvas.DrawPolyline(RoundedBox(pageX - boxWidth / 2, pageY - boxHeight / 2, boxWidth, boxHeight, 1.2),
                     0.18, true, 1);
-                page.DrawText(room.Number, pageX - boxWidth / 2 + 2, pageY - 1.1, 2.4);
+                canvas.DrawText(room.Number, pageX - boxWidth / 2 + 2, pageY - 1.1, 2.4);
                 if (room.AreaSquareFeet > 0)
-                    page.DrawText($"{room.AreaSquareFeet * 0.092903:0} m²", pageX + boxWidth / 2 - 2, pageY - 1,
+                    canvas.DrawText($"{room.AreaSquareFeet * 0.092903:0} m²", pageX + boxWidth / 2 - 2, pageY - 1,
                         2, PdfTextAlignment.Right);
             }
         }
 
         foreach (var outline in content.Furniture)
-            page.DrawPolyline(outline.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0.12, true,
+            canvas.DrawPolyline(outline.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0.12, true,
                 new PdfColor(0.55, 0.55, 0.55));
 
         // A door is drawn as its leaf and the quarter arc it sweeps: the leaf stands at one jamb, perpendicular to the
@@ -603,7 +710,7 @@ public static class PlanPrinter
         double centerX = (content.MinX + content.MaxX) / 2, centerY = (content.MinY + content.MaxY) / 2;
 
         // The marks of the doors and windows, in a small circle beside the opening.
-        if (page.Owner.Font != null)
+        if (canvas.CanDrawText)
         {
             foreach (var tag in content.Tags)
             {
@@ -613,7 +720,7 @@ public static class PlanPrinter
                 double tagY = ToY(tag.MidY + tag.Ny * side * distance);
                 // A door is tagged with its mark in a circle, a window with its type mark in a hexagon, a leader line
                 // from the opening to the tag, as a plan draws them.
-                page.DrawLine(ToX(tag.MidX), ToY(tag.MidY), tagX, tagY, 0.1, 0.5);
+                canvas.DrawLine(ToX(tag.MidX), ToY(tag.MidY), tagX, tagY, 0.1, 0.5);
                 var shape = new List<(double X, double Y)>(6);
                 double radius = tag.IsWindow ? 2.6 : 2.2;
                 for (int i = 0; i < (tag.IsWindow ? 6 : 20); i++)
@@ -623,8 +730,8 @@ public static class PlanPrinter
                         : i * Math.PI * 2 / 20;
                     shape.Add((tagX + radius * Math.Cos(angle), tagY + radius * Math.Sin(angle)));
                 }
-                page.DrawPolyline(shape, 0.12, true, 1);
-                page.DrawText(tag.Text, tagX, tagY - 0.9, tag.IsWindow ? 1.6 : 1.8, PdfTextAlignment.Center);
+                canvas.DrawPolyline(shape, 0.12, true, 1);
+                canvas.DrawText(tag.Text, tagX, tagY - 0.9, tag.IsWindow ? 1.6 : 1.8, PdfTextAlignment.Center);
             }
         }
 
@@ -642,66 +749,54 @@ public static class PlanPrinter
             double midX = (hx + ex) / 2, midY = (hy + ey) / 2;
             double side = (centerX - midX) * nx + (centerY - midY) * ny >= 0 ? 1 : -1;
             double tipX = hx + nx * side * width, tipY = hy + ny * side * width;
-            page.DrawLine(ToX(hx), ToY(hy), ToX(tipX), ToY(tipY), 0.18);
+            canvas.DrawLine(ToX(hx), ToY(hy), ToX(tipX), ToY(tipY), 0.18);
             double a0 = Math.Atan2(tipY - hy, tipX - hx) * 180 / Math.PI;
             double a1 = Math.Atan2(ey - hy, ex - hx) * 180 / Math.PI;
             while (a1 < a0) a1 += 360;
             if (a1 - a0 > 270) a1 -= 360;
-            page.DrawArc(ToX(hx), ToY(hy), width / scale, a0, a1, 0.15, 0.4);
+            canvas.DrawArc(ToX(hx), ToY(hy), width / scale, a0, a1, 0.15, 0.4);
         }
 
-        DimChains(page, content, ToX, ToY);
+        DimChains(canvas, content, ToX, ToY);
 
         foreach (var opening in content.OpeningLoops)
-            page.DrawPolyline(opening.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0.18, true);
+            canvas.DrawPolyline(opening.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0.18, true);
 
         foreach (var column in content.Columns)
-            page.DrawRectangle(ToX(column.X), ToY(column.Y), column.Width / scale, column.Height / scale, 0.2, 1);
+            canvas.DrawRectangle(ToX(column.X), ToY(column.Y), column.Width / scale, column.Height / scale, 0.2, 1);
 
-        if (sectionMarks is { Count: > 0 }) DrawSectionMarks(page, content, scale, originX, originY, sectionMarks);
+        if (sectionMarks is { Count: > 0 }) DrawSectionMarks(canvas, content, scale, originX, originY, sectionMarks);
     }
 
     /// <summary>Draws the plan of a level as one page of the document.</summary>
     internal static void AddPlanPage(PdfDocument pdf, RvtDocument document, int levelId, int scale, string? title,
         PlanPrintOptions options)
     {
-        PlanContent content = CollectLevel(document, levelId)
-            ?? throw new InvalidOperationException("The level has no wall or column with a location line to draw.");
-        double contentWidth = (content.MaxX - content.MinX) / scale;
-        double contentHeight = (content.MaxY - content.MinY) / scale;
-        PdfPageSize paper = options.PaperSize ?? SmallestPaper(contentWidth + 2 * options.MarginMillimetres,
-            contentHeight + 2 * options.MarginMillimetres);
-        double usableWidth = paper.WidthMillimetres - 2 * options.MarginMillimetres;
-        double usableHeight = paper.HeightMillimetres - 2 * options.MarginMillimetres;
-        double effectiveScale = scale;
-        if (contentWidth > usableWidth || contentHeight > usableHeight)
-        {
-            double factor = Math.Min(usableWidth / Math.Max(contentWidth, 1e-9),
-                                     usableHeight / Math.Max(contentHeight, 1e-9));
-            effectiveScale = scale / factor;
-        }
-        double offsetX = (paper.WidthMillimetres - (content.MaxX - content.MinX) / effectiveScale) / 2;
-        double offsetY = (paper.HeightMillimetres - (content.MaxY - content.MinY) / effectiveScale) / 2;
+        var layout = ComputePageLayout(document, levelId, scale, options);
+        PdfPage page = pdf.AddPage(layout.Paper);
+        DrawPlanSurface(new PdfPlanCanvas(page), layout, title, options);
+    }
 
-        PdfPage page = pdf.AddPage(paper);
+    private static void DrawPlanSurface(IPlanCanvas canvas, PlanLayout layout, string? title, PlanPrintOptions options)
+    {
         if (options.DrawFrame)
         {
             double m = options.MarginMillimetres;
-            page.DrawRectangle(m, m, paper.WidthMillimetres - 2 * m, paper.HeightMillimetres - 2 * m, 0.25);
+            canvas.DrawRectangle(m, m, layout.Paper.WidthMillimetres - 2 * m, layout.Paper.HeightMillimetres - 2 * m, 0.25);
         }
 
-        DrawContent(page, content, effectiveScale, offsetX, offsetY);
+        DrawContent(canvas, layout.Content, layout.EffectiveScale, layout.OffsetX, layout.OffsetY);
 
         // A title inside the frame: the level or view name and the scale. Drawn only when a font with the name's
-        // characters was found; the standard font cannot write Cyrillic.
-        if (pdf.Font != null && !string.IsNullOrEmpty(title))
+        // characters was found; the standard PDF font cannot write Cyrillic.
+        if (canvas.CanDrawText && !string.IsNullOrEmpty(title))
         {
             double margin = options.MarginMillimetres;
-            page.DrawText(title, margin + 3, paper.HeightMillimetres - margin - 8, 4.5);
+            canvas.DrawText(title, margin + 3, layout.Paper.HeightMillimetres - margin - 8, 4.5);
             // The scale the drawing is printed at: a plan reduced to fit a small page no longer prints at its nominal
             // scale, and the title must not claim it does.
-            int printedScale = (int)Math.Round(effectiveScale);
-            page.DrawText($"1:{printedScale}", margin + 3, paper.HeightMillimetres - margin - 15, 3.5,
+            int printedScale = (int)Math.Round(layout.EffectiveScale);
+            canvas.DrawText($"1:{printedScale}", margin + 3, layout.Paper.HeightMillimetres - margin - 15, 3.5,
                 PdfTextAlignment.Left, 0.35);
         }
     }
@@ -730,7 +825,7 @@ public static class PlanPrinter
 
     /// <summary>Draws the section marks of a plan: the trace of each section plane across the drawing, a tick at both
     /// ends and a bubble with the letter of the view, as a plan shows where it is cut.</summary>
-    private static void DrawSectionMarks(PdfPage page, PlanContent content, double scale, double originX,
+    private static void DrawSectionMarks(IPlanCanvas canvas, PlanContent content, double scale, double originX,
         double originY, IReadOnlyList<(double X, double Y, double Dx, double Dy, string Name)> marks)
     {
         double ToX(double x) => (x - content.MinX) / scale + originX;
@@ -767,21 +862,21 @@ public static class PlanPrinter
             double x1 = px + dx * tMin, y1 = py + dy * tMin;
             double x2 = px + dx * tMax, y2 = py + dy * tMax;
             if (Math.Abs(x2 - x1) + Math.Abs(y2 - y1) < 10) continue;
-            page.DrawLine(x1, y1, x2, y2, 0.22, 0.2);
+            canvas.DrawLine(x1, y1, x2, y2, 0.22, 0.2);
             index++;
             string label = mark.Name.Length > 0 ? mark.Name[..1].ToUpperInvariant() : index.ToString();
             foreach (var (x, y, otherX, otherY) in new[] { (x1, y1, x2, y2), (x2, y2, x1, y1) })
             {
                 double angle = Math.Atan2(y - otherY, x - otherX);
                 // A short tick across the trace and the bubble at its end.
-                page.DrawLine(x - Math.Sin(angle) * 1.4, y + Math.Cos(angle) * 1.4, x + Math.Sin(angle) * 1.4,
+                canvas.DrawLine(x - Math.Sin(angle) * 1.4, y + Math.Cos(angle) * 1.4, x + Math.Sin(angle) * 1.4,
                     y - Math.Cos(angle) * 1.4, 0.22, 0.2);
-                Bubble(page, x, y, label);
+                Bubble(canvas, x, y, label);
             }
         }
     }
 
-    private static void Bubble(PdfPage page, double x, double y, string name)
+    private static void Bubble(IPlanCanvas canvas, double x, double y, string name)
     {
         const double radius = 3.5;
         var points = new List<(double X, double Y)>(24);
@@ -790,16 +885,16 @@ public static class PlanPrinter
             double angle = i * Math.PI * 2 / 24;
             points.Add((x + radius * Math.Cos(angle), y + radius * Math.Sin(angle)));
         }
-        page.DrawPolyline(points, 0.18, true, 1);
-        page.DrawText(name, x, y - 1.4, 3, PdfTextAlignment.Center);
+        canvas.DrawPolyline(points, 0.18, true, 1);
+        canvas.DrawText(name, x, y - 1.4, 3, PdfTextAlignment.Center);
     }
 
     /// <summary>Draws the dimension chains between the grid lines: a horizontal chain across the top of the plan and a
     /// vertical chain down its right side, each between neighbouring grids with the distance in millimetres.</summary>
-    private static void DimChains(PdfPage page, PlanContent content, Func<double, double> toX,
+    private static void DimChains(IPlanCanvas canvas, PlanContent content, Func<double, double> toX,
         Func<double, double> toY)
     {
-        if (page.Owner.Font == null) return;
+        if (!canvas.CanDrawText) return;
         var xs = new List<double>();
         var ys = new List<double>();
         foreach (var grid in content.Grids)
@@ -840,28 +935,28 @@ public static class PlanPrinter
         double top = toY(wallMaxY + 550);
         if (xs.Count >= 2)
         {
-            page.DrawLine(toX(xs[0]), top, toX(xs[^1]), top, 0.15, 0.3);
+            canvas.DrawLine(toX(xs[0]), top, toX(xs[^1]), top, 0.15, 0.3);
             for (int i = 0; i < xs.Count; i++)
             {
                 double x = toX(xs[i]);
-                page.DrawLine(x - 1.5, top - 1.5, x + 1.5, top + 1.5, 0.15, 0.3);
+                canvas.DrawLine(x - 1.5, top - 1.5, x + 1.5, top + 1.5, 0.15, 0.3);
                 if (i == 0) continue;
                 double millimetres = xs[i] - xs[i - 1];
-                page.DrawText($"{millimetres:0}", (x + toX(xs[i - 1])) / 2, top + 1.2, 2.2,
+                canvas.DrawText($"{millimetres:0}", (x + toX(xs[i - 1])) / 2, top + 1.2, 2.2,
                     PdfTextAlignment.Center, 0.25);
             }
         }
         double right = toX(wallMaxX + 550);
         if (ys.Count >= 2)
         {
-            page.DrawLine(right, toY(ys[0]), right, toY(ys[^1]), 0.15, 0.3);
+            canvas.DrawLine(right, toY(ys[0]), right, toY(ys[^1]), 0.15, 0.3);
             for (int i = 0; i < ys.Count; i++)
             {
                 double y = toY(ys[i]);
-                page.DrawLine(right - 1.5, y - 1.5, right + 1.5, y + 1.5, 0.15, 0.3);
+                canvas.DrawLine(right - 1.5, y - 1.5, right + 1.5, y + 1.5, 0.15, 0.3);
                 if (i == 0) continue;
                 double millimetres = ys[i] - ys[i - 1];
-                page.DrawTextRotated($"{millimetres:0}", right - 1.2, (y + toY(ys[i - 1])) / 2, 2.2, 90,
+                canvas.DrawTextRotated($"{millimetres:0}", right - 1.2, (y + toY(ys[i - 1])) / 2, 2.2, 90,
                     PdfTextAlignment.Center, 0.25);
             }
         }
@@ -870,28 +965,28 @@ public static class PlanPrinter
         double bottom = toY(wallMinY - 550);
         if (xs.Count >= 2)
         {
-            page.DrawLine(toX(xs[0]), bottom, toX(xs[^1]), bottom, 0.15, 0.3);
+            canvas.DrawLine(toX(xs[0]), bottom, toX(xs[^1]), bottom, 0.15, 0.3);
             for (int i = 0; i < xs.Count; i++)
             {
                 double x = toX(xs[i]);
-                page.DrawLine(x - 1.5, bottom - 1.5, x + 1.5, bottom + 1.5, 0.15, 0.3);
+                canvas.DrawLine(x - 1.5, bottom - 1.5, x + 1.5, bottom + 1.5, 0.15, 0.3);
                 if (i == 0) continue;
                 double millimetres = xs[i] - xs[i - 1];
-                page.DrawText($"{millimetres:0}", (x + toX(xs[i - 1])) / 2, bottom - 3.4, 2.2,
+                canvas.DrawText($"{millimetres:0}", (x + toX(xs[i - 1])) / 2, bottom - 3.4, 2.2,
                     PdfTextAlignment.Center, 0.25);
             }
         }
         double left = toX(wallMinX - 550);
         if (ys.Count >= 2)
         {
-            page.DrawLine(left, toY(ys[0]), left, toY(ys[^1]), 0.15, 0.3);
+            canvas.DrawLine(left, toY(ys[0]), left, toY(ys[^1]), 0.15, 0.3);
             for (int i = 0; i < ys.Count; i++)
             {
                 double y = toY(ys[i]);
-                page.DrawLine(left - 1.5, y - 1.5, left + 1.5, y + 1.5, 0.15, 0.3);
+                canvas.DrawLine(left - 1.5, y - 1.5, left + 1.5, y + 1.5, 0.15, 0.3);
                 if (i == 0) continue;
                 double millimetres = ys[i] - ys[i - 1];
-                page.DrawTextRotated($"{millimetres:0}", left - 0.8, (y + toY(ys[i - 1])) / 2, 2.2, 90,
+                canvas.DrawTextRotated($"{millimetres:0}", left - 0.8, (y + toY(ys[i - 1])) / 2, 2.2, 90,
                     PdfTextAlignment.Center, 0.25);
             }
         }

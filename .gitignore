@@ -26,3 +26,9 @@ test_files/
 .env
 *.rej
 *.orig
+
+# Reproducible RE1 comparison downloads and outputs
+_measure_cache/
+_measure_out/
+__pycache__/
+*.pyc

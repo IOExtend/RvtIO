@@ -80,7 +80,7 @@ public partial class IfcExporter
                 || w.EntityAt(psetIndex).Type != "IFCELEMENTQUANTITY")
                 return;
             var psetArgs = SplitStepArguments(w.EntityAt(psetIndex).Args);
-            if (psetArgs.Length < 6 || psetArgs[2].Trim('\'') !="BaseQuantities") return;
+            if (psetArgs.Length < 6 || psetArgs[2].Trim('\'') is not ("BaseQuantities" or "Qto_OpeningElementBaseQuantities")) return;
             string inner = psetArgs[5].Trim();
             if (inner.StartsWith('(') && inner.EndsWith(')')) inner = inner[1..^1];
             foreach (string qToken in SplitStepArguments(inner))
@@ -91,7 +91,11 @@ public partial class IfcExporter
                 var qArgs = SplitStepArguments(w.EntityAt(qIndex).Args);
                 if (qArgs.Length < 4) continue;
                 string qName = qArgs[0].Trim('\'');
-                if (newValue(qName, qArgs[3]) is { } value) w.ReplaceArgs(qIndex, $"'{qName}','',$,{D17(value)}");
+                if (newValue(qName, qArgs[3]) is { } value)
+                {
+                    string suffix = qArgs.Length >= 5 ? $",{qArgs[4]}" : "";
+                    w.ReplaceArgs(qIndex, $"'{qName}','',$,{D17(value)}{suffix}");
+                }
             }
         }
         foreach (var (openingId, fillingId) in fillingByOpening)

@@ -8,7 +8,8 @@ RvtIO is a .NET library and command line tool that reads Autodesk Revit projects
 
 - Reads elements, parameters, geometry, file metadata and project information.
 - Queries elements through `FilteredElementCollector`.
-- Exports IFC2X3 coordination view, with optional Revit parameters as property sets.
+- Exports IFC2X3 coordination view (default) and IFC4 (ISO 16739-1:2018 / ADD2 TC1; `ReferenceView_V1.2` and `DesignTransferView_V1.0`), with shared JSON/API configuration presets and optional Revit parameters as property sets.
+- Exports binary glTF 2.0 (`.glb`) directly via `GlbExporter` / `--glb` in Y-up metres with shared family symbol meshes, PBR colors/transparency, and element/material metadata in `extras`.
 - Writes compact JSON or a full JSON dump with every parameter and geometry.
 - Returns the triangle meshes of the model elements, with one shared mesh per family symbol for repeated instances (`ElementMeshes`).
 - Lists the sheets of a file and the viewports placed on them (`SheetCatalog`), with the sheet number, name, issue date, by-lines, the viewports of each sheet and the elements each sheet owns. Page size, view placement and 2D content are not decoded yet; the catalog reports each limit.
@@ -66,13 +67,29 @@ Export IFC with Revit parameters as property sets:
 rvtio project.rvt project.parameters.ifc --ifc-revit-parameters
 ```
 
+Export IFC4 (`ReferenceView_V1.2` by default, or `DesignTransferView_V1.0`) independently of `Current`/`Legacy` profiles, or drive exports through a shared JSON configuration preset (`--ifc-preset`, `--ifc-config`, `--ifc-save-config`, `--ifc-capabilities`):
+
+```sh
+rvtio project.rvt project-rv12.ifc --ifc-schema ifc4
+rvtio project.rvt project-dtv.ifc --ifc-schema ifc4 --ifc-mvd design-transfer-view-1.0 --ifc-profile legacy
+rvtio --ifc-capabilities
+```
+
+See [IFC export and configuration](docs/ifc-export.md) for the exact IFC4 edition details, supported MVD exchange scenarios, precedence rules, validation checks, and capability matrix.
+
+Export a project to binary glTF 2.0 (GLB):
+
+```sh
+rvtio project.rvt project.glb
+```
+
 Export multiple formats in a single read:
 
 ```sh
-rvtio project.rvt --ifc project.ifc --compact-json project.compact.json --scene project.scene.json
+rvtio project.rvt --ifc project.ifc --glb project.glb --compact-json project.compact.json --scene project.scene.json
 ```
 
-A `.ifc` output path selects IFC. Any other output path selects JSON, which is compact by default. When `--ifc`, `--compact-json`, `--full-json`, or `--scene` are specified, the model is read once and each requested format is exported sequentially. Positional output arguments remain fully backward compatible. Single-output and multi-output exports produce byte-identical files. On Revit 2023+ (own-schema) models, JSON formats retain their wide-schema representation by default (use `--r22-layout` to export JSON in Revit 2022 layout too), while IFC and Scene exports use the Revit 2022 geometry layout, sharing decoded quantities without reading the model again. If no output path is given, the tool writes `output.json`. Diagnostics go to standard error.
+A `.ifc` output path selects IFC and a `.glb` output path selects binary glTF 2.0 (GLB). Any other output path selects JSON, which is compact by default. When `--ifc`, `--glb`, `--compact-json`, `--full-json`, or `--scene` are specified, the model is read once and each requested format is exported sequentially. Positional output arguments remain fully backward compatible. Single-output and multi-output exports produce byte-identical files. On Revit 2023+ (own-schema) models, JSON formats retain their wide-schema representation by default (use `--r22-layout` to export JSON in Revit 2022 layout too), while IFC, GLB, and Scene exports use the Revit 2022 geometry layout, sharing decoded geometry and quantities without reading the model again. If no output path is given, the tool writes `output.json`. Diagnostics go to standard error. See [GLB export](docs/glb-export.md).
 
 List the sheets and the viewports placed on them:
 
@@ -82,10 +99,32 @@ rvtio sheets project.rvt sheets.json
 
 The catalog has the sheet number, name, issue date, by-lines and scale, the viewports of each sheet and the elements each sheet owns, plus the text and whole-number project/shared parameters of each sheet (`--params`, `--csv`, `--where NAME=VALUE` with `!=`/`~` and `*`/`?` wildcards). Page size, view placement, the displayed view and 2D content are not decoded; every limit is reported in the catalog itself. See [sheets and viewports](docs/sheets.md).
 
-Print the plan of a level to PDF — walls with their stored width, column footprints and grids, on the smallest paper that holds the drawing at the scale:
+Inspect file metadata or inventory a folder recursively without reading geometry or `Partitions`:
+
+```sh
+rvtio info project.rvt
+rvtio info projects/ --csv --output inventory.csv --redact
+rvtio info projects/ --jsonl --no-recursive
+```
+
+`rvtio info` supports `.rvt`, `.rfa`, `.rte`, and `.rft` files (including templates and `.NNNN` backup files), reports Revit release/build, file type, worksharing state, and available save fields, keeps missing fields unknown (`null` in JSON/JSONL, empty in CSV), emits error rows with a non-zero exit code when any file in a folder is damaged, and redacts usernames and sensitive path segments across all report fields when `--redact` is passed.
+
+Folder inventories skip directory symlinks and junctions. The output path must differ from every input model.
+`--redact` also scrubs sensitive names and path segments from read and write diagnostics.
+
+Compare two revisions of a project by persistent identity (`UniqueId`). The report covers additions, removals, parameter, type, placement, geometry, relationship, and link changes, plus instances affected by type changes.
+
+```sh
+rvtio diff rev1.rvt rev2.rvt --json changes.json
+```
+
+See [revision comparison](docs/diff.md) for matching rules, tolerances, coordinate frames, partial decoding, and version upgrades.
+
+Print the plan of a level to PDF or SVG — walls with their stored width, column footprints and grids, on the smallest paper that holds the drawing at the scale:
 
 ```sh
 rvtio print project.rvt plan.pdf --level "Уровень 1" --scale 100
+rvtio print project.rvt plan.svg --level "Уровень 1" --scale 100
 ```
 
 `--list-levels` prints the levels that can be printed. A sheet prints from its decoded linework (page border, title block frame, rules) on the paper it spans:
@@ -232,7 +271,7 @@ Wide creation IDs are available as `Element.OriginalElementId`. The Revit Unique
 - Geometry coverage is partial for some element kinds.
 - Revit 2027 support is partial.
 - Parameter editing supports single assignments and atomic batches of verified assignments and clears in local Revit 2020–2027 projects and standalone families. See the [writing guide](docs/writing.md).
-- IFC output is limited to IFC2X3 coordination view.
+- IFC output supports IFC2X3 coordination view (default) and IFC4 (`ReferenceView_V1.2` and `DesignTransferView_V1.0`); see [IFC export and configuration](docs/ifc-export.md) for declared schema/MVD coverage and unsupported options.
 - Output was compared with an independent reference exporter on the tested samples. Byte equality with Revit's own IFC export is not claimed.
 
 ## Build from source and tests
@@ -247,6 +286,14 @@ dotnet test
 ```
 
 Tests requiring real Revit files are skipped with a message unless `RVTIO_TEST_FILES` points to a folder containing the private fixtures. The repository includes no Revit models.
+
+To run the reproducible RE1 IFC comparison against Autodesk Revit's reference exports across two RvtIO commits (`origin/main` vs `HEAD`):
+
+```sh
+python tools/measure/measure_re1.py --base origin/main --head HEAD
+```
+
+See [RE1 reproducible comparison](docs/measure.md) for pinned SHA-256 checksums, Revit export settings, tolerances, and manual CI dispatch.
 
 ## Contributing
 

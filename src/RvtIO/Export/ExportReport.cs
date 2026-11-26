@@ -75,7 +75,7 @@ public sealed class ExportReport
     /// <summary>The input file.</summary>
     public ReportInput Input { get; set; } = new();
 
-    /// <summary>Why the file could not be read; only when <see cref="Status"/> is <c>failed</c>.</summary>
+    /// <summary>Why the run failed; only when <see cref="Status"/> is <c>failed</c>.</summary>
     public ReportError? Error { get; set; }
 
     /// <summary>The options that bear on the limits and the limits that cut a stream.</summary>
@@ -93,6 +93,9 @@ public sealed class ExportReport
     /// <summary>What the export wrote and left out; absent when nothing was exported.</summary>
     public ReportExport? Export { get; set; }
 
+    /// <summary>The GLB export when another format provides the primary <see cref="Export"/> summary.</summary>
+    public ReportExport? GlbExport { get; private set; }
+
     /// <summary>The input file.</summary>
     public sealed class ReportInput
     {
@@ -103,7 +106,7 @@ public sealed class ExportReport
         public long Bytes { get; set; }
     }
 
-    /// <summary>A failure to read the file.</summary>
+    /// <summary>A failure of the run.</summary>
     public sealed class ReportError
     {
         /// <summary>Stable code, for example <c>truncated-or-damaged</c>.</summary>
@@ -187,7 +190,7 @@ public sealed class ExportReport
     /// <summary>What the export wrote.</summary>
     public sealed class ReportExport
     {
-        /// <summary><c>ifc</c>, <c>json</c> (the BM export) or <c>json-full</c>.</summary>
+        /// <summary><c>ifc</c>, <c>json</c> (the BM export), <c>json-full</c> or <c>glb</c>.</summary>
         public string Format { get; set; } = "";
         /// <summary>Parsed elements the export considered.</summary>
         public int Considered { get; set; }
@@ -204,6 +207,12 @@ public sealed class ExportReport
         public List<ReportElementGeometry> Elements { get; set; } = new();
         /// <summary>Every skipped element class with its reason.</summary>
         public List<ReportSkipped> SkippedByClass { get; set; } = new();
+
+        /// <summary>Total scene nodes, including placement children, when the format is GLB.</summary>
+        public int? Nodes { get; set; }
+
+        /// <summary>Unique mesh resources when the format is GLB.</summary>
+        public int? Meshes { get; set; }
     }
 
     /// <summary>Totals of exported elements per geometry quality class (sum equals <see cref="ReportExport.Exported"/>).</summary>
@@ -378,6 +387,21 @@ public sealed class ExportReport
             Geometry = totals, Elements = elements,
             SkippedByClass = skipped.Groups(),
         };
+    }
+
+    internal void SetGlbExport(Gltf.GlbExportResult result)
+    {
+        var elements = result.ReportElements ?? throw new InvalidOperationException("The GLB export summary was not collected.");
+        var primary = Export;
+        SetExport("glb", result.ElementCount, new SkipLog(), elements);
+        var glb = Export!;
+        glb.Nodes = result.NodeCount;
+        glb.Meshes = result.MeshCount;
+        if (primary != null)
+        {
+            GlbExport = glb;
+            Export = primary;
+        }
     }
 
     /// <summary>The export part of a JSON run: the compact BM export writes the rows of the element table
