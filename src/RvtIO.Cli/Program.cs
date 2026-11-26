@@ -67,6 +67,8 @@ internal static partial class Program
           --list-category <categoryId> <out.csv>  list the elements of one category
           coverage <file.rvt> [--report <report.json>] [--top <n>]
                                             check own-schema partition coverage
+          info <file-or-dir> [output] [--format text|json|jsonl|csv] [--csv|--jsonl|--json] [--output <path>] [--no-recursive] [--redact]
+                                            inspect metadata without reading geometry or Partitions (single file or recursive folder inventory)
           diff <left.rvt> <right.rvt> [output.json] [--json [path]] [--output <path>] [--category <name|id>] [--element <uniqueId|id>] [--redact]
                                             compare two Revit revisions (additions, removals, parameters, types, placement, geometry, links)
           sheets <file.rvt|file.rfa> [output.json] [--r22-layout] [--where FILTER] [--params] [--csv] [--json]
@@ -181,6 +183,7 @@ internal static partial class Program
         if (args[0] == "set-family-parameter") return RvtIO.Cli.SetParameterCommand.Run(args[1..], Console.Out, Console.Error, familyFile: true);
         if (args[0] == "edit-parameters") return RvtIO.Cli.SetParameterCommand.RunBatch(args[1..], Console.Out, Console.Error);
         if (args[0] == "coverage") return RvtIO.Cli.CoverageCommand.Run(args[1..], Console.Out, Console.Error);
+        if (args[0] == "info") return RvtIO.Cli.InfoCommand.Run(args[1..], Console.Out, Console.Error);
         if (args[0] == "diff") return RvtIO.Cli.DiffCommand.Run(args[1..], Console.Out, Console.Error);
         if (args[0] == "sheets") return RvtIO.Cli.SheetsCommand.Run(args[1..], Console.Out, Console.Error);
         if (args[0] == "print") return RvtIO.Cli.PrintCommand.Run(args[1..], Console.Out, Console.Error);

@@ -97,15 +97,28 @@ List the sheets and the viewports placed on them:
 rvtio sheets project.rvt sheets.json
 ```
 
-Compare two revisions of a project by persistent identity (`UniqueId`), reporting additions, removals, parameter/type/placement/geometry/relationship/link changes and affected type instances as summary text or deterministic JSON (`--json`):
+The catalog has the sheet number, name, issue date, by-lines and scale, the viewports of each sheet and the elements each sheet owns, plus the text and whole-number project/shared parameters of each sheet (`--params`, `--csv`, `--where NAME=VALUE` with `!=`/`~` and `*`/`?` wildcards). Page size, view placement, the displayed view and 2D content are not decoded; every limit is reported in the catalog itself. See [sheets and viewports](docs/sheets.md).
+
+Inspect file metadata or inventory a folder recursively without reading geometry or `Partitions`:
+
+```sh
+rvtio info project.rvt
+rvtio info projects/ --csv --output inventory.csv --redact
+rvtio info projects/ --jsonl --no-recursive
+```
+
+`rvtio info` supports `.rvt`, `.rfa`, `.rte`, and `.rft` files (including templates and `.NNNN` backup files), reports Revit release/build, file type, worksharing state, and available save fields, keeps missing fields unknown (`null` in JSON/JSONL, empty in CSV), emits error rows with a non-zero exit code when any file in a folder is damaged, and redacts usernames and sensitive path segments across all report fields when `--redact` is passed.
+
+Folder inventories skip directory symlinks and junctions. The output path must differ from every input model.
+`--redact` also scrubs sensitive names and path segments from read and write diagnostics.
+
+Compare two revisions of a project by persistent identity (`UniqueId`). The report covers additions, removals, parameter, type, placement, geometry, relationship, and link changes, plus instances affected by type changes.
 
 ```sh
 rvtio diff rev1.rvt rev2.rvt --json changes.json
 ```
 
-See [revision comparison](docs/diff.md) for matching rules, tolerances, local vs. world coordinates, partial decoding, and version-upgrade handling.
-
-The catalog has the sheet number, name, issue date, by-lines and scale, the viewports of each sheet and the elements each sheet owns, plus the text and whole-number project/shared parameters of each sheet (`--params`, `--csv`, `--where NAME=VALUE` with `!=`/`~` and `*`/`?` wildcards). Page size, view placement, the displayed view and 2D content are not decoded; every limit is reported in the catalog itself. See [sheets and viewports](docs/sheets.md).
+See [revision comparison](docs/diff.md) for matching rules, tolerances, coordinate frames, partial decoding, and version upgrades.
 
 Print the plan of a level to PDF or SVG — walls with their stored width, column footprints and grids, on the smallest paper that holds the drawing at the scale:
 
