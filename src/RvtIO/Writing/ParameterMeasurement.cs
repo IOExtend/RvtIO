@@ -204,16 +204,22 @@ internal static class ParameterMeasurement
         }
         if (unit is null)
             return null;
+        if (grouping)
+        {
+            format = GroupedFormat(aUnits.Values, format);
+            if (format is null)
+                return null;
+        }
         if (unit.Forge is FeetFractionalInches or FractionalInches)
         {
             bool inchesOnly = unit.Forge == FractionalInches;
-            if (!validFractionalFlags || grouping || suppressTrailingZeros
+            if (!validFractionalFlags || suppressTrailingZeros
                 || (symbol != "" && !(inchesOnly && modern is not null && symbol == SymbolPrefix + "inchDoubleQuote"))
                 || (inchesOnly && (suppressLeadingZeros || suppressSpaces)))
                 return null;
             string inchSuffix = inchesOnly && symbol == "" ? "" : "\"";
             return DisplayFractionalLength(before, after, accuracy, inchesOnly, suppressLeadingZeros, suppressSpaces,
-                modern is null ? null : unit.Atom, format, inchSuffix);
+                modern is null ? null : unit.Atom, format, inchSuffix, grouping);
         }
         if ((suppressLeadingZeros || suppressTrailingZeros)
             && (spec == UnitType.UT_Currency || additional is not null || unit.AlternateAtom is not null))
@@ -232,12 +238,6 @@ internal static class ParameterMeasurement
             return null;
         if (spec == UnitType.UT_Currency && accuracy != 0.01)
             return null;
-        if (grouping)
-        {
-            format = GroupedFormat(aUnits.Values, format);
-            if (format is null)
-                return null;
-        }
         int digits = 0;
         while (digits <= 8 && accuracy != Math.Pow(10, -digits))
             digits++;
@@ -255,7 +255,7 @@ internal static class ParameterMeasurement
     }
 
     private static DisplayValue? DisplayFractionalLength(double before, double after, double accuracy, bool inchesOnly,
-        bool suppressLeadingZeros, bool suppressSpaces, string? atomUnit, NumberFormatInfo format, string inchSuffix)
+        bool suppressLeadingZeros, bool suppressSpaces, string? atomUnit, NumberFormatInfo format, string inchSuffix, bool grouping)
     {
         const int InchesPerFoot = 12;
         const int TicksPerInch = 1 << 20;
@@ -270,6 +270,7 @@ internal static class ParameterMeasurement
             return null;
         long ticksPerStep = (long)integralTicks;
         bool wholeFeet = !inchesOnly && ticksPerStep % TicksPerFoot == 0;
+        string integerPattern = grouping ? "N0" : "D";
 
         string? oldText = Render(before), newText = Render(after);
         return oldText is not null && newText is not null
@@ -292,13 +293,13 @@ internal static class ParameterMeasurement
             long inches = inchesOnly ? wholeInches : wholeInches % InchesPerFoot;
             string text = feetValue < 0 && ticks != 0 ? "-" : "";
             if (wholeFeet)
-                return text + feet.ToString(CultureInfo.InvariantCulture) + "'";
+                return text + feet.ToString(integerPattern, format) + "'";
             bool showFeet = !inchesOnly && (feet != 0 || !suppressLeadingZeros);
             long numerator = ticks % TicksPerInch;
             if (showFeet)
-                text += feet.ToString(CultureInfo.InvariantCulture) + (suppressSpaces ? "'-" : "' - ");
+                text += feet.ToString(integerPattern, format) + (suppressSpaces ? "'-" : "' - ");
             if (showFeet || inches != 0 || numerator == 0)
-                text += inches.ToString(CultureInfo.InvariantCulture);
+                text += inches.ToString(integerPattern, format);
             if (numerator != 0)
             {
                 int reducedDenominator = TicksPerInch;
@@ -325,7 +326,7 @@ internal static class ParameterMeasurement
         {
             0L => [3, 2], 1L => [3], _ => null,
         };
-        if (separator is null || sizes is null || separator == format.NumberDecimalSeparator)
+        if (separator is null || sizes is null)
             return null;
         var grouped = (NumberFormatInfo)format.Clone();
         grouped.NumberGroupSeparator = separator;

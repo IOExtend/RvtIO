@@ -285,6 +285,8 @@ Fractional inches use a double quote in the value in older saves. Newer saves pu
 the `units` attribute and include the quote in the value when the double-quote symbol is selected.
 Family metadata follows the document's decimal point or comma. The verified grouping options use commas, dots,
 spaces, or apostrophes, with groups of three digits or with two-digit groups to the left of the final three digits.
+Grouping applies to the whole-foot and whole-inch parts of fractional lengths. If the decimal and grouping
+separators are identical, the writer checks the saved display text against the stored number before changing it.
 Unitless Number values use the document's decimal separator without digit grouping. Numeric edit requests still use
 a decimal point and omit grouping separators. A Number value whose shortest round-trip text needs exponent notation
 (for example `1E-05`) is refused, because how Revit writes it into the family metadata has not been verified.
@@ -568,6 +570,14 @@ Currency, and Number, including dependent formulas, Default Elevation, and Cost.
 native Revit 2020–2025 and 2027 writes byte for byte. Revit 2027 verified the eighteen 2026-format files after upgrade.
 API values and `PartAtom` entries matched after Save As and reopening without Audit. All 146 refused batches preserved
 the source bytes and created no output, including cases with an incorrect grouping separator or stale metadata.
+
+Additional checks covered grouping in fractional Length and decimal Area and Volume, including equal decimal
+and grouping separators. They compared first edits, replacements, ordered batches, and rounding across a
+grouping boundary. In 140 files, family records matched native Revit 2020–2025 and 2027 writes byte for byte.
+API values, formulas, and `PartAtom` entries matched after Save As and reopening without Audit. The 20 files in
+the 2026 format passed after upgrade in Revit 2027. All 123 refused batches preserved the source and created no
+output. Three used a mismatched separator or stale display text.
+
 Three project files in Revit 2025 also matched the internal value and affected records after assignments in degrees,
 Save As, and reopening without Audit.
 
@@ -775,7 +785,7 @@ sample from Autodesk and controlled project and family fixtures converted to the
 | User Currency parameters in standalone families | RvtIO supports verified type values, instance defaults, and formula dependencies. Additional Currency display formats still require coverage. |
 | Family-declared Currency parameters in projects | RvtIO supports the verified primary type and top-level instance assignments, exact type formula inverses, and existing global associations described above. Other formula paths and geometry dependencies still require coverage. |
 | Project-bound Currency parameters | RvtIO supports verified shared values on walls, basic wall types, rooms, and loaded family types and instances. Non-shared bindings and other owner classes still require coverage. |
-| Additional measurable specs and units | RvtIO supports the input units, display formats, and formula combinations listed above. Further measurable specs and combinations still require coverage. Digit grouping in fractional formats, identical decimal and grouping separators, and other display symbols in standalone family metadata also require verification. Values and fractional rounding steps outside the verified numeric range are refused. |
+| Additional measurable specs and units | RvtIO supports the input units, display formats, and formula combinations listed above. Further measurable specs, combinations, and display symbols in standalone family metadata still require verification. Values and fractional rounding steps outside the verified numeric range are refused. |
 | Invalid standalone image references | Revit 2022 and 2027 rejected a missing element ID and an existing family element that was outside the image class. RvtIO requires a local imported image with a verified raster record, or the explicit None value. |
 | Standalone instance and shared Image definitions | The Revit API prohibits creating instance Image parameters. Revit 2025 also rejected the tested attempt to create a shared type definition. RvtIO supports the non-shared type scope described above. [Autodesk FamilyManager.AddParameter reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/3ac89d60-4b71-694f-002f-125d2e6565fc.htm) |
 | Linked images in standalone families | Revit 2025 rejected `ImageTypeSource.Link` when creating an image in a family document. The verified standalone Image path uses imported images. [Autodesk ImageType.Create reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/31bb13e3-e8f5-cb66-18d0-619578d56cde.htm) |

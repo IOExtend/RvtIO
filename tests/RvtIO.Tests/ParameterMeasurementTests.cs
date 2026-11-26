@@ -80,7 +80,7 @@ public sealed class ParameterMeasurementTests
     [Theory]
     [InlineData(0, "m_bUseGrouping", 0L)]
     [InlineData(0.3, "m_bUseGrouping", 0L)]
-    [InlineData(0.125, "m_bUseGrouping", 1L)]
+    [InlineData(0.125, "m_bUseGrouping", 2L)]
     [InlineData(0.125, "m_bSuppressTrailingZeros", 1L)]
     [InlineData(0.125, "m_bSuppressSpaces", 2L)]
     public void RefusesUnverifiedFractionalOptions(double accuracy, string field, long value)
@@ -177,10 +177,37 @@ public sealed class ParameterMeasurementTests
     }
 
     [Theory]
+    [InlineData(false, 0, 1, 1, 12345.625, 999.9973958333334, "12,345' - 7 1/2\"", "1,000' - 0\"")]
+    [InlineData(false, 0, 0, 1, 12345.625, 999.9973958333334, "12.345' - 7 1/2\"", "1.000' - 0\"")]
+    [InlineData(false, 1, 3, 0, 12345678.625, 999.9973958333334, "1'23'45'678' - 7 1/2\"", "1'000' - 0\"")]
+    [InlineData(true, 1, 2, 1, 1028.8020833333333, 83.328125, "12 345 5/8", "1 000")]
+    [InlineData(true, 1, 1, 1, 1028.8020833333333, 83.328125, "12,345 5/8", "1,000")]
+    public void GroupsWholeUnitsInFractionalLengths(bool inches, long decimalSymbol, long groupSymbol, long groupSize,
+        double before, double after, string oldText, string newText)
+    {
+        foreach (bool legacy in new[] { false, true })
+        {
+            var layout = FractionalLayout(inches, symbol: false, legacy, inches ? 0.125 : 1.0 / 96);
+            SetGrouping(layout, decimalSymbol, groupSymbol, groupSize);
+            var display = ParameterMeasurement.Display(UnitType.UT_Length, Walker, layout, before, after);
+            Assert.True(display.HasValue);
+            string? unit = inches && !legacy ? "\"" : null;
+            string suffix = inches && legacy ? "\"" : "";
+            var stored = display.Value.ForStoredUnit(unit);
+            Assert.True(stored.MatchesUnit(unit));
+            Assert.True(stored.Matches(oldText + suffix));
+            Assert.False(stored.Matches(oldText + suffix + " "));
+            Assert.Equal(newText + suffix, stored.After);
+        }
+    }
+
+    [Theory]
     [InlineData(1, 0, 1, "12.345.678,63", "0,00")]
     [InlineData(1, 2, 1, "12 345 678,63", "0,00")]
     [InlineData(1, 3, 0, "1'23'45'678,63", "0,00")]
     [InlineData(0, 1, 1, "12,345,678.63", "0.00")]
+    [InlineData(0, 0, 1, "12.345.678.63", "0.00")]
+    [InlineData(1, 1, 1, "12,345,678,63", "0,00")]
     public void FormatsGroupedFamilyMetadata(long decimalSymbol, long groupSymbol, long groupSize, string expected, string zero)
     {
         foreach (bool legacy in new[] { false, true })
@@ -214,7 +241,6 @@ public sealed class ParameterMeasurementTests
     [InlineData(2, 0, 1)]
     [InlineData(1, 4, 1)]
     [InlineData(1, 0, 2)]
-    [InlineData(1, 1, 1)]
     public void RefusesUnverifiedDecimalAndGroupingOptions(long decimalSymbol, long groupSymbol, long groupSize)
     {
         var layout = DisplayUnits(UnitType.UT_Length, "feet", DisplayUnitType.DUT_DECIMAL_FEET, "", UnitSymbolType.UST_NONE, legacy: false);
