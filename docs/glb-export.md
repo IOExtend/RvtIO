@@ -1,6 +1,6 @@
 # GLB export
 
-`RvtIO.Gltf.GlbExporter` converts a Revit project (`.rvt`) or family (`.rfa`) directly into a self-contained binary glTF 2.0 (`.glb`) asset using the decoded triangle meshes from `ElementMeshes`.
+`RvtIO.Gltf.GlbExporter` writes decoded Revit triangle meshes as a self-contained binary glTF 2.0 (`.glb`) asset. Standalone Revit families (`.rfa`) whose bodies have no decoded triangles are refused. The API throws `NotSupportedException`, and the CLI returns exit code 4 with the reason `glb-family-geometry-unavailable` in the report.
 
 ## Coordinates, units, and resource sharing
 
@@ -26,7 +26,11 @@ var result = GlbExporter.Export("project.rvt", "project.glb");
 Or reuse an already opened `RvtDocument` and `MeshSet`:
 
 ```csharp
-using var doc = RvtDocument.Open("project.rvt", new RvtReaderOptions { R22Layout = true });
+using RvtIO;
+using RvtIO.Gltf;
+using RvtIO.Meshes;
+
+var doc = RvtDocument.Open("project.rvt", new RvtReaderOptions { R22Layout = true });
 var meshes = ElementMeshes.Extract(doc);
 var result = GlbExporter.Export(doc, meshes, "project.glb");
 ```
@@ -37,5 +41,7 @@ From the command line:
 rvtio project.rvt project.glb
 rvtio project.rvt --glb project.glb --ifc project.ifc --compact-json project.json
 ```
+
+With `--report`, a GLB-only run includes element, node and mesh counts in `export`. When IFC or JSON provides the main `export` summary, the GLB counts appear in `glbExport`.
 
 When `--glb` is combined with `--ifc`, `--scene`, `--compact-json`, or `--full-json`, the `.rvt` file is read once (and `ElementMeshes` is extracted once when paired with `--scene`).

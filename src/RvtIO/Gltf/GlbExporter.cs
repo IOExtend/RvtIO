@@ -11,12 +11,16 @@ using RvtIO.Parsing;
 namespace RvtIO.Gltf;
 
 /// <summary>
-/// Exports a Revit project or family directly to binary glTF 2.0 (.glb) using decoded triangle meshes
+/// Exports decoded Revit geometry directly to binary glTF 2.0 (.glb) using triangle meshes
 /// (<see cref="ElementMeshes"/>), converting coordinates from Revit Z-up feet into glTF Y-up metres, reusing shared family
 /// symbol meshes and materials, and attaching element and material metadata in glTF <c>extras</c>.
 /// </summary>
+/// <remarks>A standalone family with no exportable triangles is refused with <see cref="NotSupportedException"/>.</remarks>
 public static class GlbExporter
 {
+    internal sealed class FamilyGeometryUnavailableException()
+        : NotSupportedException("The standalone Revit family has no decoded triangle geometry to export to GLB.");
+
     private const double MetresPerFoot = 0.3048;
     private const int ArrayBufferTarget = 34962;
     private const int ElementArrayBufferTarget = 34963;
@@ -83,6 +87,9 @@ public static class GlbExporter
         ArgumentException.ThrowIfNullOrEmpty(glbPath);
 
         string fullPath = Path.GetFullPath(glbPath);
+        if (document.SourcePath is { } sourcePath && FileIdentity.SameFile(fullPath, sourcePath))
+            throw new ArgumentException($"The output path '{glbPath}' must not name the input file.", nameof(glbPath));
+
         string? directory = Path.GetDirectoryName(fullPath);
         if (!string.IsNullOrEmpty(directory))
             Directory.CreateDirectory(directory);
@@ -163,6 +170,7 @@ public static class GlbExporter
         private readonly List<GltfNode> _nodes = [];
         private readonly List<int> _sceneRootNodes = [];
         private readonly Dictionary<MeshCoverage, int> _coverageCounts = [];
+        private readonly List<ElementGeometryQuality>? _reportElements;
 
         private int _elementCount;
         private int _elementsWithGeometry;
@@ -175,6 +183,8 @@ public static class GlbExporter
             _meshes = meshes;
             _options = options;
             _diag = options.DiagnosticOutput;
+            if (options.CollectExportReport)
+                _reportElements = new List<ElementGeometryQuality>(meshes.Elements.Count);
         }
 
         public GlbExportResult BuildAndWrite(Stream output)
@@ -187,6 +197,9 @@ public static class GlbExporter
                 _coverageCounts[elemMesh.Coverage] = _coverageCounts.GetValueOrDefault(elemMesh.Coverage) + 1;
                 ProcessElement(elemMesh);
             }
+
+            if (_document.RawData.IsStandaloneFamily && _elementsWithGeometry == 0)
+                throw new FamilyGeometryUnavailableException();
 
             if (_bin.Length > 0)
                 PadBinTo4();
@@ -222,6 +235,7 @@ public static class GlbExporter
                 MaterialCount = _materials.Count,
                 GeometryUndecoded = _meshes.GeometryUndecoded,
                 Coverage = _coverageCounts,
+                ReportElements = _reportElements,
             };
         }
 
@@ -284,6 +298,18 @@ public static class GlbExporter
             _elementCount++;
             if (hasAnyGeometry) _elementsWithGeometry++;
             _placementCount += resolvedPlacements.Count;
+            if (_reportElements != null)
+            {
+                int ownPrimitiveCount = ownMeshIndex is int meshIndex ? _glMeshes[meshIndex].Primitives.Count : 0;
+                bool lostGeometry = ownPrimitiveCount < elemMesh.Meshes.Count || resolvedPlacements.Count < elemMesh.Placements.Count
+                    || resolvedPlacements.Any(p => _glMeshes[p.MeshIndex].Primitives.Count < _meshes.Symbols[p.SymbolId].Count);
+                var quality = !hasAnyGeometry ? GeometryQualityClass.None
+                    : elemMesh.Coverage == MeshCoverage.BoxSubstitute ? GeometryQualityClass.BoxOnly
+                    : lostGeometry || elemMesh.Coverage != MeshCoverage.Complete ? GeometryQualityClass.Approximated
+                    : GeometryQualityClass.Exact;
+                _reportElements.Add(new ElementGeometryQuality(elemMesh.ElementId,
+                    element == null ? "unknown" : SkipLog.ClassOf(element), quality));
+            }
 
             GltfNodeExtras MakeExtras(int[]? matIds, int? symbolId) => new()
             {

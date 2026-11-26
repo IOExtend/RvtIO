@@ -442,6 +442,87 @@ public class GlbExporterTests
     }
 
     [Fact]
+    public void ExportFromOpenDocumentRejectsTheInputPath()
+    {
+        var dir = Directory.CreateTempSubdirectory("rvtio-glb-input-");
+        try
+        {
+            string source = Path.Combine(dir.FullName, "input.rvt");
+            CliExitCodeTests.WriteSyntheticRvt(source);
+            byte[] original = File.ReadAllBytes(source);
+            var document = RvtDocument.Open(source);
+
+            Assert.Throws<ArgumentException>(() => GlbExporter.Export(document, source));
+            Assert.Throws<ArgumentException>(() => GlbExporter.Export(document, new MeshSet(), source));
+            Assert.Equal(original, File.ReadAllBytes(source));
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void StandaloneFamilyWithoutTrianglesFailsWithoutReplacingTheOutput()
+    {
+        var dir = Directory.CreateTempSubdirectory("rvtio-glb-family-");
+        try
+        {
+            string input = Path.Combine(dir.FullName, "family.data");
+            string output = Path.Combine(dir.FullName, "out.glb");
+            string report = Path.Combine(dir.FullName, "report.json");
+            CliExitCodeTests.WriteSyntheticRvt(input, standaloneFamily: true);
+            File.WriteAllText(output, "prior output");
+
+            using var source = File.OpenRead(input);
+            var document = RvtDocument.OpenStream(source);
+            Assert.ThrowsAny<NotSupportedException>(() => GlbExporter.ExportToBytes(document));
+            Assert.ThrowsAny<NotSupportedException>(() => GlbExporter.Export(input, output));
+
+            var (exit, stderr) = RunCli(input, output, "--report", report);
+            Assert.Equal(RvtExitCodes.DecodeError, exit);
+            Assert.Contains("standalone Revit family has no decoded triangle geometry", stderr);
+            Assert.Equal("prior output", File.ReadAllText(output));
+            using var parsed = JsonDocument.Parse(File.ReadAllText(report));
+            Assert.Equal("failed", parsed.RootElement.GetProperty("status").GetString());
+            Assert.Equal("glb-family-geometry-unavailable", parsed.RootElement.GetProperty("error").GetProperty("kind").GetString());
+            Assert.False(parsed.RootElement.TryGetProperty("export", out _));
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ExportReportCountsActualGlbGeometry()
+    {
+        var doc = SampleDocument();
+        var meshes = new MeshSet
+        {
+            Elements =
+            [
+                new ElementMesh { ElementId = WallId, Meshes = [RightTriangle(0, 0, 0)] },
+                new ElementMesh { ElementId = NoGeomId, Coverage = MeshCoverage.NoGeometry },
+            ],
+        };
+        GlbExporter.ExportToBytes(doc, out var result, meshes, new GlbExportOptions { CollectExportReport = true });
+        var report = new ExportReport();
+
+        report.SetGlbExport(result);
+
+        var export = Assert.IsType<ExportReport.ReportExport>(report.Export);
+        Assert.Equal("glb", export.Format);
+        Assert.Equal(2, export.Exported);
+        Assert.Equal(2, export.Considered);
+        Assert.Equal(2, export.Nodes);
+        Assert.Equal(1, export.Meshes);
+        Assert.Equal(1, export.Geometry.Exact);
+        Assert.Equal(1, export.Geometry.None);
+        Assert.Equal(2, export.Elements.Count);
+    }
+
+    [Fact]
     public void CliExportsGlbAndCombinedFormats_WithSingleFileRead()
     {
         string dir = Path.Combine(Path.GetTempPath(), "rvtio-glb-cli-" + Guid.NewGuid().ToString("N"));
@@ -465,6 +546,13 @@ public class GlbExporterTests
             Assert.True(File.Exists(scene));
             Assert.True(File.Exists(compact));
             Assert.True(File.Exists(report));
+            using (var parsedReport = JsonDocument.Parse(File.ReadAllText(report)))
+            {
+                Assert.Equal("ifc", parsedReport.RootElement.GetProperty("export").GetProperty("format").GetString());
+                var glbSummary = parsedReport.RootElement.GetProperty("glbExport");
+                Assert.Equal("glb", glbSummary.GetProperty("format").GetString());
+                Assert.Equal(0, glbSummary.GetProperty("meshes").GetInt32());
+            }
 
             int readTimings = stderr.Split('\n').Count(l => l.Contains("Timing: read ", StringComparison.Ordinal));
             Assert.Equal(1, readTimings);
@@ -474,8 +562,13 @@ public class GlbExporterTests
 
             // Positional .glb path exports GLB cleanly too.
             string posGlb = Path.Combine(dir, "positional.glb");
-            var (posExit, posErr) = RunCli(rvt, posGlb);
+            var (posExit, posErr) = RunCli(rvt, posGlb, "--report", report);
             Assert.Equal(RvtExitCodes.Success, posExit);
+            using (var parsedReport = JsonDocument.Parse(File.ReadAllText(report)))
+            {
+                Assert.Equal("glb", parsedReport.RootElement.GetProperty("export").GetProperty("format").GetString());
+                Assert.False(parsedReport.RootElement.TryGetProperty("glbExport", out _));
+            }
             Assert.Equal(File.ReadAllBytes(glb), File.ReadAllBytes(posGlb));
             Assert.Contains("Timing: read ", posErr);
         }

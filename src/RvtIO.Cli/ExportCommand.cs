@@ -5,6 +5,7 @@ using RvtIO;
 using RvtIO.Compact;
 using RvtIO.BuiltIns;
 using RvtIO.Ifc;
+using RvtIO.Gltf;
 using RvtIO.Model;
 
 internal static partial class Program
@@ -163,6 +164,7 @@ internal static partial class Program
         var jsonModel = input.Json;
         var jsonState = input.JsonFacts;
         var ifcModel = input.Geometry;
+        GlbExportResult? glbResult = null;
 
         if (scenePath != null || glbPath != null)
         {
@@ -184,10 +186,21 @@ internal static partial class Program
             if (glbPath != null)
             {
                 var swGlb = System.Diagnostics.Stopwatch.StartNew();
-                var glbResult = RvtIO.Gltf.GlbExporter.Export(doc, sharedMeshes, glbPath, new RvtIO.Gltf.GlbExportOptions
+                try
                 {
-                    DiagnosticOutput = Console.Error,
-                });
+                    glbResult = GlbExporter.Export(doc, sharedMeshes, glbPath, new GlbExportOptions
+                    {
+                        DiagnosticOutput = Console.Error,
+                        CollectExportReport = reportPath != null,
+                    });
+                }
+                catch (GlbExporter.FamilyGeometryUnavailableException ex)
+                {
+                    report.Status = "failed";
+                    report.ExitCode = RvtExitCodes.DecodeError;
+                    report.Error = new ExportReport.ReportError { Kind = "glb-family-geometry-unavailable", Message = ex.Message };
+                    return EndRun(reportPath, report, $"error: {ex.Message}");
+                }
                 Console.Error.WriteLine($"Timing: glb {swGlb.Elapsed.TotalSeconds:F1}s");
                 Console.Error.WriteLine($"GLB written to {glbPath} ({glbResult.ElementCount} elements, {glbResult.MeshCount} meshes)");
             }
@@ -379,6 +392,8 @@ internal static partial class Program
             if (reportPath != null && ifcPath == null && compactJsonPath == null)
                 report.SetJsonExport(jsonModel, full: true);
         }
+        if (glbResult != null && reportPath != null)
+            report.SetGlbExport(glbResult);
         return EndRun(reportPath, report, null);
     }
 

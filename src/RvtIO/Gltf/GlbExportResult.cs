@@ -31,4 +31,6 @@ public sealed class GlbExportResult
 
     /// <summary>Counts of drawable elements processed by <see cref="MeshCoverage"/>.</summary>
     public IReadOnlyDictionary<MeshCoverage, int> Coverage { get; init; } = new Dictionary<MeshCoverage, int>();
+
+    internal IReadOnlyList<ElementGeometryQuality>? ReportElements { get; init; }
 }

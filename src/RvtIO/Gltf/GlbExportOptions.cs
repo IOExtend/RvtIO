@@ -19,4 +19,6 @@ public sealed class GlbExportOptions
     /// <summary>Optional writer for non-fatal export diagnostics (degenerate transforms, skipped invalid meshes, undecoded geometry).
     /// Null (default) keeps the library silent.</summary>
     public TextWriter? DiagnosticOutput { get; set; }
+
+    internal bool CollectExportReport { get; init; }
 }
