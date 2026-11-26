@@ -57,6 +57,8 @@ internal static partial class GRepParserV2
         public int BlockStart, BlockEnd; // this block's payload bounds (plane scan)
         public int LastEdgeEnd; // pos after the last decoded Edge
         public List<(ushort Cls, int V)> Queue = new();
+        private RingGraph? ringGraph;
+        public RingGraph RingGraph => ringGraph ??= new();
 
         // Collected geometry.
         public int FaceCount; // faces seen (schema-walked)
@@ -190,7 +192,7 @@ internal static partial class GRepParserV2
     /// <summary>A point's UV in both adjacent faces: (uA,vA) and (uB,vB).</summary>
     internal struct EdgeUV { public double UA, VA, UB, VB; }
 
-    internal struct PlaneRec { public double[] O = new double[3], X = new double[3], Y = new double[3]; public PlaneRec() { } }
+    private readonly record struct PlaneRec(double[] O, double[] X, double[] Y);
 
     internal enum SurfKind { Unknown, Plane, Cylinder, Cone, Rev, Ruled, Hermite }
 
@@ -613,7 +615,7 @@ internal static partial class GRepParserV2
                 if (c.WeldFeet > 0 && segments.SelectMany(s => new[] { s.A, s.B })
                         .Select(point => (point[0], point[1], point[2])).Distinct().Count() < 3)
                     continue;
-                var found = OrderRingsW(segments);
+                var found = c.RingGraph.OrderRings(segments);
                 if (found.Count != 1 || !HasExactPlanarTrimCoverage(segments,
                     [new GRepFace { Vertices = found[0] }])) return null;
                 rings.Add(found[0]);
@@ -709,7 +711,7 @@ internal static partial class GRepParserV2
     /// Boundary rings of a planar Face from its serialized EdgeLoops: each loop is the doubly
     /// linked list Loop.m_next, Edge.m_next[side]... back to the loop, so the Edges that name the
     /// Face as a neighbour but belong to no loop of it (leftovers of a cut) never reach the ring
-    /// search.
+    /// search. The caller discards the collected segments if a loop fails validation.
     /// </summary>
     private static List<List<double[]>>? TryOrderLoopRings(Cur c, uint face, List<int> loopIndices,
         Dictionary<uint, EdgeRec?> edges, PlaneRec plane, List<(double[] A, double[] B)> allSegments,
@@ -718,84 +720,107 @@ internal static partial class GRepParserV2
         const double Tol = 1e-5 / 0.3048; // the OrderRingsW lattice
         static (long X, long Y, long Z) Key(double[] p) =>
             ((long)Math.Round(p[0] / Tol), (long)Math.Round(p[1] / Tol), (long)Math.Round(p[2] / Tol));
-        var rings = new List<List<double[]>>();
+        var rings = new List<List<double[]>>(loopIndices.Count);
         var used = new HashSet<uint>();
+        var edgeEnds = new List<int>();
         foreach (int index in loopIndices)
         {
             var loop = c.SpaceEdgeLoops[index];
             uint sentinel = (uint)c.Queue[index].V;
             uint previous = sentinel, current = loop.Next;
-            var segments = new List<(double[] A, double[] B)>();
-            var lines = new List<List<double[]>>();
+            int loopStart = allSegments.Count;
+            edgeEnds.Clear();
             while (current != sentinel)
             {
                 if (!edges.TryGetValue(current, out var edge) || edge == null || !used.Add(current)
                     || edge.FaceA == edge.FaceB || edge.FaceA != face && edge.FaceB != face) return null;
                 bool sideA = edge.FaceA == face;
                 if ((sideA ? edge.PrevA : edge.PrevB) != previous) return null;
-                var points = new List<EdgeUV>(edge.Interior.Count + 2) { edge.Start };
-                points.AddRange(edge.Interior);
-                points.Add(edge.EndP);
-                var line = new List<double[]>(points.Count);
-                for (int pointIndex = 0; pointIndex < points.Count; pointIndex++)
+                int pointCount = edge.Interior.Count + 2;
+                var shared = edge.SharedBoundaryPoints;
+                double[]? last = null;
+                for (int pointIndex = 0; pointIndex < pointCount; pointIndex++)
                 {
-                    var point = points[pointIndex];
-                    var world = edge.SharedBoundaryPoints is { } shared && shared.Count == points.Count
-                        ? shared[pointIndex]
-                        : sideA ? World(plane, point.UA, point.VA) : World(plane, point.UB, point.VB);
+                    double[]? world;
+                    if (shared != null && shared.Count == pointCount) world = shared[pointIndex];
+                    else
+                    {
+                        var point = pointIndex == 0 ? edge.Start
+                            : pointIndex == pointCount - 1 ? edge.EndP : edge.Interior[pointIndex - 1];
+                        world = sideA ? World(plane, point.UA, point.VA) : World(plane, point.UB, point.VB);
+                    }
                     if (world == null) return null;
-                    line.Add(c.WeldFeet > 0 ? c.Weld(world) : world);
+                    if (c.WeldFeet > 0) world = c.Weld(world);
+                    if (last != null) allSegments.Add((last, world));
+                    last = world;
                 }
-                for (int i = 0; i + 1 < line.Count; i++) segments.Add((line[i], line[i + 1]));
-                lines.Add(line);
+                edgeEnds.Add(allSegments.Count);
                 previous = current;
                 current = sideA ? edge.NextA : edge.NextB;
             }
-            if (previous != loop.Prev || !TryJoinLoopEdges(lines, out var ring)) return null;
-            var distinct = new HashSet<((long, long, long), (long, long, long))>();
-            for (int i = 0; i < ring.Count; i++)
+            if (previous != loop.Prev) return null;
+            var ring = JoinLoopEdges(allSegments, loopStart, edgeEnds);
+            if (ring == null) return null;
+            // Consecutive lattice vertices already differ, including across the closing side.
+            // A triangle therefore has three distinct sides. A quad repeats a side only at a folded corner.
+            if (ring.Count == 4 && (Key(ring[0]) == Key(ring[2]) || Key(ring[1]) == Key(ring[3]))) return null;
+            if (ring.Count > 4)
             {
-                var ka = Key(ring[i]); var kb = Key(ring[(i + 1) % ring.Count]);
-                distinct.Add(ka.CompareTo(kb) < 0 ? (ka, kb) : (kb, ka));
+                var distinct = new HashSet<((long, long, long), (long, long, long))>(ring.Count);
+                var ka = Key(ring[^1]);
+                foreach (var point in ring)
+                {
+                    var kb = Key(point);
+                    if (!distinct.Add(ka.CompareTo(kb) < 0 ? (ka, kb) : (kb, ka))) return null;
+                    ka = kb;
+                }
             }
-            if (distinct.Count != ring.Count) return null; // a spur or a repeated side: not one simple cycle
             rings.Add(ring);
-            allSegments.AddRange(segments);
         }
         loopEdges.UnionWith(used);
         return rings;
 
         // Points of one OrderRingsW lattice bin that follow each other collapse into one vertex; a
         // ring needs three.
-        static bool TryJoinLoopEdges(List<List<double[]>> lines, out List<double[]> ring)
+        static List<double[]>? JoinLoopEdges(List<(double[] A, double[] B)> segments, int start, List<int> ends)
         {
-            ring = [];
             static double Distance(double[] a, double[] b) => Math.Sqrt((a[0] - b[0]) * (a[0] - b[0])
                 + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]));
-            if (lines.Count == 0 || lines.Any(line => line.Count < 2)) return false;
-            var first = lines[0];
-            if (lines.Count > 1)
+            if (ends.Count == 0) return null;
+            bool reverse = false;
+            if (ends.Count > 1)
             {
-                // The first Edge ends where the second one starts or ends.
-                var next = lines[1];
-                double Reach(double[] point) => Math.Min(Distance(point, next[0]), Distance(point, next[^1]));
-                if (Reach(first[0]) < Reach(first[^1])) first = Enumerable.Reverse(first).ToList();
+                var nextStart = segments[ends[0]].A;
+                var nextEnd = segments[ends[1] - 1].B;
+                double Reach(double[] point) => Math.Min(Distance(point, nextStart), Distance(point, nextEnd));
+                reverse = Reach(segments[start].A) < Reach(segments[ends[0] - 1].B);
             }
-            var joined = new List<double[]>(first);
-            for (int i = 1; i < lines.Count; i++)
+            var first = reverse ? segments[ends[0] - 1].B : segments[start].A;
+            var ring = new List<double[]>(ends[^1] - start) { first };
+            var lastKey = Key(first);
+            var last = first;
+            for (int i = 0; i < ends.Count; i++)
             {
-                var line = lines[i];
-                double toStart = Distance(joined[^1], line[0]), toEnd = Distance(joined[^1], line[^1]);
-                if (Math.Min(toStart, toEnd) > LoopVertexTolerance) return false;
-                if (toEnd < toStart) line = Enumerable.Reverse(line).ToList();
-                joined.AddRange(line.Skip(1));
+                int end = ends[i];
+                if (i != 0)
+                {
+                    double toStart = Distance(last, segments[start].A), toEnd = Distance(last, segments[end - 1].B);
+                    if (Math.Min(toStart, toEnd) > LoopVertexTolerance) return null;
+                    reverse = toEnd < toStart;
+                }
+                for (int offset = 0; offset < end - start; offset++)
+                {
+                    last = reverse ? segments[end - 1 - offset].A : segments[start + offset].B;
+                    if (i == ends.Count - 1 && offset == end - start - 1) break; // closing point
+                    var key = Key(last);
+                    if (key != lastKey) ring.Add(last);
+                    lastKey = key;
+                }
+                start = end;
             }
-            if (Distance(joined[^1], joined[0]) > LoopVertexTolerance) return false;
-            joined.RemoveAt(joined.Count - 1);
-            foreach (var point in joined)
-                if (ring.Count == 0 || Key(point) != Key(ring[^1])) ring.Add(point);
-            if (ring.Count > 1 && Key(ring[0]) == Key(ring[^1])) ring.RemoveAt(ring.Count - 1);
-            return ring.Count >= 3;
+            if (Distance(last, first) > LoopVertexTolerance) return null;
+            if (ring.Count > 1 && Key(first) == lastKey) ring.RemoveAt(ring.Count - 1);
+            return ring.Count >= 3 ? ring : null;
         }
     }
 
@@ -1359,6 +1384,11 @@ internal static partial class GRepParserV2
 
     private static void WalkQueueItem(Cur c, int qi)
     {
+        if (!TryWalkQueueItem(c, qi)) throw Stop;
+    }
+
+    private static bool TryWalkQueueItem(Cur c, int qi)
+    {
                 var (cls, v) = c.Queue[qi];
                 c.CurrentQueueIndex = qi;
                 c.CurrentObjectHandle = v;
@@ -1387,7 +1417,7 @@ internal static partial class GRepParserV2
                             c.FaceRenderStyle[(uint)v] = BitConverter.ToInt32(c.D, c.Pos);
                         if (sf.Name == "m_faceFlags_v9" && sf.Type == 5 && c.CanRead(4))
                             c.FaceFlagsV9[(uint)v] = BitConverter.ToUInt32(c.D, c.Pos);
-                        ReadField(c, sf, 1);
+                        if (!TryReadField(c, sf, 1)) return false;
                     }
                     c.FaceCount++;
                     c.FaceOrder.Add((uint)v);
@@ -1405,9 +1435,10 @@ internal static partial class GRepParserV2
                 }
                 else if (cls == 1243) // Edge -> capture endpoints via schema walk
                 {
-                    if (EdgeHasFixedLayout.Value && TryReadCompleteEdge(c, (uint)v, qi)) return;
+                    if (EdgeHasFixedLayout.Value && TryReadCompleteEdge(c, (uint)v, qi)) return true;
                     c.CapEdge = new EdgeRec { Handle = (uint)v, QueueIndex = qi };
-                    foreach (var sf in qf) ReadField(c, sf, 1);
+                    foreach (var sf in qf)
+                        if (!TryReadField(c, sf, 1)) return false;
                     if (c.CapEdge.HasEndpoints) c.Edges.Add(c.CapEdge);
                     c.CapEdge = null;
                     c.LastEdgeEnd = c.Pos; // surfaces are laid out after the edges
@@ -1578,7 +1609,7 @@ internal static partial class GRepParserV2
                 {
                     // Treating those 32-byte records as four-byte handles leaves the cursor in the
                     // middle of the spline.
-                    ReadField(c, qf[0], 1); // GNode.m_GInfo
+                    if (!TryReadField(c, qf[0], 1)) return false; // GNode.m_GInfo
                     if (!TryDecodeNurbSplinePayload(c.D, c.Pos, c.End,
                             out var curve, out int consumed))
                         throw Stop;
@@ -1616,7 +1647,7 @@ internal static partial class GRepParserV2
                         HermiteNodes = new List<HermiteNode>(),
                     };
                     uint count = BitConverter.ToUInt32(c.D, c.Pos + 33);
-                    if (count == 0xFFFFFFFF) { c.Take(37); return; }
+                    if (count == 0xFFFFFFFF) { c.Take(37); return true; }
                     if (count > 1_000_000 || !c.CanRead(37 + 56 * (int)count)) throw Stop;
                     int nodePos = c.Pos + 37;
                     bool valid = true;
@@ -1757,8 +1788,10 @@ internal static partial class GRepParserV2
                 }
                 else
                 {
-                    foreach (var sf in qf) ReadField(c, sf, 1);
+                    foreach (var sf in qf)
+                        if (!TryReadField(c, sf, 1)) return false;
                 }
+        return true;
     }
 
     private static readonly Lazy<bool> EdgeHasFixedLayout = new(() => TfBlockDeserializer.SerializationFields(EdgeClass) is
@@ -2091,7 +2124,11 @@ internal static partial class GRepParserV2
             c.Pos = off;
             bool ok = true;
             int want = Math.Min(10, c.Queue.Count - qj);
-            try { for (int k = 0; k < want; k++) WalkQueueItem(c, qj + k); }
+            try
+            {
+                for (int k = 0; k < want; k++)
+                    if (!TryWalkQueueItem(c, qj + k)) { ok = false; break; }
+            }
             catch (DecodeStop) { ok = false; }
             finally { c.ProbeUndo = null; }
             // Roll the dry run back - the caller's loop re-walks for real.
@@ -2178,6 +2215,13 @@ internal static partial class GRepParserV2
 
     private static void ReadField(Cur c, TfBlockDeserializer.TfField f, int depth)
     {
+        if (!TryReadField(c, f, depth)) throw Stop;
+    }
+
+    // Recovery tests many candidate offsets. Report the common category and count
+    // mismatches at the consumed position so DryRun can roll back without unwinding.
+    private static bool TryReadField(Cur c, TfBlockDeserializer.TfField f, int depth)
+    {
         if (depth > 48) throw Stop;
 
         if (f.Name == "m_GInfo")
@@ -2188,10 +2232,10 @@ internal static partial class GRepParserV2
             int control = c.U32();
             int categoryId = c.U32();
             uint flags = (uint)c.U32();
-            if (categoryId < -3_000_000) throw Stop;
+            if (categoryId < -3_000_000) return false;
             if (c.CurrentObjectHandle != 0)
                 c.ObjectGInfo[c.CurrentObjectHandle] = (tag, control, categoryId, flags);
-            return;
+            return true;
         }
 
         // GRep.m_bBox / m_tightbBox are two inline XYZ points. Capture them only on the root
@@ -2208,22 +2252,22 @@ internal static partial class GRepParserV2
                 if (f.Name == "m_tightbBox") c.RootTightBoundingBox = box;
                 else c.RootBoundingBox = box;
             }
-            return;
+            return true;
         }
 
         // Surface(523).m_Envelope has NO ref in the schema but is serialized INLINE as Envelope = 2
         // uv corners x 16 bytes = 32.
-        if (f.Name == "m_Envelope" && f.Declaring == 523) { c.Take(32); return; }
+        if (f.Name == "m_Envelope" && f.Declaring == 523) { c.Take(32); return true; }
 
         // FamilyDB serializes these POD entries as int[2], as in the exact Tf reader.
         if (c.RootClass == 1829 && f is { Declaring: 1829, Name: "m_dummyHostInsertionFaceTags",
                 Type: 13, Mods: 80, Ref: null, Cnt: null })
         {
             uint count = (uint)c.U32();
-            if (count == uint.MaxValue) return;
+            if (count == uint.MaxValue) return true;
             if (count > 1_000_000 || count > (c.End - c.Pos) / 8) throw Stop;
             c.Take((int)count * 8);
-            return;
+            return true;
         }
         if (c.RootClass == 1829 && f is { Declaring: 1763, Name: "second", Type: 14, Mods: 0, Ref: 1763 })
         {
@@ -2235,59 +2279,59 @@ internal static partial class GRepParserV2
 
         // FamilySymbol's embedded complex-cut BRep reaches the geometry walker through
         // FamSymHandleMgr.
-        if (f.Declaring == 140 && f.Name == "m_foreignElemIdRef") { c.Take(4); return; }
+        if (f.Declaring == 140 && f.Name == "m_foreignElemIdRef") { c.Take(4); return true; }
         if (f.Declaring == 1729 && f.Name == "m_handleMap")
         {
             uint count = (uint)c.U32();
-            if (count == 0xFFFFFFFF) return;
+            if (count == 0xFFFFFFFF) return true;
             if (count > 100_000) throw Stop;
             var fields = TfBlockDeserializer.SerializationFields(1730) ?? throw Stop;
             for (uint index = 0; index < count; index++)
                 foreach (var field in fields) ReadField(c, field, depth + 1);
-            return;
+            return true;
         }
         if (f.Declaring == 1730 && f.Name == "second")
         {
             var fields = TfBlockDeserializer.SerializationFields(1727) ?? throw Stop;
             foreach (var field in fields) ReadField(c, field, depth + 1);
-            return;
+            return true;
         }
-        if (f.Declaring == 1758 && f.Name == "m_flags") { c.Take(3); return; }
-        if (f.Declaring == 322 && f.Name == "second") { c.Take(4); return; }
+        if (f.Declaring == 1758 && f.Name == "m_flags") { c.Take(3); return true; }
+        if (f.Declaring == 322 && f.Name == "second") { c.Take(4); return true; }
         if (f.Declaring == 714 && f.Name == "m_params")
         {
             ReadInlineContainer(c, 715, depth);
-            return;
+            return true;
         }
         if (f.Declaring == 714 && f.Name == "m_geomRefHandles")
         {
             ReadInlineStruct(c, 716, depth);
-            return;
+            return true;
         }
         if (f.Declaring == 716 && f.Name == "m_offsetGeomMap")
         {
             ReadInlineContainer(c, 717, depth);
-            return;
+            return true;
         }
         if (f.Declaring == 496 && f.Name == "m_PatternPositionMap")
         {
             ReadInlineContainer(c, 497, depth);
-            return;
+            return true;
         }
         if (f.Declaring == 496 && f.Name == "m_substituteFaceMap")
         {
             ReadInlineContainer(c, 498, depth);
-            return;
+            return true;
         }
         if (f.Declaring == 497 && f.Name == "second")
         {
             ReadInlineStruct(c, 78, depth);
-            return;
+            return true;
         }
         if (f.Declaring == 498 && f.Name == "second")
         {
             ReadInlineStruct(c, 91, depth);
-            return;
+            return true;
         }
 
         // GHermiteSpline stores its nodes inline. One node is a 3D point, a 3D tangent and a curve
@@ -2296,10 +2340,10 @@ internal static partial class GRepParserV2
         if (f.Declaring == 2020 && f.Name == "m_NodeArray")
         {
             uint n = (uint)c.U32();
-            if (n == 0xFFFFFFFF) return;
-            if (n > 1_000_000) throw Stop;
+            if (n == 0xFFFFFFFF) return true;
+            if (n > 1_000_000) return false;
             c.Take(56 * (int)n);
-            return;
+            return true;
         }
 
         // GeomGenerator history entries have class-declared fixed widths: FaceHistEntry=16,
@@ -2308,7 +2352,7 @@ internal static partial class GRepParserV2
             or "m_edgeHistTable" or "m_edgeHistTableReverse")
         {
             uint n = (uint)c.U32();
-            if (n == 0xFFFFFFFF) return;
+            if (n == 0xFFFFFFFF) return true;
             if (n > 100000) throw Stop;
             int recordSize = f.Name switch
             {
@@ -2317,7 +2361,7 @@ internal static partial class GRepParserV2
                 _ => 20,
             };
             c.Take(recordSize * (int)n);
-            return;
+            return true;
         }
         // Exact spatial fallback also needs the sentinel's own face/first/last/open contract, not
         // only the back-references found on adjacent Edge objects.
@@ -2335,38 +2379,38 @@ internal static partial class GRepParserV2
                     if (!c.CanRead(1)) throw Stop;
                     loop.Open = c.D[c.Pos++]; break;
             }
-            return;
+            return true;
         }
         // Edge back-references to its two adjacent faces (2xu32 fixed array).
         if (f.Name == "m_pFace" && c.CapEdge != null)
         {
             uint a = (uint)c.U32(), b = (uint)c.U32();
             c.CapEdge.FaceA = a; c.CapEdge.FaceB = b;
-            return;
+            return true;
         }
         if (f.Name == "m_next" && c.CapEdge != null)
         {
             c.CapEdge.NextA = (uint)c.U32();
             c.CapEdge.NextB = (uint)c.U32();
-            return;
+            return true;
         }
         if (f.Name == "m_prev" && c.CapEdge != null)
         {
             c.CapEdge.PrevA = (uint)c.U32();
             c.CapEdge.PrevB = (uint)c.U32();
-            return;
+            return true;
         }
         if (f.Name == "m_interiorEdgePnts")
         {
             uint n = (uint)c.U32();
-            if (n == 0xFFFFFFFF) return;
+            if (n == 0xFFFFFFFF) return true;
             if (n > 100000) throw Stop;
             // A probe rolls its edge back. UV samples have fixed width and no value-dependent validation.
             if (c.ProbeUndo != null)
             {
                 if (32L * n > c.End - c.Pos) throw Stop;
                 c.Pos += (int)n * 32;
-                return;
+                return true;
             }
             // Each EdgePnt contains the UV coordinates in both adjacent faces. Every sample is part
             // of the serialized trim polyline; dropping them collapses a closed circular edge to a
@@ -2376,39 +2420,40 @@ internal static partial class GRepParserV2
                 var point = ReadUV(c);
                 c.CapEdge?.Interior.Add(point);
             }
-            return;
+            return true;
         }
         if (f.Name == "m_firstAndLastEdgePnts")
         {
             var s = ReadUV(c);
             var e = ReadUV(c);
             if (c.CapEdge != null) { c.CapEdge.Start = s; c.CapEdge.EndP = e; c.CapEdge.HasEndpoints = true; }
-            return;
+            return true;
         }
         if (f.Name == "m_flags" && c.CapEdge != null)
         {
             if (!c.CanRead(1)) throw Stop;
             c.CapEdge.Flags = c.D[c.Pos++];
-            return;
+            return true;
         }
 
         int hi = f.Mods >> 4;
-        if (hi == 6) { ReadString(c); return; }
+        if (hi == 6) { ReadString(c); return true; }
         if (hi == 1)
         {
             int n = f.Cnt ?? 0;
             for (int i = 0; i < n; i++) ReadScalar(c, f, depth);
-            return;
+            return true;
         }
         if (hi == 5)
         {
             uint n = (uint)c.U32();
-            if (n == 0xFFFFFFFF) return;
-            if (n > 1_000_000) throw Stop;
+            if (n == 0xFFFFFFFF) return true;
+            if (n > 1_000_000) return false;
             for (uint i = 0; i < n; i++) ReadScalar(c, f, depth);
-            return;
+            return true;
         }
         ReadScalar(c, f, depth);
+        return true;
     }
 
     private static void ReadInlineContainer(Cur c, int classId, int depth)
@@ -2760,6 +2805,9 @@ internal static partial class GRepParserV2
         }
         CollectFaceSegments(captureWorld: true);
         var authoredSamplingEdges = byFace;
+        // Refinement builds a new byFace map. Keep each periodic face's authored sampling
+        // in its normalized frame for both the grid and the later tessellation.
+        var periodicSamplingEdges = new Dictionary<uint, List<(double U1, double V1, double U2, double V2)>>();
 
         // Analytic face tessellation uses the U/V coordinates of every serialized trim vertex as
         // its interior grid. A grid line can intersect another topological edge between two
@@ -2793,12 +2841,15 @@ internal static partial class GRepParserV2
             if (surface.Kind == SurfKind.Rev
                 && c.Curves.TryGetValue(surface.ProfileHandle, out var profile))
                 normalized = CloseRevolutionPoleEdges(normalized, profile);
+            periodicSamplingEdges.Add(handle, normalized);
             if (!TryEdgeParameterBounds(normalized,
                     out double uMin, out double vMin, out double uMax, out double vMax))
                 continue;
-            var uvSegments = normalized.Select(edge =>
-                (new[] { edge.U1, edge.V1, 0d }, new[] { edge.U2, edge.V2, 0d })).ToList();
-            int ringCount = OrderRingsW(uvSegments).Count;
+            bool splitV = surface.Kind == SurfKind.Rev;
+            if (!splitV)
+            {
+                splitV = c.RingGraph.OrderUvRings(normalized).Count == 1;
+            }
             List<double> uSamples;
             List<double> vSamples;
             if (surface.Kind == SurfKind.Rev
@@ -2813,11 +2864,7 @@ internal static partial class GRepParserV2
                 uSamples = ParameterSamples(normalized, true, uMin, uMax);
                 vSamples = ParameterSamples(normalized, false, vMin, vMax);
             }
-            trimGrids[handle] = (
-                uSamples,
-                vSamples,
-                surface.Kind == SurfKind.Rev || ringCount == 1,
-                true);
+            trimGrids[handle] = (uSamples, vSamples, splitV, true);
         }
 
         List<double>? splitFractions = null;
@@ -3178,8 +3225,10 @@ internal static partial class GRepParserV2
             if (deadFaces.Contains(kv.Key) || regionFaces.Contains(kv.Key)) continue;
             t_coarseTessellation = gd.Faces.Count >= CoarseTessellationFaceBudget;
             var surf = handleToSurf[kv.Key];
+            bool emitPolygons = c.Debug || kindDiag || bodyFaceHandles.Contains(kv.Key) || !walkedFaceHandles.Contains(kv.Key);
             if (surf.Kind == SurfKind.Hermite)
             {
+                if (!emitPolygons) continue;
                 foreach (var quad in TessellateHermiteSurface(surf, kv.Value))
                 {
                     var (n, _) = NewellNormalArea(quad);
@@ -3191,8 +3240,10 @@ internal static partial class GRepParserV2
             {
                 if (c.Curves.TryGetValue(surf.ProfileHandle, out var arc))
                 {
-                    foreach (var quad in TessellateRevolution(surf, arc, kv.Value,
-                                 authoredSamplingEdges.GetValueOrDefault(kv.Key)))
+                    var sampling = periodicSamplingEdges[kv.Key];
+                    var trim = ReferenceEquals(byFace, authoredSamplingEdges) ? sampling
+                        : CloseRevolutionPoleEdges(NormalizePeriodicEdges(kv.Value, 2 * Math.PI), arc);
+                    foreach (var quad in TessellateRevolution(c.RingGraph, surf, arc, trim, sampling, kv.Value.Count >= 3, emitPolygons))
                     {
                         var (n, _) = NewellNormalArea(quad);
                         AddFace(kv.Key, new GRepFace { Vertices = quad, Origin = quad[0], XVector = n, CurvedSurface = true });
@@ -3202,8 +3253,8 @@ internal static partial class GRepParserV2
             }
             if (surf.Kind == SurfKind.Ruled)
             {
-                foreach (var quad in TessellateRuled(surf, c.Curves, kv.Value,
-                             authoredSamplingEdges.GetValueOrDefault(kv.Key)))
+                foreach (var quad in TessellateRuled(c.RingGraph, surf, c.Curves, kv.Value,
+                             authoredSamplingEdges.GetValueOrDefault(kv.Key), emitPolygons))
                 {
                     var (n, _) = NewellNormalArea(quad);
                     AddFace(kv.Key, new GRepFace { Vertices = quad, Origin = quad[0], XVector = n, CurvedSurface = true });
@@ -3213,12 +3264,11 @@ internal static partial class GRepParserV2
             if (surf.IsCyl)
             {
                 // Cylindrical face: tessellate over the u(angle)/v(axial) span of its edges.
+                var normalizedSamples = periodicSamplingEdges[kv.Key];
+                var normalizedEdges = ReferenceEquals(byFace, authoredSamplingEdges) ? normalizedSamples
+                    : NormalizePeriodicEdges(kv.Value, 2 * Math.PI);
                 if (c.Debug)
                 {
-                    var normalizedEdges = NormalizePeriodicEdges(kv.Value, 2 * Math.PI);
-                    var normalizedSamples = NormalizePeriodicEdges(
-                        authoredSamplingEdges.GetValueOrDefault(kv.Key) ?? kv.Value,
-                        2 * Math.PI);
                     if (TryEdgeParameterBounds(normalizedEdges,
                             out double diagnosticUMin, out double diagnosticVMin,
                             out double diagnosticUMax, out double diagnosticVMax))
@@ -3260,9 +3310,9 @@ internal static partial class GRepParserV2
                             + $"initial-grid-aspect={initialGridAspect?.ToString("G8") ?? "n/a"}");
                     }
                 }
-                IEnumerable<List<double[]>> cylinderPatches = TessellateCylinder(surf, kv.Value,
-                    authoredSamplingEdges.GetValueOrDefault(kv.Key),
-                    incompleteWorldEdges.Contains(kv.Key) ? null : authoredWorldEdges.GetValueOrDefault(kv.Key));
+                IEnumerable<List<double[]>> cylinderPatches = TessellateCylinder(c.RingGraph, surf, normalizedEdges,
+                    normalizedSamples, kv.Value.Count >= 3,
+                    incompleteWorldEdges.Contains(kv.Key) ? null : authoredWorldEdges.GetValueOrDefault(kv.Key), emitPolygons);
                 if (c.Debug)
                 {
                     var materializedPatches = cylinderPatches.ToList();
@@ -3284,6 +3334,9 @@ internal static partial class GRepParserV2
                 loopRings = TryOrderLoopRings(c, kv.Key, faceLoops, sourceEdgesByHandle, ToPlane(surf), segs, chainEdges);
                 if (loopRings == null) segs.Clear(); else chainFaces.Add(kv.Key);
             }
+            // The loop walk above records shared edges even for a filtered face. Its polygons
+            // are discarded by AddFace. Welding and diagnostics still need the original walk.
+            if (!emitPolygons && c.WeldFeet == 0) continue;
             if (loopRings == null)
                 foreach (var s in kv.Value)
                 {
@@ -3293,7 +3346,7 @@ internal static partial class GRepParserV2
                         segs.Add(c.WeldFeet > 0 ? (c.Weld(a), c.Weld(b)) : (a, b));
                 }
             if (segs.Count < 3) continue;
-            var rings = (loopRings ?? OrderRingsW(segs))
+            var rings = (loopRings ?? c.RingGraph.OrderRings(segs))
                 .Select(r => (Ring: r, Shape: NewellNormalArea(r)))
                 .Where(x => x.Shape.Area >= 1e-6)
                 .OrderByDescending(x => x.Shape.Area)
@@ -3302,7 +3355,7 @@ internal static partial class GRepParserV2
                 DiagnosticSink.WriteLine($"    face {kv.Key}: segments={segs.Count}, rings={rings.Count}, loops=[{string.Join(',', rings.Select(r => $"{r.Ring.Count}:{r.Shape.Area:G6}"))}]");
             if (rings.Count == 0) continue;
 
-            var alternativeOuter = OrderRingsW(segs, includeContainingCycles: true)
+            var alternativeOuter = c.RingGraph.OrderRings(segs, includeContainingCycles: true)
                 .Select(ring => (Ring: ring, Shape: NewellNormalArea(ring)))
                 .Where(candidate => candidate.Shape.Area > rings[0].Shape.Area)
                 .OrderByDescending(candidate => candidate.Shape.Area)
@@ -3385,7 +3438,7 @@ internal static partial class GRepParserV2
             }
             else if (s.IsCyl)
             {
-                foreach (var quad in TessellateCylinder(s, new List<(double, double, double, double)>()))
+                foreach (var quad in TessellateCylinder(c.RingGraph, s, [], [], hasAuthoredTrim: false))
                 {
                     if (!Pass(quad)) continue;
                     var (n, _) = NewellNormalArea(quad);
@@ -3403,7 +3456,7 @@ internal static partial class GRepParserV2
             }
             else if (s.Kind == SurfKind.Rev && c.Curves.TryGetValue(s.ProfileHandle, out var arc))
             {
-                foreach (var quad in TessellateRevolution(s, arc, new List<(double, double, double, double)>()))
+                foreach (var quad in TessellateRevolution(c.RingGraph, s, arc, [], [], hasAuthoredTrim: false))
                 {
                     if (!Pass(quad)) continue;
                     var (n, _) = NewellNormalArea(quad);
@@ -3412,7 +3465,7 @@ internal static partial class GRepParserV2
             }
             else if (s.Kind == SurfKind.Ruled)
             {
-                foreach (var quad in TessellateRuled(s, c.Curves, new List<(double, double, double, double)>()))
+                foreach (var quad in TessellateRuled(c.RingGraph, s, c.Curves, new List<(double, double, double, double)>()))
                 {
                     if (!Pass(quad)) continue;
                     var (n, _) = NewellNormalArea(quad);
@@ -3488,9 +3541,7 @@ internal static partial class GRepParserV2
                     if (surface.Kind == SurfKind.Rev
                         && c.Curves.TryGetValue(surface.ProfileHandle, out var profile))
                         diagnosticEdges = CloseRevolutionPoleEdges(diagnosticEdges, profile);
-                    var uvSegments = diagnosticEdges.Select(e =>
-                        (new[] { e.U1, e.V1, 0d }, new[] { e.U2, e.V2, 0d })).ToList();
-                    var rings = OrderRingsW(uvSegments);
+                    var rings = c.RingGraph.OrderUvRings(diagnosticEdges);
                     return (Kind: handleToSurf[kv.Key].Kind,
                         Segments: kv.Value.Count, Rings: rings.Count);
                 })
@@ -4242,12 +4293,7 @@ internal static partial class GRepParserV2
         return new[] { x, y, z };
     }
 
-    private static PlaneRec ToPlane(SurfaceRec s)
-    {
-        var pr = new PlaneRec();
-        Array.Copy(s.O, pr.O, 3); Array.Copy(s.X, pr.X, 3); Array.Copy(s.Y, pr.Y, 3);
-        return pr;
-    }
+    private static PlaneRec ToPlane(in SurfaceRec surface) => new(surface.O, surface.X, surface.Y);
 
     /// <summary>
     /// Find the face surfaces guided by the EXPECTED class sequence from the queue: for each
@@ -4511,15 +4557,11 @@ internal static partial class GRepParserV2
         return kept.ToList();
     }
 
-    private static IEnumerable<List<double[]>> TessellateCylinder(SurfaceRec s,
+    private static IEnumerable<List<double[]>> TessellateCylinder(RingGraph ringGraph, SurfaceRec s,
         List<(double U1, double V1, double U2, double V2)> edges,
-        List<(double U1, double V1, double U2, double V2)>? samplingEdges = null,
-        IReadOnlyList<(double[] First, double[] Second)>? worldBoundary = null)
+        List<(double U1, double V1, double U2, double V2)> samplingEdges, bool hasAuthoredTrim,
+        IReadOnlyList<(double[] First, double[] Second)>? worldBoundary = null, bool emitPolygons = true)
     {
-        bool hasAuthoredTrim = edges.Count >= 3;
-        edges = NormalizePeriodicEdges(edges, 2 * Math.PI);
-        samplingEdges = samplingEdges == null
-            ? edges : NormalizePeriodicEdges(samplingEdges, 2 * Math.PI);
         if (worldBoundary?.Count != samplingEdges.Count) worldBoundary = null;
         double uMin, uMax, vMin, vMax;
         if (!TryEdgeParameterBounds(edges, out uMin, out vMin, out uMax, out vMax))
@@ -4552,9 +4594,10 @@ internal static partial class GRepParserV2
                 s.O[2] + radial * (Math.Cos(u) * s.X[2] + Math.Sin(u) * s.Y[2]) + axial * s.Z[2],
             };
         }
-        var trimPoint = TrimBoundaryEvaluator(samplingEdges, P, worldBoundary);
+        var trimPoint = emitPolygons ? TrimBoundaryEvaluator(samplingEdges, P, worldBoundary) : null;
         var trimmed = TessellateTrimmedGrid(
-            edges, uSamples, vSamples, trimPoint, refineV: false);
+            ringGraph, edges, uSamples, vSamples, trimPoint, refineV: false);
+        if (trimPoint == null) yield break;
         if (trimmed != null)
         {
             foreach (var polygon in trimmed) yield return polygon;
@@ -4579,16 +4622,10 @@ internal static partial class GRepParserV2
     /// around the axis (surface O, Z). u = revolution angle, v = profile arc parameter (radians).
     /// Pipe elbows are the common case (torus patch).
     /// </summary>
-    private static IEnumerable<List<double[]>> TessellateRevolution(SurfaceRec s, ArcRec arc,
+    private static IEnumerable<List<double[]>> TessellateRevolution(RingGraph ringGraph, SurfaceRec s, ArcRec arc,
         List<(double U1, double V1, double U2, double V2)> edges,
-        List<(double U1, double V1, double U2, double V2)>? samplingEdges = null)
+        List<(double U1, double V1, double U2, double V2)> samplingEdges, bool hasAuthoredTrim, bool emitPolygons = true)
     {
-        bool hasAuthoredTrim = edges.Count >= 3;
-        edges = NormalizePeriodicEdges(edges, 2 * Math.PI);
-        edges = CloseRevolutionPoleEdges(edges, arc);
-        samplingEdges = samplingEdges == null
-            ? edges : CloseRevolutionPoleEdges(
-                NormalizePeriodicEdges(samplingEdges, 2 * Math.PI), arc);
         double uMin, uMax, vMin, vMax;
         if (!TryEdgeParameterBounds(edges, out uMin, out vMin, out uMax, out vMax))
         {
@@ -4656,9 +4693,10 @@ internal static partial class GRepParserV2
                         Math.Max(Math.Abs(arc.R), Math.Abs(arc.RY)));
             }
         }
-        var trimPoint = TrimBoundaryEvaluator(samplingEdges, Point);
+        var trimPoint = emitPolygons ? TrimBoundaryEvaluator(samplingEdges, Point) : null;
         var trimmed = TessellateTrimmedGrid(
-            edges, uSamples, vSamples, trimPoint, refineV: true);
+            ringGraph, edges, uSamples, vSamples, trimPoint, refineV: true);
+        if (trimPoint == null) yield break;
         if (trimmed != null)
         {
             foreach (var polygon in trimmed) yield return polygon;
@@ -4786,9 +4824,13 @@ internal static partial class GRepParserV2
         List<(double U1, double V1, double U2, double V2)> edges, double period)
     {
         if (edges.Count == 0 || !IsFinite(period) || period <= 0) return edges;
-        edges = edges.Where(edge => IsFinite(edge.U1) && IsFinite(edge.V1)
-            && IsFinite(edge.U2) && IsFinite(edge.V2)).ToList();
-        if (edges.Count == 0) return edges;
+        static bool FiniteEdge((double U1, double V1, double U2, double V2) edge) =>
+            IsFinite(edge.U1) && IsFinite(edge.V1) && IsFinite(edge.U2) && IsFinite(edge.V2);
+        if (edges.Exists(static edge => !FiniteEdge(edge)))
+        {
+            edges = edges.Where(FiniteEdge).ToList();
+            if (edges.Count == 0) return edges;
+        }
 
         const double keyResolution = 1e-9;
         static long Key(double value) => (long)Math.Round(value / keyResolution);
@@ -4805,29 +4847,43 @@ internal static partial class GRepParserV2
             return index;
         }
 
-        var graphEdges = edges.Select(edge =>
-            (A: Node(edge.U1, edge.V1), B: Node(edge.U2, edge.V2))).ToList();
-        var adjacent = Enumerable.Range(0, raw.Count)
-            .Select(_ => new List<(int Edge, int Other)>()).ToArray();
-        for (int edgeIndex = 0; edgeIndex < graphEdges.Count; edgeIndex++)
+        var graphEdges = new (int A, int B)[edges.Count];
+        for (int i = 0; i < edges.Count; i++)
         {
-            var edge = graphEdges[edgeIndex];
-            adjacent[edge.A].Add((edgeIndex, edge.B));
-            adjacent[edge.B].Add((edgeIndex, edge.A));
+            var e = edges[i];
+            graphEdges[i] = (Node(e.U1, e.V1), Node(e.U2, e.V2));
         }
 
-        var unwrapped = Enumerable.Repeat(double.NaN, raw.Count).ToArray();
+        // Accumulate the end of each adjacency list, then fill backward so that BFS
+        // sees both endpoints' neighbors in the original edge insertion order.
+        var offsets = new int[raw.Count + 1];
+        foreach (var edge in graphEdges)
+        {
+            offsets[edge.A]++;
+            offsets[edge.B]++;
+        }
+        for (int i = 1; i < offsets.Length; i++) offsets[i] += offsets[i - 1];
+        var neighbors = new int[offsets[^1]];
+        for (int i = graphEdges.Length - 1; i >= 0; i--)
+        {
+            var edge = graphEdges[i];
+            neighbors[--offsets[edge.B]] = edge.A;
+            neighbors[--offsets[edge.A]] = edge.B;
+        }
+        var unwrapped = new double[raw.Count];
+        Array.Fill(unwrapped, double.NaN);
+        var queue = new Queue<int>();
         for (int seed = 0; seed < raw.Count; seed++)
         {
             if (!double.IsNaN(unwrapped[seed])) continue;
             unwrapped[seed] = raw[seed].U;
-            var queue = new Queue<int>();
             queue.Enqueue(seed);
             while (queue.Count > 0)
             {
                 int current = queue.Dequeue();
-                foreach (var (_, other) in adjacent[current])
+                for (int i = offsets[current]; i < offsets[current + 1]; i++)
                 {
+                    int other = neighbors[i];
                     if (!double.IsNaN(unwrapped[other])) continue;
                     double delta = raw[other].U - raw[current].U;
                     delta -= Math.Round(delta / period) * period;
@@ -4838,7 +4894,7 @@ internal static partial class GRepParserV2
         }
 
         var result = new List<(double U1, double V1, double U2, double V2)>(edges.Count);
-        for (int edgeIndex = 0; edgeIndex < graphEdges.Count; edgeIndex++)
+        for (int edgeIndex = 0; edgeIndex < graphEdges.Length; edgeIndex++)
         {
             var edge = graphEdges[edgeIndex];
             result.Add((unwrapped[edge.A], raw[edge.A].V,
@@ -4904,8 +4960,9 @@ internal static partial class GRepParserV2
         uMax = vMax = double.MinValue;
         foreach (var edge in edges)
         {
-            foreach (var (u, v) in new[] { (edge.U1, edge.V1), (edge.U2, edge.V2) })
+            for (int endpoint = 0; endpoint < 2; endpoint++)
             {
+                var (u, v) = endpoint == 0 ? (edge.U1, edge.V1) : (edge.U2, edge.V2);
                 if (!IsFinite(u) || !IsFinite(v)) continue;
                 uMin = Math.Min(uMin, u); uMax = Math.Max(uMax, u);
                 vMin = Math.Min(vMin, v); vMax = Math.Max(vMax, v);
@@ -5471,10 +5528,10 @@ internal static partial class GRepParserV2
     /// Face; the EdgeLoop is authoritative. Null when the loops do not triangulate (the caller then draws the untrimmed grid);
     /// empty, with the face counted as untriangulated, when their triangulation ran out of its work budget.
     /// </summary>
-    private static List<List<double[]>>? TessellateTrimmedGrid(
+    private static List<List<double[]>>? TessellateTrimmedGrid(RingGraph ringGraph,
         List<(double U1, double V1, double U2, double V2)> edges,
         List<double> uSamples, List<double> vSamples,
-        Func<double, double, double[]> evaluate, bool refineV)
+        Func<double, double, double[]>? evaluate, bool refineV)
     {
         if (edges.Count < 3 || uSamples.Count < 2 || vSamples.Count < 2) return null;
         // Every trim vertex is a grid line in both directions, so the cell count is the product of
@@ -5488,14 +5545,13 @@ internal static partial class GRepParserV2
             uSamples = ThinSamples(uSamples, [], Math.Max(2, (int)((uSamples.Count - 1) * scale) + 1));
             vSamples = ThinSamples(vSamples, [], Math.Max(2, (int)((vSamples.Count - 1) * scale) + 1));
         }
-        var uvSegments = edges.Select(edge =>
-            (new[] { edge.U1, edge.V1, 0d }, new[] { edge.U2, edge.V2, 0d })).ToList();
-        var rings = OrderRingsW(uvSegments);
+        var rings = ringGraph.OrderUvRings(edges);
         if (rings.Count == 0 || rings.Any(ring => ring.Count < 3)) return null;
 
         List<List<double[]>>? sourcePolygons;
         if (rings.Count == 1)
         {
+            if (evaluate == null) return null;
             sourcePolygons =
             [
                 rings[0].Select(point => new[] { point[0], point[1] }).ToList(),
@@ -5516,7 +5572,9 @@ internal static partial class GRepParserV2
                 return [];
             }
         }
-        if (sourcePolygons == null || sourcePolygons.Count == 0) return null;
+        // Filtered faces still contribute failures of the trim triangulation to the model.
+        // Clipping its successful result to a grid only produces render polygons.
+        if (evaluate == null || sourcePolygons == null || sourcePolygons.Count == 0) return null;
 
         return ClipGridCells(sourcePolygons, uSamples, vSamples, rings.Count == 1 || refineV, evaluate);
     }
@@ -5835,10 +5893,10 @@ internal static partial class GRepParserV2
     /// degenerates to its apex point). u = curve parameter, v = ruling parameter normalized to the
     /// envelope.
     /// </summary>
-    private static IEnumerable<List<double[]>> TessellateRuled(SurfaceRec s,
+    private static IEnumerable<List<double[]>> TessellateRuled(RingGraph ringGraph, SurfaceRec s,
         Dictionary<uint, ArcRec> curves,
         List<(double U1, double V1, double U2, double V2)> edges,
-        List<(double U1, double V1, double U2, double V2)>? samplingEdges = null)
+        List<(double U1, double V1, double U2, double V2)>? samplingEdges = null, bool emitPolygons = true)
     {
         ArcRec? a1 = curves.TryGetValue(s.ProfileHandle, out var t1) ? t1 : null;
         ArcRec? a2 = curves.TryGetValue(s.ProfileHandle2, out var t2) ? t2 : null;
@@ -5868,11 +5926,12 @@ internal static partial class GRepParserV2
                 (1 - v) * p1[2] + v * p2[2],
             };
         }
-        var trimPoint = TrimBoundaryEvaluator(samplingEdges, Point);
+        var trimPoint = emitPolygons ? TrimBoundaryEvaluator(samplingEdges, Point) : null;
 
         // Clip the frozen interior grid by the refined trim loop.
-        var trimmed = TessellateTrimmedGrid(edges, uSamples,
+        var trimmed = TessellateTrimmedGrid(ringGraph, edges, uSamples,
             [vMin, vMax], trimPoint, refineV: false);
+        if (trimPoint == null) yield break;
         if (trimmed != null)
         {
             foreach (var polygon in trimmed) yield return polygon;
@@ -5893,17 +5952,69 @@ internal static partial class GRepParserV2
         }
     }
 
+    // Each decoder reuses these buffers across faces. Returned rings own their lists and point references.
+    private sealed class RingGraph
+    {
+        private readonly Dictionary<(long, long, long), int> nodeByKey = new();
+        private readonly HashSet<(int, int)> seenEdges = new();
+        public readonly List<double[]> Points = new();
+        public readonly List<(int A, int B)> Edges = new();
+        public int[] AdjacentStart = [];
+        public int[] AdjacentEdges = [];
+
+        public List<List<double[]>> OrderRings(List<(double[] A, double[] B)> edges,
+            bool includeContainingCycles = false, bool preferLargestCyclePerComponent = false)
+        {
+            Clear();
+            foreach (var (a, b) in edges)
+                Add(Node(a[0], a[1], a[2], a), Node(b[0], b[1], b[2], b));
+            return FindRings(this, includeContainingCycles, preferLargestCyclePerComponent);
+        }
+
+        public List<List<double[]>> OrderUvRings(List<(double U1, double V1, double U2, double V2)> edges)
+        {
+            Clear();
+            foreach (var e in edges)
+                Add(Node(e.U1, e.V1, 0, null), Node(e.U2, e.V2, 0, null));
+            return FindRings(this, false, false);
+        }
+
+        private int Node(double x, double y, double z, double[]? point)
+        {
+            // Keep the first representative of each bin on the IFC writer's 0.01 mm lattice.
+            const double Tol = 1e-5 / 0.3048;
+            var key = ((long)Math.Round(x / Tol), (long)Math.Round(y / Tol), (long)Math.Round(z / Tol));
+            ref int n = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(nodeByKey, key, out bool exists);
+            if (!exists)
+            {
+                n = Points.Count;
+                Points.Add(point ?? [x, y, z]);
+            }
+            return n;
+        }
+
+        private void Add(int a, int b)
+        {
+            if (a != b && seenEdges.Add(a < b ? (a, b) : (b, a))) Edges.Add((a, b));
+        }
+
+        private void Clear()
+        {
+            nodeByKey.Clear();
+            seenEdges.Clear();
+            Points.Clear();
+            Edges.Clear();
+        }
+    }
+
     internal static List<List<double[]>> OrderRingsW(
         List<(double[] A, double[] B)> edges, bool includeContainingCycles = false,
-        bool preferLargestCyclePerComponent = false)
-    {
-        // The IFC writer uses a 0.01 mm coordinate lattice. Vertices in different lattice bins must
-        // remain separate here; merging them can remove a shared boundary sample from a planar cap
-        // while the adjacent analytic face retains it.
-        const double Tol = 1e-5 / 0.3048;
-        static (long X, long Y, long Z) Key(double[] p) =>
-            ((long)Math.Round(p[0] / Tol), (long)Math.Round(p[1] / Tol), (long)Math.Round(p[2] / Tol));
+        bool preferLargestCyclePerComponent = false) =>
+        new RingGraph().OrderRings(edges, includeContainingCycles, preferLargestCyclePerComponent);
 
+    private static List<List<double[]>> FindRings(RingGraph graph,
+        bool includeContainingCycles, bool preferLargestCyclePerComponent)
+    {
         // The key of an edge set: its sorted indices joined by commas.
         static string SortedKey(HashSet<int> edgeSet)
         {
@@ -5913,46 +6024,65 @@ internal static partial class GRepParserV2
             return string.Join(',', (IEnumerable<int>)sorted);
         }
 
-        // Build a geometric, undirected edge graph. The GRep can repeat the same segment through
-        // several topology records; collapsing those duplicates prevents a valid loop from being
-        // consumed by an arbitrary parallel copy.
-        var nodeByKey = new Dictionary<(long, long, long), int>();
-        var points = new List<double[]>();
-        int Node(double[] p)
-        {
-            var key = Key(p);
-            if (nodeByKey.TryGetValue(key, out int n)) return n;
-            n = points.Count;
-            nodeByKey[key] = n;
-            points.Add(p);
-            return n;
-        }
-
-        var graphEdges = new List<(int A, int B)>();
-        var seenEdges = new HashSet<(int, int)>();
-        foreach (var edge in edges)
-        {
-            int a = Node(edge.A), b = Node(edge.B);
-            if (a == b) continue;
-            var ek = a < b ? (a, b) : (b, a);
-            if (seenEdges.Add(ek)) graphEdges.Add((a, b));
-        }
+        var points = graph.Points;
+        var graphEdges = graph.Edges;
         if (graphEdges.Count < 3) return new();
 
         // The edges of node n are adjacentEdges[adjacentStart[n] .. adjacentStart[n + 1]), in ascending edge index.
-        var adjacentStart = new int[points.Count + 1];
-        foreach (var graphEdge in graphEdges)
+        if (graph.AdjacentStart.Length <= points.Count) graph.AdjacentStart = new int[points.Count + 1];
+        var adjacentStart = graph.AdjacentStart;
+        Array.Clear(adjacentStart, 0, points.Count);
+        foreach (var edge in graphEdges)
         {
-            adjacentStart[graphEdge.A + 1]++;
-            adjacentStart[graphEdge.B + 1]++;
+            adjacentStart[edge.A]++;
+            adjacentStart[edge.B]++;
         }
-        for (int i = 0; i < points.Count; i++) adjacentStart[i + 1] += adjacentStart[i];
-        var adjacentEdges = new int[adjacentStart[points.Count]];
-        var adjacentFilled = new int[points.Count];
-        for (int i = 0; i < graphEdges.Count; i++)
+        bool degreeTwo = graphEdges.Count == points.Count;
+        int end = 0;
+        for (int i = 0; i < points.Count; i++)
         {
-            adjacentEdges[adjacentStart[graphEdges[i].A] + adjacentFilled[graphEdges[i].A]++] = i;
-            adjacentEdges[adjacentStart[graphEdges[i].B] + adjacentFilled[graphEdges[i].B]++] = i;
+            int degreeOfNode = adjacentStart[i];
+            degreeTwo &= degreeOfNode == 2;
+            end += degreeOfNode;
+            adjacentStart[i] = end;
+        }
+        adjacentStart[points.Count] = end;
+        if (graph.AdjacentEdges.Length < end) graph.AdjacentEdges = new int[end];
+        var adjacentEdges = graph.AdjacentEdges;
+        // Fill backwards from each node's end offset. This leaves its start offset and keeps edge order.
+        for (int i = graphEdges.Count - 1; i >= 0; i--)
+        {
+            var edge = graphEdges[i];
+            adjacentEdges[--adjacentStart[edge.A]] = i;
+            adjacentEdges[--adjacentStart[edge.B]] = i;
+        }
+
+        if (degreeTwo)
+        {
+            var ring = TraceSimpleRing(0, null);
+            if (ring.Count == points.Count)
+                return NewellNormalArea(ring).Area >= 1e-8 ? [ring] : [];
+        }
+
+        // In a degree-two component, the first surviving edge fixes the start and the
+        // alternate path between its ends fixes the direction, including after peeling.
+        List<double[]> TraceSimpleRing(int firstEdge, bool[]? surviving)
+        {
+            var target = graphEdges[firstEdge];
+            int previous = firstEdge, node = target.A;
+            var ring = new List<double[]> { points[node] };
+            while (node != target.B)
+                for (int slot = adjacentStart[node]; slot < adjacentStart[node + 1]; slot++)
+                {
+                    int next = adjacentEdges[slot];
+                    if (next == previous || surviving != null && !surviving[next]) continue;
+                    var edge = graphEdges[next];
+                    node = edge.A == node ? edge.B : edge.A;
+                    ring.Add(points[node]);
+                    previous = next;
+                    break;
+                }
+            return ring;
         }
 
         // Peel open chains. They are common after a recovered stream gap, but can never participate
@@ -6024,22 +6154,7 @@ internal static partial class GRepParserV2
             {
                 if (visitedSimpleLoops[component]) continue;
                 visitedSimpleLoops[component] = true;
-                var simpleRing = new List<double[]> { points[target.A] };
-                // Follow the unique alternate path, in the same direction as the general search.
-                int previousEdge = excluded, node = target.A;
-                while (node != target.B)
-                {
-                    for (int slot = adjacentStart[node]; slot < adjacentStart[node + 1]; slot++)
-                    {
-                        int nextEdge = adjacentEdges[slot];
-                        if (nextEdge == previousEdge || !active[nextEdge]) continue;
-                        var edge = graphEdges[nextEdge];
-                        node = edge.A == node ? edge.B : edge.A;
-                        simpleRing.Add(points[node]);
-                        previousEdge = nextEdge;
-                        break;
-                    }
-                }
+                var simpleRing = TraceSimpleRing(excluded, active);
                 double simpleArea = NewellNormalArea(simpleRing).Area;
                 if (simpleArea >= 1e-8) candidates.Add((simpleRing, null, simpleArea, component));
                 continue;

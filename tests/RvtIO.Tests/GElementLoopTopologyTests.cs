@@ -202,7 +202,7 @@ public class GElementLoopTopologyTests
         Scalar(1244, "m_flags", 7), Endpoints(), Interior(0));
     private static OwnGElementGeometryGraph Replace(OwnGElementGeometryGraph graph, int q, params GElementGraphField[] fields)
         => graph with { Nodes = graph.Nodes.Select(n => n.QueueIndex != q ? n : n with
-            { Fields = n.Fields.Select(f => fields.SingleOrDefault(x => x.Declaring == f.Declaring && x.Name == f.Name) ?? f).ToArray() }).ToArray() };
+            { Fields = n.Fields.Select(f => fields.Where(x => x.Declaring == f.Declaring && x.Name == f.Name).DefaultIfEmpty(f).Single()).ToArray() }).ToArray() };
     private static GElementGraphField Weak(int cls, string name, params uint[] keys)
         => new(cls, name, keys.Length == 2 ? 2u : null, 100, 100 + keys.Length * 4,
             keys.Select((k, i) => new GElementGraphItem(100 + i * 4, 104 + i * 4, [k], null, [])).ToArray());

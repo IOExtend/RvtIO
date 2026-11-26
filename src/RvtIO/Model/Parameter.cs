@@ -10,22 +10,24 @@ namespace RvtIO.Model
     /// </summary>
     public class Parameter
     {
-        internal sealed class DefinitionData(int id, string? name, string? builtInParameter = null, Guid? guid = null)
+        // Most parameters have neither external IDs nor display units. Readers share these
+        // immutable records until a parameter needs a different combination.
+        internal sealed record Metadata(string? ForgeId = null, Guid? Guid = null, long? SourceElementId = null,
+            string? SpecType = null, string? Symbol = null, double? Factor = null);
+
+        internal sealed class DefinitionData(int id, string? name, string? builtInParameter = null, Guid? guid = null, string? forgeId = null)
         {
             internal int Id { get; } = id;
             internal string? Name { get; } = name;
             internal string? BuiltInParameter { get; } = builtInParameter;
-            internal object? BoxedGuid { get; } = guid;
+            internal Metadata? External { get; } = forgeId == null && guid == null ? null : new(forgeId, guid);
 
             internal Definition ToDefinition() => new() { Id = Id, Name = Name, BuiltInParameter = BuiltInParameter };
         }
-        // Readers share resolved units. The public setters replace the record on the edited parameter.
-        internal sealed record DisplayUnits(string? SpecType, string? Symbol, double? Factor);
-
-        private static readonly DisplayUnits NoDisplayUnits = new(null, null, null);
+        private static readonly Metadata EmptyMetadata = new();
         private static readonly DefinitionData EmptyDefinition = new(0, null);
         private object? _definition;
-        private DisplayUnits? _displayUnits;
+        private Metadata? _metadata;
 
         /// <summary>Creates a parameter with its own empty definition.</summary>
         public Parameter() => _definition = EmptyDefinition;
@@ -34,12 +36,35 @@ namespace RvtIO.Model
         internal Parameter(DefinitionData definition)
         {
             _definition = definition;
-            _guid = definition.BoxedGuid;
+            _metadata = definition.External;
         }
 
         internal void SetDefinitionData(DefinitionData definition) => Volatile.Write(ref _definition, definition);
 
-        internal void UseGuidIfMissing(DefinitionData definition) => _guid ??= definition.BoxedGuid;
+        internal void FillMissingExternalIds(DefinitionData definition)
+        {
+            if (definition.External is not { } ids) return;
+            UpdateMetadata(ids, static (old, incoming) =>
+            {
+                if (ReferenceEquals(old, EmptyMetadata)) return incoming;
+                if ((old.ForgeId != null || incoming.ForgeId == null) && (old.Guid != null || incoming.Guid == null))
+                    return old;
+                return old with { ForgeId = old.ForgeId ?? incoming.ForgeId, Guid = old.Guid ?? incoming.Guid };
+            });
+        }
+
+        private void UpdateMetadata<T>(T value, Func<Metadata, T, Metadata> update)
+        {
+            Metadata? old;
+            Metadata next;
+            do
+            {
+                old = Volatile.Read(ref _metadata);
+                var current = old ?? EmptyMetadata;
+                next = update(current, value);
+                if (ReferenceEquals(current, next)) return;
+            } while (!ReferenceEquals(Interlocked.CompareExchange(ref _metadata, next, old), old));
+        }
 
         /// <summary>A copy of this parameter with another value.</summary>
         internal Parameter ShallowCopy(object? value)
@@ -79,16 +104,13 @@ namespace RvtIO.Model
             return value;
         }
 
-        // Built-in parameters have no GUID. Store a boxed Guid only when one is present.
-        private object? _guid;
-
         /// <summary>GUID of shared/external parameters (parsed from ForgeId). Null for built-in params.
         /// Invariant per definition id - serialized once in the document's ParameterDefinitions table.</summary>
         [JsonIgnore]
         public Guid? Guid
         {
-            get => (Guid?)_guid;
-            set => _guid = value;
+            get => _metadata?.Guid;
+            set => UpdateMetadata(value, static (old, guid) => old.Guid == guid ? old : old with { Guid = guid });
         }
 
         /// <summary>
@@ -167,15 +189,19 @@ namespace RvtIO.Model
         /// <summary>Forge TypeId string for user-defined/shared params (e.g. "autodesk.parameter.aec.revit.external.-1:GUID-1.0.0").
         /// Invariant per definition id - lives in ParameterDefinitions.</summary>
         [JsonIgnore]
-        public string? ForgeId { get; set; }
+        public string? ForgeId
+        {
+            get => _metadata?.ForgeId;
+            set => UpdateMetadata(value, static (old, id) => ReferenceEquals(old.ForgeId, id) ? old : old with { ForgeId = id });
+        }
 
         /// <summary>Measurement spec type (e.g. "autodesk.spec.aec:length-2.0.0").
         /// Resolved from ForgeId via 0x0B3A blocks, or from BIP name heuristics.</summary>
         [JsonIgnore]
         public string? SpecType
         {
-            get => _displayUnits?.SpecType;
-            set => _displayUnits = (_displayUnits ?? NoDisplayUnits) with { SpecType = value };
+            get => _metadata?.SpecType;
+            set => UpdateMetadata(value, static (old, spec) => old with { SpecType = spec });
         }
 
         /// <summary>Display unit symbol (e.g. "mm", "m^2", "degC").
@@ -184,8 +210,8 @@ namespace RvtIO.Model
         [JsonIgnore]
         public string? UnitSymbol
         {
-            get => _displayUnits?.Symbol;
-            set => _displayUnits = (_displayUnits ?? NoDisplayUnits) with { Symbol = value };
+            get => _metadata?.Symbol;
+            set => UpdateMetadata(value, static (old, symbol) => old with { Symbol = symbol });
         }
 
         /// <summary>Conversion factor from Revit internal units to display units.
@@ -193,11 +219,13 @@ namespace RvtIO.Model
         [JsonIgnore]
         public double? ConversionFactor
         {
-            get => _displayUnits?.Factor;
-            set => _displayUnits = (_displayUnits ?? NoDisplayUnits) with { Factor = value };
+            get => _metadata?.Factor;
+            set => UpdateMetadata(value, static (old, factor) => old with { Factor = factor });
         }
 
-        internal void SetDisplayUnits(DisplayUnits units) => _displayUnits = units;
+        internal void SetDisplayUnits(Metadata units) => UpdateMetadata(units, static (old, display) =>
+            old.ForgeId == null && old.Guid == null && old.SourceElementId == null ? display :
+            old with { SpecType = display.SpecType, Symbol = display.Symbol, Factor = display.Factor });
 
         /// <summary>True when this parameter's value came from an approximate fallback
         /// (e.g. dominant bounding-box dimension) rather than an exact decoded source (e.g.
@@ -419,18 +447,10 @@ namespace RvtIO.Model
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public string? SourceElementId => NativeElementId?.ToString(CultureInfo.InvariantCulture);
 
-        // Keep the presence flag alongside the other flags, rather than a padded
-        // Nullable<long> on every parameter. Zero and long.MinValue are both representable.
-        private bool _hasNativeElementId;
-        private long _nativeElementId;
         internal long? NativeElementId
         {
-            get => _hasNativeElementId ? _nativeElementId : null;
-            set
-            {
-                _nativeElementId = value.GetValueOrDefault();
-                _hasNativeElementId = value.HasValue;
-            }
+            get => _metadata?.SourceElementId;
+            set => UpdateMetadata(value, static (old, id) => old.SourceElementId == id ? old : old with { SourceElementId = id });
         }
 
         /// <summary>

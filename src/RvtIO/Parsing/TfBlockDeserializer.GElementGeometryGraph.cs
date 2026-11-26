@@ -6,15 +6,23 @@ internal static partial class TfBlockDeserializer
 {
     internal sealed record GElementGraphPointer(uint Handle, ushort? ClassId, int? QueueIndex,
         ushort? HandToken, IReadOnlyList<long> HandBits, int Start, int End);
-    internal sealed record GElementGraphItem(int Start, int End, IReadOnlyList<long> Values,
+    internal readonly record struct GElementGraphItem(int Start, int End, IReadOnlyList<long> Values,
         GElementGraphPointer? Pointer, IReadOnlyList<GElementGraphField> Fields);
-    internal sealed record GElementGraphField(int Declaring, string Name, uint? Count, int Start, int End,
+    internal readonly record struct GElementGraphField(int Declaring, string Name, uint? Count, int Start, int End,
         IReadOnlyList<GElementGraphItem> Items);
     internal sealed record GElementGraphNode(int QueueIndex, ushort ClassId, uint Handle,
         int Start, int End, IReadOnlyList<GElementGraphField> Fields);
     internal sealed record GElementFaceSurfaceLink(int FaceQueueIndex, int SurfaceQueueIndex);
     internal sealed record OwnGElementGeometryGraph(int OwnerId, uint OpaqueHeader,
         IReadOnlyList<GElementGraphNode> Nodes, IReadOnlyList<GElementFaceSurfaceLink> FaceSurfaces, int End);
+
+    // Byte values and the signed unset sentinel are common across immutable geometry graphs.
+    private static readonly IReadOnlyList<long>[] ByteGraphValues =
+        Enumerable.Range(0, 256).Select(value => (IReadOnlyList<long>)[(long)value]).ToArray();
+    private static readonly IReadOnlyList<long> UnsetGraphValue = [-1L];
+
+    private static IReadOnlyList<long> ScalarGraphValue(long value) =>
+        (ulong)value <= byte.MaxValue ? ByteGraphValues[(int)value] : value == -1 ? UnsetGraphValue : [value];
 
     private static GElementGraphField RequireUniqueGraphField(GElementGraphNode node, int declaring, string name,
         int? itemCount = null)
@@ -97,8 +105,7 @@ internal static partial class TfBlockDeserializer
             // Only owned links to admitted surface kinds are resolved here.
             foreach (var node in nodes.Where(n => n.ClassId == 1589))
             {
-                var pointer = node.Fields.Single(f => f.Declaring == 1589 && f.Name == "m_pSurf")
-                    .Items.Single().Pointer!;
+                var pointer = RequireUniqueGraphField(node, 1589, "m_pSurf", 1).Items[0].Pointer!;
                 if (pointer.QueueIndex is not int surface) continue;
                 context = "face-surface";
                 contextIndex = node.QueueIndex;
@@ -131,6 +138,7 @@ internal static partial class TfBlockDeserializer
         IReadOnlyList<GElementGraphField> ReadFields(ushort cls, int depth)
         {
             if (depth >= 32 || !GElementGraphFieldChains.TryGetValue(cls, out var fields)) throw Fail;
+            if (fields.Length == 0) return [];
             var result = new GElementGraphField[fields.Length];
             for (int i = 0; i < fields.Length; i++) result[i] = Field(fields[i], depth);
             return result;
@@ -145,19 +153,11 @@ internal static partial class TfBlockDeserializer
             int high = field.Mods >> 4;
             uint? count = high == 5 ? (uint)Raw(4, false) : high == 1 ? (uint)field.Cnt!.Value : null;
             uint length = count ?? 1;
-            IReadOnlyList<GElementGraphItem> items = [];
-            if (length != uint.MaxValue)
-            {
-                if (length > 100_000 || length > (uint)((end - position) / Minimum(field))) throw Fail;
-                if (length == 1)
-                    items = new[] { Item(field, depth) };
-                else if (length > 1)
-                {
-                    var repeatedItems = new List<GElementGraphItem>();
-                    for (uint i = 0; i < length; i++) repeatedItems.Add(Item(field, depth));
-                    items = repeatedItems;
-                }
-            }
+            if (length == uint.MaxValue)
+                return new(field.Declaring, field.Name, count, first, position - start, []);
+            if (length > 100_000 || length > (uint)((end - position) / Minimum(field))) throw Fail;
+            GElementGraphItem[] items = length == 0 ? [] : new GElementGraphItem[length];
+            for (int i = 0; i < items.Length; i++) items[i] = Item(field, depth);
             return new(field.Declaring, field.Name, count, first, position - start, items);
         }
 
@@ -165,13 +165,13 @@ internal static partial class TfBlockDeserializer
         {
             if (++itemCount > 1_000_000) throw Fail;
             int first = position - start;
-            long[] values = [];
+            IReadOnlyList<long> values = [];
             GElementGraphPointer? pointer = null;
             IReadOnlyList<GElementGraphField> children = [];
-            if (field.Type is 1 or 2) values = [Raw(1, false)];
-            else if (field.Type == 4) values = [Raw(4, true)];
-            else if (field.Type == 5) values = [Raw(4, false)];
-            else if (field.Type == 7) values = [Raw(8, true)];
+            if (field.Type is 1 or 2) values = ScalarGraphValue(Raw(1, false));
+            else if (field.Type == 4) values = ScalarGraphValue(Raw(4, true));
+            else if (field.Type == 5) values = ScalarGraphValue(Raw(4, false));
+            else if (field.Type == 7) values = ScalarGraphValue(Raw(8, true));
             else if (field.Type == 13)
             {
                 int dimensions = (field.Declaring, field.Name) switch
@@ -180,8 +180,9 @@ internal static partial class TfBlockDeserializer
                     (2008, "m_bBox") or (2008, "m_tightbBox") or (78, "m_3x3") => 3,
                     _ => throw Fail
                 };
-                values = new long[dimensions];
-                for (int i = 0; i < dimensions; i++) values[i] = Raw(8, true);
+                var coordinates = new long[dimensions];
+                for (int i = 0; i < dimensions; i++) coordinates[i] = Raw(8, true);
+                values = coordinates;
             }
             else if (field.Type == 14)
             {
@@ -190,7 +191,7 @@ internal static partial class TfBlockDeserializer
                 {
                     values = [Raw(4, true), Raw(4, true), Raw(4, true), Raw(4, false)];
                 }
-                else if (low == 3) values = [Raw(4, false)];
+                else if (low == 3) values = ScalarGraphValue(Raw(4, false));
                 else if (low is 1 or 2) pointer = Pointer();
                 else
                 {
@@ -201,7 +202,7 @@ internal static partial class TfBlockDeserializer
                         (523, "m_Envelope") => 524,
                         _ => (ushort)(field.Ref ?? throw Fail)
                     };
-                    if (cls == 0) values = [Raw(4, true)]; // ElementId's own scalar, not a polymorphic pointer
+                    if (cls == 0) values = ScalarGraphValue(Raw(4, true)); // ElementId's own scalar, not a polymorphic pointer
                     else children = ReadFields(cls, depth + 1);
                 }
             }

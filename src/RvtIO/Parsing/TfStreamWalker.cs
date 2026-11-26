@@ -27,10 +27,10 @@ internal static partial class TfStreamWalker
     {
         private readonly List<(int Start, int End, byte[] Chunk)> _ranges = [];
 
-        internal void SetSegment(IReadOnlyList<byte[]> chunks, int start, int end, int carryLength)
+        internal void SetSegment(IReadOnlyList<byte[]> chunks, int start, int end, int offset)
         {
             _ranges.Clear();
-            int position = carryLength;
+            int position = offset;
             for (int index = start; index < end; index++)
             {
                 byte[] chunk = chunks[index];
@@ -115,14 +115,18 @@ internal static partial class TfStreamWalker
     private static void WalkSegment(byte[] buf, HashSet<uint> knownIds, BlockVisitor visit,
         int visitLimit, RecordVisitor? visitRecord = null, Action<int>? reportPosition = null)
     {
-        int n = buf.Length;
-        int pos = 0;
         bool aligned = false;
+        WalkWindow(buf, buf.Length, 0, visitLimit, ref aligned, knownIds, visit, visitRecord, reportPosition);
+    }
+
+    private static int WalkWindow(byte[] buf, int n, int pos, int visitLimit, ref bool aligned,
+        HashSet<uint> knownIds, BlockVisitor visit, RecordVisitor? visitRecord, Action<int>? reportPosition = null)
+    {
         const int reportInterval = 1 << 20;
         long nextReport = reportPosition is null ? long.MaxValue : reportInterval;
-        while (pos + 12 <= n)
+        while (pos < visitLimit && pos <= n - 12)
         {
-            if (pos >= nextReport && pos < visitLimit)
+            if (pos >= nextReport)
             {
                 reportPosition!(pos);
                 nextReport = (long)pos + reportInterval;
@@ -136,35 +140,36 @@ internal static partial class TfStreamWalker
             if (!it.HasValue)
             {
                 aligned = false;
-                pos = reportPosition == null ? NextPossibleItem(buf, pos + 1) : pos + 1;
+                pos = reportPosition == null ? NextPossibleItem(buf, n, pos + 1) : pos + 1;
                 continue;
             }
             var (isBlock, size, eid, cls, dataSize) = it.Value;
-            if (isBlock && pos < visitLimit)
+            if (isBlock)
                 visit(buf, pos, dataSize, cls, eid);
-            else if (!isBlock && pos < visitLimit)
+            else
                 visitRecord?.Invoke(buf, pos, eid);
             pos += size;
             aligned = true;
         }
+        return pos;
     }
 
     // Skip only positions where the serialized size and both record markers rule out a header.
     // The anchor and size-echo checks still run on every candidate, including unaligned ones.
-    private static int NextPossibleItem(byte[] data, int position)
+    private static int NextPossibleItem(byte[] data, int length, int position)
     {
-        if (position <= data.Length - 16 && BitConverter.ToUInt64(data, position) == 0
+        if (position <= length - 16 && BitConverter.ToUInt64(data, position) == 0
             && BitConverter.ToUInt64(data, position + 8) == 0)
         {
             // No all-zero header can anchor. Keep starts whose header reaches the first nonzero byte.
-            int nonzero = data.AsSpan(position + 16).IndexOfAnyExcept((byte)0);
-            if (nonzero < 0) return data.Length;
+            int nonzero = data.AsSpan(position + 16, length - position - 16).IndexOfAnyExcept((byte)0);
+            if (nonzero < 0) return length - 15;
             position += nonzero + 1;
         }
         if (!BitConverter.IsLittleEndian || !Vector256.IsHardwareAccelerated) return position;
         int width = Vector256<byte>.Count;
         ref byte first = ref MemoryMarshal.GetArrayDataReference(data);
-        for (; position <= data.Length - 11 - width; position += width)
+        for (; position <= length - 11 - width; position += width)
         {
             var low = Vector256.LoadUnsafe(ref first, (nuint)(position + 8));
             var high = Vector256.LoadUnsafe(ref first, (nuint)(position + 9));

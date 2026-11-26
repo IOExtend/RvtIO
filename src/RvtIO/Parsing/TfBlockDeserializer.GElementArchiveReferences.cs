@@ -53,8 +53,8 @@ internal static partial class TfBlockDeserializer
         }
         catch (DecodeFail)
         {
-            failure = contextField == null ? "archive-reference-field"
-                : $"archive-reference-field:{contextSource}:{contextField.Declaring}:{contextField.Name}";
+            failure = contextField is { } field
+                ? $"archive-reference-field:{contextSource}:{field.Declaring}:{field.Name}" : "archive-reference-field";
             return null;
         }
 

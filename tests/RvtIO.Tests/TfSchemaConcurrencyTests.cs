@@ -90,6 +90,11 @@ public class TfSchemaConcurrencyTests
         var equalBeforeCapture = field with { };
 
         Assert.Equal("1795:m_hostId", field.ProductionCaptureKey);
+        Assert.True(field.CaptureIntegerByName);
+        Assert.True((field with { Name = "m_text" }).CaptureStringByName);
+        Assert.True((field with { Name = "m_scale" }).CaptureDoubleByName);
+        Assert.Equal("m_refPnts#", (field with { Name = "m_refPnts" }).CountKey);
+        Assert.False((field with { Name = "m_uncaptured" }).CaptureIntegerByName);
         Assert.Equal(equalBeforeCapture, field);
         Assert.Equal(equalBeforeCapture.GetHashCode(), field.GetHashCode());
         Assert.Null((field with { Name = "m_uncaptured" }).ProductionCaptureKey);

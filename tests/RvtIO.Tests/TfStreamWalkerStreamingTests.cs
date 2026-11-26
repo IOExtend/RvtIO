@@ -58,6 +58,48 @@ public class TfStreamWalkerStreamingTests
     }
 
     [Theory]
+    [InlineData(3_700_000, 516_019)]
+    [InlineData(12_000_000, 700_001)]
+    public void BoundedWalkMatchesStitchedWalkAndRetainsDeferredBlocks(int segmentSize, int windowSize)
+    {
+        byte[] blocks = Blocks([0, 102, 103, 104, 102, 106, 107]);
+        const int leading = 516_013, stride = 629_013;
+        byte[] stream = new byte[leading + blocks.Length + 950_000];
+        blocks.CopyTo(stream, leading);
+        int record = leading + blocks.Length;
+        BitConverter.GetBytes(123u).CopyTo(stream, record);
+        BitConverter.GetBytes((ushort)0x053C).CopyTo(stream, record + 8);
+        // A following record anchors the first record after a logical boundary.
+        BitConverter.GetBytes(124u).CopyTo(stream, record + 12);
+        BitConverter.GetBytes((ushort)0x053C).CopyTo(stream, record + 20);
+        byte[][] chunks = [[], ..Enumerable.Range(0, (stream.Length + stride - 1) / stride)
+            .Select(i => stream[(i * stride)..Math.Min((i + 1) * stride, stream.Length)]), []];
+
+        var expected = new List<(uint Owner, byte[] Bytes)>();
+        var actual = new List<(uint Owner, byte[] Data, int Start, int Length)>();
+        var sources = new TfStreamWalker.SegmentSources();
+        TfStreamWalker.Walk(chunks, [123, 124], (data, start, size, _, id) =>
+            expected.Add((id, data.AsSpan(start, (int)size + 16).ToArray())),
+            (data, start, id) => expected.Add((id, data.AsSpan(start, 12).ToArray())), segTarget: segmentSize);
+        TfStreamWalker.WalkBounded(chunks, [123, 124], (data, start, size, _, id) =>
+        {
+            Assert.InRange(data.Length, 1, windowSize + 2_200_000);
+            int length = (int)size + 16;
+            var retained = sources.Retain(data, start, length);
+            actual.Add((id, retained.Data, retained.Start, length));
+        }, (data, start, id) =>
+        {
+            var retained = sources.Retain(data, start, 12);
+            actual.Add((id, retained.Data, retained.Start, 12));
+        }, sources, segmentSize, windowSize);
+
+        Assert.Contains(expected, item => item.Owner == 123);
+        Assert.Equal(expected.Select(item => item.Owner), actual.Select(item => item.Owner));
+        for (int i = 0; i < expected.Count; i++)
+            Assert.Equal(expected[i].Bytes, actual[i].Data.AsSpan(actual[i].Start, actual[i].Length).ToArray());
+    }
+
+    [Theory]
     [InlineData(12_000_000)]
     [InlineData(9_500_000)]
     public void TargetedSlicesMatchStitchedScanAcrossPhysicalAndLogicalBoundaries(int segmentTarget)
@@ -95,6 +137,34 @@ public class TfStreamWalkerStreamingTests
             BitConverter.GetBytes(id).CopyTo(bytes, offset);
             BitConverter.GetBytes((uint)size).CopyTo(bytes, offset + 8);
             BitConverter.GetBytes(cls).CopyTo(bytes, offset + 12);
+        }
+    }
+
+    [Fact]
+    public void OverlappingCrossChunkBlocksRetainTheirOwnBytesAfterTheScan()
+    {
+        byte[] bytes = new byte[768];
+        (int Start, uint Owner, uint Size)[] blocks = [(32, 1, 240), (60, 2, 20), (97, 3, 300), (500, 4, 80)];
+        foreach (var (start, owner, size) in blocks)
+        {
+            BitConverter.GetBytes(owner).CopyTo(bytes, start);
+            BitConverter.GetBytes(size).CopyTo(bytes, start + 8);
+            BitConverter.GetBytes((ushort)0x07D7).CopyTo(bytes, start + 12);
+        }
+        byte[][] chunks = bytes.Chunk(128).ToArray();
+        var retained = new List<(byte[] Data, int Start)>();
+        TfStreamWalker.ScanBlockSlices(chunks, [1, 2, 3, 4], (data, start, size, _, owner) =>
+        {
+            Assert.Equal((blocks[retained.Count].Owner, blocks[retained.Count].Size), (owner, size));
+            retained.Add((data, start));
+        });
+        Assert.Equal(blocks.Length, retained.Count);
+        Assert.Same(retained[0].Data, retained[2].Data);
+        Assert.Same(chunks[0], retained[1].Data);
+        for (int i = 0; i < blocks.Length; i++)
+        {
+            int length = (int)blocks[i].Size + 16;
+            Assert.True(bytes.AsSpan(blocks[i].Start, length).SequenceEqual(retained[i].Data.AsSpan(retained[i].Start, length)));
         }
     }
 

@@ -21,7 +21,7 @@ internal static partial class Program
 
     private static ExportInput ReadExportInput(string path, RvtReaderOptions options, bool compact, bool dumpSolids, bool debugNative)
     {
-        var reader = new RvtFileReader(options);
+        var reader = new RvtFileReader(options) { ReleaseExportPartitions = compact && !debugNative && !dumpSolids };
         var model = reader.Read(path);
         var state = reader.LastParsingState ?? throw new InvalidOperationException("The reader kept no parsing state.");
         var json = reader.WideModel ?? model;

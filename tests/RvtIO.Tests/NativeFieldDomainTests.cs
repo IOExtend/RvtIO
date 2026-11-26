@@ -13,6 +13,53 @@ public class NativeFieldDomainTests
 
     private static Dictionary<uint, ushort> Classes(params (uint Id, ushort Class)[] items) => items.ToDictionary(i => i.Id, i => i.Class);
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ListFactsKeepRuleOrderAndOnlyFamilyInstancesKeepElementBaseFacts(bool familyInstance)
+    {
+        var state = new ParsingState();
+        var native = state.NativeParams[1] = new TfBlockDeserializer.NativeParams();
+        native.Fields["527:m_leader"] = 4;
+        if (familyInstance) native.Fields["1794:m_masterSymbolId"] = 3;
+        native.Fields["37:m_dummy"] = 2;
+        native.Fields["160:m_flags"] = 1;
+        var element = new Element { Id = 1 };
+
+        var info = new RevitFileInfo { Elements = [element] };
+        ElementBuilder.ApplyNativeParams(info, state);
+        ElementBuilder.ApplyMepSystemParams(info, state, null);
+
+        string[] expected = familyInstance
+            ? ["160:m_flags", "37:m_dummy", "1794:m_masterSymbolId", "527:m_leader"]
+            : ["160:m_flags", "527:m_leader"];
+        Assert.Equal(expected, element.NativeListFields!.Keys);
+        Assert.Equal(expected.Select(key => native.Fields[key]), element.NativeListFields.Values);
+        Assert.Null(native.CapturedDoubleFields);
+        Assert.Null(native.CapturedStringFields);
+    }
+
+    [Fact]
+    public void NativeHostsKeepSeparateNumericallyOrderedListsWithSparseIndices()
+    {
+        var state = new ParsingState();
+        var native = state.NativeParams[1] = new TfBlockDeserializer.NativeParams();
+        native.Fields["m_extraHostIds@10"] = 20;
+        native.Fields["m_explicitHostIds@3"] = -1;
+        native.Fields["m_extraHostIds@2"] = 17;
+        native.Fields["m_explicitHostIds@0"] = 14;
+        native.Fields["m_extraHostIdsOther"] = 99;
+        var element = new Element { Id = 1 };
+        var info = new RevitFileInfo { Elements = [element] };
+        ElementBuilder.ApplyNativeParams(info, state);
+        Assert.Equal([17, 20], element.ExtraHostIds);
+        Assert.Equal([14, -1], element.ExplicitHostIds);
+        native.Fields.Clear();
+        ElementBuilder.ApplyNativeParams(info, state);
+        Assert.Null(element.ExtraHostIds);
+        Assert.Null(element.ExplicitHostIds);
+    }
+
     [Fact]
     public void NativeParameterIndexKeepsFirstMatchAndEachElementsStoreIds()
     {
@@ -43,16 +90,13 @@ public class NativeFieldDomainTests
     {
         var inside = new Element { Id = 1, CategoryId = -2000011 };
         inside.Parameters.Add(P(-1006000, StorageType.Integer, 5));
-        inside.NativeTableAddedParams = [(-1006000, ["10/-2000011"], StorageType.Integer, 5, false)];
-        inside.NativeTableCreatedParams = [-1006000];
+        inside.NativeTableAddedParams = [new(-1006000, ["10/-2000011"], StorageType.Integer, 5, false, new(Created: true))];
         var wrongCategory = new Element { Id = 2, CategoryId = -2000023 };
         wrongCategory.Parameters.Add(P(-1006000, StorageType.Integer, 5));
-        wrongCategory.NativeTableAddedParams = [(-1006000, ["10/-2000011"], StorageType.Integer, 5, false)];
-        wrongCategory.NativeTableCreatedParams = [-1006000];
+        wrongCategory.NativeTableAddedParams = [new(-1006000, ["10/-2000011"], StorageType.Integer, 5, false, new(Created: true))];
         var classWide = new Element { Id = 3, CategoryId = -2000023 };
         classWide.Parameters.Add(P(-1006000, StorageType.Integer, 5));
-        classWide.NativeTableAddedParams = [(-1006000, ["10"], StorageType.Integer, 5, false)];
-        classWide.NativeTableCreatedParams = [-1006000];
+        classWide.NativeTableAddedParams = [new(-1006000, ["10"], StorageType.Integer, 5, false, new(Created: true))];
         var info = new RevitFileInfo { Elements = [inside, wrongCategory, classWide] };
 
         ElementBuilder.PruneNativeFieldTableOutsideDomains(info, Classes((1, 10), (2, 10), (3, 10)));
@@ -68,8 +112,8 @@ public class NativeFieldDomainTests
     {
         var element = new Element { Id = 1, CategoryId = -2000023 };
         element.Parameters.Add(P(-1006001, StorageType.String, "wrong"));
-        element.NativeTableAddedParams = [(-1006001, ["10/-2000011"], StorageType.String, "wrong", false)];
-        element.NativeTablePrevious = new() { [-1006001] = ("original", StorageType.String, false) };
+        element.NativeTableAddedParams = [new(-1006001, ["10/-2000011"], StorageType.String, "wrong", false,
+            new(false, StorageType.String, "original"))];
 
         ElementBuilder.PruneNativeFieldTableOutsideDomains(new RevitFileInfo { Elements = [element] }, Classes((1, 10)));
 
@@ -81,8 +125,8 @@ public class NativeFieldDomainTests
     {
         var element = new Element { Id = 1, CategoryId = -2000023 };
         element.Parameters.Add(P(-1006001, StorageType.String, "decided later"));
-        element.NativeTableAddedParams = [(-1006001, ["10/-2000011"], StorageType.String, "table", false)];
-        element.NativeTablePrevious = new() { [-1006001] = ("original", StorageType.String, false) };
+        element.NativeTableAddedParams = [new(-1006001, ["10/-2000011"], StorageType.String, "table", false,
+            new(false, StorageType.String, "original"))];
 
         ElementBuilder.PruneNativeFieldTableOutsideDomains(new RevitFileInfo { Elements = [element] }, Classes((1, 10)));
 
@@ -96,13 +140,46 @@ public class NativeFieldDomainTests
         element.Parameters.Add(P(-1006002, StorageType.String, ""));
         element.NativeTableAddedParams =
         [
-            (-1006002, ["10/-2000011"], StorageType.String, "450x200", false),
-            (-1006002, ["10/-2000016"], StorageType.String, "", false),
+            new(-1006002, ["10/-2000011"], StorageType.String, "450x200", false),
+            new(-1006002, ["10/-2000016"], StorageType.String, "", false),
         ];
 
         ElementBuilder.PruneNativeFieldTableOutsideDomains(new RevitFileInfo { Elements = [element] }, Classes((1, 10)));
 
         Assert.Equal("450x200", Value(element, -1006002));
+    }
+
+    [Fact]
+    public void RepeatedNativePassKeepsFirstSnapshotUntilAnExplicitStoreTakesOver()
+    {
+        const int tick = -1006445;
+        const int outsideTickDomain = -2000575;
+        var created = new Element { Id = 10, CategoryId = outsideTickDomain };
+        var original = new Parameter { Id = tick, StorageType = StorageType.None, HasNoRevitValue = true };
+        var overwritten = new Element { Id = 11, CategoryId = outsideTickDomain, Parameters = [original] };
+        var stored = new Element { Id = 12, CategoryId = outsideTickDomain };
+        var info = new RevitFileInfo { Elements = [created, overwritten, stored] };
+        var state = new ParsingState();
+        foreach (var element in info.Elements)
+        {
+            state.ElemClassIdx[(uint)element.Id] = 174;
+            var native = state.NativeParams[(uint)element.Id] = new TfBlockDeserializer.NativeParams();
+            native.Fields["174:m_centerlineTickMarkStyleId"] = 25;
+        }
+
+        ElementBuilder.ApplyNativeParams(info, state);
+        Assert.Single(stored.Parameters, p => p.Id == tick).Value = null;
+        state.NativeParams[12].ElementIds.Add((tick, 42));
+        ElementBuilder.ApplyNativeParams(info, state);
+        Assert.All(info.Elements, e => Assert.Equal(25, Value(e, tick)));
+        ElementBuilder.PruneNativeFieldTableOutsideDomains(info, state.ElemClassIdx);
+
+        Assert.DoesNotContain(created.Parameters, p => p.Id == tick);
+        Assert.Same(original, Assert.Single(overwritten.Parameters, p => p.Id == tick));
+        Assert.Null(original.Value);
+        Assert.Equal(StorageType.None, original.StorageType);
+        Assert.True(original.HasNoRevitValue);
+        Assert.Equal(42, Value(stored, tick));
     }
 
     [Fact]

@@ -76,27 +76,40 @@ internal static partial class GRepParserV2
         {
             var faceEdges = TryGetFaceLoopEdges(c, face, indices, edges);
             if (faceEdges == null) continue;
-            var points = new List<double[]>();
+            double[] bounds = [double.PositiveInfinity, double.PositiveInfinity, double.PositiveInfinity,
+                double.NegativeInfinity, double.NegativeInfinity, double.NegativeInfinity];
+            void Include(double x, double y, double z)
+            {
+                if (x < bounds[0]) bounds[0] = x;
+                if (y < bounds[1]) bounds[1] = y;
+                if (z < bounds[2]) bounds[2] = z;
+                if (x > bounds[3]) bounds[3] = x;
+                if (y > bounds[4]) bounds[4] = y;
+                if (z > bounds[5]) bounds[5] = z;
+            }
+            Action<double, double, double> includePoint = Include;
             bool complete = true;
             foreach (var edge in faceEdges)
             {
-                if (TryGetEdgePoints(c, edge) is not { } samples)
+                if (GetEdgeSurface(c, edge, out bool useA) is not { } surface
+                    || !VisitEdgePoints(edge, useA, surface, includePoint))
                 { complete = false; break; }
-                points.AddRange(samples);
             }
-            if (complete && points.Count > 0)
-                result[face] = [points.Min(p => p[0]), points.Min(p => p[1]), points.Min(p => p[2]),
-                    points.Max(p => p[0]), points.Max(p => p[1]), points.Max(p => p[2])];
+            if (complete && double.IsFinite(bounds[0]))
+                result[face] = bounds;
         }
         return result;
     }
 
     private static List<double[]>? TryGetEdgePoints(Cur c, EdgeRec edge)
+        => GetEdgeSurface(c, edge, out bool useA) is { } surface ? EvaluateEdgePoints(edge, useA, surface) : null;
+
+    private static SurfaceRec? GetEdgeSurface(Cur c, EdgeRec edge, out bool useA)
     {
+        useA = false;
         if (!TryIsActive(edge.FaceA, out bool activeA) || !TryIsActive(edge.FaceB, out bool activeB)) return null;
-        bool useA = edge.FaceA != 0 && (activeA || edge.FaceB == 0 || !activeB);
-        return c.DirectSurfaceByFace.TryGetValue(useA ? edge.FaceA : edge.FaceB, out var surface)
-            ? EvaluateEdgePoints(edge, useA, surface) : null;
+        useA = edge.FaceA != 0 && (activeA || edge.FaceB == 0 || !activeB);
+        return c.DirectSurfaceByFace.TryGetValue(useA ? edge.FaceA : edge.FaceB, out var surface) ? surface : null;
         bool TryIsActive(uint handle, out bool active)
         {
             active = false;
@@ -132,12 +145,17 @@ internal static partial class GRepParserV2
 
     internal static List<double[]>? EvaluateEdgePoints(EdgeRec edge, bool useA, SurfaceRec surface)
     {
-        if (surface.Kind is not (SurfKind.Plane or SurfKind.Cylinder) || !edge.HasEndpoints) return null;
         var points = new List<double[]>();
-        if ((edge.Flags & 2) != 0 && !Add(edge.Start)) return null;
-        foreach (var point in edge.Interior) if (!Add(point)) return null;
-        if ((edge.Flags & 4) != 0 && !Add(edge.EndP)) return null;
-        return points;
+        return VisitEdgePoints(edge, useA, surface, (x, y, z) => points.Add([x, y, z])) ? points : null;
+    }
+
+    private static bool VisitEdgePoints(EdgeRec edge, bool useA, SurfaceRec surface, Action<double, double, double> visit)
+    {
+        if (surface.Kind is not (SurfKind.Plane or SurfKind.Cylinder) || !edge.HasEndpoints) return false;
+        if ((edge.Flags & 2) != 0 && !Add(edge.Start)) return false;
+        foreach (var point in edge.Interior) if (!Add(point)) return false;
+        if ((edge.Flags & 4) != 0 && !Add(edge.EndP)) return false;
+        return true;
 
         bool Add(EdgeUV point)
         {
@@ -145,10 +163,10 @@ internal static partial class GRepParserV2
             double x = surface.Kind == SurfKind.Cylinder ? surface.R * Math.Cos(u) : u;
             double y = surface.Kind == SurfKind.Cylinder ? surface.R * Math.Sin(u) : v;
             double z = surface.Kind == SurfKind.Cylinder ? v : 0;
-            var world = Enumerable.Range(0, 3).Select(k => surface.O[k]
-                + x * surface.X[k] + y * surface.Y[k] + z * surface.Z[k]).ToArray();
-            if (world.Any(value => !double.IsFinite(value))) return false;
-            points.Add(world);
+            double Coordinate(int k) => surface.O[k] + x * surface.X[k] + y * surface.Y[k] + z * surface.Z[k];
+            double wx = Coordinate(0), wy = Coordinate(1), wz = Coordinate(2);
+            if (!double.IsFinite(wx) || !double.IsFinite(wy) || !double.IsFinite(wz)) return false;
+            visit(wx, wy, wz);
             return true;
         }
     }

@@ -13,6 +13,27 @@ internal static partial class TfBlockDeserializer
         public bool? FlippedY { get; init; }
     }
 
+    private static readonly Lazy<(List<TfField> Root, List<TfField> Info)?> ComputedFamilySymbolFields = new(() =>
+    {
+        var root = SerializationFields(1794);
+        var info = SerializationFields(2238);
+        var transform = SerializationFields(78);
+        if (root == null
+            || !HasExactSchemaField(root, 37, "m_id", 14, 0, 20)
+            || !HasExactSchemaField(root, 37, "m_docAccess", 14, 0, null)
+            || !HasExactSchemaField(root, 1796, "m_pInstanceInfo", 14, 2, null)
+            || info is not { Count: 3 }
+            || !HasExactSchemaField(info, 2237, "m_Trf", 14, 0, 78)
+            || !HasExactSchemaField(info, 2237, "m_symbolId", 14, 0, 20)
+            || !HasExactSchemaField(info, 2238, "m_cda", 14, 0, 413)
+            || info[0].Name != "m_Trf" || info[1].Name != "m_symbolId"
+            || info[2].Name != "m_cda" || transform is not { Count: 2 }
+            || transform[0] is not { Declaring: 78, Name: "m_3x3", Type: 13, Mods: 16, Cnt: 3, Ref: null }
+            || transform[1] is not { Declaring: 78, Name: "m_or", Type: 7, Mods: 16, Cnt: 3, Ref: 77 })
+            return null;
+        return (root, info);
+    });
+
     /// <summary>FamilyInstance's own Instance.m_pInstanceInfo -> InstInfoBase.m_symbolId.
     /// getOriginalSymbol_ delegates to FamilyInstance.getComputedSymbol, which reads this member, not
     /// FamilyInstance.m_masterSymbolId. Only the complete root and the owned deferred prefix through InstanceInfo
@@ -27,22 +48,8 @@ internal static partial class TfBlockDeserializer
             || BitConverter.ToUInt16(data, start + 12) != classId
             || BitConverter.ToUInt32(data, start + 12 + (int)size) != size)
             return null;
-        var rootFields = SerializationFields(classId);
-        var infoFields = SerializationFields(2238);
-        var transformFields = SerializationFields(78);
-        if (rootFields == null
-            || !HasExactSchemaField(rootFields, 37, "m_id", 14, 0, 20)
-            || !HasExactSchemaField(rootFields, 37, "m_docAccess", 14, 0, null)
-            || !HasExactSchemaField(rootFields, 1796, "m_pInstanceInfo", 14, 2, null)
-            || infoFields is not { Count: 3 }
-            || !HasExactSchemaField(infoFields, 2237, "m_Trf", 14, 0, 78)
-            || !HasExactSchemaField(infoFields, 2237, "m_symbolId", 14, 0, 20)
-            || !HasExactSchemaField(infoFields, 2238, "m_cda", 14, 0, 413)
-            || infoFields[0].Name != "m_Trf" || infoFields[1].Name != "m_symbolId"
-            || infoFields[2].Name != "m_cda" || transformFields is not { Count: 2 }
-            || transformFields[0] is not { Declaring: 78, Name: "m_3x3", Type: 13, Mods: 16, Cnt: 3, Ref: null }
-            || transformFields[1] is not { Declaring: 78, Name: "m_or", Type: 7, Mods: 16, Cnt: 3, Ref: 77 })
-            return null;
+        if (ComputedFamilySymbolFields.Value is not { } layout) return null;
+        var (rootFields, infoFields) = layout;
         var cursor = new Cursor { D = data, Pos = start + 14,
             End = start + 12 + (int)size, RootClassId = classId };
         var queue = new List<(ushort Cls, uint Id)>();

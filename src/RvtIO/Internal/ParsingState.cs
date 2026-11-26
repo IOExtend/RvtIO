@@ -147,7 +147,7 @@ internal class ParsingState : JsonReadFacts
     public Dictionary<uint, GRepData> GrepBlocks { get; set; } = new();
     // Symbol-local faces are read-only to the placement pass. The cache is scoped to model building.
     internal System.Collections.Concurrent.ConcurrentDictionary<GRepData, Lazy<Model.GeometryData?>>? SymbolPlacementGeometry { get; set; }
-    internal Dictionary<uint, (Model.Parameter.DefinitionData Data, string? ForgeId)>? ReaderParameterDefinitions { get; set; }
+    internal Dictionary<uint, Model.Parameter.DefinitionData>? ReaderParameterDefinitions { get; set; }
     internal Dictionary<uint, (int BlockCount, TfBlockDeserializer.OwnRailingQuantityInput? Input)> RailingQuantityInputs { get; } = new();
 
     public Dictionary<uint, (int BlockCount, GRepData? Body, string? Failure)> OwnWallPlanarBodies { get; } = new();
