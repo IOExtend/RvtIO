@@ -114,6 +114,13 @@ public class RvtDocument
 
         ResolveElementNames();
 
+        // An unused cable tray type still has its own type record. Include it in queries
+        // after parameter and name recovery, which use references between elements.
+        foreach (var element in info.Elements)
+            if (element.CategoryId == (int)BuiltInCategory.OST_CableTray && !element.IsBlockOnly
+                && !element.IsDiscovered && element.RootClassName == "RbsCableTrayType")
+                _typeElementIds.Add(element.Id);
+
         // Build UniqueId index (only if UniqueIds are present)
         if (info.Elements.Any(e => e.UniqueId != null))
         {
@@ -463,7 +470,7 @@ public class RvtDocument
         return new(_info.Elements.Where(e => idSet.Contains(e.Id)), _typeElementIds);
     }
 
-    /// <summary>Set of element IDs that are known type definitions (referenced by ELEM_TYPE_PARAM).</summary>
+    /// <summary>Element keys identified as type definitions by references or a verified type record.</summary>
     public IReadOnlySet<int> TypeElementIds => _typeElementIds;
 
 

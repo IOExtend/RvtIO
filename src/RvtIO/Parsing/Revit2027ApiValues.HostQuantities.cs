@@ -201,7 +201,11 @@ internal static partial class Revit2027ApiValues
         if (!HasValue(fitting, BuiltInParameter.HOST_VOLUME_COMPUTED))
         {
             int detail = fitting.CategoryId == (int)BuiltInCategory.OST_PipeFitting ? Fine : Medium;
-            if (geometry.Measure(fitting.Id, WideSolidQuantities.Source.VisibleVolume)?[detail] is { BodyCount: > 0 } solid)
+            var measured = geometry.Measure(fitting.Id, WideSolidQuantities.Source.VisibleVolume)?[detail];
+            // The stored coedges also bound trimmed ruled faces in closed duct fitting bodies.
+            if (measured == null && fitting.CategoryId == (int)BuiltInCategory.OST_DuctFitting)
+                measured = geometry.Measure(fitting.Id, WideSolidQuantities.Source.RawBodies)?[Medium];
+            if (measured is { BodyCount: > 0 } solid)
                 SetQuantity(fitting, BuiltInParameter.HOST_VOLUME_COMPUTED, solid.Volume);
         }
         if (!HasValue(fitting, BuiltInParameter.HOST_AREA_COMPUTED)

@@ -580,6 +580,8 @@ internal sealed class FramedElementTypes
             if (category == BuiltInCategory.INVALID || records[owner] is not { Complete: true, Category: long recorded }
                 || recorded != (int)category || owners[owner].CategoryId != (int)category) continue;
             var run = owners[owner];
+            if (category == BuiltInCategory.OST_CableTray)
+                Revit2027ApiValues.SetUnsetArea(run);
             var existing = run.Parameters.FirstOrDefault(p => p.Id == (int)BuiltInParameter.HOST_VOLUME_COMPUTED && p.HasRevitValue);
             double volume;
             if (existing == null)

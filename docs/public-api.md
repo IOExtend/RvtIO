@@ -189,9 +189,15 @@ This recovery has been verified on RVT 2022.
 Cable trays can also expose a missing `HOST_VOLUME_COMPUTED` from their own closed
 Coarse geometry. On the 2022 JP sample, these volumes match Revit 2027.2 for all
 47 cable tray instances.
+The physical tray also exposes an unset `Double` Area when its own records agree
+and no area is stored. The document collector recognizes cable tray type records
+even when the project has no instance of that type.
 
 For historical pipe and duct fittings, the reader checks the family instance's saved category
 and measures its visible bodies at Fine detail for pipes and Medium detail for ducts.
+For duct fittings with trimmed ruled faces, the reader can integrate the closed bodies
+from their stored face boundaries. Their volumes were checked against the individual
+Medium solids in Revit 2027.2 on the 2021 and 2023 Golden Nugget MEP samples.
 The fitting's Area comes from half the combined surface of the directional bodies at Coarse
 detail. A completely measured empty surface gives the fitting an Area parameter of type
 `Double` with `HasRevitValue == false`. Its center line omits Area in that case.

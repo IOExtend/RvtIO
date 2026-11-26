@@ -8,6 +8,27 @@ namespace RvtIO.Tests;
 
 public class NativeFieldDomainTests
 {
+    [Fact]
+    public void CollectorRecognizesAnUnreferencedCableTrayTypeFromItsOwnRecord()
+    {
+        const int category = (int)RvtIO.BuiltIns.BuiltInCategory.OST_CableTray;
+        var info = new RevitFileInfo
+        {
+            Elements =
+            [
+                new() { Id = 1, CategoryId = category, NativeRootClassName = "RbsCableTrayType" },
+                new() { Id = 2, CategoryId = category, NativeRootClassName = "CableTray" },
+                new() { Id = 3, CategoryId = category, NativeRootClassName = "RbsCableTrayType", IsBlockOnly = true },
+                new() { Id = 4, CategoryId = category, NativeRootClassName = "RbsCableTrayType", IsDiscovered = true },
+                new() { Id = 5, NativeRootClassName = "RbsCableTrayType" },
+            ],
+        };
+        var doc = RvtDocument.FromInfo(info);
+        Assert.Equal(1, Assert.Single(doc.TypeElementIds));
+        Assert.Equal(1, Assert.Single(doc.Collector().WhereElementIsElementType()).Id);
+        Assert.DoesNotContain(doc.Collector().WhereElementIsNotElementType(), e => e.Id == 1);
+    }
+
     private static Parameter P(int id, StorageType storage, object value) => BipHelpers.MakeBipParam(id, id.ToString(), storage, value);
     private static object? Value(Element e, int id) => e.Parameters.FirstOrDefault(p => p.Id == id)?.Value;
 

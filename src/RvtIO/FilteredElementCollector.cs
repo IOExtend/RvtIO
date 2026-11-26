@@ -43,14 +43,12 @@ public class FilteredElementCollector : IEnumerable<Element>
     }
 
     /// <summary>
-    /// Keep only instance elements (not type definitions). Excludes elements whose ID is referenced as a type by other
-    /// elements.
+    /// Keep instances and exclude known type definitions, including unused cable tray types.
     /// </summary>
     public FilteredElementCollector WhereElementIsNotElementType()
     {
         if (_typeElementIds != null)
         {
-            // Precise: exclude elements known to be types (referenced by ELEM_TYPE_PARAM of other elements)
             _source = _source.Where(e => !_typeElementIds.Contains(e.Id));
         }
         else
@@ -64,8 +62,7 @@ public class FilteredElementCollector : IEnumerable<Element>
     }
 
     /// <summary>
-    /// Keep only type/symbol elements (not instances).
-    /// Keeps elements whose ID is referenced as a type by other elements.
+    /// Keep known type definitions, including unused cable tray types.
     /// </summary>
     public FilteredElementCollector WhereElementIsElementType()
     {

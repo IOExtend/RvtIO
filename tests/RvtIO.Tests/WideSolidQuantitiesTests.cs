@@ -8,16 +8,46 @@ namespace RvtIO.Tests;
 
 public sealed class WideSolidQuantitiesTests
 {
-    [SkippableFact]
-    public void CableTraysExposeTheirCoarseBodyVolumesInThe2022JpSample()
+    [SkippableTheory]
+    [InlineData("2021")]
+    [InlineData("2023")]
+    public void HistoricalDuctFittingVolumeIncludesItsTrimmedRuledBodies(string year)
+    {
+        // Autodesk Revit Samples. Revit 2027.2 measures three Medium solids per instance.
+        var doc = RvtDocument.Open(TestFiles.FindRelative($"{year}/BIM_Projekt_Golden_Nugget-Gebaeudetechnik.rvt"));
+        const BuiltInParameter volume = BuiltInParameter.HOST_VOLUME_COMPUTED;
+        var small = doc.GetElement("9ef96ed7-810a-4c84-bf8d-0f8f28aadfdf-0025016c");
+        var large = doc.GetElement("870e077d-411d-47d4-a648-448dde90dfcc-002fdc4a");
+        Assert.Equal(0.20801932072778165, Assert.IsType<double>(small?.LookupParameter(volume)?.Value), 10);
+        Assert.Equal(2.6587743659848972, Assert.IsType<double>(large?.LookupParameter(volume)?.Value), 10);
+    }
+
+    [SkippableTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void CableTraysExposeTheirCoarseBodyVolumesInThe2022JpSample(bool resolveCurrentCopies)
     {
         // Autodesk Revit 2022 Samples/サンプル設備.rvt, copied to this fixture name.
-        var doc = RvtDocument.Open(TestFiles.FindRelative("2022/jp_sample_3.rvt"));
-        var category = doc.Collector().OfCategory(BuiltInCategory.OST_CableTray).ToElements();
-        var trays = category.Where(e => e.RootClassName == "CableTray").ToArray();
-        Assert.Equal(47, trays.Length);
-        Assert.All(category.Where(e => e.RootClassName == "RbsCableTrayType"),
-            type => Assert.Null(type.LookupParameter(BuiltInParameter.HOST_VOLUME_COMPUTED)));
+        var doc = RvtDocument.Open(TestFiles.FindRelative("2022/jp_sample_3.rvt"),
+            new RvtReaderOptions { ResolveCurrentCopies = resolveCurrentCopies });
+        var trays = doc.Collector().OfCategory(BuiltInCategory.OST_CableTray).WhereElementIsNotElementType().ToElements();
+        var types = doc.Collector().OfCategory(BuiltInCategory.OST_CableTray).WhereElementIsElementType().ToElements();
+        Assert.Equal(47, trays.Count);
+        Assert.Equal(9, types.Count);
+        Assert.All(types, type =>
+        {
+            Assert.Equal("RbsCableTrayType", type.RootClassName);
+            Assert.Null(type.LookupParameter(BuiltInParameter.HOST_VOLUME_COMPUTED));
+        });
+        Assert.All(trays, tray =>
+        {
+            Assert.Equal("CableTray", tray.RootClassName);
+            var area = tray.LookupParameter(BuiltInParameter.HOST_AREA_COMPUTED);
+            Assert.NotNull(area);
+            Assert.Equal(StorageType.Double, area.StorageType);
+            Assert.False(area.HasRevitValue);
+            Assert.Null(area.Value);
+        });
         var volumes = trays.Select(tray =>
             Assert.IsType<double>(tray.LookupParameter(BuiltInParameter.HOST_VOLUME_COMPUTED)?.Value)).ToArray();
         // Revit 2027.2, internal cubic feet.
