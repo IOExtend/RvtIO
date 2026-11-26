@@ -375,7 +375,8 @@ public partial class IfcExporter
                     low = Math.Min(low, t); high = Math.Max(high, t);
                 }
             }
-        if (element?.OwnWallTrimmedAxis is { Length: 2 } trimmedAxis)
+        if (element?.OwnWallTrimmedAxis is { Length: 2 } trimmedAxis
+            && !HasSeparatedFullHeightWallPieces(element))
         {
             double[] along = trimmedAxis.Select(point => (point[0] * FeetToMetres - startX) * u[0]
                 + (point[1] * FeetToMetres - startY) * u[1]).ToArray();

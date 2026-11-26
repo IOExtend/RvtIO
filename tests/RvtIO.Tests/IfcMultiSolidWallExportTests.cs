@@ -1,19 +1,21 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using RvtIO.Geometry;
 using RvtIO.Ifc;
 using RvtIO.Model;
 using Xunit;
 
 namespace RvtIO.Tests;
 
-/// <summary>A wall of several solids is the extrusion of its first solid: the depth of the extrusion and the Height of its quantities
-/// (millimetres) come from the same solid.</summary>
+/// <summary>IFC placement, body and height checks for straight walls with one or more solids.</summary>
 public class IfcMultiSolidWallExportTests
 {
-    // A box on [x0,x1] x [0,0.5] from z = 0 to z = height (feet), faces with normals.
-    private static List<GeoFace> Box(double x0, double x1, double height)
+    // A box on [x0,x1] x [0,0.5] and [baseZ, baseZ + height] in feet, faces with normals.
+    private static List<GeoFace> Box(double x0, double x1, double height, double baseZ = 0)
     {
-        double[][] p = [[x0, 0, 0], [x1, 0, 0], [x1, 0.5, 0], [x0, 0.5, 0], [x0, 0, height], [x1, 0, height], [x1, 0.5, height], [x0, 0.5, height]];
+        double topZ = baseZ + height;
+        double[][] p = [[x0, 0, baseZ], [x1, 0, baseZ], [x1, 0.5, baseZ], [x0, 0.5, baseZ],
+            [x0, 0, topZ], [x1, 0, topZ], [x1, 0.5, topZ], [x0, 0.5, topZ]];
         int[][] f = [[0, 3, 2, 1], [4, 5, 6, 7], [0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7]];
         return f.Select(ix =>
         {
@@ -49,12 +51,12 @@ public class IfcMultiSolidWallExportTests
         };
     }
 
-    private static string Export(Element wall)
+    private static string Export(Element wall, IfcUnitFamily? unit = null)
     {
         var info = new RevitFileInfo();
         info.Elements.AddRange([wall, new Element { Id = 500, TypeId = -1, CategoryId = -2000011, Name = "Wall type" }]);
         string path = Path.Combine(Path.GetTempPath(), $"rvtio-multi-solid-wall-{Guid.NewGuid():N}.ifc");
-        try { new IfcExporter { Profile = IfcProfile.Current }.Export(info, path); return File.ReadAllText(path); }
+        try { new IfcExporter { Profile = IfcProfile.Current, LengthUnit = unit }.Export(info, path); return File.ReadAllText(path); }
         finally { if (File.Exists(path)) File.Delete(path); }
     }
 
@@ -64,6 +66,89 @@ public class IfcMultiSolidWallExportTests
     private static string[] Args(string entity) => IfcExporter.SplitStepArguments(entity[(entity.IndexOf('(') + 1)..entity.LastIndexOf(')')]);
 
     private static double Number(string text) => double.Parse(text, CultureInfo.InvariantCulture);
+
+    private static Dictionary<string, string> ByReference(string ifc) =>
+        ifc.Split('\n').Where(line => line.StartsWith('#')).ToDictionary(line => line[..line.IndexOf('=')]);
+
+    [Theory]
+    [InlineData(-12.0, null, 304.8)]
+    [InlineData(-9.0, null, 304.8)]
+    [InlineData(-12.0, IfcUnitFamily.Centimetre, 30.48)]
+    public void ConstrainedWall_BaseOffsetIsAppliedOnce(double locationZ, IfcUnitFamily? unit, double unitsPerFoot)
+    {
+        var wall = Wall(Box(0, 10, 9, baseZ: -12));
+        wall.Location!.StartPoint = [0, 0.25, locationZ];
+        wall.Location.EndPoint = [10, 0.25, locationZ];
+        wall.BoundingBox = wall.Geometry!.BoundingBox = [0, 0, -12, 10, 0.5, -3];
+        wall.Parameters.AddRange(
+        [
+            new Parameter { Id = -1001108, StorageType = StorageType.Double, Value = -3.0 },
+            new Parameter { Id = -1001103, StorageType = StorageType.ElementId, Value = 20 },
+            new Parameter { Id = -1001105, StorageType = StorageType.Double, Value = 9.0 },
+        ]);
+
+        string ifc = Export(wall, unit);
+        var entities = ByReference(ifc);
+        var occurrence = Args(Assert.Single(Entities(ifc, "IFCWALLSTANDARDCASE")));
+        var placement = Args(entities[occurrence[5]]);
+        var axis = Args(entities[placement[1]]);
+        var origin = Args(entities[axis[0]])[0].Trim('(', ')').Split(',').Select(Number).ToArray();
+        double depth = Number(Args(Assert.Single(Entities(ifc, "IFCEXTRUDEDAREASOLID")))[3]);
+        Assert.Equal(-12 * unitsPerFoot, origin[2], 6);
+        Assert.Equal(-3 * unitsPerFoot, origin[2] + depth, 6);
+    }
+
+    [Theory]
+    [InlineData(false, 0, 0)]
+    [InlineData(true, 0, 0)]
+    [InlineData(false, 0, 0.005)]
+    [InlineData(true, 0.005, 0.005)]
+    public void FullHeightGap_ExportsBothWallPieces(bool reverseSolidOrder, double startInsetFeet, double endInsetFeet)
+    {
+        // A world coordinate adds the rounded placement and the rounded local coordinate.
+        const double toleranceMm = FacetedShell.IfcGeometryPrecisionMetres * 1000;
+        double bodyEndFeet = 20 - endInsetFeet;
+        var end = Box(startInsetFeet, 0.2, 14);
+        var other = Box(8, bodyEndFeet, 14);
+        var wall = reverseSolidOrder ? Wall(other, end) : Wall(end, other);
+        wall.Location!.EndPoint = [20, 0.25, 0];
+        wall.Location.Length = 20;
+        wall.BoundingBox = wall.Geometry!.BoundingBox = [startInsetFeet, 0, 0, bodyEndFeet, 0.5, 14];
+        wall.OwnWallTrimmedAxis = reverseSolidOrder
+            ? [[8, 0.25, 0], [bodyEndFeet, 0.25, 0]]
+            : [[startInsetFeet, 0.25, 0], [0.2, 0.25, 0]];
+
+        string ifc = Export(wall);
+        var entities = ByReference(ifc);
+        var occurrence = Args(Assert.Single(Entities(ifc, "IFCWALL")));
+        var placement = Args(entities[occurrence[5]]);
+        var frame = Args(entities[placement[1]]);
+        double originX = Number(Args(entities[frame[0]])[0].Trim('(', ')').Split(',')[0]);
+        Assert.Equal(startInsetFeet * 304.8, originX, tolerance: toleranceMm);
+        var reps = Args(entities[occurrence[6]])[2].Trim('(', ')').Split(',').Select(id => Args(entities[id])).ToList();
+        var body = Assert.Single(reps, rep => rep[1] == "'Body'");
+        Assert.Equal("'Brep'", body[2]);
+        var axis = Assert.Single(reps, rep => rep[1] == "'Axis'");
+        var trim = Args(entities[axis[3].Trim('(', ')')]);
+        double axisEndX = Number(Args(entities[trim[2].Trim('(', ')')])[0].Trim('(', ')').Split(',')[0]);
+        Assert.Equal(bodyEndFeet * 304.8, originX + axisEndX, tolerance: toleranceMm);
+        var pieces = body[3].Trim('(', ')').Split(',').Select(AlongExtent).OrderBy(bounds => bounds.Min).ToArray();
+        Assert.Equal(2, pieces.Length);
+        Assert.Equal(startInsetFeet * 304.8, pieces[0].Min, tolerance: toleranceMm);
+        Assert.Equal(0.2 * 304.8, pieces[0].Max, tolerance: toleranceMm);
+        Assert.Equal(8 * 304.8, pieces[1].Min, tolerance: toleranceMm);
+        Assert.Equal(bodyEndFeet * 304.8, pieces[1].Max, tolerance: toleranceMm);
+
+        (double Min, double Max) AlongExtent(string brep)
+        {
+            var xCoordinates = Args(entities[Args(entities[brep])[0]])[0].Trim('(', ')').Split(',')
+                .Select(face => Args(entities[face])[0].Trim('(', ')'))
+                .Select(bound => Args(entities[bound])[0])
+                .SelectMany(loop => Args(entities[loop])[0].Trim('(', ')').Split(','))
+                .Select(point => Number(Args(entities[point])[0].Trim('(', ')').Split(',')[0])).ToArray();
+            return (originX + xCoordinates.Min(), originX + xCoordinates.Max());
+        }
+    }
 
     [Fact]
     public void ExtrusionDepthAndHeight_AreThoseOfTheFirstSolid()
