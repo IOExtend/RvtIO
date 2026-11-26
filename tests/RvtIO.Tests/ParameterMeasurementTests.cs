@@ -78,6 +78,48 @@ public sealed class ParameterMeasurementTests
     }
 
     [Theory]
+    [InlineData(1, 0, "22.1250345", "22° 07' 30\"", "-13.3754", "-13° 22' 31\"")]
+    [InlineData(0.01, 1, "22.1250345", "22° 07' 30,12\"", "-0.000125", "-0° 00' 00,45\"")]
+    [InlineData(1, 0, "-0.000125", "0° 00' 00\"", "12.99986111111111", "13° 00' 00\"")]
+    [InlineData(60, 0, "22.1250345", "22° 08' 00\"", "-13.3754", "-13° 23' 00\"")]
+    [InlineData(3600, 0, "-13.3754", "-13° 00' 00\"", "12.5", "13° 00' 00\"")]
+    public void FormatsDegreesMinutesAndSeconds(double stepSeconds, long decimalSymbol, string before, string oldText,
+        string after, string newText)
+    {
+        foreach (bool legacy in new[] { false, true })
+        {
+            var options = DisplayUnits(UnitType.UT_Angle, "degreesMinutes", DisplayUnitType.DUT_DEGREES_AND_MINUTES,
+                "", UnitSymbolType.UST_NONE, legacy);
+            Assert.Single(options.Records, record => record.ClassId == FormatClass).Values["m_accuracy"] = stepSeconds / 3600;
+            Assert.Single(options.Records, record => record.ClassId == UnitsClass).Values["m_decimalSymbol"] = decimalSymbol;
+            var display = ParameterMeasurement.Display(UnitType.UT_Angle, Walker, options,
+                ParameterMeasurement.Parse(UnitType.UT_Angle, before + " deg")!.Value,
+                ParameterMeasurement.Parse(UnitType.UT_Angle, after + " deg")!.Value);
+            Assert.True(display.HasValue);
+            Assert.Equal("Angle", display.Value.Type);
+            Assert.True(display.Value.MatchesUnit(null));
+            Assert.False(display.Value.MatchesUnit("°"));
+            Assert.True(display.Value.Matches(oldText));
+            Assert.False(display.Value.Matches(oldText + " "));
+            Assert.Equal(newText, display.Value.After);
+        }
+    }
+
+    [Theory]
+    [InlineData(1e-13, "m_bUseGrouping", 0L)]
+    [InlineData(1.0 / 3600, "m_bUseGrouping", 1L)]
+    [InlineData(1.0 / 3600, "m_bSuppressSpaces", 1L)]
+    public void RefusesUnverifiedDegreesMinutesOptions(double accuracy, string field, long value)
+    {
+        var layout = DisplayUnits(UnitType.UT_Angle, "degreesMinutes", DisplayUnitType.DUT_DEGREES_AND_MINUTES,
+            "", UnitSymbolType.UST_NONE, legacy: true);
+        var options = Assert.Single(layout.Records, record => record.ClassId == FormatClass).Values;
+        options["m_accuracy"] = accuracy;
+        options[field] = value;
+        Assert.Null(ParameterMeasurement.Display(UnitType.UT_Angle, Walker, layout, 1, 2));
+    }
+
+    [Theory]
     [InlineData(0, "m_bUseGrouping", 0L)]
     [InlineData(0.3, "m_bUseGrouping", 0L)]
     [InlineData(0.125, "m_bUseGrouping", 2L)]

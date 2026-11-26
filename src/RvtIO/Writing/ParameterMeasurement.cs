@@ -14,6 +14,7 @@ internal static class ParameterMeasurement
     private const string SymbolPrefix = "autodesk.unit.symbol:";
     private const string FeetFractionalInches = "feetFractionalInches";
     private const string FractionalInches = "fractionalInches";
+    private const string DegreesMinutes = "degreesMinutes";
     private static readonly NumberFormatInfo DecimalComma = NumberFormatInfo.ReadOnly(new() { NumberDecimalSeparator = "," });
     internal const string LegacyFormats = WideBlockWalker.AllItemsKeyPrefix + "legacy-unit-options";
     private sealed record Unit(UnitType Spec, string? Input, string Forge, DisplayUnitType? Legacy, string? Atom, double ToInternal,
@@ -44,6 +45,7 @@ internal static class ParameterMeasurement
         new(UnitType.UT_Volume, "m3", "cubicMeters", DisplayUnitType.DUT_CUBIC_METERS, "m³", 1 / (MetresPerFoot * MetresPerFoot * MetresPerFoot)),
         new(UnitType.UT_Volume, "ft3", "cubicFeet", DisplayUnitType.DUT_CUBIC_FEET, "CF", 1, "ft³"),
         new(UnitType.UT_Angle, "deg", "degrees", DisplayUnitType.DUT_DECIMAL_DEGREES, "°", RadiansPerDegree),
+        new(UnitType.UT_Angle, null, DegreesMinutes, DisplayUnitType.DUT_DEGREES_AND_MINUTES, null, RadiansPerDegree),
         new(UnitType.UT_Angle, "rad", "radians", null, "rad", 1),
         new(UnitType.UT_Currency, "", "currency", DisplayUnitType.DUT_CURRENCY, "$", 1),
         new(UnitType.UT_Mass, "kg", "kilograms", DisplayUnitType.DUT_KILOGRAMS_MASS, "kg", 1),
@@ -150,7 +152,7 @@ internal static class ParameterMeasurement
         bool suppressLeadingZeros;
         bool suppressTrailingZeros;
         bool suppressSpaces;
-        bool validFractionalFlags = true;
+        bool validDisplayFlags = true;
         var additional = AdditionalSpecs.SingleOrDefault(entry => entry.Unit == spec);
         var modern = WideDocument.UnitOptions(records);
         if (modern is not null)
@@ -200,7 +202,7 @@ internal static class ParameterMeasurement
             suppressLeadingZeros = leading is not 0L;
             suppressTrailingZeros = trailing is not 0L;
             suppressSpaces = spaces is not 0L;
-            validFractionalFlags = leading is 0L or 1L && trailing is 0L or 1L && spaces is 0L or 1L;
+            validDisplayFlags = leading is 0L or 1L && trailing is 0L or 1L && spaces is 0L or 1L;
         }
         if (unit is null)
             return null;
@@ -213,7 +215,7 @@ internal static class ParameterMeasurement
         if (unit.Forge is FeetFractionalInches or FractionalInches)
         {
             bool inchesOnly = unit.Forge == FractionalInches;
-            if (!validFractionalFlags || suppressTrailingZeros
+            if (!validDisplayFlags || suppressTrailingZeros
                 || (symbol != "" && !(inchesOnly && modern is not null && symbol == SymbolPrefix + "inchDoubleQuote"))
                 || (inchesOnly && (suppressLeadingZeros || suppressSpaces)))
                 return null;
@@ -221,6 +223,10 @@ internal static class ParameterMeasurement
             return DisplayFractionalLength(before, after, accuracy, inchesOnly, suppressLeadingZeros, suppressSpaces,
                 modern is null ? null : unit.Atom, format, inchSuffix, grouping);
         }
+        if (unit.Forge == DegreesMinutes)
+            return validDisplayFlags && symbol == "" && !grouping && !suppressLeadingZeros && !suppressTrailingZeros && !suppressSpaces
+                ? DisplayDegreesMinutes(before, after, accuracy, format)
+                : null;
         if ((suppressLeadingZeros || suppressTrailingZeros)
             && (spec == UnitType.UT_Currency || additional is not null || unit.AlternateAtom is not null))
             return null;
@@ -263,12 +269,8 @@ internal static class ParameterMeasurement
         int ticksPerUnit = inchesOnly ? TicksPerInch : TicksPerFoot;
         long maxTicks = (long)int.MaxValue * ticksPerUnit;
         // Revit stores fractional accuracy in display units on a grid of 1/2^20 inch.
-        double encodedTicks = accuracy * ticksPerUnit;
-        double integralTicks = Math.Round(encodedTicks);
-        if (!(integralTicks >= 1 && integralTicks <= maxTicks)
-            || (integralTicks != encodedTicks && integralTicks / ticksPerUnit != accuracy))
+        if (AccuracyTicks(accuracy, ticksPerUnit, maxTicks) is not long ticksPerStep)
             return null;
-        long ticksPerStep = (long)integralTicks;
         bool wholeFeet = !inchesOnly && ticksPerStep % TicksPerFoot == 0;
         string integerPattern = grouping ? "N0" : "D";
 
@@ -280,14 +282,8 @@ internal static class ParameterMeasurement
         string? Render(double feetValue)
         {
             double displayValue = Math.Abs(feetValue) * (inchesOnly ? InchesPerFoot : 1);
-            double steps = displayValue / accuracy;
-            if (displayValue > int.MaxValue || steps >= (1L << 52))
+            if (displayValue > int.MaxValue || RoundedTicks(displayValue, accuracy, ticksPerStep, maxTicks) is not long ticks)
                 return null;
-            // The same midpoint tolerance as the Revit fractional display reader.
-            long roundedSteps = (long)Math.Floor(steps + 0.5 + 1e-9);
-            if (roundedSteps > maxTicks / ticksPerStep)
-                return null;
-            long ticks = roundedSteps * ticksPerStep;
             long wholeInches = ticks / TicksPerInch;
             long feet = inchesOnly ? 0 : wholeInches / InchesPerFoot;
             long inches = inchesOnly ? wholeInches : wholeInches % InchesPerFoot;
@@ -314,6 +310,57 @@ internal static class ParameterMeasurement
             }
             return text + inchSuffix;
         }
+    }
+
+    private static DisplayValue? DisplayDegreesMinutes(double before, double after, double accuracy, NumberFormatInfo format)
+    {
+        const long TicksPerSecond = 100_000_000;
+        const long TicksPerMinute = 60 * TicksPerSecond;
+        const long TicksPerDegree = 60 * TicksPerMinute;
+        const long MaxTicks = long.MaxValue / 2;
+        // Revit stores the step in degrees on a grid of 10^-8 arcsecond.
+        if (AccuracyTicks(accuracy, TicksPerDegree, MaxTicks) is not long ticksPerStep)
+            return null;
+        int digits = 8;
+        for (long decimalTicks = ticksPerStep; digits > 0 && decimalTicks % 10 == 0; decimalTicks /= 10)
+            digits--;
+        string secondsPattern = digits == 0 ? "00" : "00." + new string('0', digits);
+        string? oldText = Render(before), newText = Render(after);
+        return oldText is not null && newText is not null
+            ? new("Angle", null, "", 0, newText, format, ExactBefore: oldText)
+            : null;
+
+        string? Render(double radians)
+        {
+            double degreesValue = Math.Abs(radians) / RadiansPerDegree;
+            if (RoundedTicks(degreesValue, accuracy, ticksPerStep, MaxTicks) is not long ticks)
+                return null;
+            string sign = radians < 0 && ticks != 0 ? "-" : "";
+            long degrees = ticks / TicksPerDegree;
+            long minutes = ticks % TicksPerDegree / TicksPerMinute;
+            double seconds = (double)(ticks % TicksPerMinute) / TicksPerSecond;
+            return FormattableString.Invariant($"{sign}{degrees}° {minutes:00}' ") + seconds.ToString(secondsPattern, format) + "\"";
+        }
+    }
+
+    private static long? AccuracyTicks(double accuracy, long ticksPerUnit, long maxTicks)
+    {
+        double encodedTicks = accuracy * ticksPerUnit;
+        double integralTicks = Math.Round(encodedTicks);
+        return integralTicks >= 1 && integralTicks <= maxTicks
+            && (integralTicks == encodedTicks || integralTicks / ticksPerUnit == accuracy)
+            ? (long)integralTicks
+            : null;
+    }
+
+    private static long? RoundedTicks(double displayValue, double accuracy, long ticksPerStep, long maxTicks)
+    {
+        double steps = displayValue / accuracy;
+        if (steps >= (1L << 52))
+            return null;
+        // The same midpoint tolerance as the Revit fractional display reader.
+        long roundedSteps = (long)Math.Floor(steps + 0.5 + 1e-9);
+        return roundedSteps <= maxTicks / ticksPerStep ? roundedSteps * ticksPerStep : null;
     }
 
     private static NumberFormatInfo? GroupedFormat(Dictionary<string, object?> units, NumberFormatInfo format)

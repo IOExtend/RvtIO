@@ -283,6 +283,10 @@ rounded fraction there. The stored length retains its full precision. Supported 
 a whole-foot step displays feet alone. Feet with fractional inches can suppress leading zeros and spaces.
 Fractional inches use a double quote in the value in older saves. Newer saves put the unit label in
 the `units` attribute and include the quote in the value when the double-quote symbol is selected.
+The degrees, minutes, and seconds display format for Angle stores the marks in the `PartAtom` value, such as
+`22° 07' 30"`. Edit requests use decimal quantities with `deg` or `rad`. The saved Angle value retains the
+assigned precision. Its displayed seconds follow the family's decimal separator and verified rounding step.
+The verified layout uses the default marks and spacing.
 Family metadata follows the document's decimal point or comma. The verified grouping options use commas, dots,
 spaces, or apostrophes, with groups of three digits or with two-digit groups to the left of the final three digits.
 Grouping applies to the whole-foot and whole-inch parts of fractional lengths. If the decimal and grouping
@@ -580,6 +584,13 @@ output. Three used a mismatched separator or stale display text.
 
 Three project files in Revit 2025 also matched the internal value and affected records after assignments in degrees,
 Save As, and reopening without Audit.
+
+Degrees, minutes, and seconds were checked with steps of 0.01 second, one second, one minute, and one degree.
+The checks covered first edits, replacements, ordered batches, both signs, and rounding across degree boundaries.
+They compared stored Angle values, dependent formulas, and `PartAtom` after Save As and reopening without Audit.
+The family records in 112 files matched native Revit 2020–2025 and 2027 writes byte for byte. The 16 files in the
+2026 format passed after upgrade in Revit 2027. All 98 refused batches preserved the source bytes and created no
+output, including edits with stale angle metadata or a mismatched decimal separator.
 
 Global assignments to loaded family parameters matched 240 Revit API assignments across the eight formats.
 The fixtures included shared family definitions, empty text, unitless and measured values, links to recalculated
