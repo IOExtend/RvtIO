@@ -161,8 +161,8 @@ public class IfcExporterQuantityTakeOffPropertySetTests
         var beam = Beam(id: 240, typeId: 241, name: "BeamType_200x300", centreX: 0);
         beam.Parameters.Add(new Parameter
         {
-            Id = -1012100, // PHASE_CREATED: public API name "Phase Created", group Phasing
-            Definition = new Definition { Name = "PHASE_CREATED" },
+            Id = -1012101, // PHASE_DEMOLISHED: public API name "Phase Demolished", group Phasing
+            Definition = new Definition { Name = "PHASE_DEMOLISHED" },
             StorageType = StorageType.Integer,
             Value = 7,
         });
@@ -185,7 +185,7 @@ public class IfcExporterQuantityTakeOffPropertySetTests
             Assert.DoesNotContain("'RevitParameters'", ifc);
             Assert.Single(Regex.Matches(ifc, @"IFCPROPERTYSET\('[^']*',#\d+,'Phasing'"));
             Assert.Single(Regex.Matches(ifc, @"IFCPROPERTYSET\('[^']*',#\d+,'Other'"));
-            Assert.Contains("IFCPROPERTYSINGLEVALUE('Phase Created',$,IFCINTEGER(7),$)", ifc);
+            Assert.Contains("IFCPROPERTYSINGLEVALUE('Phase Demolished',$,IFCINTEGER(7),$)", ifc);
             Assert.Contains("IFCPROPERTYSINGLEVALUE('CustomCode',$,IFCLABEL('x'),$)", ifc);
         }
         finally { Cleanup(path); }
@@ -225,6 +225,60 @@ public class IfcExporterQuantityTakeOffPropertySetTests
             Assert.Contains("IFCPROPERTYSINGLEVALUE('Classification Title',$,IFCTEXT('Doors'),$)", ifc);
         }
         finally { Cleanup(path); }
+    }
+
+    [Theory]
+    [InlineData(IfcSchema.Ifc2x3)]
+    [InlineData(IfcSchema.Ifc4)]
+    public void RevitParameterGroups_GivesEveryMemberOfANameClashItsParameterId(IfcSchema schema)
+    {
+        var beam = Beam(id: 280, typeId: 281, name: "BeamType_200x300", centreX: 0);
+        // distinct built-ins that the public API gives one name in one group
+        beam.Parameters.Add(new Parameter { Id = -1002066, StorageType = StorageType.Double, Value = 10.0 }); // Top Offset
+        beam.Parameters.Add(new Parameter { Id = -1001358, StorageType = StorageType.Double, Value = 20.0 }); // Top Offset
+        // one name in two groups lands in two sets, which is no clash
+        beam.Parameters.Add(new Parameter { Id = -1002062, StorageType = StorageType.String, Value = "L1" }); // Level, Constraints
+        beam.Parameters.Add(new Parameter { Id = -1012014, StorageType = StorageType.String, Value = "L2" }); // Level, Dimensions
+        // one ID twice: the ID alone does not tell them apart
+        beam.Parameters.Add(new Parameter { Id = -1001203, StorageType = StorageType.String, Value = "A" }); // Mark
+        beam.Parameters.Add(new Parameter { Id = -1001203, StorageType = StorageType.String, Value = "B" });
+        var info = new RevitFileInfo();
+        info.Elements.Add(beam);
+        string path = TempIfcPath("revit-parameter-name-clash");
+
+        try
+        {
+            new IfcExporter(includeRevitPropertySets: true)
+            {
+                RevitParameterGroups = true,
+                Profile = IfcProfile.Legacy,
+                Schema = schema,
+            }.Export(info, path);
+            string ifc = File.ReadAllText(path);
+
+            AssertUniquePropertyNamesPerSet(ifc);
+            Assert.Contains("IFCPROPERTYSINGLEVALUE('Phase Created',", ifc); // unique: stays plain
+            Assert.Contains("IFCPROPERTYSINGLEVALUE('Top Offset [-1002066]',$,IFCLENGTHMEASURE(3048.),$)", ifc);
+            Assert.Contains("IFCPROPERTYSINGLEVALUE('Top Offset [-1001358]',$,IFCLENGTHMEASURE(6096.),$)", ifc);
+            Assert.Equal(2, Regex.Matches(ifc, @"IFCPROPERTYSINGLEVALUE\('Level',").Count);
+            Assert.Contains("IFCPROPERTYSINGLEVALUE('Mark [-1001203]',$,IFCTEXT('A'),$)", ifc);
+            Assert.Contains("IFCPROPERTYSINGLEVALUE('Mark [-1001203] #2',$,IFCTEXT('B'),$)", ifc);
+        }
+        finally { Cleanup(path); }
+    }
+
+    private static void AssertUniquePropertyNamesPerSet(string ifc)
+    {
+        var names = Regex.Matches(ifc, @"#(\d+)=IFCPROPERTYSINGLEVALUE\('((?:[^']|'')*)'")
+            .ToDictionary(m => m.Groups[1].Value, m => m.Groups[2].Value);
+        var sets = Regex.Matches(ifc, @"IFCPROPERTYSET\('[^']*',#\d+,'([^']*)',\$,\(([^)]*)\)\)");
+        Assert.NotEmpty(sets);
+        foreach (Match set in sets)
+        {
+            var members = set.Groups[2].Value.Split(',').Select(id => names[id.Trim().TrimStart('#')]).ToList();
+            Assert.True(members.Distinct(StringComparer.Ordinal).Count() == members.Count,
+                $"Duplicate property names in {set.Groups[1].Value}: {string.Join(", ", members)}");
+        }
     }
 
     [Fact]

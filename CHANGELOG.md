@@ -38,6 +38,8 @@ API between minor releases.
 
 ### Fixed
 
+- IFC export with Revit parameters grouped (`--ifc-revit-parameter-groups`) no longer writes several properties of one
+  name in a property set: each of them gets ` [parameter id]` appended.
 - IFC export preserves the base of a level-constrained wall whose location line already includes its base offset when its decoded body confirms the base and top. The current profile preserves separately closed sections of a straight wall across a full-height gap.
 - Nest fixed MEP ports under their host with `IfcRelNests` in IFC4 and write directed port links from source to sink.
 - Avoid overflow when triangulating trimmed faces with 46,341 or more vertices after bridging.
