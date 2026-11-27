@@ -6167,7 +6167,7 @@ public partial class IfcExporter
             if (associated.Count == 0) continue;
 
             bool wallLayers = first.Product.ifcType is "IFCWALL" or "IFCWALLSTANDARDCASE"
-                || (first.Product.ifcType == "IFCCURTAINWALL" && first.Element.CategoryId == -2000011);
+                || IsCurtainPanelWall(first.Element, first.Product.ifcType);
             bool directLayerSet = first.Native != null && (CurrentProfile
                 ? first.Element.CategoryId == -2000035
                 : first.Element.CategoryId == -2001300);
@@ -7042,6 +7042,9 @@ public partial class IfcExporter
         return true;
     }
 
+    private static bool IsCurtainPanelWall(Element element, string ifcType) =>
+        ifcType == "IFCCURTAINWALL" && element.CategoryId == -2000011 && element.SerializedCurtainHostId is > 0;
+
     /// <summary>
     /// The layer-set cache keys native HostObjAttr sets by the own type, not by identical
     /// material/thickness contents.
@@ -7050,7 +7053,9 @@ public partial class IfcExporter
         Element element, string ifcType, IReadOnlyDictionary<int, Element> elements,
         IReadOnlyDictionary<int, int> counts)
     {
-        string direction = ifcType is "IFCWALL" or "IFCWALLSTANDARDCASE" ? "AXIS2" : "AXIS3";
+        // A curtain panel wall has its own groups: the first member of a group names and orients the layers of all of them.
+        string direction = IsCurtainPanelWall(element, ifcType) ? "AXIS2|curtain-panel"
+            : ifcType is "IFCWALL" or "IFCWALLSTANDARDCASE" ? "AXIS2" : "AXIS3";
         string layers = string.Join(';', (element.Layers ?? [])
             .OrderBy(layer => layer.LayerIndex)
             .Select(layer => $"{layer.MaterialId}:{layer.ThicknessMm.ToString("R", CultureInfo.InvariantCulture)}"));
@@ -67430,6 +67435,8 @@ public partial class IfcExporter
         var typeGroupOrder = new List<(int typeId, int symbolId, string typeClass, int ownerId, int systemTypeId)>();
         var predefinedTypes = new Dictionary<(int typeId, int symbolId, string typeClass, int ownerId, int systemTypeId), string>();
         var exactSystemTypeGroups = new HashSet<(int typeId, int symbolId, string typeClass, int ownerId, int systemTypeId)>();
+        // Groups with a member that is not a wall standing as a panel of a curtain wall.
+        var nonPanelGroups = new HashSet<(int typeId, int symbolId, string typeClass, int ownerId, int systemTypeId)>();
         var firstMemberElementId = new Dictionary<(int typeId, int symbolId, string typeClass, int ownerId, int systemTypeId), int>();
         var connectedSystemTypes = currentProfile ? ResolveConnectedSystemTypes(elemById) : null;
         var stairShapes = currentProfile ? ReadProductAttributes(w, exportedProducts,
@@ -67586,14 +67593,16 @@ public partial class IfcExporter
                 if (!exactSystemType) exactSystemTypeGroups.Remove(key);
             }
             members.Add(product.entityId);
+            if (!IsCurtainPanelWall(instElem, product.ifcType))
+                nonPanelGroups.Add(key);
             firstInstanceIfcType.TryAdd(key, product.ifcType);
             firstMemberElementId[key] = firstMemberElementId.TryGetValue(key, out int earlier)
                 ? Math.Min(earlier, elementId) : elementId;
         }
 
         // A native type may govern both walls and curtain walls.
-        var classCounts = typeGroupOrder.GroupBy(key => (key.typeId, key.symbolId, key.ownerId, key.systemTypeId))
-            .ToDictionary(group => group.Key, group => group.Select(key => key.typeClass).Distinct().Count());
+        var identities = typeGroupOrder.GroupBy(key => (key.typeId, key.symbolId, key.ownerId, key.systemTypeId))
+            .ToDictionary(group => group.Key, group => (Classes: group.Count(), NonPanelClasses: group.Count(nonPanelGroups.Contains)));
         var guidClaimant = typeGroupOrder.Where(key => key.symbolId > 0)
             .GroupBy(key => (key.symbolId, key.ownerId))
             .ToDictionary(group => group.Key, group => group.MinBy(key => firstMemberElementId[key]));
@@ -67624,7 +67633,11 @@ public partial class IfcExporter
                 : $"{typeElemId.ToString(CultureInfo.InvariantCulture)}:symbol:{originalSymbolId.ToString(CultureInfo.InvariantCulture)}";
             if (ownerId > 0) identityKey += $":instance:{ownerId.ToString(CultureInfo.InvariantCulture)}";
             if (systemTypeId > 0) identityKey += $":system:{systemTypeId.ToString(CultureInfo.InvariantCulture)}";
-            if (classCounts[(typeElemId, originalSymbolId, ownerId, systemTypeId)] > 1)
+            // The IfcCurtainWallType made for wall panels is an extra object beside the type of the other walls: it takes
+            // neither the identity nor the native GlobalId from them.
+            var (classes, nonPanelClasses) = identities[(typeElemId, originalSymbolId, ownerId, systemTypeId)];
+            bool extraPanelType = !nonPanelGroups.Contains(key) && classes > 1;
+            if (extraPanelType || nonPanelClasses > 1)
                 identityKey += $":{typeClass}";
             string guidArg = S(IfcGuid.FromName($"type:{identityKey}"));
             int firstElementId = firstMemberElementId[key];
@@ -67665,7 +67678,7 @@ public partial class IfcExporter
 
             // The GlobalId rule uses the original symbol's own ExportId for mapped types, except
             // overrides/collisions.
-            bool typeElementGuid = exactSystemTypeGroups.Contains(key)
+            bool typeElementGuid = exactSystemTypeGroups.Contains(key) && !extraPanelType
                 || typeClass is "IFCPIPESEGMENTTYPE" or "IFCCABLECARRIERSEGMENTTYPE"
                 || currentProfile && (typeClass is "IFCDUCTSEGMENTTYPE" or "IFCSTAIRFLIGHTTYPE" or "IFCTYPEPRODUCT" or "IFCRAILINGTYPE"
                     || typeClass == "IFCSLABTYPE" && typeElem.CategoryId == StairsLandingsCategoryId);

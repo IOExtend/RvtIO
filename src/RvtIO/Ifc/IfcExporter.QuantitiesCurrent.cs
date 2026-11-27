@@ -1229,8 +1229,10 @@ public partial class IfcExporter
     {
         var result = new List<QuantityValue>();
         Element? type = TypeOfCurrent(element, context.Elements);
+        // A wall standing as a panel of a curtain wall is exported as one, but to its own doors and windows it is still a wall.
         bool inCurtainWall = element.SerializedHostId is { } hostId
-            && context.Products.TryGetValue(hostId, out var host) && host.ifcType == "IFCCURTAINWALL";
+            && context.Products.TryGetValue(hostId, out var host) && host.ifcType == "IFCCURTAINWALL"
+            && !(context.Elements.TryGetValue(hostId, out var hostElement) && IsCurtainPanelWall(hostElement, host.ifcType));
         double? height = ExactNamedParameterFeetCurrent(element, type, "Height", true, -1001300, -1010300) * FeetToMetres
             ?? (inCurtainWall ? InstanceFrameExtentMetresCurrent(element, 2) : null);
         // Without a parameter of its own (a panel of a curtain wall holds only a bounding-box estimate) the width is the extent of
