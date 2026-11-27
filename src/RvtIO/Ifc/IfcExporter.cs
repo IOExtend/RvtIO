@@ -231,6 +231,9 @@ public partial class IfcExporter
     private bool? _exportRoomsOfAllPhases;
     private IfcProfile? _profile;
     private bool? _revitParameterGroups;
+    private IfcRevitParameterUnits? _revitParameterUnits;
+    private IfcRevitParameterNames? _revitParameterNames;
+    private Parsing.UserParameterCatalog? _userParameters;
     private DateTimeOffset? _timestamp;
     private IfcUnitFamily? _lengthUnit;
     private IfcSchema? _schema;
@@ -323,6 +326,21 @@ public partial class IfcExporter
     /// </summary>
     public bool RevitParameterGroups { get => _revitParameterGroups ?? _resolvedConfig.RevitParameterGroups; init => _revitParameterGroups = value; }
 
+    /// <summary>
+    /// Unit system used for numeric Revit parameters when exporting Revit property sets
+    /// (<see cref="IfcRevitParameterUnits.Internal"/> preserves raw internal units;
+    /// <see cref="IfcRevitParameterUnits.Ifc"/> converts length, area, volume, and angle to IFC units
+    /// and other known physical spec types to SI units).
+    /// </summary>
+    public IfcRevitParameterUnits? RevitParameterUnits { get => _revitParameterUnits ?? _resolvedConfig.RevitParameterUnits; init => _revitParameterUnits = value; }
+
+    /// <summary>
+    /// Property naming convention used when exporting Revit parameters
+    /// (<see cref="IfcRevitParameterNames.BuiltIn"/> keeps built-in/definition names;
+    /// <see cref="IfcRevitParameterNames.Display"/> uses display names with built-in names in <c>Description</c>).
+    /// </summary>
+    public IfcRevitParameterNames? RevitParameterNames { get => _revitParameterNames ?? _resolvedConfig.RevitParameterNames; init => _revitParameterNames = value; }
+
     private ResolvedIfcExportConfiguration BuildEffectiveConfiguration()
     {
         IfcExportConfiguration baseConfig = Configuration ?? new IfcExportConfiguration();
@@ -368,6 +386,8 @@ public partial class IfcExporter
             {
                 ExportRevitPropertySets = _revitPropertySetsExplicit ? true : null,
                 GroupRevitParametersByGroup = _revitParameterGroups,
+                RevitParameterUnits = _revitParameterUnits,
+                RevitParameterNames = _revitParameterNames,
             },
         };
 
@@ -378,6 +398,10 @@ public partial class IfcExporter
     {
         if (_lengthUnit is { } explicitUnit && !Enum.IsDefined(explicitUnit))
             throw new ArgumentOutOfRangeException(nameof(LengthUnit), explicitUnit, "Unsupported IFC length unit family.");
+        if (_revitParameterUnits is { } explicitParamUnits && !Enum.IsDefined(explicitParamUnits))
+            throw new ArgumentOutOfRangeException(nameof(RevitParameterUnits), explicitParamUnits, "Unsupported Revit parameter unit system.");
+        if (_revitParameterNames is { } explicitParamNames && !Enum.IsDefined(explicitParamNames))
+            throw new ArgumentOutOfRangeException(nameof(RevitParameterNames), explicitParamNames, "Unsupported Revit parameter naming convention.");
         if (_exportPhaseId != null && info.SerializedProjectPhaseIds?.Contains(_exportPhaseId.Value) != true)
             throw new InvalidOperationException("The requested export phase is not in a validated project phase order.");
         if (_roomExportPhaseId == null) return;
@@ -464,6 +488,7 @@ public partial class IfcExporter
             info.Elements = allElements;
             foreach (var (element, original) in computedSymbolGeometry) element.Geometry = original;
             _facetedPlans.Clear(); // plans nobody asked for must not outlive the export
+            _userParameters = null;
         }
     }
     /// <summary>Whether any of the elements holds a decoded body: a solid or a face.</summary>
@@ -528,6 +553,7 @@ public partial class IfcExporter
     private void ExportDocument(RevitFileInfo info, TextWriter output)
     {
         ValidateRoomExportPhase(info);
+        _userParameters = info.UserParameters;
         _geometryUndecoded = info.GeometryUndecoded;
         _exportedElementQualities.Clear();
         _usedExportIds.Clear();
@@ -66375,7 +66401,7 @@ public partial class IfcExporter
     /// name="angleInDegrees"/> (the The current profile plane angle unit).
     /// </summary>
     internal static string? TypedApiParameterValue(Element elem, Parameter p, string dataType,
-        IReadOnlyDictionary<int, Element> elemById, bool angleInDegrees = false)
+        IReadOnlyDictionary<int, Element> elemById, bool angleInDegrees = false, bool convertAllSpecs = false)
     {
         // Element references and the type-derived identity parameters are written as the referenced
         // text, as Revit's parameter display does.
@@ -66411,6 +66437,8 @@ public partial class IfcExporter
         switch (p.StorageType)
         {
             case StorageType.Double when p.Value is double d && double.IsFinite(d):
+                if (convertAllSpecs)
+                    return ConvertDoubleToIfcOrSi(d, dataType, angleInDegrees);
                 return dataType switch
                 {
                     "autodesk.spec.aec:length" => $"IFCLENGTHMEASURE({D17(d * 304.8)})",
@@ -66436,53 +66464,38 @@ public partial class IfcExporter
         // Group parameters by a common property set name Revit params -> "PSet_Revit_Parameters"
         var propIds = new List<int>();
         var propIdsByGroup = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+        bool useDisplayNames = RevitParameterNames == IfcRevitParameterNames.Display;
+        bool useBuiltInNames = RevitParameterNames == IfcRevitParameterNames.BuiltIn;
+        bool useIfcUnits = RevitParameterUnits == IfcRevitParameterUnits.Ifc;
+        bool useInternalUnits = RevitParameterUnits == IfcRevitParameterUnits.Internal;
 
         foreach (var p in elem.Parameters)
         {
             if (!p.HasRevitValue) continue;
 
-            string propValue;
+            string apiName = "";
+            int apiGroupId = -1;
+            string apiDataType = "";
+            bool hasApiDef = p.Id < 0 && Parsing.ApiParameterDefinitions.TryGet(
+                p.Id, out apiName, out apiGroupId, out apiDataType);
 
-            switch (p.StorageType)
-            {
-                case StorageType.Double:
-                    if (p.Value is double dv && double.IsFinite(dv))
-                    {
-                        propValue = $"IFCREAL({(CurrentProfile ? D17(dv) : D(dv))})";
-                    }
-                    else continue;
-                    break;
-                case StorageType.String:
-                    propValue = $"IFCLABEL({S(p.Value?.ToString() ?? "")})";
-                    break;
-                case StorageType.Integer:
-                    propValue = p.Value is bool bv
-                        ? $"IFCINTEGER({(bv ? 1 : 0)})"
-                        : $"IFCINTEGER({p.Value})";
-                    break;
-                case StorageType.ElementId:
-                    propValue = $"IFCINTEGER({p.Value})";
-                    break;
-                default:
-                    continue;
-            }
+            string? propValue = FormatRevitParameterValue(
+                elem, p, hasApiDef ? apiDataType : null, elemById,
+                useIfcUnits, useInternalUnits, RevitParameterGroups);
+            if (propValue == null) continue;
 
-            string paramName = p.DefinitionName ?? $"Param_{p.Id}";
+            var (paramName, paramDescription) = ResolveRevitParameterNameAndDescription(
+                p, hasApiDef, apiName, useDisplayNames, useBuiltInNames, RevitParameterGroups);
+
             string groupName = "Other";
-            if (RevitParameterGroups && Parsing.ApiParameterDefinitions.TryGet(
-                    p.Id, out string apiName, out int apiGroupId, out string apiDataType))
+            if (RevitParameterGroups && hasApiDef
+                && BuiltIns.BuiltInParameterGroupLabels.ToEnglishLabel((BuiltIns.BuiltInParameterGroup)apiGroupId, out string label))
             {
-                paramName = p.Id switch
-                {
-                    -1002502 => "Classification Number",
-                    -1002503 => "Classification Title",
-                    _ => apiName,
-                };
-                if (BuiltIns.BuiltInParameterGroupLabels.ToEnglishLabel((BuiltIns.BuiltInParameterGroup)apiGroupId, out string label))
-                    groupName = label;
-                propValue = TypedApiParameterValue(elem, p, apiDataType, elemById, CurrentProfile) ?? propValue;
+                groupName = label;
             }
-            int propId = w.Add("IFCPROPERTYSINGLEVALUE", $"{S(paramName)},$,{propValue},$");
+
+            string descToken = paramDescription != null ? S(paramDescription) : "$";
+            int propId = w.Add("IFCPROPERTYSINGLEVALUE", $"{S(paramName)},{descToken},{propValue},$");
             if (RevitParameterGroups)
             {
                 if (!propIdsByGroup.TryGetValue(groupName, out var groupIds))

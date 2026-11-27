@@ -113,6 +113,8 @@ Calling `configuration.Validate()`, `configuration.Resolve()`, or running an exp
 | `propertySets.exportIfcCommonPropertySets` | `SchemaOrViewScoped` | `true` | `true` | Standard `Pset_*Common` property sets are always emitted. |
 | `propertySets.exportRevitPropertySets` | `Supported` | `true`, `false` | `false` | Opt-in export of Revit parameters. |
 | `propertySets.groupRevitParametersByGroup` | `Supported` | `true`, `false` | `false` | Groups Revit parameter sets per group (implies `exportRevitPropertySets`). |
+| `propertySets.revitParameterUnits` | `Supported` | `internal`, `ifc` | `internal` (untyped) | Converts length, area, volume, and angle to IFC units and other physical specs to SI units when `ifc`. |
+| `propertySets.revitParameterNames` | `Supported` | `builtin`, `display` | `builtin` (untyped) | Uses parameter display names (with `BuiltInParameter` in `Description`) and resolves user parameter names when `display`. |
 | `propertySets.exportSchedulesAsPropertySets` | `Unsupported` | `false` | `false` | Schedule Psets are not implemented; `true` fails validation. |
 | `mappings.useRevitIfcExportAsParameters` | `Supported` | `true` | `true` | Reads `IfcExportAs` / `IfcExportType`; `false` fails validation. |
 | `mappings.familyMappingTablePath` | `Unsupported` | `null` | `null` | External mapping files fail validation if non-empty. |

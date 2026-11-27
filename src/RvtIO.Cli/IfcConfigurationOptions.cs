@@ -11,7 +11,9 @@ internal sealed record IfcCliOptions(
     string? ConfigPath,
     string? SaveConfigPath,
     bool NoSpaces,
-    bool ShowCapabilities);
+    bool ShowCapabilities,
+    IfcRevitParameterUnits? RevitParameterUnits,
+    IfcRevitParameterNames? RevitParameterNames);
 
 internal static class IfcConfigurationOptions
 {
@@ -23,10 +25,12 @@ internal static class IfcConfigurationOptions
     public const string SaveConfigOption = "--ifc-save-config";
     public const string NoSpacesOption = "--ifc-no-spaces";
     public const string CapabilitiesOption = "--ifc-capabilities";
+    public const string RevitParameterUnitsOption = "--ifc-revit-parameter-units";
+    public const string RevitParameterNamesOption = "--ifc-revit-parameter-names";
 
     public static bool TryParse(string[] args, out IfcCliOptions options, out string? error)
     {
-        options = new IfcCliOptions(null, null, null, null, null, false, false);
+        options = new IfcCliOptions(null, null, null, null, null, false, false, null, null);
         error = null;
 
         IfcSchema? schema = null;
@@ -36,6 +40,8 @@ internal static class IfcConfigurationOptions
         string? saveConfigPath = null;
         bool noSpaces = false;
         bool showCapabilities = false;
+        IfcRevitParameterUnits? revitParameterUnits = null;
+        IfcRevitParameterNames? revitParameterNames = null;
 
         string? ReadSingleValue(string flag, ref int index, ref bool seen)
         {
@@ -48,6 +54,7 @@ internal static class IfcConfigurationOptions
         }
 
         bool seenSchema = false, seenView = false, seenPreset = false, seenConfig = false, seenSaveConfig = false;
+        bool seenParamUnits = false, seenParamNames = false;
         for (int i = 0; i < args.Length; i++)
         {
             switch (args[i])
@@ -114,10 +121,33 @@ internal static class IfcConfigurationOptions
                 case CapabilitiesOption:
                     showCapabilities = true;
                     break;
+                case RevitParameterUnitsOption:
+                {
+                    string? raw = ReadSingleValue(RevitParameterUnitsOption, ref i, ref seenParamUnits);
+                    if (raw is null || !IfcExportOptionParser.TryParseRevitParameterUnits(raw, out var parsed))
+                    {
+                        error = $"{RevitParameterUnitsOption} requires a supported unit system: ifc, internal.";
+                        return false;
+                    }
+                    revitParameterUnits = parsed;
+                    break;
+                }
+                case RevitParameterNamesOption:
+                {
+                    string? raw = ReadSingleValue(RevitParameterNamesOption, ref i, ref seenParamNames);
+                    if (raw is null || !IfcExportOptionParser.TryParseRevitParameterNames(raw, out var parsed))
+                    {
+                        error = $"{RevitParameterNamesOption} requires a supported naming mode: display, builtin.";
+                        return false;
+                    }
+                    revitParameterNames = parsed;
+                    break;
+                }
             }
         }
 
-        options = new IfcCliOptions(schema, modelView, preset, configPath, saveConfigPath, noSpaces, showCapabilities);
+        options = new IfcCliOptions(schema, modelView, preset, configPath, saveConfigPath, noSpaces, showCapabilities,
+            revitParameterUnits, revitParameterNames);
         return true;
     }
 
@@ -210,8 +240,12 @@ internal static class IfcConfigurationOptions
             },
             PropertySets = new IfcPropertySetConfiguration
             {
-                ExportRevitPropertySets = revitParameters || revitParameterGroups ? true : null,
+                ExportRevitPropertySets = revitParameters || revitParameterGroups
+                    || (cliOptions.ConfigPath == null && (cliOptions.RevitParameterUnits.HasValue || cliOptions.RevitParameterNames.HasValue))
+                    ? true : null,
                 GroupRevitParametersByGroup = revitParameterGroups ? true : null,
+                RevitParameterUnits = cliOptions.RevitParameterUnits,
+                RevitParameterNames = cliOptions.RevitParameterNames,
             },
         };
 

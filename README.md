@@ -61,10 +61,11 @@ Export full JSON, including every parameter and geometry:
 rvtio project.rvt project.full.json --json-full
 ```
 
-Export IFC with Revit parameters as property sets:
+Export IFC with Revit parameters as property sets (optionally converting values to IFC/SI units and using display names):
 
 ```sh
 rvtio project.rvt project.parameters.ifc --ifc-revit-parameters
+rvtio project.rvt project.parameters.ifc --ifc-revit-parameters --ifc-revit-parameter-units ifc --ifc-revit-parameter-names display
 ```
 
 Export IFC4 (`ReferenceView_V1.2` by default, or `DesignTransferView_V1.0`) independently of `Current`/`Legacy` profiles, or drive exports through a shared JSON configuration preset (`--ifc-preset`, `--ifc-config`, `--ifc-save-config`, `--ifc-capabilities`):
