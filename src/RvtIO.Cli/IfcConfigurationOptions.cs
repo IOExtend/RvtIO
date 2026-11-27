@@ -241,7 +241,7 @@ internal static class IfcConfigurationOptions
             PropertySets = new IfcPropertySetConfiguration
             {
                 ExportRevitPropertySets = revitParameters || revitParameterGroups
-                    || (cliOptions.ConfigPath == null && (cliOptions.RevitParameterUnits.HasValue || cliOptions.RevitParameterNames.HasValue))
+                    || cliOptions.RevitParameterUnits.HasValue || cliOptions.RevitParameterNames.HasValue
                     ? true : null,
                 GroupRevitParametersByGroup = revitParameterGroups ? true : null,
                 RevitParameterUnits = cliOptions.RevitParameterUnits,

@@ -554,6 +554,7 @@ public partial class IfcExporter
     {
         ValidateRoomExportPhase(info);
         _userParameters = info.UserParameters;
+        _revitParameterMeasures.Clear();
         _geometryUndecoded = info.GeometryUndecoded;
         _exportedElementQualities.Clear();
         _usedExportIds.Clear();
@@ -6915,6 +6916,7 @@ public partial class IfcExporter
             _diag?.WriteLine($"The current profile string property byte limits: {limitedStrings} values shortened");
             FinalizeUnitAssignmentCurrent(w, unitsCurrent!);
         }
+        DeclareRevitParameterUnits(w);
         if (CurrentProfile) ApplyCurrentOpeningOrder(w, openingOrderKeys);
         if (_resolvedConfig.Schema == IfcSchema.Ifc4)
         {
@@ -66462,6 +66464,7 @@ public partial class IfcExporter
         IReadOnlyDictionary<int, Element> elemById)
     {
         // Group parameters by a common property set name Revit params -> "PSet_Revit_Parameters"
+        var properties = new List<(string Group, string Name, string? Description, string Value, int ParameterId)>();
         var propIds = new List<int>();
         var propIdsByGroup = new Dictionary<string, List<int>>(StringComparer.Ordinal);
         bool useDisplayNames = RevitParameterNames == IfcRevitParameterNames.Display;
@@ -66483,6 +66486,7 @@ public partial class IfcExporter
                 elem, p, hasApiDef ? apiDataType : null, elemById,
                 useIfcUnits, useInternalUnits, RevitParameterGroups);
             if (propValue == null) continue;
+            if (useIfcUnits) _revitParameterMeasures.Add(propValue[..propValue.IndexOf('(')]);
 
             var (paramName, paramDescription) = ResolveRevitParameterNameAndDescription(
                 p, hasApiDef, apiName, useDisplayNames, useBuiltInNames, RevitParameterGroups);
@@ -66494,8 +66498,28 @@ public partial class IfcExporter
                 groupName = label;
             }
 
+            properties.Add((groupName, paramName, paramDescription, propValue, p.Id));
+        }
+
+        // IfcPropertySet requires unique property names, and distinct parameters can share one: in the
+        // requested naming modes every member of a clash gets its parameter id. The default naming is
+        // left as it was.
+        var clashes = RevitParameterNames == null
+            ? null
+            : properties.GroupBy(x => (x.Group, x.Name)).Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet();
+        var takenNames = new HashSet<(string, string)>();
+        foreach (var (groupName, paramName, paramDescription, propValue, parameterId) in properties)
+        {
+            string name = paramName;
+            if (clashes != null)
+            {
+                if (clashes.Contains((groupName, paramName))) name = $"{paramName} [{parameterId}]";
+                string unique = name;
+                for (int n = 2; !takenNames.Add((groupName, unique)); n++) unique = $"{name} #{n}";
+                name = unique;
+            }
             string descToken = paramDescription != null ? S(paramDescription) : "$";
-            int propId = w.Add("IFCPROPERTYSINGLEVALUE", $"{S(paramName)},{descToken},{propValue},$");
+            int propId = w.Add("IFCPROPERTYSINGLEVALUE", $"{S(name)},{descToken},{propValue},$");
             if (RevitParameterGroups)
             {
                 if (!propIdsByGroup.TryGetValue(groupName, out var groupIds))

@@ -46,6 +46,7 @@ public partial class IfcExporter
             ["autodesk.spec.aec.structural:reinforcementLength"] = new(RevitSpecKind.Length),
             ["autodesk.spec.aec.structural:reinforcementSpacing"] = new(RevitSpecKind.Length),
             ["autodesk.spec.aec.structural:sectionDimension"] = new(RevitSpecKind.Length),
+            ["autodesk.spec.aec.structural:sectionProperty"] = new(RevitSpecKind.Length),
 
             // Area specs -> IFCAREAMEASURE(m^2), then IfcLengthUnit.ToFamily scales to the file's area unit.
             ["autodesk.spec.aec:area"] = new(RevitSpecKind.Area),
@@ -70,8 +71,7 @@ public partial class IfcExporter
             ["autodesk.spec.aec.piping:viscosity"] = new(RevitSpecKind.SiMeasure, "IFCDYNAMICVISCOSITYMEASURE", -1),
             ["autodesk.spec.aec.energy:permeability"] = new(RevitSpecKind.SiMeasure, "IFCVAPORPERMEABILITYMEASURE", -1),
             ["autodesk.spec.aec.structural:massPerUnitLength"] = new(RevitSpecKind.SiMeasure, "IFCMASSPERLENGTHMEASURE", -1),
-            ["autodesk.spec.aec.electrical:powerDensity"] = new(RevitSpecKind.SiMeasure, "IFCREAL", -1),
-            ["autodesk.spec.aec.structural:forceScale"] = new(RevitSpecKind.SiMeasure, "IFCREAL", -1),
+            ["autodesk.spec.aec.structural:momentScale"] = new(RevitSpecKind.SiMeasure, "IFCREAL", -1),
 
             ["autodesk.spec.aec.structural:force"] = new(RevitSpecKind.SiMeasure, "IFCFORCEMEASURE", 1),
             ["autodesk.spec.aec.hvac:velocity"] = new(RevitSpecKind.SiMeasure, "IFCLINEARVELOCITYMEASURE", 1),
@@ -82,8 +82,7 @@ public partial class IfcExporter
             ["autodesk.spec.aec.hvac:airFlowDensity"] = new(RevitSpecKind.SiMeasure, "IFCREAL", 1),
             ["autodesk.spec.aec.structural:reinforcementAreaPerUnitLength"] = new(RevitSpecKind.SiMeasure, "IFCREAL", 1),
             ["autodesk.spec.aec.structural:surfaceAreaPerUnitLength"] = new(RevitSpecKind.SiMeasure, "IFCREAL", 1),
-            ["autodesk.spec.aec.structural:sectionProperty"] = new(RevitSpecKind.SiMeasure, "IFCREAL", 1),
-            ["autodesk.spec.aec.structural:areaForceScale"] = new(RevitSpecKind.SiMeasure, "IFCREAL", 1),
+            ["autodesk.spec.aec.structural:linearForceScale"] = new(RevitSpecKind.SiMeasure, "IFCREAL", 1),
 
             ["autodesk.spec.aec.electrical:power"] = new(RevitSpecKind.SiMeasure, "IFCPOWERMEASURE", 2),
             ["autodesk.spec.aec.electrical:wattage"] = new(RevitSpecKind.SiMeasure, "IFCPOWERMEASURE", 2),
@@ -91,6 +90,7 @@ public partial class IfcExporter
             ["autodesk.spec.aec.hvac:heatingLoad"] = new(RevitSpecKind.SiMeasure, "IFCPOWERMEASURE", 2),
             ["autodesk.spec.aec.hvac:heatGain"] = new(RevitSpecKind.SiMeasure, "IFCPOWERMEASURE", 2),
             ["autodesk.spec.aec.electrical:apparentPower"] = new(RevitSpecKind.SiMeasure, "IFCREAL", 2),
+            ["autodesk.spec.aec.structural:areaForceScale"] = new(RevitSpecKind.SiMeasure, "IFCREAL", 2),
             ["autodesk.spec.aec.electrical:potential"] = new(RevitSpecKind.SiMeasure, "IFCELECTRICVOLTAGEMEASURE", 2),
             ["autodesk.spec.aec.energy:specificHeat"] = new(RevitSpecKind.SiMeasure, "IFCSPECIFICHEATCAPACITYMEASURE", 2),
             ["autodesk.spec.aec.energy:specificHeatOfVaporization"] = new(RevitSpecKind.SiMeasure, "IFCHEATINGVALUEMEASURE", 2),
@@ -104,7 +104,6 @@ public partial class IfcExporter
             ["autodesk.spec.aec.piping:friction"] = new(RevitSpecKind.SiMeasure, "IFCREAL", -2),
             ["autodesk.spec.aec.structural:unitWeight"] = new(RevitSpecKind.SiMeasure, "IFCREAL", -2),
             ["autodesk.spec.aec.structural:massPerUnitArea"] = new(RevitSpecKind.SiMeasure, "IFCREAL", -2),
-            ["autodesk.spec.aec.structural:momentScale"] = new(RevitSpecKind.SiMeasure, "IFCREAL", -2),
 
             ["autodesk.spec.aec.hvac:airFlow"] = new(RevitSpecKind.SiMeasure, "IFCVOLUMETRICFLOWRATEMEASURE", 3),
             ["autodesk.spec.aec.piping:flow"] = new(RevitSpecKind.SiMeasure, "IFCVOLUMETRICFLOWRATEMEASURE", 3),
@@ -118,6 +117,8 @@ public partial class IfcExporter
             ["autodesk.spec.aec.structural:warpingConstant"] = new(RevitSpecKind.SiMeasure, "IFCWARPINGCONSTANTMEASURE", 6),
 
             // Specs whose Revit internal unit is already SI (lengthExponent == 0).
+            ["autodesk.spec.aec.electrical:powerDensity"] = new(RevitSpecKind.SiMeasure, "IFCREAL", 0),
+            ["autodesk.spec.aec.structural:forceScale"] = new(RevitSpecKind.SiMeasure, "IFCREAL", 0),
             ["autodesk.spec.aec.energy:heatTransferCoefficient"] = new(RevitSpecKind.SiMeasure, "IFCTHERMALTRANSMITTANCEMEASURE", 0),
             ["autodesk.spec.aec.energy:thermalResistance"] = new(RevitSpecKind.SiMeasure, "IFCTHERMALRESISTANCEMEASURE", 0),
             ["autodesk.spec.aec.energy:heatCapacityPerArea"] = new(RevitSpecKind.SiMeasure, "IFCREAL", 0),
@@ -144,8 +145,97 @@ public partial class IfcExporter
             ["autodesk.spec.aec.hvac:heatingLoadDividedByArea"] = new(RevitSpecKind.SiMeasure, "IFCREAL", 0),
             ["autodesk.spec.aec.hvac:areaDividedByCoolingLoad"] = new(RevitSpecKind.SiMeasure, "IFCREAL", 0),
             ["autodesk.spec.aec.hvac:areaDividedByHeatingLoad"] = new(RevitSpecKind.SiMeasure, "IFCREAL", 0),
-            ["autodesk.spec.aec.structural:linearForceScale"] = new(RevitSpecKind.SiMeasure, "IFCREAL", 0),
         }.ToFrozenDictionary(StringComparer.Ordinal);
+
+    // The unit of each measure SpecConversions writes: a named SI unit, or the powers of kilogram, metre,
+    // second and kelvin of a derived one. IfcMonetaryMeasure has none: the currency is not decoded.
+    private static readonly (string Measure, string UnitType, string SiUnit)[] NamedMeasureUnits =
+    [
+        ("IFCPRESSUREMEASURE", "PRESSUREUNIT", "$,.PASCAL."),
+        ("IFCFORCEMEASURE", "FORCEUNIT", "$,.NEWTON."),
+        ("IFCPOWERMEASURE", "POWERUNIT", "$,.WATT."),
+        ("IFCENERGYMEASURE", "ENERGYUNIT", "$,.JOULE."),
+        ("IFCELECTRICVOLTAGEMEASURE", "ELECTRICVOLTAGEUNIT", "$,.VOLT."),
+        ("IFCELECTRICCURRENTMEASURE", "ELECTRICCURRENTUNIT", "$,.AMPERE."),
+        ("IFCILLUMINANCEMEASURE", "ILLUMINANCEUNIT", "$,.LUX."),
+        ("IFCLUMINOUSFLUXMEASURE", "LUMINOUSFLUXUNIT", "$,.LUMEN."),
+        ("IFCLUMINOUSINTENSITYMEASURE", "LUMINOUSINTENSITYUNIT", "$,.CANDELA."),
+        ("IFCTHERMODYNAMICTEMPERATUREMEASURE", "THERMODYNAMICTEMPERATUREUNIT", "$,.KELVIN."),
+        ("IFCMASSMEASURE", "MASSUNIT", ".KILO.,.GRAM."),
+        ("IFCTIMEMEASURE", "TIMEUNIT", "$,.SECOND."),
+        ("IFCFREQUENCYMEASURE", "FREQUENCYUNIT", "$,.HERTZ."),
+    ];
+
+    private static readonly (string Measure, string UnitType, int Kilogram, int Metre, int Second, int Kelvin)[] DerivedMeasureUnits =
+    [
+        ("IFCPLANARFORCEMEASURE", "PLANARFORCEUNIT", 1, -1, -2, 0),
+        ("IFCDYNAMICVISCOSITYMEASURE", "DYNAMICVISCOSITYUNIT", 1, -1, -1, 0),
+        ("IFCVAPORPERMEABILITYMEASURE", "VAPORPERMEABILITYUNIT", 0, -1, 1, 0),
+        ("IFCMASSPERLENGTHMEASURE", "MASSPERLENGTHUNIT", 1, -1, 0, 0),
+        ("IFCLINEARVELOCITYMEASURE", "LINEARVELOCITYUNIT", 0, 1, -1, 0),
+        ("IFCTHERMALCONDUCTIVITYMEASURE", "THERMALCONDUCTANCEUNIT", 1, 1, -3, -1),
+        ("IFCLINEARMOMENTMEASURE", "LINEARMOMENTUNIT", 1, 1, -2, 0),
+        ("IFCSPECIFICHEATCAPACITYMEASURE", "SPECIFICHEATCAPACITYUNIT", 0, 2, -2, -1),
+        ("IFCHEATINGVALUEMEASURE", "HEATINGVALUEUNIT", 0, 2, -2, 0),
+        ("IFCTORQUEMEASURE", "TORQUEUNIT", 1, 2, -2, 0),
+        ("IFCVOLUMETRICFLOWRATEMEASURE", "VOLUMETRICFLOWRATEUNIT", 0, 3, -1, 0),
+        ("IFCSECTIONMODULUSMEASURE", "SECTIONMODULUSUNIT", 0, 3, 0, 0),
+        ("IFCMASSDENSITYMEASURE", "MASSDENSITYUNIT", 1, -3, 0, 0),
+        ("IFCMOMENTOFINERTIAMEASURE", "MOMENTOFINERTIAUNIT", 0, 4, 0, 0),
+        ("IFCWARPINGCONSTANTMEASURE", "WARPINGCONSTANTUNIT", 0, 6, 0, 0),
+        ("IFCTHERMALTRANSMITTANCEMEASURE", "THERMALTRANSMITTANCEUNIT", 1, 0, -3, -1),
+        ("IFCTHERMALRESISTANCEMEASURE", "THERMALRESISTANCEUNIT", -1, 0, 3, 1),
+        ("IFCLINEARFORCEMEASURE", "LINEARFORCEUNIT", 1, 0, -2, 0),
+        ("IFCTHERMALEXPANSIONCOEFFICIENTMEASURE", "THERMALEXPANSIONCOEFFICIENTUNIT", 0, 0, 0, -1),
+    ];
+
+    // the measure types written with RevitParameterUnits = Ifc in the running export
+    private readonly HashSet<string> _revitParameterMeasures = new(StringComparer.Ordinal);
+
+    /// <summary>Assigns the project unit of every measure the Revit parameters were converted to. The values are
+    /// in unprefixed SI units whatever the length unit of the file is.</summary>
+    private void DeclareRevitParameterUnits(StepWriter w)
+    {
+        // assigned elsewhere: the current profile adds power and thermal transmittance from the finished
+        // property values, the legacy header has the second
+        bool AlreadyAssigned(string unitType) => CurrentProfile
+            ? unitType is "POWERUNIT" or "THERMALTRANSMITTANCEUNIT"
+            : unitType is "TIMEUNIT";
+        int SiUnit(string unitType, string unit) => w.Add("IFCSIUNIT", $"*,.{unitType}.,{unit}");
+
+        var added = new List<string>();
+        foreach (var (measure, unitType, unit) in NamedMeasureUnits)
+        {
+            if (_revitParameterMeasures.Contains(measure) && !AlreadyAssigned(unitType))
+                added.Add(R(SiUnit(unitType, unit)));
+        }
+        foreach (var (measure, unitType, kilogram, metre, second, kelvin) in DerivedMeasureUnits)
+        {
+            if (!_revitParameterMeasures.Contains(measure) || AlreadyAssigned(unitType)) continue;
+            var elements = new List<string>();
+            void Factor(int exponent, string baseType, string baseUnit)
+            {
+                if (exponent != 0)
+                    elements.Add(R(w.Add("IFCDERIVEDUNITELEMENT", $"{R(SiUnit(baseType, baseUnit))},{exponent}")));
+            }
+            Factor(kilogram, "MASSUNIT", ".KILO.,.GRAM.");
+            Factor(metre, "LENGTHUNIT", "$,.METRE.");
+            Factor(second, "TIMEUNIT", "$,.SECOND.");
+            Factor(kelvin, "THERMODYNAMICTEMPERATUREUNIT", "$,.KELVIN.");
+            added.Add(R(w.Add("IFCDERIVEDUNIT", $"{StepWriter.List(elements)},.{unitType}.,$")));
+        }
+        if (added.Count == 0) return;
+
+        for (int i = 0; i < w.EntityCount; i++)
+        {
+            var (_, type, args) = w.EntityAt(i);
+            if (type != "IFCUNITASSIGNMENT") continue;
+            // the attribute text is the one list "(#1,#2)"
+            w.ReplaceArgs(i, $"{args[..^1]},{string.Join(",", added)})");
+            return;
+        }
+        throw new InvalidOperationException("The export has no IfcUnitAssignment for the Revit parameter units.");
+    }
 
     private static double PowerOfFeetToMetres(int positiveExponent) => positiveExponent switch
     {
@@ -191,26 +281,8 @@ public partial class IfcExporter
             return apiDataType;
         if (p.Id > 0 && _userParameters?.TryGetDefinition(p.Id, out var userDef) == true && !string.IsNullOrEmpty(userDef.Spec))
             return userDef.Spec;
-        if (!string.IsNullOrEmpty(p.SpecType))
-            return p.SpecType;
-        if (p.Id < 0)
-        {
-            string? bipName = p.DefinitionBuiltIn ?? (BipNames.Lookup.TryGetValue(p.Id, out var found) ? found : null) ?? p.DefinitionName;
-            if (!string.IsNullOrEmpty(bipName))
-            {
-                if (Parameter.HasWordToken(null, bipName, Parameter.ScalarKeywordsInternal))
-                    return "autodesk.spec.aec:number";
-                if (Parameter.HasWordToken(null, bipName, Parameter.LengthKeywords))
-                    return "autodesk.spec.aec:length";
-                if (Parameter.HasWordToken(null, bipName, Parameter.AreaKeywords))
-                    return "autodesk.spec.aec:area";
-                if (Parameter.HasWordToken(null, bipName, Parameter.VolumeKeywords))
-                    return "autodesk.spec.aec:volume";
-                if (Parameter.HasWordToken(null, bipName, Parameter.AngleKeywords))
-                    return "autodesk.spec.aec:angle";
-            }
-        }
-        return null;
+        // a parameter without a known spec keeps its stored number: its name does not say what it measures
+        return string.IsNullOrEmpty(p.SpecType) ? null : p.SpecType;
     }
 
     private string? FormatRevitParameterValue(

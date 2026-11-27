@@ -670,29 +670,28 @@ namespace RvtIO.Model
             "MULTIPLIER", "MULTIPLIERS"
         };
 
-        internal static readonly HashSet<string> ScalarKeywordsInternal = ScalarKeywords;
-        internal static readonly HashSet<string> LengthKeywords = new(StringComparer.OrdinalIgnoreCase)
+        private static readonly HashSet<string> LengthKeywords = new(StringComparer.OrdinalIgnoreCase)
         {
             "WIDTH", "HEIGHT", "LENGTH", "OFFSET", "THICKNESS", "DEPTH",
             "RADIUS", "DIAMETER", "DISTANCE", "PERIMETER", "SPAN", "ELEVATION"
         };
 
-        internal static readonly HashSet<string> AreaKeywords = new(StringComparer.OrdinalIgnoreCase)
+        private static readonly HashSet<string> AreaKeywords = new(StringComparer.OrdinalIgnoreCase)
         {
             "AREA", "AREAS"
         };
 
-        internal static readonly HashSet<string> VolumeKeywords = new(StringComparer.OrdinalIgnoreCase)
+        private static readonly HashSet<string> VolumeKeywords = new(StringComparer.OrdinalIgnoreCase)
         {
             "VOLUME", "VOLUMES"
         };
 
-        internal static readonly HashSet<string> AngleKeywords = new(StringComparer.OrdinalIgnoreCase)
+        private static readonly HashSet<string> AngleKeywords = new(StringComparer.OrdinalIgnoreCase)
         {
             "ANGLE", "ANGLES", "ROTATION", "SLOPE"
         };
 
-        internal static bool HasWordToken(string? text1, string? text2, HashSet<string> keywords)
+        private static bool HasWordToken(string? text1, string? text2, HashSet<string> keywords)
         {
             if (!string.IsNullOrEmpty(text1))
             {
