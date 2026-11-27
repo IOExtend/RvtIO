@@ -66509,10 +66509,10 @@ public partial class IfcExporter
             properties.Add((groupName, paramName, paramDescription, propValue, p.Id));
         }
 
-        // IfcPropertySet requires unique property names, and distinct parameters can share one: in the
-        // requested naming modes every member of a clash gets its parameter id. The default naming is
-        // left as it was.
-        var clashes = RevitParameterNames == null
+        // IfcPropertySet requires unique property names, and distinct parameters can share one: in grouped
+        // sets and in the requested naming modes every member of a clash gets its parameter id. The default
+        // flat sets are left as they were.
+        var clashes = !RevitParameterGroups && RevitParameterNames == null
             ? null
             : properties.GroupBy(x => (x.Group, x.Name)).Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet();
         var takenNames = new HashSet<(string, string)>();
