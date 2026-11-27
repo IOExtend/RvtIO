@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace RvtIO.Sheets;
 
 /// <summary>A sheet of the document (the Revit API's <c>ViewSheet</c>) with the data this release decodes: its number,
@@ -18,7 +20,8 @@ public sealed class SheetRecord
         IReadOnlyList<int> viewportIds,
         IReadOnlyList<int> ownedElementIds,
         IReadOnlyDictionary<string, string>? parameters = null,
-        IReadOnlyCollection<string>? yesNoParameters = null)
+        IReadOnlyCollection<string>? yesNoParameters = null,
+        string? sourceElementId = null)
     {
         ElementId = elementId;
         Number = number;
@@ -35,10 +38,15 @@ public sealed class SheetRecord
         // Names compare case-insensitively everywhere else (Lookup, the filter contract), so a plain
         // array or list of Yes/No names must not turn case-sensitive here.
         YesNoParameters = new HashSet<string>(yesNoParameters ?? [], StringComparer.OrdinalIgnoreCase);
+        SourceElementId = sourceElementId;
     }
 
-    /// <summary>The element id of the sheet.</summary>
+    /// <summary>The document-local element id of the sheet.</summary>
     public int ElementId { get; }
+
+    /// <summary>Lossless decimal text of the original 64-bit Revit element ID when the file was renumbered to fit <see cref="ElementId"/>; null when unchanged.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SourceElementId { get; }
 
     /// <summary>The sheet number (the <c>Sheet Number</c> parameter) as stored, null when it is empty. "???" is a
     /// value a project stores, not a decode failure.</summary>

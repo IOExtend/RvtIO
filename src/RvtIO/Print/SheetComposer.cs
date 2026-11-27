@@ -37,7 +37,11 @@ public sealed class SheetComposeOptions
 /// <param name="ViewportCount">The number of placed viewports.</param>
 /// <param name="TextCount">The number of text notes the sheet owns.</param>
 public sealed record ComposedSheet(int SheetId, string? Number, string? Name, PdfPageSize Page, int ViewportCount,
-    int TextCount);
+    int TextCount)
+{
+    /// <summary>Lossless decimal native 64-bit Revit element ID when the file renumbered it to fit <see cref="SheetId"/>; null when unchanged.</summary>
+    public string? SourceElementId { get; init; }
+}
 
 /// <summary>
 /// Composes a sheet page the way Revit prints it: the page is the size the title block spans, every placed viewport
@@ -72,7 +76,10 @@ public static class SheetComposer
             sheets.Add(new ComposedSheet(sheet.Id, number,
                 sheet.LookupParameter(BuiltInParameter.SHEET_NAME)?.Value as string, page,
                 viewports.TryGetValue(sheet.Id, out int vp) ? vp : 0,
-                texts.TryGetValue(sheet.Id, out int tx) ? tx : 0));
+                texts.TryGetValue(sheet.Id, out int tx) ? tx : 0)
+            {
+                SourceElementId = RvtIO.Sheets.SheetCatalog.SourceIdText(document.RawData, sheet.Id, sheet),
+            });
         }
         sheets.Sort((left, right) =>
         {

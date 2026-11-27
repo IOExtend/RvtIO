@@ -149,49 +149,17 @@ internal static class PrintCommand
             whereSheets == null ? composed : composed.Where(sheet => whereSheets.Contains(sheet.SheetId)).ToList();
         if (listSheets)
         {
-            IReadOnlyList<ComposedSheet> listedComposed = ListedComposed();
-            IReadOnlyList<PrintableSheet> listedSheets = ListedSheets();
-            if (listedComposed.Count > 0)
-            {
-                foreach (ComposedSheet sheet in listedComposed)
-                    output.WriteLine($"{sheet.SheetId}\t{sheet.Number}\t{sheet.Name ?? ""}\t"
-                        + $"{sheet.Page.WidthMillimetres:0}x{sheet.Page.HeightMillimetres:0} mm\t"
-                        + $"{sheet.ViewportCount} views\t{sheet.TextCount} texts");
-            }
-            else
-            {
-                foreach (PrintableSheet sheet in listedSheets)
-                    output.WriteLine($"{sheet.SheetId}\t{sheet.Number ?? ""}\t{sheet.Name ?? ""}\t"
-                        + $"{sheet.WidthMillimetres:0}x{sheet.HeightMillimetres:0} mm\t{sheet.CurveCount} curves\t{sheet.TextCount} texts");
-                if (listedSheets.Count == 0) error.WriteLine("No sheet with decoded linework was found.");
-            }
+            WriteListedSheets(ListedSheets(), ListedComposed(), output, error);
             return RvtExitCodes.Success;
         }
         if (listLevels)
         {
-            foreach (PlanLevel level in levels)
-            {
-                string elevation = level.ElevationFeet is double feet
-                    ? (feet * 304.8).ToString("0", CultureInfo.InvariantCulture) + " mm" : "elevation not decoded";
-                output.WriteLine($"{level.LevelId}\t{level.Name ?? "(unnamed)"}\t{elevation}");
-            }
+            WriteListedLevels(levels, output);
             if (!listViews) return RvtExitCodes.Success;
         }
         if (listViews)
         {
-            foreach (PlanView view in views)
-                output.WriteLine($"{view.ViewId}\t{view.Name}\t1:{view.Scale}\tlevel {view.LevelId}\tplan");
-            foreach (ElevationView view in elevations)
-                output.WriteLine($"{view.ViewId}\t{view.Name}\t1:{view.Scale}\t{view.Direction}\televation");
-            foreach (RvtIO.Model.Element other in ViewPrinter.OtherViews(document))
-            {
-                string kind = other.RootClassName == "DBViewRendering" ? "rendering" : "3d";
-                int otherScale = other.LookupParameter(RvtIO.BuiltIns.BuiltInParameter.VIEW_SCALE)?.Value is int value
-                    ? value : 0;
-                output.WriteLine($"{other.Id}\t{other.Name}\t1:{otherScale}\t-\t{kind}");
-            }
-            if (views.Count == 0 && elevations.Count == 0 && ViewPrinter.OtherViews(document).Count == 0)
-                error.WriteLine("No printable view was found.");
+            WriteListedViews(document, views, elevations, output, error);
             return RvtExitCodes.Success;
         }
 
@@ -283,20 +251,7 @@ internal static class PrintCommand
                 var viewIds = new List<int>();
                 foreach (string text in viewTexts)
                 {
-                    int? resolved = ResolveView(text, views, elevations);
-                    if (resolved == null)
-                    {
-                        // A 3D view or a rendering is a printable view too.
-                        foreach (RvtIO.Model.Element other in ViewPrinter.OtherViews(document))
-                        {
-                            if (int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int otherId)
-                                && otherId == other.Id)
-                                resolved = other.Id;
-                            else if (string.Equals(other.Name, text, StringComparison.OrdinalIgnoreCase))
-                                resolved = other.Id;
-                            if (resolved != null) break;
-                        }
-                    }
+                    int? resolved = ResolveView(text, views, elevations, ViewPrinter.OtherViews(document), document.RawData);
                     if (resolved == null)
                     {
                         error.WriteLine($"No printable view is named or numbered '{text}'. --list-views shows them.");
@@ -351,19 +306,107 @@ internal static class PrintCommand
         }
     }
 
-    /// <summary>The id of the printable view a text names: a plan or an elevation, by id or by exact name.</summary>
-    private static int? ResolveView(string text, IReadOnlyList<PlanView> views, IReadOnlyList<ElevationView> elevations)
+    internal static void WriteListedSheets(
+        IReadOnlyList<PrintableSheet> listedSheets,
+        IReadOnlyList<ComposedSheet> listedComposed,
+        TextWriter output,
+        TextWriter error)
     {
-        bool byId = int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int id);
+        if (listedComposed.Count > 0)
+        {
+            foreach (ComposedSheet sheet in listedComposed)
+            {
+                string sourceSuffix = sheet.SourceElementId is { } sourceId ? $"\tsource={sourceId}" : "";
+                output.WriteLine($"{sheet.SheetId}\t{sheet.Number}\t{sheet.Name ?? ""}\t"
+                    + $"{sheet.Page.WidthMillimetres:0}x{sheet.Page.HeightMillimetres:0} mm\t"
+                    + $"{sheet.ViewportCount} views\t{sheet.TextCount} texts{sourceSuffix}");
+            }
+        }
+        else
+        {
+            foreach (PrintableSheet sheet in listedSheets)
+            {
+                string sourceSuffix = sheet.SourceElementId is { } sourceId ? $"\tsource={sourceId}" : "";
+                output.WriteLine($"{sheet.SheetId}\t{sheet.Number ?? ""}\t{sheet.Name ?? ""}\t"
+                    + $"{sheet.WidthMillimetres:0}x{sheet.HeightMillimetres:0} mm\t{sheet.CurveCount} curves\t{sheet.TextCount} texts{sourceSuffix}");
+            }
+            if (listedSheets.Count == 0) error.WriteLine("No sheet with decoded linework was found.");
+        }
+    }
+
+    internal static void WriteListedLevels(IReadOnlyList<PlanLevel> levels, TextWriter output)
+    {
+        foreach (PlanLevel level in levels)
+        {
+            string elevation = level.ElevationFeet is double feet
+                ? (feet * 304.8).ToString("0", CultureInfo.InvariantCulture) + " mm" : "elevation not decoded";
+            string sourceSuffix = level.SourceElementId is { } sourceId ? $"\tsource={sourceId}" : "";
+            output.WriteLine($"{level.LevelId}\t{level.Name ?? "(unnamed)"}\t{elevation}{sourceSuffix}");
+        }
+    }
+
+    internal static void WriteListedViews(
+        RvtDocument document,
+        IReadOnlyList<PlanView> views,
+        IReadOnlyList<ElevationView> elevations,
+        TextWriter output,
+        TextWriter error)
+    {
         foreach (PlanView view in views)
         {
-            if ((byId && id == view.ViewId) || string.Equals(view.Name, text, StringComparison.OrdinalIgnoreCase))
+            string levelLabel = view.SourceLevelId is { } srcLvl
+                ? $"level {view.LevelId} (source={srcLvl})"
+                : $"level {view.LevelId}";
+            string sourceSuffix = view.SourceElementId is { } sourceId ? $"\tsource={sourceId}" : "";
+            output.WriteLine($"{view.ViewId}\t{view.Name}\t1:{view.Scale}\t{levelLabel}\tplan{sourceSuffix}");
+        }
+        foreach (ElevationView view in elevations)
+        {
+            string sourceSuffix = view.SourceElementId is { } sourceId ? $"\tsource={sourceId}" : "";
+            output.WriteLine($"{view.ViewId}\t{view.Name}\t1:{view.Scale}\t{view.Direction}\televation{sourceSuffix}");
+        }
+        IReadOnlyList<RvtIO.Model.Element> otherViews = ViewPrinter.OtherViews(document);
+        foreach (RvtIO.Model.Element other in otherViews)
+        {
+            string kind = other.RootClassName == "DBViewRendering" ? "rendering" : "3d";
+            int otherScale = other.LookupParameter(RvtIO.BuiltIns.BuiltInParameter.VIEW_SCALE)?.Value is int value
+                ? value : 0;
+            string? otherSourceId = RvtIO.Sheets.SheetCatalog.SourceIdText(document.RawData, other.Id, other);
+            string sourceSuffix = otherSourceId is { } sourceId ? $"\tsource={sourceId}" : "";
+            output.WriteLine($"{other.Id}\t{other.Name}\t1:{otherScale}\t-\t{kind}{sourceSuffix}");
+        }
+        if (views.Count == 0 && elevations.Count == 0 && otherViews.Count == 0)
+            error.WriteLine("No printable view was found.");
+    }
+
+    /// <summary>The id of the printable view a text names: a plan, elevation, 3D view, or rendering, by local id, native 64-bit id, or exact name.</summary>
+    internal static int? ResolveView(
+        string text,
+        IReadOnlyList<PlanView> views,
+        IReadOnlyList<ElevationView> elevations,
+        IReadOnlyList<RvtIO.Model.Element>? otherViews = null,
+        RvtIO.Model.RevitFileInfo? rawData = null)
+    {
+        foreach (PlanView view in views)
+        {
+            if (MatchesId(text, view.ViewId, view.SourceElementId) || string.Equals(view.Name, text, StringComparison.OrdinalIgnoreCase))
                 return view.ViewId;
         }
         foreach (ElevationView view in elevations)
         {
-            if ((byId && id == view.ViewId) || string.Equals(view.Name, text, StringComparison.OrdinalIgnoreCase))
+            if (MatchesId(text, view.ViewId, view.SourceElementId) || string.Equals(view.Name, text, StringComparison.OrdinalIgnoreCase))
                 return view.ViewId;
+        }
+        if (otherViews != null)
+        {
+            foreach (RvtIO.Model.Element other in otherViews)
+            {
+                string? otherSourceId = rawData != null
+                    ? RvtIO.Sheets.SheetCatalog.SourceIdText(rawData, other.Id, other)
+                    : other.SourceElementId;
+                if (MatchesId(text, other.Id, otherSourceId) || string.Equals(other.Name, text, StringComparison.OrdinalIgnoreCase))
+                    return other.Id;
+            }
         }
         return null;
     }
@@ -400,9 +443,8 @@ internal static class PrintCommand
             ComposedSheet? composedMatch = null;
             foreach (ComposedSheet sheet in composed)
             {
-                if (int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int id) && id == sheet.SheetId)
-                    composedMatch = sheet;
-                else if (string.Equals(sheet.Number, text, StringComparison.OrdinalIgnoreCase))
+                if (MatchesId(text, sheet.SheetId, sheet.SourceElementId)
+                    || string.Equals(sheet.Number, text, StringComparison.OrdinalIgnoreCase))
                     composedMatch = sheet;
                 if (composedMatch != null) break;
             }
@@ -414,9 +456,8 @@ internal static class PrintCommand
             PrintableSheet? match = null;
             foreach (PrintableSheet sheet in sheets)
             {
-                if (int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int id) && id == sheet.SheetId)
-                    match = sheet;
-                else if (string.Equals(sheet.Number, text, StringComparison.OrdinalIgnoreCase))
+                if (MatchesId(text, sheet.SheetId, sheet.SourceElementId)
+                    || string.Equals(sheet.Number, text, StringComparison.OrdinalIgnoreCase))
                     match = sheet;
                 if (match != null) break;
             }
@@ -431,16 +472,41 @@ internal static class PrintCommand
         return new ExplicitSheetSelection(sheetIds, composedIds, null);
     }
 
-    private static int? ResolveLevelId(string? levelText, IReadOnlyList<PlanLevel> levels)
+    internal static int? ResolveLevelId(string? levelText, IReadOnlyList<PlanLevel> levels)
     {
         if (levelText == null) return null;
-        bool byId = int.TryParse(levelText, NumberStyles.None, CultureInfo.InvariantCulture, out int id);
         foreach (PlanLevel level in levels)
         {
-            if ((byId && id == level.LevelId) || string.Equals(level.Name, levelText, StringComparison.OrdinalIgnoreCase))
+            if (MatchesId(levelText, level.LevelId, level.SourceElementId)
+                || string.Equals(level.Name, levelText, StringComparison.OrdinalIgnoreCase))
                 return level.LevelId;
         }
         return null;
+    }
+
+    internal static bool MatchesId(string selector, int localId, string? sourceElementId)
+    {
+        const string SourcePrefix = "source:";
+        const string NativePrefix = "native:";
+        if (selector.StartsWith(SourcePrefix, StringComparison.OrdinalIgnoreCase))
+            return MatchesExplicitSource(selector.AsSpan(SourcePrefix.Length), localId, sourceElementId);
+        if (selector.StartsWith(NativePrefix, StringComparison.OrdinalIgnoreCase))
+            return MatchesExplicitSource(selector.AsSpan(NativePrefix.Length), localId, sourceElementId);
+
+        if (!long.TryParse(selector, NumberStyles.None, CultureInfo.InvariantCulture, out long parsed))
+            return false;
+        if (sourceElementId != null && string.Equals(sourceElementId, selector, StringComparison.Ordinal))
+            return true;
+        return parsed <= int.MaxValue && (int)parsed == localId;
+    }
+
+    private static bool MatchesExplicitSource(ReadOnlySpan<char> idSpan, int localId, string? sourceElementId)
+    {
+        if (!long.TryParse(idSpan, NumberStyles.None, CultureInfo.InvariantCulture, out long parsed))
+            return false;
+        return sourceElementId != null
+            ? long.TryParse(sourceElementId, NumberStyles.None, CultureInfo.InvariantCulture, out long sourceId) && sourceId == parsed
+            : parsed <= int.MaxValue && (int)parsed == localId;
     }
 
     private static int Usage(TextWriter error, string problem)

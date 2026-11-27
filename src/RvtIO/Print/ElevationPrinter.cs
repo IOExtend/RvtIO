@@ -10,7 +10,11 @@ using RvtIO.Pdf;
 /// <param name="Name">The view name.</param>
 /// <param name="Direction">The direction the view looks at: north, south, east or west.</param>
 /// <param name="Scale">The view scale denominator.</param>
-public sealed record ElevationView(int ViewId, string Name, string Direction, int Scale);
+public sealed record ElevationView(int ViewId, string Name, string Direction, int Scale)
+{
+    /// <summary>Lossless decimal native 64-bit Revit element ID when the file renumbered it to fit <see cref="ViewId"/>; null when unchanged.</summary>
+    public string? SourceElementId { get; init; }
+}
 
 /// <summary>
 /// Prints an elevation from the 3D geometry the reader decodes: every planar face of the model (walls, floors, roofs,
@@ -60,7 +64,10 @@ public static class ElevationPrinter
             if (section && (scale == 0 || scale < 100) && !name.Contains("stair", StringComparison.OrdinalIgnoreCase)
                 && !(planeDecoded && placed))
                 continue;
-            views.Add(new ElevationView(element.Id, name, direction, scale));
+            views.Add(new ElevationView(element.Id, name, direction, scale)
+            {
+                SourceElementId = RvtIO.Sheets.SheetCatalog.SourceIdText(document.RawData, element.Id, element),
+            });
         }
         views.Sort((left, right) => string.CompareOrdinal(left.Name, right.Name));
         return views;
