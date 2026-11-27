@@ -1484,28 +1484,156 @@ public class IfcExporterTypeObjectsTests
     }
 
     [Theory]
-    [InlineData(IfcProfile.Legacy, 1)]
-    [InlineData(IfcProfile.Current, 0)]
-    public void BasicWallBoundToACurtainWallAsAPanel_IsNotExportedByCurrent(IfcProfile version, int wallPanels)
+    [InlineData(IfcProfile.Legacy, "IFCWALL", 1)]
+    [InlineData(IfcProfile.Current, "IFCCURTAINWALL", 0)]
+    public void BasicWallBoundToACurtainWallAsAPanel_ExportsAndAggregatesUnderCurtainWall(
+        IfcProfile version, string childIfcType, int wallCount)
     {
-        // In the current profile a wall whose owner is a curtain wall is not exported: only plates, members, doors and windows are
-        // aggregated under a curtain wall.
+        // Reference exports write basic-wall curtain panels as IfcCurtainWall aggregated under their
+        // parent IfcCurtainWall (Legacy emits them as IfcWall).
         var type = TypeElement(500, "Curtain type", "Curtain family");
         type.CategoryId = WallCategoryId; type.SerializedCurtainWallFunction = 1;
         var parent = Product(100, WallCategoryId, "OST_Walls", 500, null);
         parent.TypeId = 500; parent.Geometry = null; parent.BoundingBox = null;
         var panel = Product(101, -2000170, "OST_CurtainWallPanels", null, null);
         panel.SerializedCurtainHostId = 100;
-        var wallPanel = Product(102, WallCategoryId, "OST_Walls", null, null);
+        var wallType = TypeElement(501, "Panel wall", "Basic Wall");
+        wallType.CategoryId = WallCategoryId; wallType.SerializedBasicWallTypeFunction = 1;
+        wallType.SerializedBasicWallTypeName = "Panel wall";
+        var wallPanel = Product(102, WallCategoryId, "OST_Walls", 501, null);
         wallPanel.SerializedCurtainHostId = 100;
-        string ifc = ExportToText(version, type, parent, panel, wallPanel);
-        int parentId = SoleEntityId(ifc, "IFCCURTAINWALL");
+        string ifc = ExportToText(version, type, wallType, parent, panel, wallPanel);
+        int parentId = SoleEntityIdForTag(ifc, "IFCCURTAINWALL", "100");
         int plateId = SoleEntityId(ifc, "IFCPLATE");
+        int wallChildId = SoleEntityIdForTag(ifc, childIfcType, "102");
         var rel = Assert.Single(EntityIds(ifc, "IFCRELAGGREGATES")
             .Select(id => EntityArgs(ifc, id, "IFCRELAGGREGATES")),
             args => args[4] == $"#{parentId}");
-        Assert.Equal(wallPanels == 0 ? $"(#{plateId})" : $"(#{plateId},#{SoleEntityIdForTag(ifc, "IFCWALL", "102")})", rel[5]);
-        Assert.Equal(wallPanels, EntityIds(ifc, "IFCWALL").Count + EntityIds(ifc, "IFCWALLSTANDARDCASE").Count);
+        var expectedChildren = new[] { plateId, wallChildId }.OrderBy(id => id).Select(id => $"#{id}");
+        Assert.Equal($"({string.Join(",", expectedChildren)})", rel[5]);
+        Assert.Equal(wallCount, EntityIds(ifc, "IFCWALL").Count + EntityIds(ifc, "IFCWALLSTANDARDCASE").Count);
+        if (version == IfcProfile.Current)
+        {
+            Assert.Contains(EntityIds(ifc, "IFCCURTAINWALLTYPE"), id => EntityArgs(ifc, id, "IFCCURTAINWALLTYPE")[7] == "'501'");
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void WallTypeSharedWithACurtainPanelWall_KeepsItsOwnGlobalId(bool withRegularWall)
+    {
+        var exportId = Guid.Parse("11111111-2222-3333-4444-555555555555");
+        var curtainType = TypeElement(500, "Curtain type", "Curtain family");
+        curtainType.CategoryId = WallCategoryId; curtainType.SerializedCurtainWallFunction = 1;
+        var parent = Product(100, WallCategoryId, "OST_Walls", 500, null);
+        parent.TypeId = 500; parent.Geometry = null; parent.BoundingBox = null;
+        var panel = Product(101, -2000170, "OST_CurtainWallPanels", null, null);
+        panel.SerializedCurtainHostId = 100;
+        var wallType = TypeElement(501, "Shared wall", "Basic Wall");
+        wallType.CategoryId = WallCategoryId; wallType.SerializedBasicWallTypeFunction = 1;
+        wallType.SerializedBasicWallTypeName = "Shared wall";
+        wallType.SerializedSystemTypeClassId = 512; wallType.SerializedExportId = exportId;
+        var wallPanel = Product(102, WallCategoryId, "OST_Walls", 501, null, centreX: 10);
+        wallPanel.SerializedCurtainHostId = 100;
+        wallPanel.TypeId = 501; wallPanel.SerializedSystemTypeId = 501;
+        var regularWall = Product(103, WallCategoryId, "OST_Walls", 501, null, centreX: 20);
+        regularWall.TypeId = 501; regularWall.SerializedSystemTypeId = 501;
+        Element[] elements = [curtainType, wallType, parent, panel, wallPanel];
+
+        string ifc = ExportToText(IfcProfile.Current, withRegularWall ? [.. elements, regularWall] : elements);
+
+        string expected = $"'{RvtIO.Ifc.IfcGuid.ToIfcGuid(exportId)}'";
+        var panelType = Assert.Single(EntityIds(ifc, "IFCCURTAINWALLTYPE")
+            .Select(id => EntityArgs(ifc, id, "IFCCURTAINWALLTYPE")), args => args[7] == "'501'");
+        if (!withRegularWall)
+        {
+            Assert.Equal(expected, panelType[0]);
+            return;
+        }
+        var basicType = Assert.Single(EntityIds(ifc, "IFCWALLTYPE")
+            .Select(id => EntityArgs(ifc, id, "IFCWALLTYPE")), args => args[7] == "'501'");
+        Assert.Equal(expected, basicType[0]);
+        Assert.NotEqual(expected, panelType[0]);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void CurtainPanelWall_KeepsItsLayerGroupApartFromHostsWithTheSameLayers(bool panelFirst)
+    {
+        var curtainType = TypeElement(500, "Curtain type", "Curtain family");
+        curtainType.CategoryId = WallCategoryId; curtainType.SerializedCurtainWallFunction = 1;
+        var parent = Product(100, WallCategoryId, "OST_Walls", 500, null);
+        parent.TypeId = 500; parent.Geometry = null; parent.BoundingBox = null;
+        var panel = Product(101, -2000170, "OST_CurtainWallPanels", null, null);
+        panel.SerializedCurtainHostId = 100;
+        var wallPanel = Product(102, WallCategoryId, "OST_Walls", null, null, centreX: 10);
+        wallPanel.SerializedCurtainHostId = 100;
+        var floor = Product(103, -2000032, "OST_Floors", null, null, centreX: 20);
+        static List<MaterialLayer> Layers() =>
+            [new MaterialLayer { LayerIndex = 0, MaterialId = 700, MaterialName = "Concrete", ThicknessMm = 200 }];
+        wallPanel.Layers = Layers(); floor.Layers = Layers();
+        Element[] hosts = panelFirst ? [wallPanel, floor] : [floor, wallPanel];
+
+        string ifc = ExportToText(IfcProfile.Current, [curtainType, parent, panel, .. hosts]);
+
+        Assert.Equal(".AXIS2.", LayerUsageDirection(ifc, SoleEntityIdForTag(ifc, "IFCCURTAINWALL", "102")));
+        Assert.Equal(".AXIS3.", LayerUsageDirection(ifc, SoleEntityIdForTag(ifc, "IFCSLAB", "103")));
+        // Nor may a panel join the walls: the first member of a group names and orients it.
+        var none = new Dictionary<int, Element>();
+        var counts = new Dictionary<int, int>();
+        Assert.NotEqual(IfcExporter.MaterialLayerSetGroupKey(wallPanel, "IFCWALL", none, counts),
+            IfcExporter.MaterialLayerSetGroupKey(wallPanel, "IFCCURTAINWALL", none, counts));
+    }
+
+    [Theory]
+    // In a curtain wall itself the area is height times width: 7 ft x 3 ft.
+    [InlineData(100, 21.0)]
+    // A wall standing as a panel is still a wall to its door: half of the 40 ft2 surface of the door.
+    [InlineData(102, 20.0)]
+    public void DoorArea_FollowsWhetherTheHostIsACurtainWallOrAPanelWall(int hostId, double squareFeet)
+    {
+        var curtainType = TypeElement(500, "Curtain type", "Curtain family");
+        curtainType.CategoryId = WallCategoryId; curtainType.SerializedCurtainWallFunction = 1;
+        var parent = Product(100, WallCategoryId, "OST_Walls", 500, null);
+        parent.TypeId = 500; parent.Geometry = null; parent.BoundingBox = null;
+        var panel = Product(101, -2000170, "OST_CurtainWallPanels", null, null);
+        panel.SerializedCurtainHostId = 100;
+        var wallPanel = Product(102, WallCategoryId, "OST_Walls", null, null, centreX: 10);
+        wallPanel.SerializedCurtainHostId = 100;
+        var door = Product(104, -2000023, "OST_Doors", null, null, centreX: 20);
+        door.SerializedHostId = hostId;
+        door.CoarseSurfaceArea = 40;
+        foreach (var (id, feet) in new[] { (-1001300, 7.0), (-1001301, 3.0) })
+            door.Parameters.Add(new Parameter
+            {
+                Id = id, StorageType = StorageType.Double, Value = feet,
+                Definition = new Definition { Id = id, Name = id == -1001300 ? "Height" : "Width" },
+            });
+
+        string ifc = ExportToText(IfcProfile.Current, curtainType, parent, panel, wallPanel, door);
+
+        int doorId = SoleEntityId(ifc, "IFCDOOR");
+        var definitions = EntityIds(ifc, "IFCRELDEFINESBYPROPERTIES")
+            .Select(id => EntityArgs(ifc, id, "IFCRELDEFINESBYPROPERTIES"))
+            .Where(args => args[4].Trim('(', ')').Split(',').Contains($"#{doorId}"))
+            .Select(args => int.Parse(args[5].TrimStart('#')));
+        int quantitySet = Assert.Single(definitions.Intersect(EntityIds(ifc, "IFCELEMENTQUANTITY")));
+        var members = EntityArgs(ifc, quantitySet, "IFCELEMENTQUANTITY")[5].Trim('(', ')').Split(',')
+            .Select(reference => int.Parse(reference.TrimStart('#')));
+        int areaId = Assert.Single(members.Intersect(EntityIds(ifc, "IFCQUANTITYAREA")));
+        double area = double.Parse(EntityArgs(ifc, areaId, "IFCQUANTITYAREA")[3],
+            System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Equal(squareFeet * 0.09290304, area, 6);
+    }
+
+    private static string LayerUsageDirection(string ifc, int productId)
+    {
+        var rel = Assert.Single(EntityIds(ifc, "IFCRELASSOCIATESMATERIAL")
+            .Select(id => EntityArgs(ifc, id, "IFCRELASSOCIATESMATERIAL")),
+            args => args[4].Trim('(', ')').Split(',').Contains($"#{productId}"));
+        return EntityArgs(ifc, int.Parse(rel[5].TrimStart('#')), "IFCMATERIALLAYERSETUSAGE")[1];
     }
 
     /// <summary>A 4 x 3 x 0.5 box roof: bottom and top as horizontal faces with a world-aligned plane frame.</summary>
