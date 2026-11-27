@@ -1,5 +1,7 @@
 using RvtIO.Ifc;
+using RvtIO.Meshes;
 using RvtIO.Model;
+using RvtIO.Parsing;
 using System.Text.RegularExpressions;
 using Xunit;
 
@@ -957,6 +959,76 @@ public class IfcExporterGeometrylessProductSuppressionTests
             ],
         }).ToList(),
     };
+
+    [Theory]
+    [InlineData(IfcProfile.Current)]
+    [InlineData(IfcProfile.Legacy)]
+    public void WallWithUnresolvedSymbolAndNoFaces_GetsNoSolid_IsNoGeometry_AndIsSuppressed(IfcProfile profile)
+    {
+        var wall = new Element
+        {
+            Id = 350,
+            TypeId = 351,
+            CategoryId = -2000011,
+            Category = "OST_Walls",
+            Name = "VoidInPlaceWall",
+            References = [3],
+            Parameters =
+            [
+                PhaseParameter(),
+                new Parameter { Id = -1002050, StorageType = StorageType.ElementId, Value = 351 },
+                new Parameter { Id = -1001000, Definition = new Definition { Name = "WALL_ATTR_WIDTH_PARAM" }, StorageType = StorageType.Double, Value = 1.0 },
+            ],
+            BoundingBox = [0, 0, 0, 10, 4, 8],
+            Geometry = new GeometryData
+            {
+                BoundingBox = [0, 0, 0, 10, 4, 8],
+                UnresolvedSymbol = true,
+                Instances =
+                [
+                    new GeoInstance
+                    {
+                        SymbolId = 351,
+                        Transform = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],
+                    },
+                ],
+            },
+        };
+        var symbol = new Element
+        {
+            Id = 351,
+            CategoryId = -2000011,
+            Category = "OST_Walls",
+            Name = "VoidInPlaceWall",
+            BoundingBox = [0, 0, 0, 10, 4, 8],
+        };
+        var info = new RevitFileInfo { Elements = [wall, symbol] };
+        ElementBuilder.ComputeWallSolids(info.Elements);
+
+        Assert.Null(wall.Geometry.Solids);
+
+        var mesh = Assert.Single(ElementMeshes.Extract(RvtDocument.FromInfo(info)).Elements);
+        Assert.Equal(wall.Id, mesh.ElementId);
+        Assert.Equal(MeshCoverage.NoGeometry, mesh.Coverage);
+
+        string path = TempIfcPath($"wall-unresolved-{profile}");
+        try
+        {
+            var diagnostics = new StringWriter();
+            var skipLog = new SkipLog();
+            new IfcExporter(diagnostics) { Profile = profile, SkipLog = skipLog }.Export(info, path);
+            string ifc = File.ReadAllText(path);
+
+            Assert.DoesNotContain("=IFCWALL(", ifc);
+            Assert.DoesNotContain("=IFCWALLSTANDARDCASE(", ifc);
+            Assert.DoesNotContain("=IFCEXTRUDEDAREASOLID(", ifc);
+            Assert.DoesNotContain("Pset_QuantityTakeOff", ifc);
+            Assert.Empty(Regex.Matches(ifc, @"#\d+=IFCRELCONTAINEDINSPATIALSTRUCTURE\("));
+            Assert.Contains(skipLog.Groups(), group => group.Reason == "geometryless-product" && group.Examples.Contains(wall.Id));
+            Assert.Contains("IFC geometry-less element products suppressed: 1 - IFCWALL=1", diagnostics.ToString());
+        }
+        finally { Cleanup(path); }
+    }
 
     private static string TempIfcPath(string tag) =>
         Path.Combine(Path.GetTempPath(), $"revitreader-{tag}-{Guid.NewGuid():N}.ifc");

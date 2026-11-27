@@ -8479,11 +8479,11 @@ internal static partial class ElementBuilder
     /// Compute extruded solid geometry for wall elements. Uses world-coordinate GRep face data when
     /// available (the largest vertical face gives wall direction, position, length, and height).
     /// </summary>
-    private static void ComputeWallSolids(List<Element> elements)
+    internal static void ComputeWallSolids(List<Element> elements)
     {
         foreach (var elem in elements)
         {
-            if (elem.Category != "OST_Walls") continue;
+            if (elem.Category != "OST_Walls" || ProductRules.IsGeometrylessUnresolvedWall(elem)) continue;
 
             double[]? bbox = elem.BoundingBox ?? elem.Geometry?.BoundingBox;
             if (bbox == null || bbox.Length < 6) continue;

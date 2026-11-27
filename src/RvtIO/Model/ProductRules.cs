@@ -95,6 +95,12 @@ internal static class ProductRules
         && type.Id == element.FamilyTypeId && type.CategoryId == -2003500
         && type.IsSerializedStackedWallType;
 
+    /// <summary>A wall whose own geometry carries no decoded faces or BRep solids, no location curve, and only an unresolved or unexpanded symbol placement.</summary>
+    internal static bool IsGeometrylessUnresolvedWall(Element element) =>
+        element.Location is not { CurveType: "Line" or "Arc" }
+        && element.Geometry is { Faces.Count: 0, BrepSolids: not { Count: > 0 } } geometry
+        && (geometry.UnresolvedSymbol || geometry.Instances is { Count: > 0 });
+
     /// <summary>The last project phase of the authored phase order that is a phase element of the document, null when there is none.</summary>
     internal static int? LastProjectPhase(RevitFileInfo info)
     {
