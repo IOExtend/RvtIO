@@ -6679,8 +6679,9 @@ internal static partial class ElementBuilder
         AddViewAndDatumDefaults(rvtInfo);
         AddCurtainQuantities(rvtInfo);
         EnrichTypeLevelBips(rvtInfo, state, elemByIdLookup);
-        // Detached quantity geometry reads final categories and GRep, independently of parameter propagation.
-        var quantities = state != null && SymbolDiagPath == null && !GRepParserV2.IsDecodeTracingEnabled()
+        // Detached quantity geometry can run beside parameter propagation on runtimes with background threads.
+        var quantities = state != null && !OperatingSystem.IsBrowser()
+            && SymbolDiagPath == null && !GRepParserV2.IsDecodeTracingEnabled()
             && Environment.GetEnvironmentVariable("RVTIO_MESH_LOG") != "1"
             && Environment.GetEnvironmentVariable("RVTIO_TRACE_ID") == null
             && !TfBlockDeserializer.CaptureAllFields
