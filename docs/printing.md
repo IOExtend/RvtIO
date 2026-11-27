@@ -821,10 +821,15 @@ missing geometry in most places:
   the reference does not carry (recall +0.01% with precision −1.08% for the boundary, recall +0.1% with
   precision −1.2% for breaks above 60°). The remaining gap is the reference's own resampled raster: the
   anti-aliased edge of its 3D model, the model's stipple and tonal shading, and thin annotation lines.
-- On A103 one block at the lower left (0% recall) is a small hatched site element, about 14 mm wide on paper,
-  that the reference draws in the section and we omit. Exempting the furniture, casework, speciality and
-  foundation categories from the section's placed-site filter did not bring it back (page recall unchanged,
-  precision −0.2%), so it is not one of those categories.
+- On A103 one block at the lower left (0% recall) is the topography's cut cap: a 13 m × 0.21 m section polygon
+  at the section plane (world X −13.6…−12.3 m, Y −2.18 m, Z 0.83…1.04 m), drawn by us as an unhatched face while
+  the reference fills it with a fine hatch. Its pitch does not match any decoded cut pattern (the site cut pattern
+  is a 6.35 mm brick, the concrete cut pattern 6–11 mm, both sub-pixel at 1:100), so the pattern itself is still
+  undecoded. The larger A103 gaps sit in the South elevation, where the guardrail's horizontal bars are decoded
+  (five rails at 100 mm pitch, view depth −18200) but the occlusion pass drops them behind the railing's own
+  nearer faces. Exempting railing edges from occlusion by the same element, or by railing categories at all,
+  restores some bars but costs more than it gains: A104 precision 95.6% → 93.3%, A105 93.6% → 93.1%, A103
+  93.4% → 93.2% for +0.1…+0.3% recall. The occlusion therefore stays.
 
 
 | Sheet | Printed | Still different |
