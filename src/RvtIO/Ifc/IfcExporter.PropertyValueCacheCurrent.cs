@@ -56,7 +56,7 @@ public partial class IfcExporter
             else if (type == "IFCPROPERTYSET") setIndexes.Add(i);
         }
 
-        var pooled = new Dictionary<(string Name, string Value), int>();
+        var pooled = new Dictionary<(string Name, string Description, string Value), int>();
         var taken = new HashSet<int>();
         var dropped = new HashSet<int>();
         foreach (int setIndex in setIndexes)
@@ -78,9 +78,9 @@ public partial class IfcExporter
                 int target = valueId;
                 if (value.Length != 4 || CachesPropertyValueCurrent(value[2]))
                 {
-                    if (value.Length == 4 && !pooled.TryAdd((value[0], value[2]), valueId))
+                    if (value.Length == 4 && !pooled.TryAdd((value[0], value[1], value[2]), valueId))
                     {
-                        target = pooled[(value[0], value[2])];
+                        target = pooled[(value[0], value[1], value[2])];
                         if (target != valueId) dropped.Add(valueId);
                     }
                 }

@@ -254,6 +254,21 @@ public class IfcExportConfigurationTests
         Assert.Contains(section, error.Message);
     }
 
+    [Theory]
+    [InlineData("--ifc-revit-parameter-units", "ifc")]
+    [InlineData("--ifc-revit-parameter-names", "display")]
+    public void Cli_RevitParameterOptionsImplyRevitPropertySetsWithAConfigurationFile(string option, string value)
+    {
+        using var temp = new ConfigurationTestDirectory();
+        string source = Path.Combine(temp.Path, "input.json");
+        string saved = Path.Combine(temp.Path, "saved.json");
+        File.WriteAllText(source, "{}");
+
+        Assert.Equal(0, Program.Main(["--ifc-config", source, option, value, "--ifc-save-config", saved]));
+
+        Assert.True(IfcExportConfiguration.FromJson(File.ReadAllText(saved)).Resolve().ExportRevitPropertySets);
+    }
+
     [Fact]
     public void Cli_SaveConfigurationRejectsCollidingPaths()
     {

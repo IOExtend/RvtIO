@@ -28,6 +28,13 @@ internal static partial class Program
           --ifc-profile <legacy|current>    IFC output profile (default: current)
           --ifc-revit-parameters            write the Revit parameters as IFC property sets
           --ifc-revit-parameter-groups      write them as one property set per parameter group (implies --ifc-revit-parameters)
+          --ifc-revit-parameter-units <ifc|internal>
+                                            unit system for Revit parameters: ifc (IFC length/area/volume/angle units and SI
+                                            units for other physical specs; implies --ifc-revit-parameters) or internal (default)
+          --ifc-revit-parameter-names <display|builtin>
+                                            property naming for Revit parameters: display (display names with BuiltInParameter
+                                            in Description, user parameter names instead of IDs; implies --ifc-revit-parameters)
+                                            or builtin (default)
           --ifc-no-base-quantities          leave out the base quantity sets
           --ifc-opening-legacy-axes         name the sides of the opening of a door or window by the frame they are measured in (Height
                                             along the wall, Width vertical), as earlier releases did; by default the opening has the Width
@@ -131,6 +138,8 @@ internal static partial class Program
         RvtIO.Cli.IfcConfigurationOptions.PresetOption,
         RvtIO.Cli.IfcConfigurationOptions.ConfigOption,
         RvtIO.Cli.IfcConfigurationOptions.SaveConfigOption,
+        RvtIO.Cli.IfcConfigurationOptions.RevitParameterUnitsOption,
+        RvtIO.Cli.IfcConfigurationOptions.RevitParameterNamesOption,
         RvtIO.Cli.IfcLengthUnitOption.Name, RvtIO.Cli.IfcTimestampOption.Name, "--json-class-prefix", "--revit-localization", "--inspect", "--diag-dump", "--find-str",
         "--sketch-owner-dump", "--dev-external-dump", "--dev-external-dump-prefix", "--dev-candidates", "--dev-trace", "--dev-facts",
         "--dev-fact-names", "--dev-user-params", "--dev-collisions", "--dev-solids", "--dev-native", "--class-census", "--episode-check",
@@ -388,9 +397,9 @@ internal static partial class Program
             Console.Error.WriteLine("--ifc-length-unit requires IFC output.");
             return 1;
         }
-        if ((cliIfcOptions.Schema.HasValue || cliIfcOptions.ModelView.HasValue || cliIfcOptions.Preset.HasValue || cliIfcOptions.ConfigPath != null || cliIfcOptions.NoSpaces) && !hasIfcOutput && cliIfcOptions.SaveConfigPath == null)
+        if ((cliIfcOptions.Schema.HasValue || cliIfcOptions.ModelView.HasValue || cliIfcOptions.Preset.HasValue || cliIfcOptions.ConfigPath != null || cliIfcOptions.NoSpaces || cliIfcOptions.RevitParameterUnits.HasValue || cliIfcOptions.RevitParameterNames.HasValue) && !hasIfcOutput && cliIfcOptions.SaveConfigPath == null)
         {
-            Console.Error.WriteLine("IFC schema, model view, preset, config, and space options require IFC output.");
+            Console.Error.WriteLine("IFC schema, model view, preset, config, Revit parameter formatting, and space options require IFC output.");
             return 1;
         }
 

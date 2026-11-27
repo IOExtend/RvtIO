@@ -83,6 +83,26 @@ public enum IfcRoomPhaseScope
     SpecificPhase,
 }
 
+/// <summary>Unit system used when exporting Revit parameters to IFC property sets.</summary>
+public enum IfcRevitParameterUnits
+{
+    /// <summary>Preserve Revit internal values as raw reals (feet, radians, etc.).</summary>
+    Internal,
+
+    /// <summary>Convert length, area, volume, and angle parameters to the IFC file units, and other physical spec types to SI units.</summary>
+    Ifc,
+}
+
+/// <summary>Property naming convention used when exporting Revit parameters to IFC property sets.</summary>
+public enum IfcRevitParameterNames
+{
+    /// <summary>Use the built-in parameter enum name or stored definition name.</summary>
+    BuiltIn,
+
+    /// <summary>Use each parameter's display name (and place the built-in name in <c>Description</c>).</summary>
+    Display,
+}
+
 /// <summary>Coordinate frame used for opening <c>Width</c> and <c>Height</c> base quantities.</summary>
 public enum IfcOpeningQuantityFrame
 {
@@ -282,6 +302,12 @@ public sealed record IfcPropertySetConfiguration
     /// <summary>Group Revit parameters into one property set per Revit parameter group (implies <see cref="ExportRevitPropertySets"/>).</summary>
     public bool? GroupRevitParametersByGroup { get; init; }
 
+    /// <summary>Unit system used when exporting Revit parameters (<c>Internal</c> or <c>Ifc</c>).</summary>
+    public IfcRevitParameterUnits? RevitParameterUnits { get; init; }
+
+    /// <summary>Property naming convention used when exporting Revit parameters (<c>BuiltIn</c> or <c>Display</c>).</summary>
+    public IfcRevitParameterNames? RevitParameterNames { get; init; }
+
     /// <summary>Export Revit schedules as custom property sets (not implemented; must remain null/false).</summary>
     public bool? ExportSchedulesAsPropertySets { get; init; }
 }
@@ -359,6 +385,8 @@ public sealed record IfcExportConfiguration
         options.Converters.Add(new FlexibleEnumJsonConverter<IfcExportPresetKind>(IfcExportOptionParser.TryParsePreset, IfcExportOptionParser.FormatPreset));
         options.Converters.Add(new FlexibleEnumJsonConverter<IfcUnitFamily>(IfcExportOptionParser.TryParseUnitFamily, IfcExportOptionParser.FormatUnitFamily));
         options.Converters.Add(new FlexibleEnumJsonConverter<IfcProfile>(IfcExportOptionParser.TryParseProfile, IfcExportOptionParser.FormatProfile));
+        options.Converters.Add(new FlexibleEnumJsonConverter<IfcRevitParameterUnits>(IfcExportOptionParser.TryParseRevitParameterUnits, IfcExportOptionParser.FormatRevitParameterUnits));
+        options.Converters.Add(new FlexibleEnumJsonConverter<IfcRevitParameterNames>(IfcExportOptionParser.TryParseRevitParameterNames, IfcExportOptionParser.FormatRevitParameterNames));
         options.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false));
         return options;
     }
@@ -561,6 +589,8 @@ public sealed record IfcExportConfiguration
                 ExportIfcCommonPropertySets = overrides.PropertySets.ExportIfcCommonPropertySets ?? PropertySets.ExportIfcCommonPropertySets,
                 ExportRevitPropertySets = overrides.PropertySets.ExportRevitPropertySets ?? PropertySets.ExportRevitPropertySets,
                 GroupRevitParametersByGroup = overrides.PropertySets.GroupRevitParametersByGroup ?? PropertySets.GroupRevitParametersByGroup,
+                RevitParameterUnits = overrides.PropertySets.RevitParameterUnits ?? PropertySets.RevitParameterUnits,
+                RevitParameterNames = overrides.PropertySets.RevitParameterNames ?? PropertySets.RevitParameterNames,
                 ExportSchedulesAsPropertySets = overrides.PropertySets.ExportSchedulesAsPropertySets ?? PropertySets.ExportSchedulesAsPropertySets,
             },
             Mappings = new IfcMappingConfiguration
@@ -692,6 +722,16 @@ public sealed record IfcExportConfiguration
         ValidatePhase(effective.Phases, diagnostics);
         ValidateUnsupportedFlags(effective, diagnostics);
 
+        if (effective.PropertySets.RevitParameterUnits is { } paramUnits && !Enum.IsDefined(paramUnits))
+            diagnostics.Add(new IfcConfigurationDiagnostic(
+                "invalid-revit-parameter-units", IfcConfigurationDiagnosticSeverity.Error, "propertySets.revitParameterUnits",
+                $"Unsupported Revit parameter units '{paramUnits}'. Supported values: Internal, Ifc."));
+
+        if (effective.PropertySets.RevitParameterNames is { } paramNames && !Enum.IsDefined(paramNames))
+            diagnostics.Add(new IfcConfigurationDiagnostic(
+                "invalid-revit-parameter-names", IfcConfigurationDiagnosticSeverity.Error, "propertySets.revitParameterNames",
+                $"Unsupported Revit parameter naming '{paramNames}'. Supported values: BuiltIn, Display."));
+
         bool revitGroups = effective.PropertySets.GroupRevitParametersByGroup ?? false;
         bool revitPsets = (effective.PropertySets.ExportRevitPropertySets ?? false) || revitGroups;
 
@@ -718,6 +758,8 @@ public sealed record IfcExportConfiguration
             ExportIfcCommonPropertySets = effective.PropertySets.ExportIfcCommonPropertySets ?? true,
             ExportRevitPropertySets = revitPsets,
             RevitParameterGroups = revitGroups,
+            RevitParameterUnits = effective.PropertySets.RevitParameterUnits,
+            RevitParameterNames = effective.PropertySets.RevitParameterNames,
             RespectExportToIfcParameter = effective.Scope.RespectExportToIfcParameter ?? true,
             UseRevitIfcExportAsParameters = effective.Mappings.UseRevitIfcExportAsParameters ?? true,
             Diagnostics = diagnostics,
@@ -860,6 +902,10 @@ public sealed record ResolvedIfcExportConfiguration
     public bool ExportRevitPropertySets { get; init; }
     /// <summary>True when Revit parameter property sets are grouped per Revit parameter group.</summary>
     public bool RevitParameterGroups { get; init; }
+    /// <summary>Unit conversion mode for exported Revit parameters (<c>null</c> keeps mode default).</summary>
+    public IfcRevitParameterUnits? RevitParameterUnits { get; init; }
+    /// <summary>Property naming mode for exported Revit parameters (<c>null</c> keeps mode default).</summary>
+    public IfcRevitParameterNames? RevitParameterNames { get; init; }
     /// <summary>True when the <c>Export to IFC</c> parameter filters elements.</summary>
     public bool RespectExportToIfcParameter { get; init; }
     /// <summary>True when <c>IfcExportAs</c>/<c>IfcExportType</c> parameters override category mappings.</summary>
@@ -929,6 +975,12 @@ public static class IfcExportCapabilities
             "true, false", "false", "Exports Revit instance and type parameters in IfcPropertySet entities."),
         new("propertySets.groupRevitParametersByGroup", "Property Sets", "Group Revit Parameters", IfcCapabilitySupportStatus.Supported,
             "true, false", "false", "Splits Revit parameters into one IfcPropertySet per parameter group (implies exportRevitPropertySets)."),
+        new("propertySets.revitParameterUnits", "Property Sets", "Revit Parameter Units", IfcCapabilitySupportStatus.Supported,
+            "internal, ifc", "internal (legacy/untyped) / length-area-volume-angle in grouped mode",
+            "Converts length, area, volume, and angle to IFC file units and other known physical specs to SI units when set to ifc."),
+        new("propertySets.revitParameterNames", "Property Sets", "Revit Parameter Names", IfcCapabilitySupportStatus.Supported,
+            "builtin, display", "builtin (or display in grouped mode)",
+            "Uses display names as property names (preserving BuiltInParameter in Description) and resolves user parameter names when set to display."),
         new("propertySets.exportSchedulesAsPropertySets", "Property Sets", "Revit Schedules as Psets", IfcCapabilitySupportStatus.Unsupported,
             "false (default)", "false", "Schedule-to-Pset export is not implemented; true fails validation."),
         new("mappings.useRevitIfcExportAsParameters", "Mappings", "IfcExportAs / IfcExportType", IfcCapabilitySupportStatus.Supported,
@@ -1122,6 +1174,52 @@ internal static class IfcExportOptionParser
         IfcUnitFamily.Metre => "m",
         IfcUnitFamily.Foot => "ft",
         _ => unit.ToString(),
+    };
+
+    public static bool TryParseRevitParameterUnits(string? text, out IfcRevitParameterUnits units)
+    {
+        switch (text?.Trim().ToLowerInvariant())
+        {
+            case "internal":
+                units = IfcRevitParameterUnits.Internal;
+                return true;
+            case "ifc":
+                units = IfcRevitParameterUnits.Ifc;
+                return true;
+            default:
+                units = default;
+                return false;
+        }
+    }
+
+    public static string FormatRevitParameterUnits(IfcRevitParameterUnits units) => units switch
+    {
+        IfcRevitParameterUnits.Internal => "internal",
+        IfcRevitParameterUnits.Ifc => "ifc",
+        _ => units.ToString(),
+    };
+
+    public static bool TryParseRevitParameterNames(string? text, out IfcRevitParameterNames names)
+    {
+        switch (text?.Trim().ToLowerInvariant().Replace("-", ""))
+        {
+            case "builtin":
+                names = IfcRevitParameterNames.BuiltIn;
+                return true;
+            case "display":
+                names = IfcRevitParameterNames.Display;
+                return true;
+            default:
+                names = default;
+                return false;
+        }
+    }
+
+    public static string FormatRevitParameterNames(IfcRevitParameterNames names) => names switch
+    {
+        IfcRevitParameterNames.BuiltIn => "builtin",
+        IfcRevitParameterNames.Display => "display",
+        _ => names.ToString(),
     };
 }
 
