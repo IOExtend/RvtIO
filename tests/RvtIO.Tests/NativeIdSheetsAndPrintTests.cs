@@ -16,6 +16,7 @@ public class NativeIdSheetsAndPrintTests
     private const long WideLevelNativeId = 5_000_000_103L;
     private const long WidePlanViewNativeId = 5_000_000_104L;
     private const long WideElevationViewNativeId = 5_000_000_105L;
+    private const long WideSheetCurveNativeId = 5_000_000_106L;
 
     private static RevitFileInfo BuildWideSyntheticProject()
     {
@@ -49,11 +50,17 @@ public class NativeIdSheetsAndPrintTests
                 BipHelpers.MakeBipParam((int)BuiltInParameter.SHEET_NUMBER, "SHEET_NUMBER", StorageType.String, "A101"),
                 BipHelpers.MakeBipParam((int)BuiltInParameter.SHEET_NAME, "SHEET_NAME", StorageType.String, "Ground Plan"),
                 BipHelpers.MakeBipParam((int)BuiltInParameter.VIEW_SCALE, "VIEW_SCALE", StorageType.Integer, 100),
+                new Parameter
+                {
+                    Id = 1000, Definition = new Definition { Id = 1000, Name = "Zone" },
+                    StorageType = StorageType.String, Value = "North wing",
+                },
             ],
         };
         var wideSheetCurve = new Element
         {
             Id = 211,
+            NativeId = WideSheetCurveNativeId,
             SerializedOwnerDbViewId = 201,
             Location = new LocationCurve { CurveType = "Line", StartPoint = [0, 0, 0], EndPoint = [1.0, 1.0, 0] },
         };
@@ -141,6 +148,10 @@ public class NativeIdSheetsAndPrintTests
         Assert.Equal(201, vp.SheetId);
         Assert.Equal("5000000101", vp.SourceSheetId);
 
+        // Owned elements of a sheet map back to Revit too; only the renumbered ones are listed.
+        Assert.Null(normal.OwnedElementSourceIds);
+        Assert.Equal("5000000106", Assert.Single(wide.OwnedElementSourceIds!, pair => pair.Key == 211).Value);
+
         string json = SheetsCommand.ToJson(catalog);
         using var parsed = JsonDocument.Parse(json);
         var jsonSheets = parsed.RootElement.GetProperty("Sheets").EnumerateArray().ToList();
@@ -148,15 +159,39 @@ public class NativeIdSheetsAndPrintTests
         Assert.Equal(JsonValueKind.String, jsonSheets[1].GetProperty("SourceElementId").ValueKind);
         Assert.Equal("5000000101", jsonSheets[1].GetProperty("SourceElementId").GetString());
 
+        Assert.False(jsonSheets[0].TryGetProperty("OwnedElementSourceIds", out _));
+        Assert.Equal("5000000106", jsonSheets[1].GetProperty("OwnedElementSourceIds").GetProperty("211").GetString());
+
         var jsonVp = parsed.RootElement.GetProperty("Viewports").EnumerateArray().Single();
         Assert.Equal("5000000102", jsonVp.GetProperty("SourceElementId").GetString());
         Assert.Equal("5000000101", jsonVp.GetProperty("SourceSheetId").GetString());
 
         string csv = SheetsCommand.ToCsv(catalog);
         string[] lines = csv.Split(Environment.NewLine);
-        Assert.Equal("ElementId,Number,Name,IssueDate,Scale,DrawnBy,DesignedBy,CheckedBy,ApprovedBy,SourceElementId", lines[0]);
-        Assert.Equal("10,A100,Cover,,100,,,,,", lines[1]);
-        Assert.Equal("201,A101,Ground Plan,,100,,,,,5000000101", lines[2]);
+        // The new column is last, so the position of every earlier column is unchanged.
+        Assert.Equal("ElementId,Number,Name,IssueDate,Scale,DrawnBy,DesignedBy,CheckedBy,ApprovedBy,Zone,SourceElementId", lines[0]);
+        Assert.Equal("10,A100,Cover,,100,,,,,,", lines[1]);
+        Assert.Equal("201,A101,Ground Plan,,100,,,,,North wing,5000000101", lines[2]);
+    }
+
+    [Fact]
+    public void PrintRecords_OmitTheSourceIdFromJson_WhenTheIdWasNotRenumbered()
+    {
+        // ComposedSheet is left out: its PdfPageSize.Landscape makes System.Text.Json report a cycle.
+        object[] unchanged =
+        [
+            new PlanLevel(1, "Level 1", 0), new PlanView(2, "Level 1", 1, 100), new ElevationView(3, "North", "north", 100),
+            new PrintableSheet(4, "A1", "Cover", 1, 1, 1, 0),
+        ];
+
+        foreach (object record in unchanged)
+        {
+            string json = JsonSerializer.Serialize(record, record.GetType());
+            Assert.DoesNotContain("SourceElementId", json);
+            Assert.DoesNotContain("SourceLevelId", json);
+        }
+        Assert.Contains("\"SourceLevelId\":\"5000000103\"",
+            JsonSerializer.Serialize(new PlanView(2, "Level 1", 1, 100) { SourceLevelId = "5000000103" }));
     }
 
     [Fact]
@@ -206,7 +241,7 @@ public class NativeIdSheetsAndPrintTests
         var viewsErr = new StringWriter();
         PrintCommand.WriteListedViews(document, planViews, elevations, viewsOut, viewsErr);
         string viewLines = viewsOut.ToString();
-        Assert.Contains("204\tLevel 1\t1:100\tlevel 203 (source=5000000103)\tplan\tsource=5000000104", viewLines);
+        Assert.Contains("204\tLevel 1\t1:100\tlevel 203\tplan\tsource=5000000104\tlevel-source=5000000103", viewLines);
         Assert.Contains("205\tNorth\t1:100\tnorth\televation\tsource=5000000105", viewLines);
 
         // Selectors accept local 32-bit key, wide 64-bit native ID, explicit prefixes, and numbers/names.

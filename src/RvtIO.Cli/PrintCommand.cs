@@ -354,11 +354,10 @@ internal static class PrintCommand
     {
         foreach (PlanView view in views)
         {
-            string levelLabel = view.SourceLevelId is { } srcLvl
-                ? $"level {view.LevelId} (source={srcLvl})"
-                : $"level {view.LevelId}";
+            // New fields go after the existing ones, which keep their text.
+            string levelSuffix = view.SourceLevelId is { } sourceLevelId ? $"\tlevel-source={sourceLevelId}" : "";
             string sourceSuffix = view.SourceElementId is { } sourceId ? $"\tsource={sourceId}" : "";
-            output.WriteLine($"{view.ViewId}\t{view.Name}\t1:{view.Scale}\t{levelLabel}\tplan{sourceSuffix}");
+            output.WriteLine($"{view.ViewId}\t{view.Name}\t1:{view.Scale}\tlevel {view.LevelId}\tplan{sourceSuffix}{levelSuffix}");
         }
         foreach (ElevationView view in elevations)
         {

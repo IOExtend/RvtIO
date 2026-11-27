@@ -105,12 +105,16 @@ public sealed class SheetCatalog
         foreach (var sheet in sheetElements) sheetIds.Add(sheet.Id);
 
         var owned = new Dictionary<int, List<int>>();
+        var ownedSourceIds = new Dictionary<int, Dictionary<int, string>>();
         foreach (var element in info.Elements)
         {
             if (!Compact.CompactUniverse.IsTableRow(element, info.ElemTableIsExact)) continue;
             if (element.OwnerViewId is not int owner || !sheetIds.Contains(owner) || owner == element.Id) continue;
             if (!owned.TryGetValue(owner, out var ids)) owned[owner] = ids = new List<int>();
             ids.Add(element.Id);
+            if (SourceIdText(info, element.Id, element) is not { } sourceId) continue;
+            if (!ownedSourceIds.TryGetValue(owner, out var sources)) ownedSourceIds[owner] = sources = new Dictionary<int, string>();
+            sources[element.Id] = sourceId;
         }
 
         var viewports = new List<ViewportRecord>();
@@ -159,7 +163,8 @@ public sealed class SheetCatalog
                 Ordered(owned, element.Id),
                 parameters,
                 yesNo,
-                sheetSourceIds.GetValueOrDefault(element.Id)));
+                sheetSourceIds.GetValueOrDefault(element.Id),
+                ownedSourceIds.GetValueOrDefault(element.Id)));
         }
 
         return new SheetCatalog(sheets, viewports);

@@ -194,7 +194,7 @@ internal static class SheetsCommand
         var lines = new List<string>
         {
             string.Join(",", new[] { "ElementId", "Number", "Name", "IssueDate", "Scale", "DrawnBy",
-                "DesignedBy", "CheckedBy", "ApprovedBy", "SourceElementId" }.Concat(extra).Select(EscapeCsv)),
+                "DesignedBy", "CheckedBy", "ApprovedBy" }.Concat(extra).Append("SourceElementId").Select(EscapeCsv)),
         };
         foreach (var sheet in catalog.Sheets)
         {
@@ -202,10 +202,10 @@ internal static class SheetsCommand
             {
                 sheet.ElementId.ToString(), sheet.Number, sheet.Name, sheet.IssueDate,
                 sheet.Scale?.ToString(), sheet.DrawnBy, sheet.DesignedBy, sheet.CheckedBy, sheet.ApprovedBy,
-                sheet.SourceElementId,
             };
             foreach (string key in extra)
                 fields.Add(sheet.Parameters.TryGetValue(key, out var value) ? value : null);
+            fields.Add(sheet.SourceElementId);
             lines.Add(string.Join(",", fields.Select(EscapeCsv)));
         }
         return string.Join(Environment.NewLine, lines);

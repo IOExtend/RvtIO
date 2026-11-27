@@ -21,7 +21,8 @@ public sealed class SheetRecord
         IReadOnlyList<int> ownedElementIds,
         IReadOnlyDictionary<string, string>? parameters = null,
         IReadOnlyCollection<string>? yesNoParameters = null,
-        string? sourceElementId = null)
+        string? sourceElementId = null,
+        IReadOnlyDictionary<int, string>? ownedElementSourceIds = null)
     {
         ElementId = elementId;
         Number = number;
@@ -39,6 +40,7 @@ public sealed class SheetRecord
         // array or list of Yes/No names must not turn case-sensitive here.
         YesNoParameters = new HashSet<string>(yesNoParameters ?? [], StringComparer.OrdinalIgnoreCase);
         SourceElementId = sourceElementId;
+        OwnedElementSourceIds = ownedElementSourceIds;
     }
 
     /// <summary>The document-local element id of the sheet.</summary>
@@ -82,6 +84,11 @@ public sealed class SheetRecord
     /// view-specific graphics and other content placed on the sheet), ascending. Empty when the file decoded no owner
     /// view for its content.</summary>
     public IReadOnlyList<int> OwnedElementIds { get; }
+
+    /// <summary>The original 64-bit Revit element ID, as lossless decimal text, of each entry of
+    /// <see cref="OwnedElementIds"/> that the file renumbered, keyed by the document-local id; null when none was.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyDictionary<int, string>? OwnedElementSourceIds { get; }
 
     /// <summary>The sheet's project and shared parameters as display strings, keyed by display name
     /// (the <c>Definition.Name</c> Revit shows). Only text and whole numbers are included; numbers with

@@ -40,6 +40,7 @@ public sealed record ComposedSheet(int SheetId, string? Number, string? Name, Pd
     int TextCount)
 {
     /// <summary>Lossless decimal native 64-bit Revit element ID when the file renumbered it to fit <see cref="SheetId"/>; null when unchanged.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string? SourceElementId { get; init; }
 }
 

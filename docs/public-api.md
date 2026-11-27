@@ -159,8 +159,8 @@ No compact JSON override is implemented.
 | Type | Use |
 |---|---|
 | `SheetCatalog` | `Extract(document)` (or a `RevitFileInfo`) returns the sheets of the file, the viewports placed on them and the limits of this release: `Sheets`, `Viewports` and `Issues`. Nothing is read from the file again. |
-| `SheetRecord` | A sheet: `ElementId`, `Number`, `Name`, `IssueDate`, `Scale`, `DrawnBy`, `DesignedBy`, `CheckedBy`, `ApprovedBy`, `ViewportIds`, `OwnedElementIds`, `Parameters` (text/whole-number project/shared params; Yes/No params read as `Yes`/`No`) and `YesNoParameters` (their names). |
-| `ViewportRecord` | A placed view: `ElementId`, `SheetId` and `DetailNumber`; `DisplayedViewId` is null until the viewer element is decoded. |
+| `SheetRecord` | A sheet: `ElementId`, `SourceElementId`, `OwnedElementSourceIds`, `Number`, `Name`, `IssueDate`, `Scale`, `DrawnBy`, `DesignedBy`, `CheckedBy`, `ApprovedBy`, `ViewportIds`, `OwnedElementIds`, `Parameters` (text/whole-number project/shared params; Yes/No params read as `Yes`/`No`) and `YesNoParameters` (their names). |
+| `ViewportRecord` | A placed view: `ElementId`, `SourceElementId`, `SheetId`, `SourceSheetId` and `DetailNumber`; `DisplayedViewId` is null until the viewer element is decoded. |
 | `SheetIssue`, `SheetIssueKind` | What this release does not decode: page size, view placement, displayed view, view content and crop region. |
 | `SheetFilter` | A `--where` filter (`NAME=VALUE`, `!=`, `~`, `*`/`?` wildcards; `true`/`false`/`1`/`0` aliases apply only to Yes/No params); `SheetCatalog.FromFiltered` keeps matching sheets. |
 
@@ -172,16 +172,16 @@ See [sheets and viewports](sheets.md) for what is decoded, what the limits are a
 |---|---|
 | `PlanPrinter` | `Levels(document)` lists the printable levels. `Render(document, levelId, scale, options)` returns a `PdfDocument` with the plan of one level, including walls with their stored width, column footprints, and clipped grids. `RenderSvg(document, ...)` returns the same level plan as SVG text. `WriteSvg(document, output, ...)` writes it as UTF-8 to a stream. |
 | `PlanPrintOptions` | `PaperSize` (null picks the smallest paper that holds the drawing), `MarginMillimetres`, `FallbackWallWidthMillimetres`, `DrawFrame`. |
-| `PlanLevel`, `PlanView` | A printable level (id, name, elevation) and a printable plan view (id, name, level, scale). |
+| `PlanLevel`, `PlanView` | A printable level (id, name, elevation) and a printable plan view (id, name, level, scale); `SourceElementId` and `PlanView.SourceLevelId` hold renumbered 64-bit Revit ids. |
 | `ViewPrinter` | `Render(document, viewIds, options)` prints views into one PDF document, one page per view: a plan, an elevation or a section (`PlanPrinter.Views`, `ElevationPrinter.Views`), a 3D view (an isometric massing page) and a rendering (its image page). `OtherViews(document)` lists the 3D views and the renderings. |
 | `ElevationPrinter` | `Views(document)` lists the elevations and the building sections (North, South, East, West, Section, Stair Section) with their scale; `Collect(document, direction, stairsOnly, planeView)` projects the model faces on the plane of the view when the reader decoded it (a section is cut at that plane: the geometry in front of it is removed and the crossing polygons are clipped) or on the plane of the direction taken from the name; a stair section projects the stairs alone. `DrawContent` writes them. |
-| `ElevationView` | An elevation view: id, name, direction (north, south, east, west, section, iso) and scale. |
+| `ElevationView` | An elevation view: id, name, direction (north, south, east, west, section, iso), scale and `SourceElementId`. |
 | `SheetComposer` | `Sheets(document)` lists the numbered sheets with the page their title block spans; `Render(document, sheetId, options)` and `RenderSheets` compose pages: each placed viewport draws its plan at the stored offset and view scale, labelled with the view name and scale, and the sheet's own text notes are written. |
 | `SheetComposeOptions` | `PaperSize` (null takes the title block extent, snapped to A4-A0), `DrawViewLabels`, `ViewMarginMillimetres`. |
-| `ComposedSheet` | A composed sheet: id, number, name, page, placed viewport count, text count. |
+| `ComposedSheet` | A composed sheet: id, number, name, page, placed viewport count, text count and `SourceElementId`. |
 | `SheetPrinter` | `Sheets(document)` lists the sheets with page-sized decoded linework; `Render(document, sheetId, options)` and `RenderSheets` print one page per sheet from the lines the sheet owns, on the paper the linework spans. |
 | `SheetPrintOptions` | `PaperSize` (null uses the linework extent, snapped to A4-A0), `MarginMillimetres`, `PaperToleranceMillimetres`, `DrawSheetFields`. |
-| `PrintableSheet` | A printable sheet: id, number, name, linework extent, curve and text counts. |
+| `PrintableSheet` | A printable sheet: id, number, name, linework extent, curve and text counts, and `SourceElementId`. |
 
 See [printing a plan](printing.md) for what is drawn, what is not, and the roadmap to sheet printing.
 

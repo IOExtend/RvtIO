@@ -28,6 +28,7 @@ public sealed class PlanPrintOptions
 public sealed record PlanLevel(int LevelId, string? Name, double? ElevationFeet)
 {
     /// <summary>Lossless decimal native 64-bit Revit element ID when the file renumbered it to fit <see cref="LevelId"/>; null when unchanged.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string? SourceElementId { get; init; }
 }
 
@@ -40,9 +41,11 @@ public sealed record PlanLevel(int LevelId, string? Name, double? ElevationFeet)
 public sealed record PlanView(int ViewId, string Name, int LevelId, int Scale)
 {
     /// <summary>Lossless decimal native 64-bit Revit element ID when the file renumbered it to fit <see cref="ViewId"/>; null when unchanged.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string? SourceElementId { get; init; }
 
     /// <summary>Lossless decimal native 64-bit Revit element ID of the plan's level when renumbered to fit <see cref="LevelId"/>; null when unchanged.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string? SourceLevelId { get; init; }
 }
 
