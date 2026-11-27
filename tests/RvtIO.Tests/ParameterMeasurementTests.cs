@@ -43,6 +43,133 @@ public sealed class ParameterMeasurementTests
     }
 
     [Theory]
+    [InlineData(false, false, false, 1.0 / 96, -0.005208333333333333, "-0' - 0 1/8\"", 0.9973958333333334, "1' - 0\"")]
+    [InlineData(false, false, true, 1.0 / 192, 0.046875, "9/16\"", -0.000125, "0\"")]
+    [InlineData(true, false, false, 0.125, -0.005208333333333334, "-1/8", 0.9947916666666667, "12")]
+    [InlineData(true, true, false, 0.125, -0.005208333333333334, "-1/8\"", 0.9947916666666667, "12\"")]
+    [InlineData(false, false, false, 0.03125, 0.015625, "0' - 0 3/8\"", 0.984375, "1' - 0\"")]
+    [InlineData(true, false, false, 1.5, -0.0625, "-1 1/2", 0.9375, "12")]
+    [InlineData(true, false, false, 6, -0.25, "-6", 1.25, "18")]
+    [InlineData(false, false, false, 1, -0.5, "-1'", 1.5, "2'")]
+    [InlineData(false, false, true, 1, -0.01, "0'", 1.5, "2'")]
+    public void FormatsFractionalLengthsInFamilyMetadata(bool inches, bool symbol, bool compactFeet, double accuracy,
+        double before, string oldText, double after, string newText)
+    {
+        foreach (bool legacy in symbol ? new[] { false } : new[] { false, true })
+        {
+            var layout = FractionalLayout(inches, symbol, legacy, accuracy);
+            var options = Assert.Single(layout.Records, record => record.ClassId == FormatClass).Values;
+            options["m_bSuppressLeadingZeros"] = compactFeet ? 1L : 0L;
+            options["m_bSuppressSpaces"] = compactFeet ? 1L : 0L;
+            var display = ParameterMeasurement.Display(UnitType.UT_Length, Walker, layout, before, after);
+            Assert.True(display.HasValue);
+            foreach (string? unit in inches && !legacy && !symbol ? new string?[] { "\"", null }
+                         : new[] { inches && !legacy ? "\"" : null })
+            {
+                string suffix = inches && unit is null ? "\"" : "";
+                var stored = display.Value.ForStoredUnit(unit);
+                Assert.True(stored.MatchesUnit(unit));
+                Assert.False(stored.MatchesUnit("in"));
+                Assert.True(stored.Matches(oldText + suffix));
+                Assert.False(stored.Matches(oldText + suffix + " "));
+                Assert.Equal(newText + suffix, stored.After);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(1, 0, "22.1250345", "22° 07' 30\"", "-13.3754", "-13° 22' 31\"")]
+    [InlineData(0.01, 1, "22.1250345", "22° 07' 30,12\"", "-0.000125", "-0° 00' 00,45\"")]
+    [InlineData(1, 0, "-0.000125", "0° 00' 00\"", "12.99986111111111", "13° 00' 00\"")]
+    [InlineData(60, 0, "22.1250345", "22° 08' 00\"", "-13.3754", "-13° 23' 00\"")]
+    [InlineData(3600, 0, "-13.3754", "-13° 00' 00\"", "12.5", "13° 00' 00\"")]
+    public void FormatsDegreesMinutesAndSeconds(double stepSeconds, long decimalSymbol, string before, string oldText,
+        string after, string newText)
+    {
+        foreach (bool legacy in new[] { false, true })
+        {
+            var options = DisplayUnits(UnitType.UT_Angle, "degreesMinutes", DisplayUnitType.DUT_DEGREES_AND_MINUTES,
+                "", UnitSymbolType.UST_NONE, legacy);
+            Assert.Single(options.Records, record => record.ClassId == FormatClass).Values["m_accuracy"] = stepSeconds / 3600;
+            Assert.Single(options.Records, record => record.ClassId == UnitsClass).Values["m_decimalSymbol"] = decimalSymbol;
+            var display = ParameterMeasurement.Display(UnitType.UT_Angle, Walker, options,
+                ParameterMeasurement.Parse(UnitType.UT_Angle, before + " deg")!.Value,
+                ParameterMeasurement.Parse(UnitType.UT_Angle, after + " deg")!.Value);
+            Assert.True(display.HasValue);
+            Assert.Equal("Angle", display.Value.Type);
+            Assert.True(display.Value.MatchesUnit(null));
+            Assert.False(display.Value.MatchesUnit("°"));
+            Assert.True(display.Value.Matches(oldText));
+            Assert.False(display.Value.Matches(oldText + " "));
+            Assert.Equal(newText, display.Value.After);
+        }
+    }
+
+    [Theory]
+    [InlineData(1e-13, "m_bUseGrouping", 0L)]
+    [InlineData(1.0 / 3600, "m_bUseGrouping", 2L)]
+    [InlineData(1.0 / 3600, "m_bSuppressSpaces", 1L)]
+    public void RefusesUnverifiedDegreesMinutesOptions(double accuracy, string field, long value)
+    {
+        var layout = DisplayUnits(UnitType.UT_Angle, "degreesMinutes", DisplayUnitType.DUT_DEGREES_AND_MINUTES,
+            "", UnitSymbolType.UST_NONE, legacy: true);
+        var options = Assert.Single(layout.Records, record => record.ClassId == FormatClass).Values;
+        options["m_accuracy"] = accuracy;
+        options[field] = value;
+        Assert.Null(ParameterMeasurement.Display(UnitType.UT_Angle, Walker, layout, 1, 2));
+    }
+
+    [Fact]
+    public void DegreesMinutesAndSecondsKeepAnUngroupedDegreeCount()
+    {
+        var layout = DisplayUnits(UnitType.UT_Angle, "degreesMinutes", DisplayUnitType.DUT_DEGREES_AND_MINUTES,
+            "", UnitSymbolType.UST_NONE, legacy: false);
+        Assert.Single(layout.Records, record => record.ClassId == FormatClass).Values["m_accuracy"] = 1.0 / 3600;
+        SetGrouping(layout, decimalSymbol: 1, groupSymbol: 2, groupSize: 1);
+        var display = ParameterMeasurement.Display(UnitType.UT_Angle, Walker, layout,
+            ParameterMeasurement.Parse(UnitType.UT_Angle, "12345.625 deg")!.Value,
+            ParameterMeasurement.Parse(UnitType.UT_Angle, "999.9998611111112 deg")!.Value);
+        Assert.True(display.HasValue);
+        Assert.True(display.Value.Matches("12345° 37' 30\""));
+        Assert.False(display.Value.Matches("12 345° 37' 30\""));
+        Assert.Equal("1000° 00' 00\"", display.Value.After);
+    }
+
+    [Theory]
+    [InlineData(false, false, "1.13", "10.00", "0.00")]
+    [InlineData(true, false, "1.13 rad", "10.00 rad", "0.00 rad")]
+    [InlineData(true, true, "1.13 rad", "10 rad", "0 rad")]
+    public void FormatsRadiansInLegacyAndModernFamilyMetadata(bool showSymbol, bool trim, string previous,
+        string rounded, string zero)
+    {
+        foreach (bool legacy in new[] { false, true })
+        {
+            var layout = DisplayUnits(UnitType.UT_Angle, "radians", DisplayUnitType.DUT_RADIANS,
+                showSymbol ? "rad" : "", showSymbol ? UnitSymbolType.UST_RAD : UnitSymbolType.UST_NONE, legacy);
+            Assert.Single(layout.Records, record => record.ClassId == FormatClass).Values["m_bSuppressTrailingZeros"] = trim ? 1L : 0L;
+            var display = ParameterMeasurement.Display(UnitType.UT_Angle, Walker, layout, 1.125, 9.995);
+            Assert.True(display.HasValue);
+            Assert.True(display.Value.MatchesUnit("rad"));
+            Assert.True(display.Value.Matches(previous));
+            Assert.Equal(rounded, display.Value.After);
+            Assert.Equal(zero, ParameterMeasurement.Display(UnitType.UT_Angle, Walker, layout, 1.125, -0.00125)?.After);
+        }
+    }
+
+    [Theory]
+    [InlineData(0, "m_bUseGrouping", 0L)]
+    [InlineData(0.3, "m_bUseGrouping", 0L)]
+    [InlineData(0.125, "m_bUseGrouping", 2L)]
+    [InlineData(0.125, "m_bSuppressTrailingZeros", 1L)]
+    [InlineData(0.125, "m_bSuppressSpaces", 2L)]
+    public void RefusesUnverifiedFractionalOptions(double accuracy, string field, long value)
+    {
+        var layout = FractionalLayout(inches: true, symbol: false, legacy: true, accuracy);
+        Assert.Single(layout.Records, record => record.ClassId == FormatClass).Values[field] = value;
+        Assert.Null(ParameterMeasurement.Display(UnitType.UT_Length, Walker, layout, 1, 2));
+    }
+
+    [Theory]
     [InlineData("1.125 in", 0.09375000000000001)]
     [InlineData("8.5 in", 0.7083333333333334)]
     [InlineData("-2.375 in", -0.19791666666666669)]
@@ -129,10 +256,37 @@ public sealed class ParameterMeasurementTests
     }
 
     [Theory]
+    [InlineData(false, 0, 1, 1, 12345.625, 999.9973958333334, "12,345' - 7 1/2\"", "1,000' - 0\"")]
+    [InlineData(false, 0, 0, 1, 12345.625, 999.9973958333334, "12.345' - 7 1/2\"", "1.000' - 0\"")]
+    [InlineData(false, 1, 3, 0, 12345678.625, 999.9973958333334, "1'23'45'678' - 7 1/2\"", "1'000' - 0\"")]
+    [InlineData(true, 1, 2, 1, 1028.8020833333333, 83.328125, "12 345 5/8", "1 000")]
+    [InlineData(true, 1, 1, 1, 1028.8020833333333, 83.328125, "12,345 5/8", "1,000")]
+    public void GroupsWholeUnitsInFractionalLengths(bool inches, long decimalSymbol, long groupSymbol, long groupSize,
+        double before, double after, string oldText, string newText)
+    {
+        foreach (bool legacy in new[] { false, true })
+        {
+            var layout = FractionalLayout(inches, symbol: false, legacy, inches ? 0.125 : 1.0 / 96);
+            SetGrouping(layout, decimalSymbol, groupSymbol, groupSize);
+            var display = ParameterMeasurement.Display(UnitType.UT_Length, Walker, layout, before, after);
+            Assert.True(display.HasValue);
+            string? unit = inches && !legacy ? "\"" : null;
+            string suffix = inches && legacy ? "\"" : "";
+            var stored = display.Value.ForStoredUnit(unit);
+            Assert.True(stored.MatchesUnit(unit));
+            Assert.True(stored.Matches(oldText + suffix));
+            Assert.False(stored.Matches(oldText + suffix + " "));
+            Assert.Equal(newText + suffix, stored.After);
+        }
+    }
+
+    [Theory]
     [InlineData(1, 0, 1, "12.345.678,63", "0,00")]
     [InlineData(1, 2, 1, "12 345 678,63", "0,00")]
     [InlineData(1, 3, 0, "1'23'45'678,63", "0,00")]
     [InlineData(0, 1, 1, "12,345,678.63", "0.00")]
+    [InlineData(0, 0, 1, "12.345.678.63", "0.00")]
+    [InlineData(1, 1, 1, "12,345,678,63", "0,00")]
     public void FormatsGroupedFamilyMetadata(long decimalSymbol, long groupSymbol, long groupSize, string expected, string zero)
     {
         foreach (bool legacy in new[] { false, true })
@@ -166,7 +320,6 @@ public sealed class ParameterMeasurementTests
     [InlineData(2, 0, 1)]
     [InlineData(1, 4, 1)]
     [InlineData(1, 0, 2)]
-    [InlineData(1, 1, 1)]
     public void RefusesUnverifiedDecimalAndGroupingOptions(long decimalSymbol, long groupSymbol, long groupSize)
     {
         var layout = DisplayUnits(UnitType.UT_Length, "feet", DisplayUnitType.DUT_DECIMAL_FEET, "", UnitSymbolType.UST_NONE, legacy: false);
@@ -195,6 +348,15 @@ public sealed class ParameterMeasurementTests
         units["m_digitGroupingSymbol"] = groupSymbol;
         units["m_digitGroupingAmount"] = groupSize;
         Assert.Single(layout.Records, record => record.ClassId == FormatClass).Values["m_bUseGrouping"] = 1L;
+    }
+
+    private static WideBlockWalker.Walk FractionalLayout(bool inches, bool symbol, bool legacy, double accuracy)
+    {
+        var layout = DisplayUnits(UnitType.UT_Length, inches ? "fractionalInches" : "feetFractionalInches",
+            inches ? DisplayUnitType.DUT_FRACTIONAL_INCHES : DisplayUnitType.DUT_FEET_FRACTIONAL_INCHES,
+            symbol ? "inchDoubleQuote" : "", UnitSymbolType.UST_NONE, legacy);
+        Assert.Single(layout.Records, record => record.ClassId == FormatClass).Values["m_accuracy"] = accuracy;
+        return layout;
     }
 
     private static WideBlockWalker.Walk DisplayUnits(UnitType spec, string unitId, DisplayUnitType legacyUnit, string symbol,

@@ -6,9 +6,9 @@ namespace RvtIO.Parsing;
 internal sealed class GridAxisReader
 {
     private const string SurfaceKey = "DatumPlane.m_pSurface";
-    private const string MembershipKey = "Grid.m_pGridChainMembershipCell";
+    internal const string MembershipKey = "Grid.m_pGridChainMembershipCell";
     private const string ChainMap = "GridChain.m_curveTagToGridsInChain";
-    private const string Pair = "std::pair< int, ElementId >";
+    internal const string MemberPair = "std::pair< int, ElementId >";
     private readonly WideBlockWalker _walker;
     private readonly Dictionary<int, (string? Name, int? Owner, LocationCurve? Curve)> _segments = [];
     private readonly Dictionary<int, (string Name, int[] Members)> _chains = [];
@@ -25,7 +25,7 @@ internal sealed class GridAxisReader
             "Envelope" when field.Name == "m_corners" => type.Name + "." + field.Name,
             "Plane" or "CylSurf" => type.Name + "." + field.Name,
             _ => null,
-        }, [Pair], captureRootPointers: true, ids: ids);
+        }, [MemberPair], captureRootPointers: true, ids: ids);
         _walker.UseEntitySchemas(entities, passUnknown: true);
     }
 
@@ -40,18 +40,8 @@ internal sealed class GridAxisReader
         {
             if (!walk.Exact || Field("GridChain.commonText", -1).Text is not { } label || string.IsNullOrWhiteSpace(label))
                 return;
-            var order = new SortedDictionary<int, int>();
-            foreach (var pair in walk.Records)
-            {
-                if (pair.Values.GetValueOrDefault(WideBlockWalker.RootFieldKey) is not ChainMap) continue;
-                if (pair.Values.GetValueOrDefault("first") is not long tag || tag is < 0 or > int.MaxValue
-                    || pair.Values.GetValueOrDefault("second") is not long member || member is <= 0 or > int.MaxValue
-                    || !order.TryAdd((int)tag, (int)member))
-                    return;
-            }
-            if (order.Count >= 2 && order.Count == Field(ChainMap + "#", -1).Integer
-                && order.Values.Distinct().Count() == order.Count)
-                _chains.Add((int)id, (label, order.Values.ToArray()));
+            if (ReadChainMemberIds(walk) is { } members && members.All(member => member <= int.MaxValue))
+                _chains.Add((int)id, (label, members.Select(member => (int)member).ToArray()));
             return;
         }
 
@@ -98,6 +88,22 @@ internal sealed class GridAxisReader
             walk.Captures.FirstOrDefault(field => field.Key == key && field.QueueIndex == queue);
         double Real(string key, int queue) => Field(key, queue) is { Kind: WideBlockWalker.CaptureKind.Real } field ? field.Real : double.NaN;
         double[] Vector(string key, int queue) => [Real(key + "@0", queue), Real(key + "@1", queue), Real(key + "@2", queue)];
+    }
+
+    internal static long[]? ReadChainMemberIds(WideBlockWalker.Walk walk)
+    {
+        if (!walk.Exact || walk.Captures.Where(field => field.AtRoot && field.Key == ChainMap + "#").ToArray()
+            is not [{ Kind: WideBlockWalker.CaptureKind.Integer } count] || count.Integer < 2)
+            return null;
+        var order = new SortedDictionary<int, long>();
+        foreach (var pair in walk.Records)
+        {
+            if (pair.Values.GetValueOrDefault(WideBlockWalker.RootFieldKey) is not ChainMap) continue;
+            if (pair.Values.GetValueOrDefault("first") is not long tag || tag is < 0 or > int.MaxValue
+                || pair.Values.GetValueOrDefault("second") is not long member || member <= 0 || !order.TryAdd((int)tag, member))
+                return null;
+        }
+        return order.Count == count.Integer && order.Values.Distinct().Count() == order.Count ? order.Values.ToArray() : null;
     }
 
     internal (List<GridAxis> Paths, HashSet<int> Members) Build()

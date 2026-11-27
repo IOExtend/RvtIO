@@ -16,7 +16,7 @@ using NoRef = RvtIO.Tests.SchemaStreamEditorTests.NoRef;
 
 namespace RvtIO.Tests;
 
-public sealed class SetParameterTests : IDisposable
+public sealed partial class SetParameterTests : IDisposable
 {
     private const int ProjectId = 70;
     private const int DefinitionId = 71;
@@ -920,15 +920,18 @@ public sealed class SetParameterTests : IDisposable
     }
 
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    public void AGlobalIdentityAssignmentChangesOnlyTheAssociatedSymbols(bool derived, bool both)
+    [InlineData(BuiltInCategory.OST_GenericModel, false, false)]
+    [InlineData(BuiltInCategory.OST_GenericModel, true, false)]
+    [InlineData(BuiltInCategory.OST_GenericModel, false, true)]
+    [InlineData(BuiltInCategory.OST_Doors, false, false)]
+    [InlineData(BuiltInCategory.OST_Windows, true, false)]
+    [InlineData(BuiltInCategory.OST_Furniture, false, true)]
+    public void AGlobalIdentityAssignmentChangesOnlyTheAssociatedSymbols(BuiltInCategory category, bool derived, bool both)
     {
         const BuiltInParameter parameter = BuiltInParameter.ALL_MODEL_TYPE_COMMENTS;
         var identity = new StoredIdentity(parameter, "Stored");
         var association = new ProjectAssociation(parameter, GlobalId: PropertyGlobalId, Derived: derived, PrimaryAndDerived: both);
-        var family = new FamilyFixture(Category: BuiltInCategory.OST_GenericModel, Identity: identity, DerivedType: derived || both);
+        var family = new FamilyFixture(Category: category, Identity: identity, DerivedType: true);
         string source = CreateSource(family: family, globalParameter: new(Kind.Text, InitialValue: identity.Value), association: association);
         var result = RvtWriter.SetParameter(source, Output, PropertyGlobalId, PropertyGlobalId, "New");
 
@@ -944,6 +947,30 @@ public sealed class SetParameterTests : IDisposable
             Assert.Equal(ReadBody(original, (ulong)unchanged), ReadBody(output, (ulong)unchanged));
         Assert.Equal(SymbolBody(target, derived ? ProjectId : -1, "Old", identity: identity with { Value = "New" },
             association: association, associationSlot: true), ReadBody(output, (ulong)target));
+    }
+
+    [Theory]
+    [InlineData(BuiltInCategory.OST_Doors, false, false)]
+    [InlineData(BuiltInCategory.OST_Windows, true, false)]
+    [InlineData(BuiltInCategory.OST_Furniture, false, true)]
+    public void AGlobalCurrencyAssignmentChangesOnlyTheAssociatedSymbolCosts(BuiltInCategory category, bool derived, bool both)
+    {
+        const double before = 17.25;
+        const double after = 58.625;
+        var association = new ProjectAssociation(BuiltInParameter.ALL_MODEL_COST, GlobalId: PropertyGlobalId, Derived: derived, PrimaryAndDerived: both);
+        var global = new GlobalFixture(Kind.Number, Currency: true, InitialValue: "17.25");
+        string source = CreateSource(family: new FamilyFixture(Category: category, DerivedType: true, TypedCost: before),
+            globalParameter: global, association: association);
+        var result = RvtWriter.SetParameters(source, Output,
+            [new(PropertyGlobalId, PropertyGlobalId, "0"), new(PropertyGlobalId, PropertyGlobalId, "58.625")]);
+
+        Assert.Equal(both ? 3 : 2, result.RewrittenRecordCount);
+        using var output = RootStorage.OpenRead(Output);
+        Assert.Equal(SymbolBody(ProjectId, -1, "Old", association: derived ? null : association, associationSlot: true,
+            typedCost: derived ? before : after), ReadBody(output));
+        Assert.Equal(SymbolBody(DerivedId, ProjectId, "Old", association: derived || both ? association : null, associationSlot: true,
+            typedCost: derived || both ? after : before), ReadBody(output, DerivedId));
+        Assert.Equal(GlobalBody(global, "58.625", PropertyGlobalId), ReadBody(output, PropertyGlobalId));
     }
 
     [Theory]
@@ -980,12 +1007,15 @@ public sealed class SetParameterTests : IDisposable
     }
 
     [Theory]
-    [InlineData(OwnerKind.Wall, 1)]
-    [InlineData(OwnerKind.WallType, 2)]
-    [InlineData(OwnerKind.Room, 1)]
-    public void AGlobalCurrencyValueUpdatesAVerifiedSharedProjectParameter(OwnerKind owner, int binding)
+    [InlineData(OwnerKind.Wall, 1, true)]
+    [InlineData(OwnerKind.WallType, 2, true)]
+    [InlineData(OwnerKind.Room, 1, true)]
+    [InlineData(OwnerKind.Wall, 1, false)]
+    [InlineData(OwnerKind.WallType, 2, false)]
+    [InlineData(OwnerKind.Room, 1, false)]
+    public void AGlobalCurrencyValueUpdatesAVerifiedProjectParameter(OwnerKind owner, int binding, bool shared)
     {
-        var parameter = new UserParameter(Kind.Number, true, Binding: binding, Owner: owner, Currency: true);
+        var parameter = new UserParameter(Kind.Number, shared, Binding: binding, Owner: owner, Currency: true);
         var association = new ProjectAssociation((BuiltInParameter)DefinitionId, GlobalId: PropertyGlobalId);
         var global = new GlobalFixture(Kind.Number, InitialValue: "1.5", Currency: true);
         string source = CreateSource(wall: true, user: parameter, globalParameter: global, association: association);
@@ -1173,15 +1203,21 @@ public sealed class SetParameterTests : IDisposable
     }
 
     [Theory]
-    [InlineData("12.75 ft", "unsupported-parameter")]
-    [InlineData(null, "unsupported-parameter")]
-    public void RefusesAWholeBatchWhenWallHeightCannotBeWritten(string? height, string errorCode)
+    [InlineData(BuiltInParameter.WALL_USER_HEIGHT_PARAM, "12.75 ft", "unverified-parameter-storage")]
+    [InlineData(BuiltInParameter.WALL_BASE_OFFSET, "-2 ft", "unverified-parameter-storage")]
+    [InlineData(BuiltInParameter.WALL_TOP_OFFSET, "2 ft", "unverified-parameter-storage")]
+    [InlineData(BuiltInParameter.WALL_BASE_CONSTRAINT, "181", "unsupported-parameter")]
+    [InlineData(BuiltInParameter.WALL_HEIGHT_TYPE, "181", "unsupported-parameter")]
+    [InlineData(BuiltInParameter.WALL_USER_HEIGHT_PARAM, null, "unsupported-parameter-clear")]
+    [InlineData(BuiltInParameter.WALL_BASE_OFFSET, null, "unsupported-parameter-clear")]
+    [InlineData(BuiltInParameter.WALL_TOP_OFFSET, null, "unsupported-parameter-clear")]
+    public void RefusesAWholeBatchWhenAWallDimensionCannotBeWritten(BuiltInParameter parameter, string? value, string errorCode)
     {
         string source = CreateSource(builtIn: BuiltInParameter.ALL_MODEL_MARK);
         byte[] original = SHA256.HashData(File.ReadAllBytes(source));
         var refused = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetParameters(source, Output,
             [new(ProjectId, (int)BuiltInParameter.ALL_MODEL_MARK, "New mark"),
-             new(ProjectId, (int)BuiltInParameter.WALL_USER_HEIGHT_PARAM, height)]));
+             new(ProjectId, (int)parameter, value)]));
         Assert.Equal(errorCode, refused.Kind);
         Assert.False(File.Exists(Output));
         Assert.Equal(original, SHA256.HashData(File.ReadAllBytes(source)));
@@ -1308,6 +1344,7 @@ public sealed class SetParameterTests : IDisposable
 
     [Theory]
     [InlineData(Kind.Text, "First text ✓", false, false)]
+    [InlineData(Kind.Text, "", true, false)]
     [InlineData(Kind.Integer, "-17", false, false)]
     [InlineData(Kind.YesNo, "1", true, false)]
     [InlineData(Kind.Number, "8.625", true, false)]
@@ -1323,12 +1360,15 @@ public sealed class SetParameterTests : IDisposable
     }
 
     [Theory]
-    [InlineData(2020, OwnerKind.Wall, 1, "0")]
-    [InlineData(2022, OwnerKind.WallType, 2, "1e-300")]
-    [InlineData(2022, OwnerKind.Room, 1, "0")]
-    public void AssignsAnExplicitFirstCurrencyValue(int release, OwnerKind owner, int binding, string value)
+    [InlineData(2020, OwnerKind.Wall, 1, true, "0")]
+    [InlineData(2022, OwnerKind.WallType, 2, true, "1e-300")]
+    [InlineData(2022, OwnerKind.Room, 1, true, "0")]
+    [InlineData(2020, OwnerKind.Wall, 1, false, "0")]
+    [InlineData(2022, OwnerKind.WallType, 2, false, "1e-300")]
+    [InlineData(2022, OwnerKind.Room, 1, false, "0")]
+    public void AssignsAnExplicitFirstCurrencyValue(int release, OwnerKind owner, int binding, bool shared, string value)
     {
-        var parameter = new UserParameter(Kind.Number, true, Binding: binding, Store: StoreState.NullPointer,
+        var parameter = new UserParameter(Kind.Number, shared, Binding: binding, Store: StoreState.NullPointer,
             Owner: owner, Currency: true);
         string source = CreateSource(wall: true, user: parameter, release: release);
         RvtWriter.SetParameter(source, Output, ProjectId, DefinitionId, value);
@@ -1369,15 +1409,18 @@ public sealed class SetParameterTests : IDisposable
     }
 
     [Theory]
-    [InlineData(OwnerKind.Wall, "17.25000000001", "unverified-parameter-storage")]
-    [InlineData(OwnerKind.Wall, "42 $", "invalid-parameter-value")]
-    [InlineData(OwnerKind.Wall, null, "unsupported-parameter-clear")]
-    [InlineData(OwnerKind.Room, "17.25000000001", "unverified-parameter-storage")]
-    [InlineData(OwnerKind.Room, "42 $", "invalid-parameter-value")]
-    [InlineData(OwnerKind.Room, null, "unsupported-parameter-clear")]
-    public void RefusesInvalidCurrencyBatchesWithoutChangingTheProject(OwnerKind owner, string? value, string kind)
+    [InlineData(OwnerKind.Wall, true, "17.25000000001", "unverified-parameter-storage")]
+    [InlineData(OwnerKind.Wall, true, "42 $", "invalid-parameter-value")]
+    [InlineData(OwnerKind.Wall, true, null, "unsupported-parameter-clear")]
+    [InlineData(OwnerKind.Room, true, "17.25000000001", "unverified-parameter-storage")]
+    [InlineData(OwnerKind.Room, true, "42 $", "invalid-parameter-value")]
+    [InlineData(OwnerKind.Room, true, null, "unsupported-parameter-clear")]
+    [InlineData(OwnerKind.Wall, false, "17.25000000001", "unverified-parameter-storage")]
+    [InlineData(OwnerKind.Wall, false, "42 $", "invalid-parameter-value")]
+    [InlineData(OwnerKind.Wall, false, null, "unsupported-parameter-clear")]
+    public void RefusesInvalidCurrencyBatchesWithoutChangingTheProject(OwnerKind owner, bool shared, string? value, string kind)
     {
-        string source = CreateSource(wall: true, user: new(Kind.Number, true, Owner: owner, Currency: true));
+        string source = CreateSource(wall: true, user: new(Kind.Number, shared, Owner: owner, Currency: true));
         byte[] hash = SHA256.HashData(File.ReadAllBytes(source));
         var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetParameters(source, Output,
             [new(ProjectId, DefinitionId, "17.25"), new(ProjectId, DefinitionId, value)]));
@@ -1391,6 +1434,23 @@ public sealed class SetParameterTests : IDisposable
     [InlineData(OwnerKind.Room, 1, true)]
     [InlineData(OwnerKind.WallType, 1, false)]
     [InlineData(OwnerKind.Room, 2, false)]
+    [InlineData(OwnerKind.Floor, 1, true)]
+    [InlineData(OwnerKind.FloorType, 2, true)]
+    [InlineData(OwnerKind.Roof, 1, true)]
+    [InlineData(OwnerKind.RoofType, 2, true)]
+    [InlineData(OwnerKind.Ceiling, 1, true)]
+    [InlineData(OwnerKind.CeilingType, 2, true)]
+    [InlineData(OwnerKind.Floor, 2, false)]
+    [InlineData(OwnerKind.RoofType, 1, false)]
+    [InlineData(OwnerKind.Ceiling, 2, false)]
+    [InlineData(OwnerKind.Level, 1, true)]
+    [InlineData(OwnerKind.LevelType, 2, true)]
+    [InlineData(OwnerKind.Grid, 1, true)]
+    [InlineData(OwnerKind.GridType, 2, true)]
+    [InlineData(OwnerKind.GridChain, 1, true)]
+    [InlineData(OwnerKind.Level, 2, false)]
+    [InlineData(OwnerKind.GridType, 1, false)]
+    [InlineData(OwnerKind.GridChain, 2, false)]
     public void FirstValueRequiresTheRightBindingForTheOwner(OwnerKind owner, int binding, bool writable)
     {
         var parameter = new UserParameter(Kind.Text, false, Binding: binding, Store: StoreState.NullPointer, Owner: owner);
@@ -1409,9 +1469,103 @@ public sealed class SetParameterTests : IDisposable
     }
 
     [Theory]
-    [InlineData(false, "", false, "invalid-parameter-value")]
-    [InlineData(true, "New", false, "read-only-parameter")]
-    [InlineData(false, "New", true, "unverified-parameter-storage")]
+    [InlineData(OwnerKind.Grid, BuiltInCategory.OST_GridChains)]
+    [InlineData(OwnerKind.GridChain, BuiltInCategory.OST_Grids)]
+    public void RefusesBindingsForTheOtherGridCategory(OwnerKind owner, BuiltInCategory bindingCategory)
+    {
+        var parameter = new UserParameter(Kind.Text, false, Store: StoreState.NullPointer, Owner: owner,
+            BindingCategory: bindingCategory);
+        string source = CreateSource(wall: true, user: parameter);
+        byte[] original = File.ReadAllBytes(source);
+
+        var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetParameter(source, Output, ProjectId, DefinitionId, "First"));
+
+        Assert.Equal("unverified-parameter-storage", error.Kind);
+        Assert.Contains("no unique applicable parameter binding", error.Message);
+        Assert.Equal(original, File.ReadAllBytes(source));
+        Assert.False(File.Exists(Output));
+    }
+
+    [Fact]
+    public void RenamesADatumAndEveryVerifiedMemberOfAMultiSegmentGrid()
+    {
+        string source = CreateSource(datumNames: true);
+
+        RvtWriter.SetParameters(source, Output,
+        [
+            new(DatumLevelId, (int)BuiltInParameter.DATUM_TEXT, "Grid A"),
+            new(DatumLineId, (int)BuiltInParameter.DATUM_TEXT, "Grid B"),
+            new(DatumChainId, (int)BuiltInParameter.DATUM_TEXT, "  Grid A  "),
+        ]);
+
+        using var root = RootStorage.OpenRead(Output);
+        Assert.Equal(DatumBody(DatumLevelId, 77, "Grid A"), ReadBody(root, DatumLevelId));
+        Assert.Equal(DatumBody(DatumLineId, 93, "Grid B"), ReadBody(root, DatumLineId));
+        Assert.Equal(DatumBody(DatumChainId, 95, "Grid A"), ReadBody(root, DatumChainId));
+        foreach (int id in new[] { DatumFirstMemberId, DatumSecondMemberId })
+            Assert.Equal(DatumBody(id, 93, "Grid A", DatumChainId), ReadBody(root, (ulong)id));
+    }
+
+    [Theory]
+    [InlineData(DatumFirstMemberId, "Separate", "read-only-parameter")]
+    [InlineData(DatumLineId, "Chain A", "invalid-parameter-value")]
+    [InlineData(DatumLineId, "", "invalid-parameter-value")]
+    [InlineData(DatumChainId, "A[B", "invalid-parameter-value")]
+    [InlineData(DatumChainId, null, "unsupported-parameter-clear")]
+    public void RefusesTheEntireBatchWhenADatumCannotBeRenamed(int id, string? newName, string reason)
+    {
+        string source = CreateSource(datumNames: true);
+        byte[] original = File.ReadAllBytes(source);
+
+        var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetParameters(source, Output,
+        [
+            new(DatumLevelId, (int)BuiltInParameter.DATUM_TEXT, "Renamed level"),
+            new(id, (int)BuiltInParameter.DATUM_TEXT, newName),
+        ]));
+
+        Assert.Equal(reason, error.Kind);
+        Assert.Equal(original, File.ReadAllBytes(source));
+        Assert.False(File.Exists(Output));
+    }
+
+    [Fact]
+    public void RefusesTheEntireBatchWhenTheGridChainAndItsMemberDisagree()
+    {
+        string source = CreateSource(datumNames: true, omitDatumMemberLink: true);
+        byte[] original = File.ReadAllBytes(source);
+
+        var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetParameters(source, Output,
+        [
+            new(DatumLevelId, (int)BuiltInParameter.DATUM_TEXT, "Renamed level"),
+            new(DatumChainId, (int)BuiltInParameter.DATUM_TEXT, "Renamed chain"),
+        ]));
+
+        Assert.Equal("unverified-parameter-storage", error.Kind);
+        Assert.Equal(original, File.ReadAllBytes(source));
+        Assert.False(File.Exists(Output));
+    }
+
+    [Theory]
+    [InlineData(OwnerKind.Wall, 1, true)]
+    [InlineData(OwnerKind.WallType, 2, false)]
+    [InlineData(OwnerKind.Room, 1, true)]
+    [InlineData(OwnerKind.Floor, 1, true)]
+    [InlineData(OwnerKind.RoofType, 2, false)]
+    public void WritesAnExplicitFirstEmptyTextOnAVerifiedSystemElement(OwnerKind owner, int binding, bool shared)
+    {
+        var parameter = new UserParameter(Kind.Text, shared, Binding: binding, Store: StoreState.NullPointer, Owner: owner);
+        string source = CreateSource(wall: true, user: parameter);
+
+        RvtWriter.SetParameter(source, Output, ProjectId, DefinitionId, "");
+
+        using var output = RootStorage.OpenRead(Output);
+        Assert.Equal(UserBody(parameter, ""), ReadBody(output));
+    }
+
+    [Theory]
+    [InlineData(false, "\0", false, "invalid-parameter-value")]
+    [InlineData(true, "", false, "read-only-parameter")]
+    [InlineData(false, "", true, "unverified-parameter-storage")]
     public void RefusesUnsafeFirstAssignments(bool readOnly, string value, bool unsorted, string code)
     {
         var parameter = new UserParameter(Kind.Text, true, ReadOnly: readOnly,
@@ -1439,11 +1593,16 @@ public sealed class SetParameterTests : IDisposable
     }
 
     public enum Kind { Text, Integer, YesNo, Number, Material, FamilyType }
-    public enum OwnerKind : ushort { Wall = 22, WallType = 50, Room = 51 }
+    public enum OwnerKind : ushort
+    {
+        Wall = 22, WallType = 50, Room = 51, Level = 77,
+        Floor = 86, FloorType = 87, Roof = 88, RoofType = 89, Ceiling = 90, CeilingType = 91,
+        LevelType = 92, Grid = 93, GridType = 94, GridChain = 95,
+    }
     private enum StoreState { Value, NullPointer, Neighbour, Unsorted }
     private sealed record UserParameter(Kind Kind, bool Shared, bool ReadOnly = false, int Binding = 1, bool Measured = false,
         bool IdFirst = false, StoreState Store = StoreState.Value, OwnerKind Owner = OwnerKind.Wall, bool HideWhenNoValue = false,
-        bool Currency = false, (UnitType Legacy, string Forge)? DefinitionSpec = null);
+        bool Currency = false, (UnitType Legacy, string Forge)? DefinitionSpec = null, BuiltInCategory? BindingCategory = null);
     private sealed record ProjectImage(OwnerKind Owner, int? Stored = null, bool BrokenHolder = false, int DesignOption = -1,
         string? LinkedPath = null, string PathType = "Relative to Central Model");
     private sealed record GlobalFixture(Kind Kind, bool Formula = false, bool Reporting = false, bool Consumer = false, string? InitialValue = null,
@@ -1929,33 +2088,57 @@ public sealed class SetParameterTests : IDisposable
         Assert.Equal(hash, SHA256.HashData(File.ReadAllBytes(source)));
     }
 
-    [Fact]
-    public void UpdatesAnImportedIdentityAndMirrorsTheVerifiedDerivedSymbol()
+    [Theory]
+    [InlineData(BuiltInCategory.OST_GenericModel, BuiltInParameter.ALL_MODEL_TYPE_COMMENTS, "Template", "Updated")]
+    [InlineData(BuiltInCategory.OST_Doors, BuiltInParameter.FIRE_RATING, "60 min", "90 min")]
+    [InlineData(BuiltInCategory.OST_Windows, BuiltInParameter.ALL_MODEL_DESCRIPTION, "Template", "")]
+    [InlineData(BuiltInCategory.OST_Furniture, BuiltInParameter.ALL_MODEL_COST, "17.25", "29.125")]
+    public void UpdatesAnImportedIdentityAndMirrorsTheVerifiedDerivedSymbol(BuiltInCategory category,
+        BuiltInParameter parameter, string before, string after)
     {
-        var identity = new StoredIdentity(BuiltInParameter.ALL_MODEL_TYPE_COMMENTS, "Template");
-        string source = CreateSource(family: new FamilyFixture(Category: BuiltInCategory.OST_GenericModel,
-            DerivedType: true, Identity: identity));
-        var result = RvtWriter.SetParameter(source, Output, ProjectId, identity.Parameter, "Updated");
+        var identity = new StoredIdentity(parameter, before);
+        string source = CreateSource(family: new FamilyFixture(Category: category, DerivedType: true, Identity: identity));
+        var result = RvtWriter.SetParameter(source, Output, ProjectId, identity.Parameter, after);
         Assert.Equal(2, result.RewrittenRecordCount);
 
         using var root = RootStorage.OpenRead(Output);
-        var expected = identity with { Value = "Updated" };
+        var expected = identity with { Value = after };
         Assert.Equal(SymbolBody(ProjectId, -1, "Old", identity: expected), ReadBody(root));
         Assert.Equal(SymbolBody(DerivedId, ProjectId, "Old", identity: expected), ReadBody(root, DerivedId));
     }
 
-    [Fact]
-    public void RejectsADirectNamedIdentityEditOnADerivedSymbol()
+    [Theory]
+    [InlineData(BuiltInCategory.OST_GenericModel)]
+    [InlineData(BuiltInCategory.OST_Doors)]
+    [InlineData(BuiltInCategory.OST_Windows)]
+    [InlineData(BuiltInCategory.OST_Furniture)]
+    public void RejectsADirectNamedIdentityEditOnADerivedSymbol(BuiltInCategory category)
     {
         var identity = new StoredIdentity(BuiltInParameter.ALL_MODEL_TYPE_COMMENTS, "Template");
-        string source = CreateSource(family: new FamilyFixture(Category: BuiltInCategory.OST_GenericModel,
-            DerivedType: true, Identity: identity));
+        string source = CreateSource(family: new FamilyFixture(Category: category, DerivedType: true, Identity: identity));
         byte[] hash = SHA256.HashData(File.ReadAllBytes(source));
         var error = Assert.Throws<RvtWriteRefusedException>(() => RvtWriter.SetParameters(source, Output,
             [new(ProjectId, (int)identity.Parameter, "Staged"), new(DerivedId, (int)identity.Parameter, "Rejected")]));
         Assert.Equal("unverified-parameter-storage", error.Kind);
         Assert.False(File.Exists(Output));
         Assert.Equal(hash, SHA256.HashData(File.ReadAllBytes(source)));
+    }
+
+    [Theory]
+    [InlineData(BuiltInCategory.OST_Doors)]
+    [InlineData(BuiltInCategory.OST_Windows)]
+    [InlineData(BuiltInCategory.OST_Furniture)]
+    public void ProjectIdentityAssignmentsKeepSeparatePrimaryAndDerivedValues(BuiltInCategory category)
+    {
+        string source = CreateSource(family: new FamilyFixture(Category: category, DerivedType: true));
+        int cost = (int)BuiltInParameter.ALL_MODEL_COST;
+        var result = RvtWriter.SetParameters(source, Output,
+            [new(ProjectId, cost, "17.25"), new(DerivedId, cost, "21.125"), new(ProjectId, cost, "32.125")]);
+        Assert.Equal(2, result.RewrittenRecordCount);
+
+        using var root = RootStorage.OpenRead(Output);
+        Assert.Equal(SymbolBody(ProjectId, -1, "Old", typedCost: 32.125), ReadBody(root));
+        Assert.Equal(SymbolBody(DerivedId, ProjectId, "Old", typedCost: 21.125), ReadBody(root, DerivedId));
     }
 
     [Theory]
@@ -2355,7 +2538,7 @@ public sealed class SetParameterTests : IDisposable
         UserParameter? user = null, FamilyFixture? family = null, int release = 2022,
         BuiltInParameter? builtIn = null, string? builtInValue = null, GlobalFixture? globalParameter = null,
         GlobalFormulaFixture? globalFormulas = null, ProjectAssociation? association = null, OrdinaryTarget? projectTarget = null,
-        int? targetLevelDesignOption = null, ProjectImage? image = null)
+        int? targetLevelDesignOption = null, ProjectImage? image = null, bool datumNames = false, bool omitDatumMemberLink = false)
     {
         var tags = Tags(release);
         bool material = user?.Kind is Kind.Material or Kind.FamilyType || family?.BoundFamilyType == true || image is not null;
@@ -2454,10 +2637,19 @@ public sealed class SetParameterTests : IDisposable
         Add("ForeignElemRef", new Fld("m_id", 4)); // 71
         Add("std::pair< ElementId, ForeignElemRef >", Reference("first", 14), Reference("second", 71)); // 72
         Add("FamilyDocument", Reference("m_big2SmallMap2", 72, 0x50)); // 73
-        Add("ElementIdPlusIndex", Reference("m_elementId", 14), new("m_index", 4)); // 74
-        Add("ElementIdIndexPairSet", Reference("m_data", 74, 0x50)); // 75
-        schema.Top(new("SpecializedFamilySymbol", new Back(46), 1, [], [])); // 76
-        schema.Top(new("Level", new Back(20), 1, [], [])); // 77
+        if (datumNames)
+        {
+            schema.Top(new("DatumPlane", new Back(20), 1, [new("m_text", 8)], [])); // 74
+            Add("GridChainMembershipCell", Reference("m_gridChainId", 14)); // 75
+            Add("std::pair< int, ElementId >", new("first", 4), Reference("second", 14)); // 76
+        }
+        else
+        {
+            Add("ElementIdPlusIndex", Reference("m_elementId", 14), new("m_index", 4)); // 74
+            Add("ElementIdIndexPairSet", Reference("m_data", 74, 0x50)); // 75
+            schema.Top(new("SpecializedFamilySymbol", new Back(46), 1, [], [])); // 76
+        }
+        schema.Top(new("Level", new Back(datumNames ? 74 : 20), 1, user?.Owner == OwnerKind.Level ? ownerFields : [], [])); // 77
         Add("SymbolInfo", new Fld("m_name", 8)); // 78
         schema.Top(new("Symbol", new Back(20), 1, [new Fld("m_symbolInfo", 14, 1)], [])); // 79
         var imageFields = new Fld[] { Reference("m_idImageHolder", 14), new("m_flags", 4), Reference("m_viewId", 14),
@@ -2471,7 +2663,19 @@ public sealed class SetParameterTests : IDisposable
         Add("std::pair< AString, AString >", new Fld("first", 8), new Fld("second", 8)); // 83
         Add("ExternalResourceRef", Reference("m_referenceInformation", 83, 0x50)); // 84
         Add("ExternalResourceReferenceCell", Reference("m_externalResourceReferences", 84, 0x50)); // 85
-        for (int i = 86; i < tags.ContentKey; i++)
+        schema.Top(new("Floor", new Back(20), 1, ownerFields, [])); // 86
+        schema.Top(new("FloorAttributes", new Back(20), 1, ownerFields, [])); // 87
+        schema.Top(new("ProfileRoof", new Back(20), 1, ownerFields, [])); // 88
+        schema.Top(new("RoofAttributes", new Back(20), 1, ownerFields, [])); // 89
+        schema.Top(new("Ceiling", new Back(20), 1, ownerFields, [])); // 90
+        schema.Top(new("CompoundCeilingType", new Back(20), 1, ownerFields, [])); // 91
+        schema.Top(new("LevelAttributes", new Back(20), 1, ownerFields, [])); // 92
+        schema.Top(new("Grid", new Back(datumNames ? 74 : 20), 1,
+            datumNames ? [new("m_pGridChainMembershipCell", 14, 1)] : ownerFields, [])); // 93
+        schema.Top(new("GridAttributes", new Back(20), 1, ownerFields, [])); // 94
+        schema.Top(new("GridChain", new Back(20), 1,
+            datumNames ? [new("commonText", 8), Reference("m_curveTagToGridsInChain", 76, 0x50)] : ownerFields, [])); // 95
+        for (int i = 96; i < tags.ContentKey; i++)
             Add("Filler" + i);
         foreach (string marker in new[] { "ContentKey", "ContentMarker", "SegmentMarker", "SegmentCheckback", "SignatureMarker" })
             Add(marker);
@@ -2518,6 +2722,8 @@ public sealed class SetParameterTests : IDisposable
             if (globalFormulas is not null)
                 owners = globalFormulas.Consumer ? [..owners, BindingId, GlobalFormulaResultId, GlobalFormulaConsumerId]
                     : [..owners, BindingId, GlobalFormulaResultId];
+            if (datumNames)
+                owners = [.. owners, DatumLevelId, DatumLineId, DatumChainId, DatumFirstMemberId, DatumSecondMemberId];
             Array.Sort(owners);
             byte[] table = new byte[6 + owners.Length * 28];
             table[0] = 17;
@@ -2528,7 +2734,17 @@ public sealed class SetParameterTests : IDisposable
         }
         using (var partition = root.CreateStorage("Partitions").CreateStream("0"))
         {
-            var category = (user?.Owner ?? image?.Owner) == OwnerKind.Room ? BuiltInCategory.OST_Rooms : BuiltInCategory.OST_Walls;
+            var category = (user?.Owner ?? image?.Owner) switch
+            {
+                OwnerKind.Room => BuiltInCategory.OST_Rooms,
+                OwnerKind.Floor or OwnerKind.FloorType => BuiltInCategory.OST_Floors,
+                OwnerKind.Roof or OwnerKind.RoofType => BuiltInCategory.OST_Roofs,
+                OwnerKind.Ceiling or OwnerKind.CeilingType => BuiltInCategory.OST_Ceilings,
+                OwnerKind.Level or OwnerKind.LevelType => BuiltInCategory.OST_Levels,
+                OwnerKind.Grid or OwnerKind.GridType => BuiltInCategory.OST_Grids,
+                OwnerKind.GridChain => BuiltInCategory.OST_GridChains,
+                _ => BuiltInCategory.OST_Walls,
+            };
             ushort ownerTag = user is not null ? (ushort)user.Owner : wall ? (ushort)22 : (ushort)21;
             var records = new List<(ulong, ushort, byte[])>
                 { (ProjectId, ownerTag, user is null ? Body(wall ? xmlValue : "Owner", duplicate, wall, grouped, association)[2..] : UserBody(user, grouped: grouped, association: association)[2..]) };
@@ -2548,7 +2764,7 @@ public sealed class SetParameterTests : IDisposable
                 {
                     WriteEmptyElement(writer, BindingId, material);
                     writer.Write(DefinitionId);
-                    writer.Write((int)category);
+                    writer.Write((int)(user.BindingCategory ?? category));
                     writer.Write(user.Binding);
                 })));
             }
@@ -2657,7 +2873,34 @@ public sealed class SetParameterTests : IDisposable
                         writer.Write(GlobalFormulaResultId);
                     })));
             }
+            if (datumNames)
+            {
+                records.Add((DatumLevelId, 77, DatumBody(DatumLevelId, 77, "Level A")[2..]));
+                records.Add((DatumLineId, 93, DatumBody(DatumLineId, 93, "Grid A")[2..]));
+                records.Add((DatumChainId, 95, DatumBody(DatumChainId, 95, "Chain A")[2..]));
+                records.Add((DatumFirstMemberId, 93, DatumBody(DatumFirstMemberId, 93, "Chain A", DatumChainId)[2..]));
+                records.Add((DatumSecondMemberId, 93, DatumBody(DatumSecondMemberId, 93, "Chain A",
+                    omitDatumMemberLink ? 0 : DatumChainId)[2..]));
+            }
             var block = PartitionStreamEditorTests.MakeStandardBlock(4, keyed: false, records.ToArray());
+            if (datumNames)
+            {
+                var headers = block.Chains[0].Records;
+                foreach (var (id, datumCategory) in new[]
+                {
+                    (DatumLevelId, BuiltInCategory.OST_Levels), (DatumLineId, BuiltInCategory.OST_Grids),
+                    (DatumChainId, BuiltInCategory.OST_GridChains), (DatumFirstMemberId, BuiltInCategory.OST_Grids),
+                    (DatumSecondMemberId, BuiltInCategory.OST_Grids),
+                })
+                {
+                    byte[] header = new byte[22];
+                    BinaryPrimitives.WriteUInt16LittleEndian(header, 48);
+                    BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(6), (int)datumCategory);
+                    BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(18), -1);
+                    int index = Array.FindIndex(headers, entry => entry.Owner == (ulong)id);
+                    headers[index] = new((ulong)id, header);
+                }
+            }
             if (user is not null || family is not null || builtIn is not null || association is not null || image is not null)
             {
                 byte[] header = new byte[22];
@@ -2803,6 +3046,7 @@ public sealed class SetParameterTests : IDisposable
                 formula: options.Formula, numericFormula: options.NumericFormula,
                 association: association is { Derived: true } or { PrimaryAndDerived: true } ? association : null,
                 associationSlot: association is not null && !options.Instance,
+                typedCost: options.TypedCost,
                 reference: options.Reference is { } nested ? options.Diverged ? OriginalMaterialId : nested.Value : null,
                 active: options.ProjectTarget is null ? null : true, referenceStore: options.BoundFamilyType)[2..]));
         if (options.Formula)
@@ -3255,6 +3499,29 @@ public sealed class SetParameterTests : IDisposable
         if (material)
             WritePointer(writer, elementIdStore ? 54 : 0);
     }
+
+    private const int DatumLevelId = 50001, DatumLineId = 50002, DatumChainId = 50003, DatumFirstMemberId = 50004, DatumSecondMemberId = 50005;
+
+    private static byte[] DatumBody(int id, ushort tag, string name, int chain = 0) => Pack(writer =>
+    {
+        writer.Write(tag);
+        WriteEmptyElement(writer, id);
+        WriteText(writer, name);
+        if (tag == 95)
+        {
+            writer.Write(2);
+            writer.Write(0);
+            writer.Write(DatumFirstMemberId);
+            writer.Write(1);
+            writer.Write(DatumSecondMemberId);
+        }
+        if (tag == 93)
+        {
+            WritePointer(writer, chain == 0 ? 0 : 75);
+            if (chain != 0)
+                writer.Write(chain);
+        }
+    });
 
     private static byte[] GlobalBody(GlobalFixture parameter, string value = "0", int id = DefinitionId, GlobalBinary? binary = null,
         bool conditional = false, int function = 0, int release = 2022) => Pack(writer =>

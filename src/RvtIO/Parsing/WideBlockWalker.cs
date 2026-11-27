@@ -26,6 +26,7 @@ internal sealed partial class WideBlockWalker
     internal readonly record struct Capture(string Key, CaptureKind Kind, long Integer, double Real, string? Text, bool AtRoot, int QueueIndex,
         string DeclaringClass, string Field, int ValueOffset = -1, int QueuePosition = -1);
 
+    internal readonly record struct ArchiveReference(int Offset, int OwnerQueueIndex, uint Handle, int? QueuedObject = null);
 
     internal enum CaptureKind { Integer, Real, Text, PointerClass }
 
@@ -37,6 +38,7 @@ internal sealed partial class WideBlockWalker
         public int Position;
         public readonly List<int> Queue = [];
         public readonly List<Capture> Captures = [];
+        internal List<ArchiveReference>? ArchiveReferences;
         public Dictionary<string, int>? RootPointers;
         /// <summary>Per queued object (same index as <see cref="Queue"/>) the first position of its fields, -1 when not reached.</summary>
         public readonly List<int> QueueStart = [];
@@ -190,9 +192,10 @@ internal sealed partial class WideBlockWalker
     /// behind it can be read, inside the payload, from exactly one start position and <paramref name="tailValid"/> (walk, index of the first
     /// object read again) accepts what was read there (RebarShape: the constraints of the edges lie behind the ESEntityCell of the shape;
     /// their values tell a real start from a misaligned one).</summary>
-    internal Walk Run(byte[] data, int offset, int size, int classId, Func<Walk, int, bool>? tailValid = null, bool rootOnly = false)
+    internal Walk Run(byte[] data, int offset, int size, int classId, Func<Walk, int, bool>? tailValid = null, bool rootOnly = false,
+        bool traceArchiveReferences = false)
     {
-        var walk = new Walk();
+        var walk = new Walk { ArchiveReferences = traceArchiveReferences ? [] : null };
         var ctx = new Context(data, offset + 2, offset + size, walk);
         int failedAt = -1;
         try
@@ -455,18 +458,11 @@ internal sealed partial class WideBlockWalker
                 return;
             }
             case 4:
-            {
-                int p = Take(c, 4);
-                int v = BitConverter.ToInt32(c.D, p);
-                Note(CaptureKind.Integer, v, 0, null, p);
-                if (record != null) record[f.Name] = (long)v;
-                return;
-            }
             case 5:
             {
                 int p = Take(c, 4);
                 int v = BitConverter.ToInt32(c.D, p);
-                Note(CaptureKind.Integer, v, 0, null);
+                Note(CaptureKind.Integer, v, 0, null, p);
                 if (record != null) record[f.Name] = (long)v;
                 return;
             }
@@ -542,6 +538,7 @@ internal sealed partial class WideBlockWalker
         {
             int offset = c.Pos;
             uint back = U32(c);
+            walk.ArchiveReferences?.Add(new(offset, c.QueueIndex, back));
             if (key != null) walk.Captures.Add(new(key, CaptureKind.Integer, back, 0, null, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name, offset));
             if (record != null) record[f.Name] = (long)back;
             return;
@@ -580,6 +577,7 @@ internal sealed partial class WideBlockWalker
             }
             if (key != null) walk.Captures.Add(new(key, CaptureKind.PointerClass, handle == 0 ? 0 : tag == 0 ? -1 : tag, 0, null,
                 c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name, handleAt, queuePosition));
+            walk.ArchiveReferences?.Add(new(handleAt, c.QueueIndex, handle, tag == 0 ? null : queuePosition));
             if (record != null) record[f.Name] = record is EntityFields ? UnavailableEntityValue : (long)tag;
             return;
         }
@@ -628,6 +626,7 @@ internal sealed partial class WideBlockWalker
             return;
         }
         {
+            int handleAt = c.Pos, queuePosition = walk.Queue.Count;
             uint handle = U32(c);
             int tag = 0;
             if (handle == 0xFFFFFFFF)
@@ -637,6 +636,7 @@ internal sealed partial class WideBlockWalker
                 if (walk.Queue.Count >= 1_000_000) throw new Fail("queue");
                 walk.Queue.Add(tag);
             }
+            walk.ArchiveReferences?.Add(new(handleAt, c.QueueIndex, handle, tag == 0 ? null : queuePosition));
             if (key != null) walk.Captures.Add(new(key, CaptureKind.PointerClass, handle == 0 ? 0 : tag == 0 ? -1 : tag, 0, null, c.AtRoot && depth == 0, c.QueueIndex, declaring.Name, f.Name));
         }
     }

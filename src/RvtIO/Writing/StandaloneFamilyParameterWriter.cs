@@ -579,13 +579,14 @@ internal static class StandaloneFamilyParameterWriter
             var entry = matches.SingleOrDefault();
             bool expected = !first && (display is not null || !string.IsNullOrEmpty(before));
             string? unit = (string?)entry?.Attribute("units");
+            var entryDisplay = entry is null ? display : display?.ForStoredUnit(unit);
             if (expected != (entry is not null)
                 || (entry is not null && (entry.HasElements || (string?)entry.Attribute("typeOfParameter") != field.Type
-                    || (string?)entry.Attribute("displayName") != field.DisplayName || !(display?.MatchesUnit(unit) ?? unit is null)
-                    || !(display?.Matches(entry.Value) ?? entry.Value == before))))
+                    || (string?)entry.Attribute("displayName") != field.DisplayName || !(entryDisplay?.MatchesUnit(unit) ?? unit is null)
+                    || !(entryDisplay?.Matches(entry.Value) ?? entry.Value == before))))
                 throw Unverified("The stored built-in value and family metadata disagree.");
 
-            string after = type == selected ? display?.After ?? text : defaultText;
+            string after = type == selected ? entryDisplay?.After ?? text : defaultText;
             if (entry is null)
             {
                 if (after.Length == 0)
@@ -717,6 +718,7 @@ internal static class StandaloneFamilyParameterWriter
         if (mode != 0 || matches is not [var target] || target.HasElements)
             throw Unverified("The parameter's family metadata is outside the verified layout.");
         string? unit = (string?)target.Attribute("units");
+        display = display?.ForStoredUnit(unit);
         if (!(display?.MatchesUnit(unit) ?? unit is null))
             throw Unverified("The parameter's family metadata is outside the verified layout.");
 

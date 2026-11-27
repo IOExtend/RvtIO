@@ -24,6 +24,8 @@ internal static class ParameterWriter
     {
         internal readonly Dictionary<(int Partition, int Block, int Channel, ulong Owner), RvtPartitionRecordEdit> Records = new();
         internal readonly Dictionary<string, byte[]> Metadata = new(StringComparer.OrdinalIgnoreCase);
+        internal readonly List<PartitionOwnerAddition> AddedProjectOwners = [];
+        internal readonly HashSet<(int Partition, ulong Owner)> RemovedProjectOwners = [];
         internal GlobalParameterWriter.ProjectDependencies? GlobalParameterDependencies;
 
         internal void Apply(PlanResult? plan)
@@ -73,8 +75,9 @@ internal static class ParameterWriter
         var parameter = (BuiltInParameter)parameterId;
         if (parameterId == (int)BuiltInParameter.HOST_AREA_COMPUTED)
             throw new RvtWriteRefusedException("read-only-parameter", "Revit computes HOST_AREA_COMPUTED and exposes it as read-only.");
-        if (parameterId <= 0 && parameter is not (BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS or BuiltInParameter.ALL_MODEL_MARK)
-            && !IsTypeIdentity(parameter) && !IsImage(parameter)
+        if (parameterId <= 0 && parameter is not (BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS or BuiltInParameter.ALL_MODEL_MARK
+                or BuiltInParameter.DATUM_TEXT or BuiltInParameter.LEVEL_ELEV)
+            && !WallHeightWriter.IsWallOrOpeningParameter(parameter) && !IsTypeIdentity(parameter) && !IsImage(parameter)
             && !Fields.ContainsKey(parameter))
             throw new RvtWriteRefusedException("unsupported-parameter", $"Writing {parameter} has not been verified.");
         if (value is null)
@@ -118,6 +121,12 @@ internal static class ParameterWriter
         var elementIds = elements.Select(row => row.Id).ToHashSet();
         if (!elementIds.Contains(edit.ElementId))
             throw new RvtWriteRefusedException("missing-element", $"Element {edit.ElementId} was not found in the element table.");
+        if (!edit.UserDefined && WallHeightWriter.IsWallOrOpeningParameter(edit.Parameter))
+            return WallHeightWriter.Plan(root, tags, idWidth, schema, elementIds, edit, pending);
+        if (edit.Parameter == BuiltInParameter.DATUM_TEXT)
+            return DatumNameWriter.Plan(root, tags, idWidth, schema, elementIds, edit, pending);
+        if (edit.Parameter == BuiltInParameter.LEVEL_ELEV)
+            return LevelElevationWriter.Plan(root, tags, idWidth, schema, elementIds, edit, pending);
         if (edit.UserDefined && !elementIds.Contains(edit.ParameterId))
             throw new RvtWriteRefusedException("missing-parameter-definition", $"Parameter definition {edit.ParameterId} was not found in the element table.");
 
@@ -280,8 +289,8 @@ internal static class ParameterWriter
             bool supportedOwner = comments
                 ? SchemaRelease.FromSchema(formats) is >= 2022 && (ownerClass == "SWall" && category == (int)BuiltInCategory.OST_Walls
                     || ownerClass == "FamilyInstance" && category == (int)BuiltInCategory.OST_GenericModel)
-                : ownerClass == "FamilySymbol" && (master == -1 && doorWindowFurniture
-                    || category == (int)BuiltInCategory.OST_GenericModel && master is -1 or > 0);
+                : ownerClass == "FamilySymbol" && (doorWindowFurniture || category == (int)BuiltInCategory.OST_GenericModel)
+                    && master is -1 or > 0;
             if (!supportedOwner)
                 throw Unverified("This built-in global association has not been verified for the element class, category, and release.");
         }
@@ -393,8 +402,6 @@ internal static class ParameterWriter
                 throw Unverified("The controlled property has no verified saved value.");
             if (walk.EmptyEntityAt >= 0 || projectInfo || (comments && ownerClass == "SWall" && category != (int)BuiltInCategory.OST_Walls))
                 throw Unverified("The first value requires a verified main-model element and parameter store.");
-            if (storage == StorageType.String && edit.Value!.Length == 0 && edit.UserDefined && !projectBoundAssignment)
-                throw new RvtWriteRefusedException("invalid-parameter-value", "The first text value must be non-empty.");
             updated = InsertValue(formats, walker, walk, body, idWidth, edit, storage, replacement);
         }
 
@@ -425,9 +432,7 @@ internal static class ParameterWriter
             }
             var (definitionWalk, slot) = UserParameterWriter.ReadBoundDefinition(walker, ownerClass, category, definition, bindings,
                 edit, clearing: false);
-            string? definitionClass = walker.Class(BinaryPrimitives.ReadUInt16LittleEndian(definition))?.Name;
-            var target = FormulaParameterStorage.Read(walker, definitionWalk, slot,
-                includeCurrency: definitionClass == "ParamElemExternal");
+            var target = FormulaParameterStorage.Read(walker, definitionWalk, slot, includeCurrency: true);
             // Revit 2020–2021 refuse Slope globals on Number parameters bound in the project.
             value.VerifyFormat(target, allowSlopeGlobalToNumber: SchemaRelease.FromSchema(formats) is >= 2022);
             return (target.Storage, value.Replacement, target.Unit);
@@ -459,6 +464,8 @@ internal static class ParameterWriter
             stream.ReadExactly(raw);
             if (!PartitionFraming.Walk(raw, tags, idWidth, record =>
                 {
+                    if (record.Block == 0 && pending.RemovedProjectOwners.Contains((number, record.Owner)))
+                        return;
                     if (pending.Records.TryGetValue((number, record.Block, record.Channel, record.Owner), out var edit))
                         record = record with { Body = edit.Body };
                     visit(number, record);

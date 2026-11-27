@@ -47,24 +47,29 @@ readable project record for the element and a verified source for the parameter 
 | Straight wall or top-level loaded family instance | `ALL_MODEL_MARK` (Mark). The writer verifies the main-model owner and the element's text store. |
 | Straight wall or top-level loaded Generic Model, Door, Window, or Furniture instance | `ALL_MODEL_INSTANCE_COMMENTS` (Comments). |
 | Straight wall, room, or top-level loaded Generic Model, Door, Window, or Furniture instance | `ALL_MODEL_IMAGE` (Image). |
+| Verified straight basic wall with an unconnected top | `WALL_USER_HEIGHT_PARAM` (Unconnected Height). Pass a length with units, such as `"3200 mm"`. |
+| Verified straight basic wall with level constraints | `WALL_BASE_OFFSET` (Base Offset), and `WALL_TOP_OFFSET` (Top Offset) when the top is constrained to a level. Pass a signed length with units, such as `"-150 mm"`. |
+| Verified rectangular opening in a straight basic wall | `WALL_BASE_OFFSET` and `WALL_TOP_OFFSET` take signed lengths with units. `WALL_BASE_CONSTRAINT` and `WALL_HEIGHT_TYPE` take the ID of a local project level. |
+| Level, straight or radial grid, or multi-segment grid in the main model | `DATUM_TEXT` (Name). A multi-segment grid assignment updates the name on the grid and all verified member records. |
+| Level in the main model without dependent elements or with verified plan, sketch plane, straight basic wall, or rectangular opening dependencies | `LEVEL_ELEV` (Elevation). Pass a signed length with units. RvtIO uses the level type's selected elevation base and updates the stored datum planes and affected plan, wall, and verified rectangular opening geometry in project coordinates. |
 | Basic wall type | `ALL_MODEL_TYPE_IMAGE` (Type Image). |
 | Basic wall type, primary or directly linked derived family symbol | `ALL_MODEL_TYPE_MARK` (Type Mark). Pass the ID of the type or symbol whose value you want to write. |
 | Basic wall type or verified loaded family type | `ALL_MODEL_TYPE_COMMENTS`, `ALL_MODEL_DESCRIPTION`, `ALL_MODEL_MANUFACTURER`, `ALL_MODEL_MODEL`, `ALL_MODEL_URL`, and `ALL_MODEL_COST`. Cost takes a finite invariant number with no currency symbol; a change that Revit can suppress within its numeric comparison tolerance is refused. |
-| Basic wall type or primary Door symbol without derived copies | `FIRE_RATING` (also named `DOOR_FIRE_RATING`, the same parameter ID). |
+| Basic wall type or verified loaded Door type | `FIRE_RATING` (also named `DOOR_FIRE_RATING`, the same parameter ID). |
 | Straight wall (`SWall`), basic wall type (`BasicWallType`), room (`RoomElem`) | Project and shared parameters of supported types with a verified definition and a matching instance or type binding. |
+| Floor, footprint roof, or ceiling and their verified types | Project-bound Text, Integer, Yes/No, Length, Currency, and Material. The category and binding must agree with the stored class (`Floor`, `FloorAttributes`, `ProfileRoof`, `RoofAttributes`, `Ceiling`, or `CompoundCeilingType`). |
+| Levels, straight and radial grids, multi-segment grids and their member grids, and verified level and grid types | Project-bound Text, Integer, Yes/No, Length, Currency, and Material. Levels and level types use `OST_Levels` (`Level`, `LevelAttributes`). Grids, including members, and grid types use `OST_Grids` (`Grid`, `GridAttributes`). The multi-segment grid itself uses an instance binding to `OST_GridChains` (`GridChain`). |
 | Straight wall, basic wall type, room, or loaded family instance or type | **Family Type** parameters supplied by a verified project binding. Assign a matching nested type reference, a verified material ID, or `"-1"`. Shared definitions also accept the verified local element and active primary type references described below. A shared definition with `HideWhenNoValue` supports clearing. |
 | Top-level loaded family instance (`FamilyInstance`) or primary family type (`FamilySymbol`) | Family and family-shared parameters of supported types. The loaded family must mark the parameter as independent of geometry. |
 | Top-level loaded family instance or primary loaded family type | Family and family-shared **Family Type** parameters with a verified geometry-independent declaration. Assign a matching local nested type reference, a verified local material ID, or the explicit value `"-1"`. Primary type assignments also update verified derived copies. |
 | Top-level loaded family instance (`FamilyInstance`) | Writable shared and non-shared parameters supplied by a verified project instance binding. Pass the instance's ID to assign or replace its own value. |
 | Primary or directly linked derived family symbol (`FamilySymbol`) | Writable shared and non-shared parameters supplied by a verified project type binding. Pass the symbol's element ID to assign or replace its own value. |
-| Global parameter (`GlobalParameter`) | Text, Integer, Yes/No, Number, Length, Area, Volume, Angle, Currency, Mass, Force, Mass Density, Speed, Slope, and Time, including inputs to verified formulas. Currency globals can update verified built-in Cost and shared Currency associations on walls, basic wall types, rooms, and loaded family elements. Use the global parameter's element ID for both `elementId` and `parameterId` in single edits and batches. |
+| Global parameter (`GlobalParameter`) | Text, Integer, Yes/No, Number, Length, Area, Volume, Angle, Currency, Mass, Force, Mass Density, Speed, Slope, and Time, including inputs to verified formulas. Currency globals can update verified built-in Cost and project-bound Currency associations on walls, basic wall types, rooms, and loaded family elements. Use the global parameter's element ID for both `elementId` and `parameterId` in single edits and batches. |
 
 For project and shared parameters, the writer checks the definition's read-only flag and verifies the category binding in the main model.
-Revit API editability governs shared parameters that the UI displays as read-only. The writer can also assign the first
-value of a supported parameter on a straight wall, a basic wall type, or a room. First assignment of a wall comment requires
-a wall in the main model. First assignment of project-bound text on walls and rooms requires a non-empty value.
-The supported built-in Comments and text identity fields, and project-bound text on loaded family elements, accept an
-empty string even on first assignment.
+Revit API editability governs shared parameters that the UI displays as read-only. First assignment of a wall comment
+requires a wall in the main model. The supported built-in Comments and text identity fields and verified project-bound
+text accept an empty string on first assignment. An explicit empty string has a stored value.
 Ordinary element edits also work in projects with global parameters. RvtIO checks project associations by the
 parameter ID on the element. A supported parameter can be assigned or cleared when another parameter on that
 element has an association. The associated parameter is read-only. Group membership and unverified association
@@ -109,13 +114,12 @@ The same write path supports verified parameters declared by a loaded family whe
 as independent of geometry. An instance association updates the local value and its dependent formulas. A type
 association updates the primary symbol and recalculates affected instance results, including on placements with
 derived symbols. Derived symbol records retain their saved values in this case.
-A Text global can also update Type Comments, Description, Manufacturer, and Model on a primary Generic Model,
-Door, Window, or Furniture type, and Fire Rating on a primary Door type. A Currency global can update the
-type's Cost. The writer verifies the existing value in the typed element store
-or named family store. A Generic Model global updates the primary or directly derived symbols to which it is
-associated. Starting with the 2022 format, a Text global can also update Comments on a main-model wall
-or a top-level Generic Model instance. These edits require an existing association and use the global parameter's
-ID for both edit IDs.
+A Text global can also update Type Comments, Description, Manufacturer, and Model on Generic Model, Door,
+Window, and Furniture types, and Fire Rating on Door types. A Currency global can update the type's Cost.
+RvtIO verifies the existing value in the typed element store or named family store and updates each primary
+or directly linked derived symbol associated with that global. Starting with the 2022 format, a Text global
+can also update Comments on a main-model wall or a top-level Generic Model instance. These edits require an
+existing association and use the global parameter's ID for both edit IDs.
 Verified formulas support parentheses, negation, addition, subtraction, multiplication, and division with
 compatible units. They also support `=`, `>`, `<`, `and`, `or`, `not`, and `if` with numeric, Yes/No, or Text
 branches as permitted by the formula type. Only the selected branch of `if` is evaluated. In `and` and `or`,
@@ -176,11 +180,10 @@ For a parameter supplied only by a project binding, the assignment edits the add
 typed value. The writer verifies that the loaded family does not also declare the same parameter.
 The supported built-in Comments and identity fields also edit the addressed element's own value. An assignment to a
 primary symbol through the verified project value store preserves local values of its derived symbols.
-Door, Window, and Furniture identity fields support primary symbols without derived copies. The writer follows the
-storage Revit uses for the parameter, either a value in the project store or an existing value imported from the
-family. Editing an imported Generic Model identity field on the primary symbol also updates its verified derived
-copies when they match the previous primary value. Generic Model identity fields in the project store can be
-edited on the primary or a directly linked derived symbol by its own ID.
+For Generic Model, Door, Window, and Furniture type identity fields in the project store, use the ID of the primary
+or directly linked derived symbol whose value you want to set. For an identity field imported from the family,
+use the primary symbol ID. The writer updates its verified derived copies when they match the previous primary
+value. An edit addressed directly to an imported copy is refused.
 
 Supported types are Text, Integer, Yes/No, Number, Length, Area, Volume, Angle, and Material. Use `0` or `1` for Yes/No.
 Integers respect the stored definition bounds. For Number, pass a finite invariant decimal without a unit. For measurements,
@@ -190,10 +193,11 @@ Assignments also accept Mass in `kg`, Force in `kN`, Mass Density in `kg/m3` or 
 Speed in `m/s`, Slope in `%`, and Time in `s`. In a value such as `16.5 %`, the space separates the value
 from the unit. RvtIO converts the quantity to Revit's internal units before writing.
 [Autodesk Revit API unit system](https://help.autodesk.com/cloudhelp/2024/ENU/Revit-API/files/Revit_API_Developers_Guide/Introduction/Application_and_Document/Revit_API_Revit_API_Developers_Guide_Introduction_Application_and_Document_Units_html.html)
-Shared project-bound Currency values on walls, basic wall types, rooms, top-level loaded family instances, and
-primary and directly linked derived symbols use a finite invariant number with no currency symbol. An explicit zero
-gives the parameter a value. Clearing requires `HideWhenNoValue`. The writer refuses changes that Revit may
-suppress within its numeric comparison tolerance. [Autodesk shared parameter guide](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API/files/Revit_API_Developers_Guide/Basic_Interaction_with_Revit_Elements/Parameters/Revit_API_Revit_API_Developers_Guide_Basic_Interaction_with_Revit_Elements_Parameters_Shared_Parameters_html.html)
+Shared and non-shared project-bound Currency values on walls, basic wall types, rooms, top-level loaded family
+instances, and primary and directly linked derived symbols use a finite invariant number with no currency symbol.
+An explicit zero gives the parameter a value. Clearing requires a shared definition with `HideWhenNoValue`.
+The writer refuses changes that Revit may suppress within its numeric comparison tolerance.
+[Autodesk shared parameter guide](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API/files/Revit_API_Developers_Guide/Basic_Interaction_with_Revit_Elements/Parameters/Revit_API_Revit_API_Developers_Guide_Basic_Interaction_with_Revit_Elements_Parameters_Shared_Parameters_html.html)
 Family-declared Currency values on loaded primary types and top-level instances use the same numeric input.
 The writer checks the effective value, including an inherited instance default, against Revit's comparison tolerance.
 It recalculates verified dependent results and supports a calculated Currency type value when its formula has
@@ -232,6 +236,51 @@ An identical value produces a lossless copy. The input and existing destination 
 
 The command uses exit code 0 for success, 1 for invalid arguments, 2 for input or I/O errors, and 5 for a refused edit.
 Low-level `Rewrite` accepts raw stream or record payloads and does not perform parameter editability checks.
+
+### Wall height and offsets
+
+RvtIO verifies the wall body, bounds, and saved face references before applying a height edit. It recomputes the
+compact bounds of the physical solid and each auxiliary solid from their updated geometry. The wall must be in
+the main model. Room Bounding can be enabled when the project has no rooms, spaces, areas, or saved spatial
+topology. For a project with a single wall, an end can allow joins if the stored join and healing records are
+empty. With multiple walls, both end joins must be disabled on the edited wall. A wall with a verified rectangular
+opening can retain its cut as its height changes. RvtIO also rebuilds verified cut transitions for one or two
+separated rectangular openings. This covers paths across the sill and head, activation of a dormant opening,
+and removal of a cut. When Revit would add or remove an opening warning, the writer updates its records and
+registries in the same batch. [Autodesk built-in parameter reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/fb011c91-be7e-f737-28c7-3f1e1917a0e0.htm)
+
+For Unconnected Height, pass a finite length of at least `0.1 ft` in `mm`, `cm`, `m`, `in`, or `ft`. Revit exposes it as
+read-only on the tested level-constrained walls. RvtIO also refuses ambiguous positions near a cut boundary,
+unverified dependencies such as a dimension or room topology, and unverified joins and geometry.
+
+Base Offset changes the elevation above or below the base level. For an unconnected wall, the whole wall moves
+and its unconnected height is preserved. When the top has a level constraint, the new base changes the computed
+height and the top remains at the elevation set by its constraint and offset. Top Offset changes that top
+elevation while preserving the base. Revit exposes Top Offset as read-only when the wall top is unconnected.
+Pass a finite signed length with the same units as Unconnected Height. The resulting wall must be at least
+`0.1 ft` tall and inside the writer's verified coordinate range.
+
+Verified existing rectangular openings keep their absolute elevations. RvtIO can rebuild verified transitions when
+Top Offset moves the wall top through an opening. Base Offset can move the wall base through the sill of an interior
+opening, adjust an existing cut through the base, or restore the sill when the opening becomes interior again. A second
+separated interior opening can remain in place during the transition. RvtIO preserves the assigned edge tags in the
+geometry history so that a later transition can reuse them. When the base moves above the entire opening, RvtIO
+retains the opening element, removes the cut and writes Revit's "Rectangular opening doesn't cut its host" warning.
+Moving the base back through the opening restores the cut and removes that warning. Reactivation directly through the
+base requires verified saved cut history. The base can coincide exactly with the sill or head of one or two rectangular
+openings with verified cut histories and separated positions along the wall. At the sill the opening cuts the wall and
+splits the outline of its base face. At the head the opening keeps its guide faces and posts the warning without cutting
+the wall. This covers contacts at both openings and a contact at one opening while the other remains interior, cuts through
+the base, or falls below it. The writer also handles verified positions within Revit's vertex tolerance and positions
+just beyond it that retain an interior cut or a cut through the base. It refuses the unverified positions at the
+tolerance limits, combined cuts outside these layouts, and unverified vertex projections.
+
+Fractional offsets and Unconnected Height changes can retain or rebuild the verified cuts when the writer can identify
+the wall endpoints and fixed opening elevations in the stored face coordinates. The writer derives the nominal base
+from the saved level and Base Offset and checks the projected lower bound separately. Opening elevations stay the same
+when the vertices move onto the resized wall faces. A saved upper bound slightly above the solid is supported when the
+fourth wall reference plane and the matching auxiliary rectangle account for the extension. The writer verifies the tight
+bounds of the solid independently and resizes the auxiliary rectangle with the reference plane.
 
 ## Editing a standalone family
 
@@ -273,11 +322,28 @@ chains, measured values, Yes/No conditions, and text results.
 The writer updates the selected type and its current-value copy if it is the active type. It also updates matching `PartAtom`
 metadata and adds the missing entry when filling an empty, visible user text parameter. User and shared parameters must
 have a stored row for the selected type. The source, any existing destination, and the active type selection are preserved.
-For measured type parameters, a matching `PartAtom` entry requires a verified decimal display format. Decimal feet,
+For measured type parameters, a matching `PartAtom` entry requires a verified display format. Decimal feet,
 decimal inches, square feet, and cubic feet use the labels `'`, `"`, `SF`, and `CF`. RvtIO also handles the matching
 format symbols when they appear in the displayed value. Use `ft`, `in`, `ft2`, and `ft3` in edit requests.
+For Length, RvtIO also supports the `Feet and fractional inches` and `Fractional inches` display formats. Edit requests take decimal
+quantities such as `1.125 ft` or `13.5 in`. RvtIO preserves the unit label already in `PartAtom` and writes the
+rounded fraction there. The stored length retains its full precision. Supported rounding steps follow Revit's
+1/2²⁰-inch resolution, including 3/8 inch, 1½ inches, 6 inches, and whole feet. In the feet-and-inches format,
+a whole-foot step displays feet alone. Feet with fractional inches can suppress leading zeros and spaces.
+Fractional inches use a double quote in the value in older saves. Newer saves put the unit label in
+the `units` attribute and include the quote in the value when the double-quote symbol is selected.
+The degrees, minutes, and seconds display format for Angle stores the marks in the `PartAtom` value, such as
+`22° 07' 30"`. Edit requests use decimal quantities with `deg` or `rad`. The saved Angle value retains the
+assigned precision. Its displayed seconds follow the family's decimal separator and verified rounding step.
+The verified layout uses the default marks and spacing. Revit accepts digit grouping for this format and
+still writes an ungrouped degree count in `PartAtom`. Its API disallows suppressing spaces, leading zeros,
+and trailing zeros for this display.
+Radian displays use the `rad` metadata unit in both legacy and current formats. The displayed value uses a
+` rad` suffix when that symbol is configured and drops trailing decimal zeros when suppression is selected.
 Family metadata follows the document's decimal point or comma. The verified grouping options use commas, dots,
 spaces, or apostrophes, with groups of three digits or with two-digit groups to the left of the final three digits.
+Grouping applies to the whole-foot and whole-inch parts of fractional lengths. If the decimal and grouping
+separators are identical, the writer checks the saved display text against the stored number before changing it.
 Unitless Number values use the document's decimal separator without digit grouping. Numeric edit requests still use
 a decimal point and omit grouping separators. A Number value whose shortest round-trip text needs exponent notation
 (for example `1E-05`) is refused, because how Revit writes it into the family metadata has not been verified.
@@ -306,7 +372,7 @@ the default two-decimal currency format with `$` in the family metadata. A Cost 
 comparison tolerance is refused.
 
 In Generic Model families, `FAMILY_FREEINST_DEFAULT_ELEVATION` takes a length with an explicit unit. The type table must contain the parameter
-and the family must use a verified decimal length format for the matching `PartAtom` value.
+and the family must use a verified length display format for the matching `PartAtom` value.
 `ALL_MODEL_TYPE_IMAGE` takes the positive ID of a verified raster image already imported into the same family.
 An explicit `-1` sets it to None. On first assignment the other types receive None, and the imported image data is preserved.
 Revit accepts imported images in family documents. [Autodesk ImageTypeOptions reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/47f3832b-9cf5-4628-214d-7e7e7d705393.htm)
@@ -450,6 +516,15 @@ fields after upgrading fixtures from the 2026 format. Direct `Set` calls on the 
 Revit saved the previous values in these fixtures. Use the primary type ID for imported identity edits.
 Direct verification in Revit 2021, 2023, 2024, and 2026 is pending for this scenario.
 
+The Door, Window, and Furniture checks covered primary types with two directly linked derived symbols each.
+Project-stored values were assigned on both primary and derived symbols, including a primary edit after a
+local derived edit. Imported identity values were edited on the primary and compared across all its copies.
+The cases covered first assignment, replacement, empty text, zero Cost, and ordered batches. Direct Revit API
+`Set` calls on imported derived copies returned success and left their saved symbol records unchanged.
+Revit 2020–2025 and 2027 checked the saved values, `HasValue`, and instance dimensions after opening, saving,
+and reopening without Audit. Revit 2027 also checked the 2026-format files after upgrade. The checks covered
+11 outputs and seven refused batches per format. Each refusal preserved the source bytes and produced no output.
+
 Independent global values matched native first assignments and replacements after opening, SaveAs, and
 reopening without Audit in Revit 2020–2025 and 2027. The checks covered Text, Integer, Yes/No, Number, Length,
 Area, Volume, and Angle, and compared the source and result of an unrelated formula. Revit 2027 also verified
@@ -500,6 +575,125 @@ Revit 2020–2025 and 2027. Revit 2027 verified the seven 2026-format files afte
 expected API values, presence flags, associations, room area, and instance bounds after Save As and reopening
 without Audit. Thirty-two refused batches preserved the source bytes and created no output.
 
+Non-shared Currency checks covered walls, basic wall types, rooms, and top-level Generic Model instances, primary
+types, and derived types. The matrix compared first assignment (including an explicit zero), negative replacement,
+and ordered batches, as well as changes through an existing Currency global association. The 48 edited projects
+matched Revit 2020–2025 and 2027 after Save As and reopening without Audit. Revit 2027 verified the 2026 format
+after upgrade. Invalid or ambiguous numeric changes, direct edits to associated values, and attempts to clear a
+non-shared parameter rejected all 32 invalid batches. The source bytes stayed intact and no outputs were created.
+
+The floor, footprint roof, and ceiling checks used instance and type bindings for shared Text, Integer, Yes/No,
+Length, and Material, and non-shared Text and Currency. The cases covered first values including empty text and zero,
+replacement, clearing the verified shared values, ordered batches, and updating initialized Length values through
+an existing global association. The 48 edited projects matched the Revit API values, presence flags, associations,
+and element bounds after Save As and reopening without Audit in Revit 2020–2025 and 2027. Revit 2027 checked the
+2026 format after upgrade. All 40 refused batches left the source bytes intact and produced no output.
+
+The level and grid checks used instance and type bindings for shared Text, Integer, Yes/No, Length, and Material
+and non-shared Text and Currency. They covered levels and level types, straight and radial grids and their type,
+and the owner and members of a multi-segment grid. The Revit API writes a bound instance value independently on
+the multi-segment grid and on each member. The cases covered first values including empty text and zero,
+replacement, clearing the verified shared values, an ordered batch, and changing initialized Length values through
+an existing global association. The 40 edited projects matched API values, presence flags, associations, level
+elevations, grid curves, and grid membership after Save As and reopening without Audit in Revit 2020–2025 and 2027.
+Revit 2027 checked the 2026 format after upgrade. All 40 refused batches preserved the source bytes and created
+no output.
+
+Datum name checks compared two levels, a straight grid, a radial grid, and a multi-segment grid containing two
+member grids. RvtIO trims boundary whitespace, validates the name, checks uniqueness among levels or among grids, and verifies
+both directions of multi-segment membership. Revit refuses an empty or duplicate name and direct assignment to a member grid.
+The 40 edited projects matched native API names and read-only flags after Save As and reopening without Audit
+in Revit 2020–2025 and 2027. Revit 2027 checked the 2026 format after upgrade. All 40 invalid batches preserved the
+source bytes and created no output. A separate Revit 2025 check renamed a level with a plan using the same name.
+RvtIO's level-only rename matched the API after choosing **No** in the corresponding-view dialog and after
+Save As and reopening without Audit. [Autodesk documentation on renaming levels and corresponding views](https://help.autodesk.com/cloudhelp/2023/ENU/RevitLT-DocumentPresent/files/GUID-C67D39DB-57A3-4A79-9705-C78791647CDD.htm) [Autodesk MultiSegmentGrid.Text reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/8ec5e47a-8821-5d3c-0951-33d051a58b96.htm)
+
+Level elevation checks compared assignments in project and shared coordinates, including a negative replacement
+and repeated edits in one batch. The writer resolves the location selected by the level type and checks the
+vertical transform and both saved planes. The Revit API also permits raising a pinned level without changing
+its pinned state. Small changes can leave the displayed value at its current value in the API. RvtIO follows
+the observed tolerance and refuses changes at an ambiguous floating-point cutoff. The 40 projects matched the
+Revit API after Save As and reopening without Audit in Revit 2020–2025 and 2027. Revit 2027 checked the 2026
+format after upgrade. The Revit 2025 checks also covered an elevation measured from a moved project base point,
+large finite elevations, and changes within the comparison tolerance. All 40 refused batches preserved the
+source bytes and produced no output. [Autodesk level elevation reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/b5d48a18-4aa9-7457-7a6a-6d4966eaf77f.htm)
+
+Level elevation checks with plan dependencies covered floor, structural, and reflected ceiling plans. RvtIO
+updates the stored clip elevations and cutter planes for each verified range reference. It also moves the
+associated sketch planes when the plan's generating level moves. A floor plan with a top plane referencing
+a different level was verified for edits to either level and for both edits in one batch. The 40 edited
+projects matched the Revit API for level elevations, plan range references and offsets, and sketch planes
+after Save As and reopening without Audit in Revit 2020–2025 and 2027. Revit 2027 checked the 2026 format
+after upgrade. All 32 refused batches preserved the source bytes and created no output.
+[Autodesk PlanViewRange reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/7edc5f13-a5fa-5c7a-9a03-ac6cbed1f005.htm)
+
+Level elevation checks with wall dependencies covered straight vertical basic walls without openings. Moving
+the base level moves the wall's location line and the base of its solid. An unconnected top follows the base
+level with the same height. With a level-constrained top, the writer recomputes the height while keeping
+both offsets. The tests covered moving either constraint, moving both in one batch, and a level that also
+has dependent plans. The 48 edited projects matched the API for elevations, wall constraints and offsets,
+location curves, bounds, area, volume, and plan ranges after Save As and reopening without Audit in
+Revit 2020–2025 and 2027. Revit 2027 checked the 2026 format after upgrade. All 32 refused batches preserved
+the source bytes and created no output.
+Three further Revit 2025 checks with fractional elevations matched all parameter values and wall location lines.
+One upper bounding-box coordinate differed by one floating-point step after reopening.
+
+Level elevation checks with rectangular openings covered one opening on an unconnected wall, plus one or
+two openings on a wall constrained at both ends. Each opening edge follows its saved level. The writer
+keeps the opening offsets and regenerates its rectangle, opening solid, and wall cut. Moving either
+constraint, moving both in one batch, and lowering a previously raised level were checked. The 56 edited
+projects matched the Revit API for opening bounds and dimensions, wall location and quantities, and level
+elevations after Save As and reopening without Audit in Revit 2020–2025 and 2027. Revit 2027 checked the
+2026 format after upgrade. All 32 refused batches preserved the source bytes and created no output.
+[Autodesk Opening class reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/720de864-9f4e-c606-c7f4-2e7a0b2da46f.htm)
+
+Shared-elevation checks covered walls with two or three rectangular openings whose edges initially
+coincided in height. RvtIO follows the saved cutting faces and edge loops to identify the opening for
+each edge. The checks moved the base or top level separately and moved both levels in either batch order.
+All 40 edited projects matched the Revit API after Save As and reopening without Audit in Revit
+2020–2025 and 2027. Revit 2027 checked the 2026 format after upgrade. The 32 refused batches preserved
+the source bytes and created no output. Revit 2025 reported the opening's Unconnected Height as read-only.
+This height follows the position of both edges.
+
+For direct rectangular opening edits, RvtIO updates the opening bounds, the solid, and the wall cut.
+A level reference assignment also updates the opening's saved dependencies. Changing the constraint
+keeps that edge's offset. An opening can follow a level that does not constrain its host wall.
+The opening's Unconnected Height is read-only and follows the two edges.
+A verified opening can move across the wall's top or base, including by moving a level referenced by the
+wall or opening. The writer rebuilds one or two separated rectangular cuts at the affected boundary.
+If an opening no longer cuts the wall, the opening remains in the project and RvtIO records Revit's
+warning. Restoring the cut removes that warning. The writer refuses layouts that require rebuilding
+cuts at both boundaries in the same edit, that cross the full wall height, or that merge with other cuts.
+In Revit 2020–2022, moving the host's base level translates the opening when both edges use other levels.
+RvtIO preserves this displacement when the host moves again. Changing an opening parameter or one
+of its own levels recalculates both edges from the saved constraints and offsets.
+In Revit 2023–2027, an opening with independent constraints keeps its elevation when the host's base level moves.
+
+The main matrix covered 64 projects with direct assignments and 32 batches that changed levels after reassigning
+opening constraints. Thirty further checks in Revit 2020–2022 covered repeated host motion and edits after
+a host translation. All 126 edited projects matched the Revit API after Save As and reopening without
+Audit in Revit 2020–2025 and 2027. Revit 2027 checked the 2026 format after upgrade. All 80 refused
+batches preserved the original bytes and created no output.
+
+Boundary checks covered 176 edited projects with openings crossing the wall top or base, contacting the
+boundary while still cutting, and returning inside the wall. They included two separated openings,
+assigning a new opening level and changing its elevation. All matched the Revit API after Save As and
+reopening without Audit in Revit 2020–2025 and 2027. Revit 2027 checked the 2026 format after upgrade.
+Four more checks in Revit 2020 moved the host levels across an opening and back.
+In Revit 2025, 19 projects covered adding, retaining, and removing the warning. Twelve of them
+started from a warned project saved by Revit, generated by RvtIO, or subsequently saved again in Revit.
+The edits included restoring the cut and then moving a level in the same batch. The checks compared
+the warning definition and affected opening, the boundary, the host geometry, and level dependencies
+after Save As and reopening without Audit. These direct warning transitions were verified in Revit 2025.
+All 40 refused boundary batches preserved the source bytes and created no output.
+
+Empty-text checks covered walls, basic wall types, and rooms with non-shared definitions and shared definitions
+with either setting of `HideWhenNoValue`. A first empty assignment and a new empty assignment after clearing
+both returned `HasValue=true`. Clearing a shared parameter with `HideWhenNoValue` returned `HasValue=false`.
+The 40 edited projects also covered replacement and ordered batches. Revit 2020–2025 and 2027 confirmed the
+values and presence flags after Save As and reopening without Audit. Revit 2027 checked the 2026 format after
+upgrade. All 32 refused batches preserved the source bytes and created no output.
+
 Independent Mass, Force, Mass Density, Speed, Slope, and Time checks covered 64 files. Project fixtures included
 shared values on walls and wall types, family-defined values on loaded primary types and top-level instances,
 and independent global parameters. Standalone family fixtures covered custom and shared type values and instance
@@ -542,14 +736,50 @@ Six project files also verified assignments in inches to Length globals and load
 in Revit 2020 and 2025. The affected records and formula results matched native writes and survived Save As and
 reopening without Audit.
 
+Fractional Length checks used 1/8-inch and 1/16-inch accuracy. They covered first edits from the defaults,
+replacements on active and inactive family types, ordered batches, midpoint rounding, and carry to a whole inch
+or foot. User-defined Length, dependent formula results, and Default Elevation matched the Revit API after
+Save As and reopening without Audit. The family records in 96 files matched native Revit 2020–2025 and 2027
+writes byte for byte. The 16 files in the 2026 format passed after upgrade in Revit 2027. Eighty-four invalid
+batches preserved the source bytes and created no output.
+
+Additional fractional Length checks used steps of 3/8 inch, 1½ inches, 6 inches, and one foot. They covered
+first edits, replacements, ordered batches, and signed midpoint values. The family records in 112 files
+matched native Revit 2020–2025 and 2027 writes byte for byte. API values, formula results, and `PartAtom`
+values matched after Save As and reopening without Audit. The 16 files in the 2026 format passed after upgrade
+in Revit 2027. Ninety-six invalid batches preserved the source bytes and created no output.
+
 Decimal separators and digit grouping were verified in 144 edited standalone family files. The tests compared
 first assignments, replacements on active and inactive types, and ordered batches for Length, Area, Volume, Angle,
 Currency, and Number, including dependent formulas, Default Elevation, and Cost. Family records in 126 files matched
 native Revit 2020–2025 and 2027 writes byte for byte. Revit 2027 verified the eighteen 2026-format files after upgrade.
 API values and `PartAtom` entries matched after Save As and reopening without Audit. All 146 refused batches preserved
 the source bytes and created no output, including cases with an incorrect grouping separator or stale metadata.
+
+Additional checks covered grouping in fractional Length and decimal Area and Volume, including equal decimal
+and grouping separators. They compared first edits, replacements, ordered batches, and rounding across a
+grouping boundary. In 140 files, family records matched native Revit 2020–2025 and 2027 writes byte for byte.
+API values, formulas, and `PartAtom` entries matched after Save As and reopening without Audit. The 20 files in
+the 2026 format passed after upgrade in Revit 2027. All 123 refused batches preserved the source and created no
+output. Three used a mismatched separator or stale display text.
+
 Three project files in Revit 2025 also matched the internal value and affected records after assignments in degrees,
 Save As, and reopening without Audit.
+
+Degrees, minutes, and seconds were checked with steps of 0.01 second, one second, one minute, and one degree.
+The checks covered first edits, replacements, ordered batches, both signs, and rounding across degree boundaries.
+They compared stored Angle values, dependent formulas, and `PartAtom` after Save As and reopening without Audit.
+The family records in 112 files matched native Revit 2020–2025 and 2027 writes byte for byte. The 16 files in the
+2026 format passed after upgrade in Revit 2027. All 98 refused batches preserved the source bytes and created no
+output, including edits with stale angle metadata or a mismatched decimal separator.
+
+Further Angle checks covered digit grouping with degrees, minutes, and seconds and radian displays with
+the suffix and trailing-zero suppression options. They compared first edits, replacements, ordered batches,
+and signed rounding boundaries, including a radian value of 9.995 and a negative value that displays as zero.
+The family records in 112 files matched native Revit 2020–2025 and 2027 writes byte for byte. The 16 files in
+the 2026 format passed after upgrade in Revit 2027. API values, formulas, and `PartAtom` entries matched after
+Save As and reopening without Audit. All 98 invalid batches preserved the source bytes and created no output,
+including edits with a wrong radian suffix or stale display text.
 
 Global assignments to loaded family parameters matched 240 Revit API assignments across the eight formats.
 The fixtures included shared family definitions, empty text, unitless and measured values, links to recalculated
@@ -574,6 +804,14 @@ and 480 linked built-in writes. They covered a primary symbol, a derived symbol,
 the same global. Unassociated symbol records matched the source byte for byte. Revit 2020–2025 and 2027 read
 the values and association IDs before and after SaveAs with Audit disabled. Revit 2027 upgraded the
 2026-format fixtures. All 88 rejected batches preserved the source bytes and left no output.
+
+Further Door, Window, and Furniture checks covered two derived copies per primary symbol. The fixtures linked
+the primary, one derived symbol, or both to the same global parameter in the project and imported family stores.
+The 24 edited files per format matched API writes for the first assignment, replacement, empty text, zero Cost,
+and ordered batches. Unassociated symbol records and instance geometry stayed unchanged. Revit 2020–2025 and 2027
+verified values and association IDs after opening, saving, and reopening without Audit. Revit 2027 upgraded and
+verified the 2026-format files. The 18 refused batches per format included direct writes to linked properties,
+non-finite Currency values, and attempts to clear a global. Each refusal preserved the source and produced no output.
 
 Non-shared project parameter checks matched 264 direct assignments and 48 global assignments that updated
 72 linked values. The Generic Model fixtures covered Text and Length on top-level instances and Text and
@@ -743,19 +981,110 @@ The single-assignment round-trip checks open edited projects and families with A
 then save and reopen in Revit. These checks ran in Revit 2020–2025 and 2027. For the 2026 format, Revit 2027 upgraded and verified a project
 sample from Autodesk and controlled project and family fixtures converted to the 2026 format.
 
+The wall-height checks reproduced 334 files byte for byte from inputs to earlier Revit open, Save As, and reopen
+checks with Audit disabled. The cases covered plain walls, existing cuts, changes across the sill and head,
+separated openings, and warning creation and removal. The API checks compared the saved height, bounds,
+quantities, and, for the cut transitions, face references and warnings. They ran in Revit 2020–2025 and 2027.
+Revit 2027 upgraded and verified the files in the 2026 format. All 59 refused batches preserved their source
+files and produced no destination.
+
+Additional wall-height checks covered a single wall allowing both end joins, the same wall with a rectangular
+opening, and a wall with Room Bounding and both ends disallowed in a multi-wall project with empty spatial
+topology. Revit 2020–2025 and 2027 matched the API controls for height, bounds, area, volume, joins, and opening
+count after opening, saving, and reopening without Audit. Revit 2027 also verified upgraded 2026-format files.
+Batches containing a later clear or invalid height left the source byte-for-byte intact and wrote no output.
+The Revit 2025 controls showed that a wall can form a new join at the same plan endpoints when its height reaches
+a wall above it, and that an unoccupied saved circuit can still modify a spatial plan. RvtIO refused batches
+with those dependencies, as well as existing joins and room boundaries.
+The compact bounds checks compared the command and its presence flag on each solid. They included height
+changes across packing boundaries, negative and elevated bases, oblique and long walls, existing rectangular
+openings, and changes that make the full command encodable or unencodable. A valid command with value zero
+retains the presence flag. All five commands for a closed footprint reduced to `0.5 ft` matched the Revit 2025
+control. Revit 2020–2025 and 2027 confirmed the height, geometry quantities, and packed commands after Save As
+and reopening without Audit. Revit 2027 verified the converted 2026-format file after upgrade. A later invalid
+height refused the entire batch and left the source unchanged.
+
+The Base Offset and Top Offset checks compared unconnected and level-constrained walls against Revit API
+assignments. Revit 2020–2025 and 2027 preserved the assigned values, calculated height, and geometry after
+opening, saving, and reopening without Audit. Revit 2027 also verified the 2026-format files after upgrade.
+Revit 2025 additionally verified walls on fractional level elevations, offsets that retain rectangular openings,
+and a Top Offset crossing and recrossing the head of a rectangular opening. Batches with a later read-only
+assignment, clear, missing unit, or invalid height left the source byte-for-byte intact and wrote no output.
+
+Base Offset transitions from interior to a cut through the base, along an existing bottom cut, and back to an
+interior opening were compared with Revit API controls for straight and oblique walls. Revit 2020–2025 and 2027
+confirmed the offsets, absolute opening elevations and bounds after opening, saving and reopening without Audit.
+The 2026-format files were verified after upgrade in Revit 2027. Computed areas and volumes agreed within
+floating-point rounding. Revit 2025 also verified a level-constrained top and a second, unchanged rectangular
+opening on the same wall. Revit 2027 verified a base crossing less than 0.2 mm past the sill.
+
+Base Offset edits past the full height of an opening were compared with saved Revit API controls in Revit
+2020–2025 and 2027. The 2026-format files were verified after upgrade in Revit 2027. Opening, saving and reopening
+without Audit preserved the parameter values, geometry, opening ownership and warning state. Revit 2024 and 2027
+also verified removal and reactivation of a cut through the base. The Revit 2027 batch added and removed warnings
+on two separate walls. A later unsupported boundary edit left the source byte-for-byte intact and produced no output.
+
+Exact Base Offset contacts at the sill and head matched Revit API controls after opening, saving and reopening without
+Audit in Revit 2020–2025 and 2027. Revit 2027 verified the 2026-format files after upgrade. Revit 2024 and 2027 also
+verified transitions between the contacts, an interior opening, a cut through the base, and an opening wholly below
+the wall, including the saved warning. Revit 2027 additionally checked oblique and level-constrained walls and changes
+to Unconnected Height and Top Offset with the base still in contact. A later unverified near-contact edit in a batch
+left the source byte-for-byte intact and produced no output in every file format.
+
+The two-opening checks covered matching and staggered opening elevations, an unaffected interior opening, and batches
+that add or remove two warnings on the same wall. Revit 2020–2025 and 2027 matched the API controls after saving and
+reopening without Audit. The 2026-format files were checked after upgrade in Revit 2027. Revit 2027 also checked the
+opposite creation order of the two openings. The checks compared assigned offsets, bounds, quantities, opening
+ownership and warnings.
+
+The near-contact checks compared positions just above and below the sill and head with Revit API assignments.
+The tested positions inside the tolerance retain the contact geometry. The tested positions farther from the edge
+retain an interior cut or a cut through the base. Fifteen positions per format matched after saving and reopening
+without Audit in Revit 2020–2025 and 2027. The 2026-format files were checked after upgrade in Revit 2027. Revit
+2024 and 2027 also verified replacements between these positions and ordered batches. Revit 2027 additionally
+checked oblique walls, level-constrained walls and two openings on the same wall. At the lower tolerance limit of
+the head, Revit 2027 saved an uncut wall with additional edges. That layout still requires coverage. In the tested
+batches, a later edit that reached this boundary left the source byte-for-byte intact and produced no output.
+
+The fractional-offset checks compared an interior opening and two cuts through the base with Revit API controls
+after opening, saving and reopening without Audit in Revit 2020–2025 and 2027. The 2026-format files were checked
+after upgrade in Revit 2027. Further checks in Revit 2024 and 2027 covered oblique and level-constrained walls,
+two openings, and replacements starting from native and offline files. Revit 2027 also checked Top Offset cut
+transitions and an ordered batch. The offsets matched exactly and the vertical bounds differed by at most four
+floating-point steps.
+
+The extended-bound checks started from native files where the auxiliary rectangle extended above the solid. Revit
+2020–2025 and 2027 confirmed a Base Offset replacement and three Top Offset replacements after saving and reopening
+without Audit. This included reactivating the rectangular cut. Revit 2027 checked the 2026-format files after upgrade.
+An inconsistent header, reference plane, solid bound, auxiliary loop, or auxiliary vertex caused the entire batch
+to be rejected in the tested files.
+
+Unconnected Height changes after fractional Base Offset assignments were also checked on a plain wall, an oblique
+wall, and walls with interior openings or a cut at the sill. The checks shortened the wall through an opening,
+removed the cut while preserving the opening, reactivated the cut, and restored an interior opening by raising
+the top. Revit 2020–2025 and 2027 confirmed the heights, offsets, geometry and warnings after Save As and reopening
+without Audit. Revit 2027 checked the 2026-format files after upgrade and a batch that set Base Offset followed by
+Unconnected Height. A later height edit with an invalid value or a level-constrained target rejected the whole
+batch. An inconsistent offset cache, outline, geometry bound, or split cutter vertex also caused rejection. In
+each case the source bytes stayed intact and no output was created.
+
 ## Remaining parameter coverage
 
 | Case | Current boundary |
 | --- | --- |
 | Read-only values | Revit API rejects assignments to parameters such as computed wall area. RvtIO also rejects these assignments. |
-| Wall Unconnected Height | The Revit API permits some assignments on unconnected walls. The writer requires further coverage of the affected wall, opening, and geometry records. |
+| Wall Unconnected Height | RvtIO supports the verified straight wall and rectangular opening cases above, including a single wall with joins allowed and Room Bounding when there is no saved spatial context. Joined walls, walls that can form a new join, changes affecting spatial topology, and other host cuts still require coverage. Revit exposes Unconnected Height as read-only when a level constrains the top. |
+| Wall Base Offset and Top Offset | RvtIO supports the verified straight wall and rectangular opening cases described above. Revit exposes Top Offset as read-only on a wall with an unconnected top. Opening transitions outside the verified range and offsets on walls with unverified joins, dependencies or geometry still require coverage. |
 | Clearing an RVT value | Revit API `ClearValue()` requires a shared definition with `HideWhenNoValue`. RvtIO also checks the binding and stored value layout. |
-| Additional writable RVT built-ins and element classes | The RVT parameter writer supports the combinations in the table above. Type identity assignments on Door, Window, and Furniture types with derived symbol copies still require coverage. |
+| Additional writable RVT built-ins and element classes | The RVT parameter writer supports the combinations in the table above. Other built-in fields, loaded family categories, and layouts beyond verified directly linked derived symbols still require coverage. |
+| Datum names | Revit exposes `DATUM_TEXT` as read-only on individual multi-segment grid members. The tested level and grid type name parameter (`SYMBOL_NAME_PARAM`) is read-only through `Parameter.Set`, and the tested levels expose their writable name as `DATUM_TEXT`. Grouped elements, design options, other datum classes, and renaming corresponding views with a level still require RvtIO coverage. |
+| Level elevation with dependents | RvtIO supports the verified plan, sketch plane, and straight basic wall dependencies described above. Verified rectangular openings follow their saved level constraints. RvtIO rebuilds the cuts at the verified boundary layouts described above. Other cuts and cuts with unverified face or edge links still require coverage. So do joined walls and other model geometry. Plans with templates, plan regions, underlays, or other unverified range layouts also require coverage. The API property `Level.ProjectElevation` is read-only. [Autodesk project elevation reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/895ef506-bfea-cc4e-31f8-aad2af6672e4.htm) |
+| Direct rectangular opening edits | RvtIO supports the verified top and base transitions described above. Cuts at both wall boundaries in the same edit, full-height cuts, touching or overlapping cuts, joined walls, and unverified opening dependencies still require coverage. Revit exposes the opening's Unconnected Height as read-only. |
 | Additional built-ins in standalone families | The verified Generic Model, Door, Window, and Furniture fields are listed above. Other built-ins, other family categories, and selecting an unnamed family type still require coverage. |
 | User Currency parameters in standalone families | RvtIO supports verified type values, instance defaults, and formula dependencies. Additional Currency display formats still require coverage. |
 | Family-declared Currency parameters in projects | RvtIO supports the verified primary type and top-level instance assignments, exact type formula inverses, and existing global associations described above. Other formula paths and geometry dependencies still require coverage. |
-| Project-bound Currency parameters | RvtIO supports verified shared values on walls, basic wall types, rooms, and loaded family types and instances. Non-shared bindings and other owner classes still require coverage. |
-| Additional measurable specs and units | RvtIO supports the input units, display formats, and formula combinations listed above. Further measurable specs and combinations still require coverage. Feet and fractional inches, identical decimal and grouping separators, and other display symbols in standalone family metadata also require verification. |
+| Project-bound Currency parameters | RvtIO supports the shared and non-shared bindings listed above. Other owner classes and unverified binding layouts still require coverage. |
+| Additional measurable specs and units | RvtIO supports the input units, display formats, and formula combinations listed above. Further measurable specs, combinations, and display symbols in standalone family metadata still require verification. Values and fractional rounding steps outside the verified numeric range are refused. |
 | Invalid standalone image references | Revit 2022 and 2027 rejected a missing element ID and an existing family element that was outside the image class. RvtIO requires a local imported image with a verified raster record, or the explicit None value. |
 | Standalone instance and shared Image definitions | The Revit API prohibits creating instance Image parameters. Revit 2025 also rejected the tested attempt to create a shared type definition. RvtIO supports the non-shared type scope described above. [Autodesk FamilyManager.AddParameter reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/3ac89d60-4b71-694f-002f-125d2e6565fc.htm) |
 | Linked images in standalone families | Revit 2025 rejected `ImageTypeSource.Link` when creating an image in a family document. The verified standalone Image path uses imported images. [Autodesk ImageType.Create reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/31bb13e3-e8f5-cb66-18d0-619578d56cde.htm) |
@@ -763,7 +1092,7 @@ sample from Autodesk and controlled project and family fixtures converted to the
 | Additional parameter types and references | RvtIO supports the verified material, standalone family type image, and Family Type assignments described above. Revit 2025 accepted an ordinary top-level symbol even when the API candidate list omitted it. Revit activated inactive targets in both family-declared and project-bound tests. RvtIO still needs coverage for that regeneration, dependencies represented by unresolved `NestedFamilyTypeReference` proxies, and other combinations of categories and parameter definitions. In the shared nesting test, Revit committed the independent type assignment and rolled back the corresponding instance assignment after `Parameter.Set` returned true. RvtIO supports the described type scope. A return path without the verified direct nesting remains outside that scope. After a test assignment of a missing ID, the API read back the previous value on reopen. [Autodesk NestedFamilyTypeReference reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/ff71e3b0-4300-7d04-1356-a045b9a90407.htm) |
 | Driven global parameters | Revit API rejects direct assignments to global parameters driven by a formula or reporting dimension. [Autodesk GlobalParameter.SetValue reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/df012c22-6e65-8de5-1057-f15660d02288.htm) |
 | Global parameters with dependents | Revit API can assign a global value that drives a formula, dimension, or element property. RvtIO recalculates verified formulas and updates verified project-bound or geometry-independent loaded family parameters and the built-in properties described above. Dimension recalculation, family geometry updates, and other unverified formula or association layouts still require coverage. |
-| Global associations on built-in fields | Revit 2020 and 2021 refused the tested wall and family instance Comments associations. Revit 2022–2025 and 2027 accepted them. The tested wall Mark, BasicWallType Type Comments, Manufacturer, and Model, and type URL on Generic Model, Door, Window, and Furniture could not be associated in the tested releases. Derived Door, Window, and Furniture symbol associations and other family categories still require coverage. |
+| Global associations on built-in fields | Revit 2020 and 2021 refused the tested wall and family instance Comments associations. Revit 2022–2025 and 2027 accepted them. The tested wall Mark, BasicWallType Type Comments, Manufacturer, and Model, and type URL on Generic Model, Door, Window, and Furniture could not be associated in the tested releases. More family categories and other layouts of derived symbols still require coverage. |
 | Family formulas | RvtIO can recalculate verified dependencies of inputs in standalone families and on primary types and top-level instances of loaded families. Direct assignments to standalone formula results are refused by the writer. In Revit 2025, `FamilyManager.Set` returned without an exception on the tested Mass and Slope results and left both the inputs and results unchanged after Save As and reopening without Audit. RvtIO supports the loaded type inverses described above. Nonlinear inverses, real-valued inverses that depend on the starting value, unverified instance storage, and geometry-driving formulas still require coverage. [Autodesk FamilyManager.Set reference](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/7fc40346-6188-66ff-4c00-bd4360e70c6f.htm) |
 | Geometry, formulas, groups, and other dependencies | The writer refuses unverified family geometry dependencies, formulas and associations, and unverified project model contexts. These checks are RvtIO write restrictions. |
 
@@ -785,6 +1114,8 @@ Every write call inspects the source file first and checks the requested operati
 Cross-stream tables in a Revit container (`Global/ElemTable`, `Global/DocumentIncrementTable`, `Global/PartitionTable`) store
 element identifiers, episode numbers, and partition identifiers, never byte offsets or compressed stream lengths. Changing the
 byte length of a record inside `Partitions/<n>` therefore requires no cross-stream offset table edits.
+When a height edit creates or removes an opening warning, the writer also updates the matching record in
+`Global/ElemTable` and the warning registry in `Global/Latest`.
 
 When rewriting data, `RvtWriter` enforces the following invariants:
 
@@ -802,7 +1133,7 @@ When rewriting data, `RvtWriter` enforces the following invariants:
    - Within an edited block, untouched segment chains (including untouched chains on the same channel) are copied verbatim.
    - Within an edited chain, untouched records (including records whose class tag has no known field layout or carries opaque
      trailing bytes) are copied verbatim in file order.
-   - Edited records receive updated `[size][body][size]` framing and fresh Adler-32 checksums on channels `102` and `103`
+   - Replaced and added records receive updated `[size][body][size]` framing and fresh Adler-32 checksums on channels `102` and `103`
      (channel `101` carries no record checksum).
    - Edited chains respect Revit's `131,072`-byte (`128 KB`) segment body bound, emitting standalone segments (`flags & 3 == 0`)
      for batches up to `131,072` bytes and multi-segment chains (`2 -> 3 -> 1`) for larger record bodies while preserving the
@@ -810,7 +1141,8 @@ When rewriting data, `RvtWriter` enforces the following invariants:
    - Edited blocks write an empty `SignatureMarker` (`n = 0, m = 0`) because their bytes are no longer signed by Revit.
 4. **Post-encode verification.** Every rewritten partition stream is verified in memory before container assembly: page parity
    must pass, full `PartitionFraming` must walk every block and segment without error, Adler-32 checksums must match on every
-   record, every unedited record must match the input byte-for-byte, and every edited record must match its requested body.
+   record, every unedited record must match the input byte-for-byte, and every replacement or addition must match its requested
+   body. A removed owner must have no records left in the edited project block.
 5. **Atomic persistence and source immutability.** Output is written to a sibling `.tmp` file, re-inspected against the capability
    matrix when edits were applied, read back from disk to verify every storage's directory-entry metadata and every stream's
    declared length and SHA-256 hash, and moved to the destination with `overwrite: false`. Existing files (including the source

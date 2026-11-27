@@ -61,7 +61,7 @@ internal static class UserParameterWriter
         if (ownerClass == "FamilySymbol" && edit.Value == "-1"
             && definitionClass == "ParamElemProject")
             material = -1;
-        return Encode(walker, def, slot, edit, idWidth, material, includeCurrency: definitionClass == "ParamElemExternal");
+        return Encode(walker, def, slot, edit, idWidth, material, includeCurrency: true);
     }
 
     internal static (WideBlockWalker.Walk Walk, int Slot) ReadBoundDefinition(
@@ -74,6 +74,17 @@ internal static class UserParameterWriter
             "SWall" => ((int)BuiltInCategory.OST_Walls, 1),
             "BasicWallType" => ((int)BuiltInCategory.OST_Walls, 2),
             "RoomElem" => ((int)BuiltInCategory.OST_Rooms, 1),
+            "Floor" => ((int)BuiltInCategory.OST_Floors, 1),
+            "FloorAttributes" => ((int)BuiltInCategory.OST_Floors, 2),
+            "ProfileRoof" => ((int)BuiltInCategory.OST_Roofs, 1),
+            "RoofAttributes" => ((int)BuiltInCategory.OST_Roofs, 2),
+            "Ceiling" => ((int)BuiltInCategory.OST_Ceilings, 1),
+            "CompoundCeilingType" => ((int)BuiltInCategory.OST_Ceilings, 2),
+            "Level" => ((int)BuiltInCategory.OST_Levels, 1),
+            "LevelAttributes" => ((int)BuiltInCategory.OST_Levels, 2),
+            "Grid" => ((int)BuiltInCategory.OST_Grids, 1),
+            "GridAttributes" => ((int)BuiltInCategory.OST_Grids, 2),
+            "GridChain" => ((int)BuiltInCategory.OST_GridChains, 1),
             "FamilyInstance" => (category, 1),
             "FamilySymbol" => (category, 2),
             _ => throw new RvtWriteRefusedException("unsupported-parameter-owner", "Writing user parameters on this element class has not been verified."),
