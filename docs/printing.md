@@ -807,6 +807,26 @@ a partial layer. A rule accepted on that score alone is measuring an export arti
 the horizontal-edge, buried-work and railing-diagonal removals were reverted for exactly that reason. Judging
 those pages needs a raster-aware comparison (or a vector-only export of the reference).
 
+**Raster score and residual attribution.** Rendering both PDFs at 100 dpi and scoring thin strokes with a 2 px
+match radius gives, page by page (A001, A101–A105): recall 98.6, 94.2, 94.0, 95.8, 96.3, 92.6% and precision
+99.1, 93.2, 96.9, 93.4, 95.6, 93.6%; tone correlation 0.96–1.00 over the inked blocks. The residual is not
+missing geometry in most places:
+
+- A105 scores 97.6/97.7% at 200 dpi and 98.8/99.7% at 300 dpi. Its largest gaps at the 100 dpi grid are thin
+  lines that alias between pixel centres when our vector output is resampled, while the reference keeps them in
+  its embedded raster. Nothing in the drawing is absent.
+- On A101 the worst blocks (recall 4–37%) lie inside the Solar Analysis study. Each candidate source was
+  measured and rejected: the decoded site contours ink there only as scattered lines (recall +0.00%, precision
+  −0.26%), the pad faces project elsewhere in the view, and the terrain mesh boundary and its creases add ink
+  the reference does not carry (recall +0.01% with precision −1.08% for the boundary, recall +0.1% with
+  precision −1.2% for breaks above 60°). The remaining gap is the reference's own resampled raster: the
+  anti-aliased edge of its 3D model, the model's stipple and tonal shading, and thin annotation lines.
+- On A103 one block at the lower left (0% recall) is a small hatched site element, about 14 mm wide on paper,
+  that the reference draws in the section and we omit. Exempting the furniture, casework, speciality and
+  foundation categories from the section's placed-site filter did not bring it back (page recall unchanged,
+  precision −0.2%), so it is not one of those categories.
+
+
 | Sheet | Printed | Still different |
 |---|---|---|
 | A001 Title Sheet | the title text in its stored frame, the five renderings at their stored sizes, the title-block logo, the "How do I" table with its saved title and instruction-band styles, inline help marker, header and 40 evaluated rows at its instance origin, and every revision table with its header and empty body grid to its fixed height | remaining font and baseline differences in schedule text |
