@@ -8,6 +8,10 @@ API between minor releases.
 
 ### Fixed
 
+- Omit unplaced group template geometry from opaque fine sections.
+- Clip projected wall and railing uprights behind opaque slab sides in fine sections.
+- Mask projected geometry behind closed floor cuts in fine section callouts.
+
 - Omit RPC planting cut by an active 3D section box plane using the placed type outline.
 - Draw and light both sides of RPC planting meshes in shaded views.
 - Print the saved daily and hourly boundaries of multi-day solar studies with their geometric horizon times.
@@ -69,7 +73,7 @@ API between minor releases.
   Horizontal mullions below the cut project their saved top faces within the plan range.
 - Descending sketched stairs project their attached top rails and clip nosings by the saved rail faces.
 - Regular fine sections cover surfaces behind simple closed wall cuts with the wall's cut face.
-- Fine sections use the saved structural floor finish on upright slab sides under ambient shading.
+- Fine hidden-line sections shade white structural slab sides using nearby geometry and the distance to the section plane.
 - Cropped construction details draw the stored layer interfaces of rectangular ceiling cuts.
 - Overlapping cut contours in opaque construction details preserve their saved pen widths along each span.
 - Nearer opaque faces clip round flue outlines in elevations and preserve the spans visible through decoded openings.

@@ -22,7 +22,7 @@ public static partial class ElevationPrinter
         private readonly List<(List<Point> Polygon, List<List<Point>>? Holes, Vector3 Origin, Vector3 Normal,
             double Gray, bool OrientDirectLight, bool IgnoreStairExitHits, bool IgnoreEdgeOnHits,
             bool ExcludeSamplesBehindCut, bool DistanceFalloff, int[]? AttachedRoofIds,
-            (double Elevation, float Depth)? ExteriorWall)> _receivers = [];
+            (double Elevation, float Depth)? ExteriorWall, bool ProjectedSlabSide)> _receivers = [];
         private readonly List<AmbientGlass> _glass = [];
 
         private readonly record struct Occluder(Vector3 Origin, Vector3 Normal, Vector3 Min, Vector3 Max,
@@ -51,11 +51,12 @@ public static partial class ElevationPrinter
             double gray = 1, bool orientDirectLight = false, bool ignoreStairExitHits = false,
             bool ignoreEdgeOnHits = false,
             bool excludeSamplesBehindCut = false, bool distanceFalloff = false, int[]? attachedRoofIds = null,
-            (double Elevation, float Depth)? exteriorWall = null)
+            (double Elevation, float Depth)? exteriorWall = null, bool projectedSlabSide = false)
         {
             if (normal.Z < -1e-5f)
                 _receivers.Add((polygon, holes, origin, Vector3.Normalize(normal), gray, orientDirectLight,
-                    ignoreStairExitHits, ignoreEdgeOnHits, excludeSamplesBehindCut, distanceFalloff, attachedRoofIds, exteriorWall));
+                    ignoreStairExitHits, ignoreEdgeOnHits, excludeSamplesBehindCut, distanceFalloff, attachedRoofIds,
+                    exteriorWall, projectedSlabSide));
         }
 
         internal void AddGlazing(List<Point> polygon, List<List<Point>>? holes, double farDepth) =>
@@ -75,7 +76,7 @@ public static partial class ElevationPrinter
             Span<bool> behindCut = stackalloc bool[samples.Length];
             float visibleSpan = (float)Math.Min(crop.X1 - crop.X0, crop.Y1 - crop.Y0);
             foreach (var (polygon, holes, planeOrigin, normal, gray, orientDirectLight, ignoreStairExitHits, ignoreEdgeOnHits,
-                excludeSamplesBehindCut, distanceFalloff, attachedRoofIds, exteriorWall) in _receivers)
+                excludeSamplesBehindCut, distanceFalloff, attachedRoofIds, exteriorWall, projectedSlabSide) in _receivers)
             {
                 sampled.Clear();
                 behindCut.Clear();
@@ -158,21 +159,35 @@ public static partial class ElevationPrinter
                     sampled[i] = true;
                     var receiver = new Vector3((float)x, (float)y, z);
                     double blocked = 0;
+                    double sectionBlocked = 0;
                     // The saved crop and cut plane limit how far a buried wall samples its surroundings.
                     float reach = exteriorWall is { } wall && y < wall.Elevation
                         ? Math.Clamp(visibleSpan, AmbientReach, Math.Max(AmbientReach, z - wall.Depth))
                         : AmbientReach;
+                    float sectionDepth = projectedSlabSide ? z - (float)cutDepth : 0;
                     foreach (var ray in rays)
                     {
-                        float distance = reach;
+                        float rayReach = sectionDepth > reach && ray.Z < -1e-6f ? sectionDepth / -ray.Z : reach;
+                        float distance = rayReach;
                         if (!FindHit(tree, occluders, receiver + normal * RayBias, ray, ignoreStairExitHits, ignoreEdgeOnHits,
                             attachedRoofIds, ref distance))
                             continue;
-                        float relativeDistance = distance / reach;
-                        blocked += binaryVisibility && !distanceFalloff && reach == AmbientReach ? 1 : 1 - relativeDistance * relativeDistance;
+                        if (distance < reach)
+                        {
+                            float relativeDistance = distance / reach;
+                            blocked += binaryVisibility && !distanceFalloff && reach == AmbientReach
+                                ? 1 : 1 - relativeDistance * relativeDistance;
+                        }
+                        if (rayReach > reach)
+                        {
+                            float relativeDistance = distance / rayReach;
+                            sectionBlocked += 1 - relativeDistance * relativeDistance;
+                        }
                     }
                     double ambientLoss = ambientFraction * blocked / RayCount;
-                    byte tone = ToTone(baseLinear * (1 - ambientLoss - directLightLoss));
+                    // Approximate the reduced light through the section opening separately from contact shadows.
+                    double sectionLight = 1 - (1 - ambientFraction) * sectionBlocked / RayCount;
+                    byte tone = ToTone(baseLinear * (1 - ambientLoss - directLightLoss) * sectionLight);
                     int pixel = i * 3;
                     rgb[pixel] = rgb[pixel + 1] = rgb[pixel + 2] = tone;
                     if (throughGlass != null)

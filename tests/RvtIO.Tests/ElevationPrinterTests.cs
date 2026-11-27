@@ -1585,13 +1585,16 @@ public class ElevationPrinterTests
     }
 
     [Theory]
-    [InlineData(BuiltInCategory.OST_BuildingPad)]
-    [InlineData(BuiltInCategory.OST_Floors)]
-    public void Collect_UsesAClosedSlabCutToMaskTheProjectionBehindIt(BuiltInCategory category)
+    [InlineData(BuiltInCategory.OST_BuildingPad, false, true)]
+    [InlineData(BuiltInCategory.OST_Floors, false, true)]
+    [InlineData(BuiltInCategory.OST_Floors, true, true)]
+    [InlineData(BuiltInCategory.OST_Floors, true, false)]
+    public void Collect_UsesAClosedSlabCutToMaskTheProjectionBehindIt(BuiltInCategory category, bool callout, bool closed)
     {
         var view = SectionView(900, [0, 0, 0]);
         Add(view, BuiltInParameter.VIEW_SCALE, StorageType.Integer, 50);
         view.ViewCrop = new ViewCropFrame(0, 0, 0, [0, 1, 0], [0, 0, 1], [-1, 0, 0], -4, -4, 4, 5, true);
+        if (callout) view.SectionViewerId = 905;
         var pad = QuadWall(601, [[-1, -2, -2], [1, -2, -2], [1, 2, -2], [-1, 2, -2]], [0, 0, 1],
             (int)category);
         pad.BoundingBox = [-1, -2, -3, 1, 2, -2];
@@ -1602,12 +1605,22 @@ public class ElevationPrinterTests
             Face([[-1, -2, -2], [-1, 2, -2], [-1, 2, -3], [-1, -2, -3]], [-1, 0, 0]),
             Face([[1, 2, -2], [1, -2, -2], [1, -2, -3], [1, 2, -3]], [1, 0, 0]),
         ]);
+        pad.Geometry.BrepSolids = [new() { IsClosed = closed, FaceIndices = [0, 1, 2, 3, 4, 5] }];
         var wall = QuadWall(602, [[-2, -1, -4], [-2, 1, -4], [-2, 1, 1], [-2, -1, 1]], [1, 0, 0]);
         var document = Document(view, pad, wall);
         document.RawData.OpaquePlanViews = new HashSet<int> { view.Id };
+        document.RawData.SectionViews = new Dictionary<int, (int, double, IReadOnlyList<double[]>?)>
+        {
+            [905] = (899, 0.02, null),
+        };
 
         var content = ElevationPrinter.Collect(document, "section", planeView: view)!;
 
+        if (!closed)
+        {
+            Assert.Null(content.DetailCutFaces);
+            return;
+        }
         var mask = Assert.Single(content.DetailCutFaces!);
         Assert.Equal(4, mask.Count);
         Assert.Equal(-2 * FeetToMillimetres, mask.Max(point => point.Y), 6);
@@ -1620,16 +1633,19 @@ public class ElevationPrinterTests
     }
 
     [Theory]
-    [InlineData(BuiltInCategory.OST_Walls, 9, true)]
-    [InlineData(BuiltInCategory.OST_StairsRailing, 9, true)]
-    [InlineData(BuiltInCategory.OST_StairsRailing, 7, false)]
-    public void Collect_ClipsUprightsAtANearerProjectedSlabInASectionCallout(
-        BuiltInCategory category, double slabDepth, bool clipped)
+    [InlineData(BuiltInCategory.OST_Walls, 9, true, true)]
+    [InlineData(BuiltInCategory.OST_StairsRailing, 9, true, true)]
+    [InlineData(BuiltInCategory.OST_StairsRailing, 7, true, false)]
+    [InlineData(BuiltInCategory.OST_Walls, 9, false, true)]
+    [InlineData(BuiltInCategory.OST_StairsRailing, 9, false, true)]
+    [InlineData(BuiltInCategory.OST_StairsRailing, 7, false, false)]
+    public void Collect_ClipsUprightsAtANearerProjectedSlabInAnOpaqueSection(
+        BuiltInCategory category, double slabDepth, bool callout, bool clipped)
     {
         var view = SectionView(900, [10, 0, 0]);
         Add(view, BuiltInParameter.VIEW_SCALE, StorageType.Integer, 20);
         view.ViewCrop = new ViewCropFrame(10, 0, 0, [0, 1, 0], [0, 0, 1], [-1, 0, 0], -2, -1, 5, 5, true);
-        view.SectionViewerId = 905;
+        if (callout) view.SectionViewerId = 905;
         var upright = QuadWall(901, [[8, 0, 0], [8, 1, 0], [8, 1, 3], [8, 0, 3]], [1, 0, 0], (int)category);
         var slab = QuadWall(902, [[slabDepth, -1, 1], [slabDepth, 2, 1], [slabDepth, 2, 2], [slabDepth, -1, 2]],
             [1, 0, 0], (int)BuiltInCategory.OST_Floors);
@@ -2567,6 +2583,26 @@ public class ElevationPrinterTests
             Assert.Null(content.SiteSilhouettes);
             Assert.Null(content.SiteOutlines);
         }
+    }
+
+    [Theory]
+    [InlineData(BuiltInCategory.OST_IOSModelGroups)]
+    [InlineData(BuiltInCategory.OST_Furniture)]
+    public void Collect_UsesPlacedGroupGeometryAndSkipsItsTemplate(BuiltInCategory category)
+    {
+        var view = SectionView(900, [10, 0, 0]);
+        Add(view, BuiltInParameter.VIEW_SCALE, StorageType.Integer, 20);
+        view.ViewCrop = new(10, 0, 0, [0, 1, 0], [0, 0, 1], [-1, 0, 0], -2, -1, 5, 5, true);
+        var placed = QuadWall(601, [[8, 0, 0], [8, 2, 0], [8, 2, 2], [8, 0, 2]], [1, 0, 0], (int)category);
+        var template = QuadWall(602, [[9, 0, 0], [9, 2, 0], [9, 2, 2], [9, 0, 2]], [1, 0, 0], (int)category);
+        template.IsGroupTemplate = true;
+        var document = Document(view, placed, template);
+        document.RawData.OpaquePlanViews = new HashSet<int> { view.Id };
+
+        var content = ElevationPrinter.Collect(document, "section", planeView: view)!;
+
+        Assert.Equal(-8 * FeetToMillimetres, Assert.Single(content.Faces).Depth, 6);
+        Assert.Equal(4, content.Edges.Count(edge => edge.CategoryId == (int)category));
     }
 
     [Fact]
@@ -5293,17 +5329,20 @@ public class ElevationPrinterTests
     }
 
     [Theory]
-    [InlineData(true, true, false, 0, true)]
-    [InlineData(true, false, false, 0, false)]
-    [InlineData(false, true, false, 0, false)]
-    [InlineData(true, true, true, 0, false)]
-    [InlineData(true, true, false, 0.5, false)]
-    public void Collect_ShadesTheProjectedStructuralSlabSideInAnAmbientSection(
-        bool ambientShadows, bool structural, bool useRenderAppearance, double transparency, bool expected)
+    [InlineData(20, 14, true, true, false, 0, true)]
+    [InlineData(20, 22, true, true, false, 0, false)]
+    [InlineData(10, 14, true, true, false, 0, false)]
+    [InlineData(20, 14, true, false, false, 0, false)]
+    [InlineData(20, 14, false, true, false, 0, false)]
+    [InlineData(20, 14, true, true, true, 0, false)]
+    [InlineData(20, 14, true, true, false, 0.5, false)]
+    public void Collect_ShadesAWhiteProjectedStructuralSlabSideThroughTheSection(
+        double cutX, double blockerX, bool ambientShadows, bool structural, bool useRenderAppearance,
+        double transparency, bool expected)
     {
-        var view = SectionView(900, [10, 0, 0]);
+        var view = SectionView(900, [cutX, 0, 0]);
         Add(view, BuiltInParameter.VIEW_SCALE, StorageType.Integer, 20);
-        view.ViewCrop = new ViewCropFrame(10, 0, 0, [0, 1, 0], [0, 0, 1], [-1, 0, 0], -1, -1, 5, 5, true);
+        view.ViewCrop = new ViewCropFrame(cutX, 0, 0, [0, 1, 0], [0, 0, 1], [-1, 0, 0], -1, -1, 5, 5, true);
         var material = new Element
         {
             Id = 901, HasShadingAppearance = true, SerializedMaterialUsesRenderAppearance = useRenderAppearance,
@@ -5318,22 +5357,20 @@ public class ElevationPrinterTests
         slab.Geometry.Faces.Add(top);
         Add(slab, BuiltInParameter.FLOOR_PARAM_IS_STRUCTURAL, StorageType.Integer, structural ? 1 : 0);
         Add(slab, BuiltInParameter.STRUCTURAL_MATERIAL_PARAM, StorageType.ElementId, material.Id);
-        var document = Document(view, slab, material);
+        var blocker = QuadWall(904, [[blockerX, -10, -10], [blockerX, 10, -10],
+            [blockerX, 10, 10], [blockerX, -10, 10]], [1, 0, 0]);
+        Assert.Single(blocker.Geometry!.Faces).PlaneSurface = true;
+        var document = Document(view, slab, material, blocker);
         document.RawData.OpaquePlanViews = new HashSet<int> { view.Id };
         if (ambientShadows) document.RawData.ViewAmbientFractions = new Dictionary<int, double> { [view.Id] = 0.5 };
 
         var section = ElevationPrinter.Collect(document, "section", planeView: view, viewportScale: 20)!;
 
-        if (expected)
-        {
-            var side = Assert.Single(section.FaceFills!);
-            Assert.Equal(192 / 255d, side.Value!.Value, 10);
-            Assert.Contains(side.Key, point => Math.Abs(point.Y) < 1e-6);
-        }
-        else
-        {
-            Assert.Null(section.FaceFills);
-        }
+        Assert.Null(section.FaceFills);
+        var side = Assert.Single(section.Faces, face => Math.Abs(face.Depth + 8 * FeetToMillimetres) < 1e-6);
+        var tone = section.AmbientTones?.GetValueOrDefault(side.Points);
+        Assert.Equal(expected, tone != null);
+        if (tone != null) Assert.All(tone.Image.Rgb, sample => Assert.InRange(sample, (byte)188, (byte)254));
     }
 
     [Theory]

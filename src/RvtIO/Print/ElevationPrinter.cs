@@ -442,7 +442,7 @@ public static partial class ElevationPrinter
             ? document.RawData.ViewHiddenCategories?.GetValueOrDefault(planeView!.Id) : null;
         foreach (var element in document.Elements)
         {
-            if (hiddenElements?.Contains(element.Id) == true
+            if (opaqueFineSection && element.IsGroupTemplate || hiddenElements?.Contains(element.Id) == true
                 || element.CategoryId is int category && hiddenCategories?.Contains(category) == true) continue;
             if (opaqueFineSection && document.RawData.ElemTableIsExact
                 && element.SerializedOwningElementId is > 0 and int owner
@@ -692,15 +692,11 @@ public static partial class ElevationPrinter
                 && categoryId == (int)BuiltInCategory.OST_CurtainWallPanels
                 && geometry.Faces.All(face => document.GetElement(face.RenderStyleId ?? face.NestedRenderStyleId ?? -1)
                     ?.SerializedMaterialTransparency is > 0 and <= 1);
-            double? slabGray = null;
-            if (regularFineSection && physicalOccluder && categoryId == (int)BuiltInCategory.OST_Floors
+            bool shadeStructuralSlab = regularFineSection && physicalOccluder && categoryId == (int)BuiltInCategory.OST_Floors
                 && element.LookupParameter(BuiltInParameter.FLOOR_PARAM_IS_STRUCTURAL)?.Value is 1
                 && element.LookupParameter(BuiltInParameter.STRUCTURAL_MATERIAL_PARAM)?.Value is > 0 and int slabMaterial
                 && document.GetElement(slabMaterial) is { HasShadingAppearance: true,
-                    SerializedMaterialUsesRenderAppearance: false, SerializedMaterialTransparency: 0 } finish
-                && finish.LookupParameter(BuiltInParameter.MATERIAL_PARAM_COLOR)?.Value is int slabColor and >= 0 and <= 0xffffff)
-                slabGray = (0.2126 * (slabColor & 255) + 0.7152 * ((slabColor >> 8) & 255)
-                    + 0.0722 * ((slabColor >> 16) & 255)) / 255;
+                    SerializedMaterialUsesRenderAppearance: false, SerializedMaterialTransparency: 0 };
             var wallType = opaqueFineSection && !detailPath && physicalOccluder
                 && categoryId == (int)BuiltInCategory.OST_Walls
                 ? document.GetElement(element.TypeId) : null;
@@ -781,7 +777,9 @@ public static partial class ElevationPrinter
                         foreach (var ring in rings)
                             DetailAnnotations.AddClosedHostCutHatches(layerHatches, document, element, ring, H, V,
                                 floorViewOrigin, layerBoundaries, penWidth: 0.1);
-                    if (regularFineSection && categoryId == (int)BuiltInCategory.OST_Walls
+                    bool needsClosedCap = regularFineSection && categoryId == (int)BuiltInCategory.OST_Walls
+                        || opaqueFineSection && detailCallout && categoryId == (int)BuiltInCategory.OST_Floors;
+                    if (needsClosedCap
                         && geometry.BrepSolids is [{ IsClosed: true }] && rings.Count == 1
                         && ClosedSectionRings(geometry.Faces, planeOrigin, D, H, V, requireClosed: true)
                             .ToList() is [var cap])
@@ -1024,9 +1022,9 @@ public static partial class ElevationPrinter
                 bool outline = facing > 0.5 || fineFace || dashedSurfacePatterns.ContainsKey(points);
                 if (roundShaft) roundShaftFaces.Add(faces.Count);
                 faces.Add((points, depth, outline));
-                double? slabSideGray = slabGray.HasValue && face.PlaneSurface && facing > 0.5
-                    && Math.Abs(face.Normal[2]) <= 1e-6 ? slabGray : null;
-                double? sideGray = slabSideGray;
+                bool projectedSlabSide = shadeStructuralSlab && face.PlaneSurface && facing > 0.5
+                    && Math.Abs(face.Normal[2]) <= 1e-6;
+                double? sideGray = null;
                 if (structuralWallBaseY is double baseY && ambientBlocker
                     && face.RenderStyleId == structuralWallMaterial && Project(face.Normal, D, 1) < -1 + 1e-9
                     && minDepth > viewPlaneDepth && points.Any(point => point.Y > baseY)
@@ -1199,7 +1197,8 @@ public static partial class ElevationPrinter
                         excludeSamplesBehindCut: paintDetailCuts && categoryId == (int)BuiltInCategory.OST_Floors
                             && Math.Abs(face.Normal[2]) <= 1e-6,
                         exteriorWall: exteriorWallTones.TryGetValue(points, out var exteriorTone)
-                            ? (exteriorTone.BaseY, (float)viewPlaneDepth) : null);
+                            ? (exteriorTone.BaseY, (float)viewPlaneDepth) : null,
+                        projectedSlabSide: projectedSlabSide);
                 }
                 else if (regularFineSection && face.PlaneSurface && ambient != null
                     && glazing?.AmbientBackgroundGray(points) is double glazedBackground)
@@ -1484,7 +1483,7 @@ public static partial class ElevationPrinter
                 deduped.AddRange(VisibleTerrainEdges(group,
                     spanOccluders.Where(mask => mask.FarDepth < group.Key - 1).Select(mask => mask.Points), [],
                     openings: spanOpenings));
-            if (opaqueFineSection && detailCallout && !detailPath)
+            if (opaqueFineSection && !detailPath)
             {
                 var slabs = spanOccluders.Where(mask => mask.ViewAlignedSlabSide).ToList();
                 if (slabs.Count > 0)

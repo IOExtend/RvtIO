@@ -304,13 +304,14 @@ In cropped sections, the cut stroke covers coincident spans of farther projected
 as wide. Uncovered spans and lines with a saved view line style stay visible.
 Overview sections and regular fine sections with a usable model crop use white base surfaces for a saved
 opaque hidden-line display. Other fine sections use white surfaces when both saved shadow modes are off.
-In regular fine sections with ambient shadows, upright projected sides of structural floors use the saved
-structural material's graphics colour as the base for ambient shading when the material is opaque and uses
-its graphics appearance. Projected single-layer exterior structural walls use the saved ambient intensity
+In regular fine hidden-line sections, upright projected sides of structural floors use a white base.
+For supported opaque floors, ambient shading combines nearby blockers with distance-weighted visibility
+from the floor side to the section plane. Projected single-layer exterior structural walls use the saved ambient intensity
 to approximate their tone above their saved base level. For samples below that level, the section crop
 and the depth to the cut plane bound the ray reach for ambient occlusion.
 A regular fine section also paints a white cut face for a closed wall solid where the section plane yields
-a single closed ring. The cut face covers the projected surfaces and edges behind that ring.
+a single closed ring. A fine section callout uses the same rule for closed floor solids. The cut face
+covers the projected surfaces and edges behind that ring.
 Section cut pens, model edges and material patterns are handled independently of the surface colour.
 Fine sections with opaque hidden-line display and surface patterns enabled print supported drafting grids on the
 faces that name their material. In a cropped model section, each continuous line uses the saved spacing and
@@ -335,6 +336,7 @@ within the pane.
 Regular cropped fine sections with the saved opaque display exclude model geometry in categories hidden in that view.
 When the project element table has been read exactly, these sections leave geometry discovered outside the table out of the projection.
 Opaque fine sections with an exact element table project placed family instances and skip geometry directly owned by a family definition.
+Opaque fine sections omit the defining instances of model groups and their template members.
 Fill pattern definitions supply material graphics for faces and are excluded from the model geometry pass.
 A sloping wall edge at constant view depth keeps the spans outside closer opaque planar faces in
 regular sections and callouts. Visibility is resolved in model face order before painting the
@@ -514,7 +516,7 @@ Fine model sections keep the physical depths of door edges through that visibili
 visible spans ink once after the viewport crop. With ambient shadows enabled, doors without
 transparent panels use the authored grayscale shading colour on opaque faces that select it.
 Nearer railing faces and separately stored balusters clip the covered spans of projected rail edges.
-In opaque fine section callouts, nearer slab sides facing the view clip the spans of upright wall and railing
+In opaque fine sections, nearer slab sides facing the view clip the spans of upright wall and railing
 profiles that they cover.
 Closed furniture meshes with saved cylindrical facets print their projected contour in fine section callouts.
 The projection skips edge-on faces with openings because they cover zero area.
