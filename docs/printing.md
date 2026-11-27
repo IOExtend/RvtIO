@@ -825,11 +825,15 @@ missing geometry in most places:
   at the section plane (world X −13.6…−12.3 m, Y −2.18 m, Z 0.83…1.04 m), drawn by us as an unhatched face while
   the reference fills it with a fine hatch. Its pitch does not match any decoded cut pattern (the site cut pattern
   is a 6.35 mm brick, the concrete cut pattern 6–11 mm, both sub-pixel at 1:100), so the pattern itself is still
-  undecoded. The larger A103 gaps sit in the South elevation, where the guardrail's horizontal bars are decoded
-  (five rails at 100 mm pitch, view depth −18200) but the occlusion pass drops them behind the railing's own
-  nearer faces. Exempting railing edges from occlusion by the same element, or by railing categories at all,
-  restores some bars but costs more than it gains: A104 precision 95.6% → 93.3%, A105 93.6% → 93.1%, A103
-  93.4% → 93.2% for +0.1…+0.3% recall. The occlusion therefore stays.
+  undecoded. The larger A103 gaps sit in the South elevation, where the guardrail's five horizontal bars are
+  decoded (100 mm pitch, view depth −18200) but the occlusion pass drops them. Instrumenting the pass names every
+  occluder rather than a glass pane: the railing's own near face (element 566588, −18203, 3 mm nearer), a floor
+  slab (550255, "Generic 150mm", −18202, 2 mm nearer) and a clad wall (427092, "Wall - Timber Clad", −18404).
+  Exempting the railing itself restores no bar (the slab and wall still cover it); exempting every face within
+  5 mm of the bar restores some on A104/A105 but not on A103, and costs precision. Measured for the 5 mm envelope:
+  A103 95.8/93.4% unchanged, A104 96.3/95.6% → 96.6/93.8%, A105 92.6/93.6% → 92.9/93.3%. Exempting all railing
+  categories measured A103 95.9/93.2%, A104 96.6/93.3%, A105 92.7/93.1%. All variants lost more precision than
+  they gained, so the occlusion stands.
 
 
 | Sheet | Printed | Still different |
