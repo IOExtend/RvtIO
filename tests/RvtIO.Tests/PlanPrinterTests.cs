@@ -1078,9 +1078,14 @@ public class PlanPrinterTests
         Assert.NotNull(content!.FurnitureLines);
         Assert.True(content.FurnitureLines!.Count > 100,
             $"Level 1 furniture silhouette drew {content.FurnitureLines.Count} segments");
-        // Every segment is one grid edge: no long straight spans (the old face outlines).
-        Assert.All(content.FurnitureLines!, line =>
-            Assert.True(Math.Abs(line.X2 - line.X1) + Math.Abs(line.Y2 - line.Y1) <= 5.01));
+        // The silhouette itself is traced on the 5 mm grid; the longer runs are the inner loops of a top face
+        // (the bathtub basin), which the reference also inks.
+        int grid = content.FurnitureLines!.Count(line =>
+            Math.Abs(line.X2 - line.X1) + Math.Abs(line.Y2 - line.Y1) <= 5.01);
+        Assert.True(grid > content.FurnitureLines.Count * 0.9,
+            $"{grid} of {content.FurnitureLines.Count} furniture lines are grid edges");
+        Assert.Contains(content.FurnitureLines, line =>
+            Math.Abs(line.X2 - line.X1) + Math.Abs(line.Y2 - line.Y1) > 5.01);
     }
 
     [Fact]

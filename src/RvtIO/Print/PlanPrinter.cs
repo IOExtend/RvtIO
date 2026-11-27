@@ -713,6 +713,20 @@ public static partial class PlanPrinter
                 string silhouetteKey = $"{sMinX:0}:{sMinY:0}:{sMaxX:0}:{sMaxY:0}";
                 if (!furnitureKeys.Add(silhouetteKey)) continue;
                 furnitureLines.AddRange(outline);
+                // A fitting's top face often carries its basin as an inner loop (the bathtub rim): the silhouette
+                // keeps only the outer boundary, so the loops ink on their own.
+                foreach (var face in faces)
+                {
+                    foreach (var hole in face.Holes)
+                    {
+                        for (int i = 0; i < hole.Count; i++)
+                        {
+                            var a = hole[i];
+                            var b = hole[(i + 1) % hole.Count];
+                            furnitureLines.Add((a.X, a.Y, b.X, b.Y));
+                        }
+                    }
+                }
                 if (opaqueFurniture)
                 {
                     foreach (var face in faces)
