@@ -1030,4 +1030,159 @@ public class GRepParserV2Tests
         }
         return Math.Abs(twiceArea) / 2;
     }
+
+    [Fact]
+    public void CurvedFaceWithCompleteLoops_IgnoresDetachedPreCutEdgesBesideMappedInstance()
+    {
+        var parser = typeof(GRepParserV2);
+        var curType = parser.GetNestedType("Cur", BindingFlags.NonPublic)!;
+        var edgeType = parser.GetNestedType("EdgeRec", BindingFlags.NonPublic)!;
+        var uvType = parser.GetNestedType("EdgeUV", BindingFlags.NonPublic)!;
+        var surfType = parser.GetNestedType("SurfaceRec", BindingFlags.NonPublic)!;
+        var surfKindType = parser.GetNestedType("SurfKind", BindingFlags.NonPublic)!;
+        var instType = parser.GetNestedType("InstanceRec", BindingFlags.NonPublic)!;
+        var loopType = parser.GetNestedType("SpaceEdgeLoopRec", BindingFlags.NonPublic)!;
+
+        object cur = Activator.CreateInstance(curType, nonPublic: true)!;
+        void Set(object target, string field, object? value) =>
+            target.GetType().GetField(field, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(target, value);
+        T Get<T>(string field) => (T)curType.GetField(field, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(cur)!;
+
+        object MakeUv(double ua, double va, double ub, double vb)
+        {
+            object uv = Activator.CreateInstance(uvType)!;
+            Set(uv, "UA", ua); Set(uv, "VA", va);
+            Set(uv, "UB", ub); Set(uv, "VB", vb);
+            return uv;
+        }
+
+        object MakeSurface(string kind, double z, double r, byte orient)
+        {
+            object s = Activator.CreateInstance(surfType)!;
+            Set(s, "Kind", Enum.Parse(surfKindType, kind));
+            Set(s, "O", new[] { 0.0, 0.0, z });
+            Set(s, "X", new[] { 1.0, 0.0, 0.0 });
+            Set(s, "Y", new[] { 0.0, 1.0, 0.0 });
+            Set(s, "Z", new[] { 0.0, 0.0, 1.0 });
+            Set(s, "R", r);
+            Set(s, "Orient", orient);
+            Set(s, "Env", kind == "Cylinder" ? new[] { 0.0, 0.0, 2 * Math.PI, 2.0 } : new[] { -1.0, -1.0, 1.0, 1.0 });
+            return s;
+        }
+
+        object MakeEdge(uint handle, uint faceA, uint faceB, uint nextA, uint prevA, uint nextB, uint prevB,
+            double uStart, double uEnd, double vConst, bool bottomCap)
+        {
+            object e = Activator.CreateInstance(edgeType)!;
+            Set(e, "Handle", handle);
+            Set(e, "FaceA", faceA); Set(e, "FaceB", faceB);
+            Set(e, "NextA", nextA); Set(e, "PrevA", prevA);
+            Set(e, "NextB", nextB); Set(e, "PrevB", prevB);
+            Set(e, "Flags", (byte)6);
+            Set(e, "HasEndpoints", true);
+            const int segs = 4;
+            var pts = Enumerable.Range(0, segs + 1).Select(i =>
+            {
+                double u = uStart + (uEnd - uStart) * i / segs;
+                double ub = Math.Cos(u);
+                double vb = Math.Sin(u);
+                return MakeUv(u, vConst, bottomCap ? ub : u, bottomCap ? vb : vConst);
+            }).ToList();
+            // For cap edges, FaceB is planar (UB=cos(u), VB=sin(u)) in all points.
+            if (faceB == 10 || faceB == 11)
+                pts = Enumerable.Range(0, segs + 1).Select(i =>
+                {
+                    double u = uStart + (uEnd - uStart) * i / segs;
+                    return MakeUv(u, vConst, Math.Cos(u), Math.Sin(u));
+                }).ToList();
+            Set(e, "Start", pts[0]);
+            Set(e, "EndP", pts[^1]);
+            var interior = (System.Collections.IList)e.GetType().GetField("Interior")!.GetValue(e)!;
+            for (int i = 1; i < pts.Count - 1; i++) interior.Add(pts[i]);
+            return e;
+        }
+
+        void AddLoop(int qIdx, uint face, uint nextEdge, uint prevEdge)
+        {
+            object loop = Activator.CreateInstance(loopType, nonPublic: true)!;
+            Set(loop, "Face", face);
+            Set(loop, "Next", nextEdge);
+            Set(loop, "Prev", prevEdge);
+            Set(loop, "Open", (byte)0);
+            var dict = (System.Collections.IDictionary)curType.GetField("SpaceEdgeLoops")!.GetValue(cur)!;
+            dict.Add(qIdx, loop);
+        }
+
+        Set(cur, "RootTightBoundingBox", new[] { -1.0, -1.0, 0.0, 1.0, 1.0, 2.0 });
+        var queue = Get<List<(ushort Cls, int V)>>("Queue");
+        var links = Get<List<(int ParentQueueIndex, string Field)>>("QueueLinks");
+        queue.AddRange([
+            (1976, 3),   // 0: root GInstance
+            (2092, 7),   // 1: Geometry node 7
+            (1589, 10),  // 2: bottom plane
+            (1589, 11),  // 3: top plane
+            (1589, 12),  // 4: cylinder wall
+            (1589, 13),  // 5: dead cut-off face
+            (1254, 101), // 6: loop bottom
+            (1254, 102), // 7: loop top
+            (1254, 103), // 8: loop cyl bottom
+            (1254, 104), // 9: loop cyl top
+        ]);
+        links.AddRange([
+            (-1, "m_subNodes"),
+            (-1, "m_subNodes"),
+            (1, "m_pFaces"),
+            (1, "m_pFaces"),
+            (1, "m_pFaces"),
+            (1, "m_pFaces"),
+            (2, "m_pFirstLoop"),
+            (3, "m_pFirstLoop"),
+            (4, "m_pFirstLoop"),
+            (8, "m_nextLoop"),
+        ]);
+
+        var ginfo = Get<Dictionary<int, (int, int, int, uint)>>("ObjectGInfo");
+        ginfo[3] = (0, 0, -1, 0x00088004u);
+        ginfo[7] = (0, 0, -1, 0x0008C004u);
+        foreach (int f in new[] { 10, 11, 12 }) ginfo[f] = (0, 0, -1, 0x00088204u);
+        ginfo[13] = (0, 0, -1, 0x00008204u);
+
+        Get<List<uint>>("FaceOrder").AddRange([10u, 11u, 12u, 13u]);
+        var direct = (System.Collections.IDictionary)curType.GetField("DirectSurfaceByFace")!.GetValue(cur)!;
+        direct.Add(10u, MakeSurface("Plane", 0.0, 0.0, 0));
+        direct.Add(11u, MakeSurface("Plane", 2.0, 0.0, 1));
+        direct.Add(12u, MakeSurface("Cylinder", 0.0, 1.0, 1));
+        direct.Add(13u, MakeSurface("Plane", 10.0, 0.0, 1));
+
+        var hasFirst = Get<Dictionary<uint, bool>>("FaceHasFirstLoop");
+        hasFirst[10] = true; hasFirst[11] = true; hasFirst[12] = true; hasFirst[13] = false;
+        Get<HashSet<int>>("LastLoops").UnionWith([6, 7, 9]);
+        AddLoop(6, 10, 202, 201);
+        AddLoop(7, 11, 204, 203);
+        AddLoop(8, 12, 201, 202);
+        AddLoop(9, 12, 203, 204);
+
+        var edges = (System.Collections.IList)curType.GetField("Edges")!.GetValue(cur)!;
+        edges.Add(MakeEdge(201, 12, 10, 202, 103, 101, 202, 0, Math.PI, 0.0, true));
+        edges.Add(MakeEdge(202, 12, 10, 103, 201, 201, 101, Math.PI, 2 * Math.PI, 0.0, true));
+        edges.Add(MakeEdge(203, 12, 11, 204, 104, 102, 204, 2 * Math.PI, Math.PI, 2.0, false));
+        edges.Add(MakeEdge(204, 12, 11, 104, 203, 203, 102, Math.PI, 0.0, 2.0, false));
+        // Detached pre-cut edge referencing the cylinder face and the dead face outside tight bounds.
+        edges.Add(MakeEdge(299, 12, 13, 0, 0, 0, 0, 0, Math.PI, 10.0, false));
+
+        var instances = (System.Collections.IList)curType.GetField("Instances")!.GetValue(cur)!;
+        instances.Add(Activator.CreateInstance(instType,
+            999, new[] { 1.0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0 }, 0)!);
+
+        var build = parser.GetMethod("BuildGeometry", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var parsed = Assert.IsType<GRepData>(build.Invoke(null, [cur, false, true, false, false, Enum.ToObject(parser.GetNestedType("BodyMeasure", BindingFlags.NonPublic)!, 0)]));
+
+        Assert.Empty(parsed.Instances);
+        Assert.NotNull(parsed.NodeMeasures);
+        var measure = Assert.Single(parsed.NodeMeasures);
+        Assert.Equal(2, measure.Node);
+        Assert.InRange(measure.Volume, 6.2, 6.3);
+        var meshNode = Assert.Single(parsed.MeshNodes!);
+        Assert.NotNull(meshNode.SourceMeasures);
+    }
 }
