@@ -939,7 +939,8 @@ public partial class IfcExporter
             .Where(candidate => candidate.CategoryId == -2000011
                 && visibleWallIds.Contains(candidate.Id)
                 && !(curtainWallIds.Contains(candidate.Id)
-                    && candidate.Layers is not { Count: > 0 })
+                    && candidate.Layers is not { Count: > 0 }
+                    || curtainPanelWallIds.Contains(candidate.Id))
                 && ShouldSuppressPhantomStoreyWallProduct(
                     "IFCWALLSTANDARDCASE", IntParam(candidate, -1001952), storeyIds)
                 // A project Level that is not a building story is a real level, not a phantom.
@@ -1886,8 +1887,6 @@ public partial class IfcExporter
 
             if (elem.CategoryId == -2000011 && !visibleWallIds.Contains(elem.Id))
             { Skip(elem, "wall-not-visible"); continue; }
-            if (curtainPanelWallIds.Contains(elem.Id))
-            { Skip(elem, "curtain-panel-wall"); continue; }
 
             if (elem.CategoryId is -2000171 or -2000170)
             {
@@ -1911,8 +1910,9 @@ public partial class IfcExporter
                 ? "IFCOPENINGELEMENT"
                 // A serialized CompoundStructure is the defining body of a basic/stacked system
                 // wall.
-                : elem.CategoryId == -2000011 && curtainWallIds.Contains(elem.Id)
+                : elem.CategoryId == -2000011 && (curtainWallIds.Contains(elem.Id)
                     && elem.Layers is not { Count: > 0 }
+                    || curtainPanelWallIds.Contains(elem.Id))
                     ? "IFCCURTAINWALL"
                 : elem.CategoryId == -2000011 && ShouldExportAsIfcWall(elem, CurrentProfile)
                     ? "IFCWALL"
@@ -6050,6 +6050,7 @@ public partial class IfcExporter
             bool agrees = (type.SerializedSystemTypeClassId, element.CategoryId, ifcType) switch
             {
                 (512, -2000011, "IFCWALL" or "IFCWALLSTANDARDCASE") => true,
+                (512, -2000011, "IFCCURTAINWALL") when element.SerializedCurtainHostId is > 0 => true,
                 (1915, -2000032, "IFCSLAB") => true,
                 (1915, -2001300, "IFCSLAB" or "IFCROOF") => true,
                 (646, -2000038, "IFCCOVERING") => true,
@@ -6165,7 +6166,8 @@ public partial class IfcExporter
             var associated = CurrentProfile ? group.Where(item => item.Product.ifcType != "IFCWALL").ToList() : group.ToList();
             if (associated.Count == 0) continue;
 
-            bool wallLayers = first.Product.ifcType is "IFCWALL" or "IFCWALLSTANDARDCASE";
+            bool wallLayers = first.Product.ifcType is "IFCWALL" or "IFCWALLSTANDARDCASE"
+                || (first.Product.ifcType == "IFCCURTAINWALL" && first.Element.CategoryId == -2000011);
             bool directLayerSet = first.Native != null && (CurrentProfile
                 ? first.Element.CategoryId == -2000035
                 : first.Element.CategoryId == -2001300);
@@ -7082,6 +7084,7 @@ public partial class IfcExporter
             bool agrees = (type.SerializedSystemTypeClassId, element.CategoryId, ifcType) switch
             {
                 (512, -2000011, "IFCWALL" or "IFCWALLSTANDARDCASE") => true,
+                (512, -2000011, "IFCCURTAINWALL") when element.SerializedCurtainHostId is > 0 => true,
                 (1915, -2000032 or -2001300, "IFCSLAB") => true,
                 (646, -2000038, "IFCCOVERING") => true,
                 _ => false,

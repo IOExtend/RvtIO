@@ -1484,28 +1484,38 @@ public class IfcExporterTypeObjectsTests
     }
 
     [Theory]
-    [InlineData(IfcProfile.Legacy, 1)]
-    [InlineData(IfcProfile.Current, 0)]
-    public void BasicWallBoundToACurtainWallAsAPanel_IsNotExportedByCurrent(IfcProfile version, int wallPanels)
+    [InlineData(IfcProfile.Legacy, "IFCWALL", 1)]
+    [InlineData(IfcProfile.Current, "IFCCURTAINWALL", 0)]
+    public void BasicWallBoundToACurtainWallAsAPanel_ExportsAndAggregatesUnderCurtainWall(
+        IfcProfile version, string childIfcType, int wallCount)
     {
-        // In the current profile a wall whose owner is a curtain wall is not exported: only plates, members, doors and windows are
-        // aggregated under a curtain wall.
+        // Reference exports write basic-wall curtain panels as IfcCurtainWall aggregated under their
+        // parent IfcCurtainWall (Legacy emits them as IfcWall).
         var type = TypeElement(500, "Curtain type", "Curtain family");
         type.CategoryId = WallCategoryId; type.SerializedCurtainWallFunction = 1;
         var parent = Product(100, WallCategoryId, "OST_Walls", 500, null);
         parent.TypeId = 500; parent.Geometry = null; parent.BoundingBox = null;
         var panel = Product(101, -2000170, "OST_CurtainWallPanels", null, null);
         panel.SerializedCurtainHostId = 100;
-        var wallPanel = Product(102, WallCategoryId, "OST_Walls", null, null);
+        var wallType = TypeElement(501, "Panel wall", "Basic Wall");
+        wallType.CategoryId = WallCategoryId; wallType.SerializedBasicWallTypeFunction = 1;
+        wallType.SerializedBasicWallTypeName = "Panel wall";
+        var wallPanel = Product(102, WallCategoryId, "OST_Walls", 501, null);
         wallPanel.SerializedCurtainHostId = 100;
-        string ifc = ExportToText(version, type, parent, panel, wallPanel);
-        int parentId = SoleEntityId(ifc, "IFCCURTAINWALL");
+        string ifc = ExportToText(version, type, wallType, parent, panel, wallPanel);
+        int parentId = SoleEntityIdForTag(ifc, "IFCCURTAINWALL", "100");
         int plateId = SoleEntityId(ifc, "IFCPLATE");
+        int wallChildId = SoleEntityIdForTag(ifc, childIfcType, "102");
         var rel = Assert.Single(EntityIds(ifc, "IFCRELAGGREGATES")
             .Select(id => EntityArgs(ifc, id, "IFCRELAGGREGATES")),
             args => args[4] == $"#{parentId}");
-        Assert.Equal(wallPanels == 0 ? $"(#{plateId})" : $"(#{plateId},#{SoleEntityIdForTag(ifc, "IFCWALL", "102")})", rel[5]);
-        Assert.Equal(wallPanels, EntityIds(ifc, "IFCWALL").Count + EntityIds(ifc, "IFCWALLSTANDARDCASE").Count);
+        var expectedChildren = new[] { plateId, wallChildId }.OrderBy(id => id).Select(id => $"#{id}");
+        Assert.Equal($"({string.Join(",", expectedChildren)})", rel[5]);
+        Assert.Equal(wallCount, EntityIds(ifc, "IFCWALL").Count + EntityIds(ifc, "IFCWALLSTANDARDCASE").Count);
+        if (version == IfcProfile.Current)
+        {
+            Assert.Contains(EntityIds(ifc, "IFCCURTAINWALLTYPE"), id => EntityArgs(ifc, id, "IFCCURTAINWALLTYPE")[7] == "'501'");
+        }
     }
 
     /// <summary>A 4 x 3 x 0.5 box roof: bottom and top as horizontal faces with a world-aligned plane frame.</summary>
