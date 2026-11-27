@@ -25,7 +25,12 @@ public sealed class PlanPrintOptions
 /// <param name="LevelId">The element id of the level.</param>
 /// <param name="Name">The level name, when the reader decoded one.</param>
 /// <param name="ElevationFeet">The stored elevation in feet, null when the reader did not decode it.</param>
-public sealed record PlanLevel(int LevelId, string? Name, double? ElevationFeet);
+public sealed record PlanLevel(int LevelId, string? Name, double? ElevationFeet)
+{
+    /// <summary>Lossless decimal native 64-bit Revit element ID when the file renumbered it to fit <see cref="LevelId"/>; null when unchanged.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? SourceElementId { get; init; }
+}
 
 /// <summary>A view a plan can be printed for: a named plan view whose name or stored elevation matches a printable
 /// level. The scale is the view's own view scale.</summary>
@@ -33,7 +38,16 @@ public sealed record PlanLevel(int LevelId, string? Name, double? ElevationFeet)
 /// <param name="Name">The view name.</param>
 /// <param name="LevelId">The level the plan of the view is drawn from.</param>
 /// <param name="Scale">The view scale denominator, 100 for 1:100.</param>
-public sealed record PlanView(int ViewId, string Name, int LevelId, int Scale);
+public sealed record PlanView(int ViewId, string Name, int LevelId, int Scale)
+{
+    /// <summary>Lossless decimal native 64-bit Revit element ID when the file renumbered it to fit <see cref="ViewId"/>; null when unchanged.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? SourceElementId { get; init; }
+
+    /// <summary>Lossless decimal native 64-bit Revit element ID of the plan's level when renumbered to fit <see cref="LevelId"/>; null when unchanged.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? SourceLevelId { get; init; }
+}
 
 /// <summary>
 /// Prints plans to PDF pages from the data the reader decodes: walls as their location line with the stored thickness,
@@ -83,7 +97,10 @@ public static class PlanPrinter
         {
             if (!byId.TryGetValue(levelId, out var level)) continue;
             double? elevation = level.LookupParameter(BuiltInParameter.LEVEL_ELEV)?.Value is double value ? value : null;
-            levels.Add(new PlanLevel(levelId, level.Name, elevation));
+            levels.Add(new PlanLevel(levelId, level.Name, elevation)
+            {
+                SourceElementId = RvtIO.Sheets.SheetCatalog.SourceIdText(document.RawData, levelId, level),
+            });
         }
         levels.Sort((left, right) =>
         {
@@ -108,9 +125,15 @@ public static class PlanPrinter
             if (element.LookupParameter(BuiltInParameter.VIEW_NAME)?.Value is not string name || name.Length == 0)
                 continue;
             int? levelId = null;
+            string? sourceLevelId = null;
             foreach (var level in levels)
             {
-                if (string.Equals(level.Name, name, StringComparison.OrdinalIgnoreCase)) { levelId = level.LevelId; break; }
+                if (string.Equals(level.Name, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    levelId = level.LevelId;
+                    sourceLevelId = level.SourceElementId;
+                    break;
+                }
             }
             // The elevation fallback is for a level plan named differently from its level ("Level 1 - Plan"); a site
             // view, a section or a 3D view shares the level elevation but is not the plan of that level.
@@ -122,6 +145,7 @@ public static class PlanPrinter
                     if (level.ElevationFeet is double levelElevation && Math.Abs(levelElevation - elevation) < 1e-6)
                     {
                         levelId = level.LevelId;
+                        sourceLevelId = level.SourceElementId;
                         break;
                     }
                 }
@@ -131,7 +155,11 @@ public static class PlanPrinter
             // A detail view of a plan is also a DBViewPlan and carries the plan's name; it is drawn at 1:2 to 1:24 and
             // is not the plan of the level.
             if (scale < 50) continue;
-            views.Add(new PlanView(element.Id, name, levelId.Value, scale));
+            views.Add(new PlanView(element.Id, name, levelId.Value, scale)
+            {
+                SourceElementId = RvtIO.Sheets.SheetCatalog.SourceIdText(document.RawData, element.Id, element),
+                SourceLevelId = sourceLevelId,
+            });
         }
         views.Sort((left, right) =>
         {

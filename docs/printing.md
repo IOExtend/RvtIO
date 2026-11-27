@@ -21,8 +21,15 @@ rvtio print project.rvt plan.svg --level 355 --scale 100
 rvtio print project.rvt plan.pdf --level "Уровень 1" --scale 200 --paper A3
 ```
 
-`--level` takes the element id or the exact level name (case-insensitive). Without it the level with the most walls and
-columns is printed. `--scale` is the view scale denominator: 100 prints 1:100, one model metre to ten millimetres of
+`--level` takes the document-local element id, the original 64-bit Revit element id (or `source:<id>` / `native:<id>`),
+or the exact level name (case-insensitive). `--view` and `--sheet` accept the same local and 64-bit native ID
+selectors as well as view names / sheet numbers. When an element in a Revit 2024+ file was renumbered from a wide
+64-bit native ID into a distinct 32-bit document-local ID, `--list-levels`, `--list-views`, and `--list-sheets` keep the
+local ID in the first column for compatibility and append `source=<id>` with the lossless decimal 64-bit Revit ID
+(the same value exposed by `PlanLevel.SourceElementId`, `PlanView.SourceElementId`, `ElevationView.SourceElementId`,
+`PrintableSheet.SourceElementId`, and `ComposedSheet.SourceElementId`). In `--list-views` a plan whose level was
+renumbered also appends `level-source=<id>` (`PlanView.SourceLevelId`); the `level <local id>` column is unchanged.
+Without `--level`, the level with the most walls and columns is printed. `--scale` is the view scale denominator: 100 prints 1:100, one model metre to ten millimetres of
 paper. `--paper` takes A4, A3, A2, A1 or A0; without it the smallest landscape paper that holds the drawing at the scale
 is chosen, and a drawing larger than A0 is scaled down to fit. Exit codes: 0 written, 1 usage error or an unwritable
 output path (also a level or view that is not printable), 2 the file cannot be read, 3 a reader limit cut a stream, 4

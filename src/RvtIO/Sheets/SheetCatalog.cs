@@ -105,16 +105,24 @@ public sealed class SheetCatalog
         foreach (var sheet in sheetElements) sheetIds.Add(sheet.Id);
 
         var owned = new Dictionary<int, List<int>>();
+        var ownedSourceIds = new Dictionary<int, Dictionary<int, string>>();
         foreach (var element in info.Elements)
         {
             if (!Compact.CompactUniverse.IsTableRow(element, info.ElemTableIsExact)) continue;
             if (element.OwnerViewId is not int owner || !sheetIds.Contains(owner) || owner == element.Id) continue;
             if (!owned.TryGetValue(owner, out var ids)) owned[owner] = ids = new List<int>();
             ids.Add(element.Id);
+            if (SourceIdText(info, element.Id, element) is not { } sourceId) continue;
+            if (!ownedSourceIds.TryGetValue(owner, out var sources)) ownedSourceIds[owner] = sources = new Dictionary<int, string>();
+            sources[element.Id] = sourceId;
         }
 
         var viewports = new List<ViewportRecord>();
         var viewportsBySheet = new Dictionary<int, List<int>>();
+        var sheetSourceIds = new Dictionary<int, string>();
+        foreach (var sheet in sheetElements)
+            if (SourceIdText(info, sheet.Id, sheet) is { } s)
+                sheetSourceIds[sheet.Id] = s;
         foreach (var element in info.Elements)
         {
             if (!Compact.CompactUniverse.IsTableRow(element, info.ElemTableIsExact)) continue;
@@ -126,7 +134,12 @@ public sealed class SheetCatalog
                 if (reference != element.Id && sheetIds.Contains(reference)) { sheetId = reference; break; }
             }
             if (sheetId == 0) continue;
-            viewports.Add(new ViewportRecord(element.Id, sheetId, Text(element, BuiltInParameter.VIEWPORT_DETAIL_NUMBER)));
+            viewports.Add(new ViewportRecord(
+                element.Id,
+                sheetId,
+                Text(element, BuiltInParameter.VIEWPORT_DETAIL_NUMBER),
+                SourceIdText(info, element.Id, element),
+                sheetSourceIds.GetValueOrDefault(sheetId)));
             if (!viewportsBySheet.TryGetValue(sheetId, out var ids)) viewportsBySheet[sheetId] = ids = new List<int>();
             ids.Add(element.Id);
         }
@@ -149,10 +162,19 @@ public sealed class SheetCatalog
                 Ordered(viewportsBySheet, element.Id),
                 Ordered(owned, element.Id),
                 parameters,
-                yesNo));
+                yesNo,
+                sheetSourceIds.GetValueOrDefault(element.Id),
+                ownedSourceIds.GetValueOrDefault(element.Id)));
         }
 
         return new SheetCatalog(sheets, viewports);
+    }
+
+    internal static string? SourceIdText(RevitFileInfo info, int localId, Element? element = null)
+    {
+        if (element?.SourceElementId is string s) return s;
+        long sourceId = info.GetSourceElementId(localId);
+        return sourceId != localId ? sourceId.ToString(System.Globalization.CultureInfo.InvariantCulture) : null;
     }
 
     /// <summary>

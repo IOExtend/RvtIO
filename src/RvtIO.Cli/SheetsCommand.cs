@@ -152,7 +152,7 @@ internal static class SheetsCommand
             }
         }
 
-        string payload = csv ? ToCsv(catalog) : JsonSerializer.Serialize(catalog, Options);
+        string payload = csv ? ToCsv(catalog) : ToJson(catalog);
         if (outputPath == null)
         {
             output.WriteLine(payload);
@@ -183,7 +183,9 @@ internal static class SheetsCommand
         return RvtExitCodes.Success;
     }
 
-    private static string ToCsv(SheetCatalog catalog)
+    internal static string ToJson(SheetCatalog catalog) => JsonSerializer.Serialize(catalog, Options);
+
+    internal static string ToCsv(SheetCatalog catalog)
     {
         var extra = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var sheet in catalog.Sheets)
@@ -192,7 +194,7 @@ internal static class SheetsCommand
         var lines = new List<string>
         {
             string.Join(",", new[] { "ElementId", "Number", "Name", "IssueDate", "Scale", "DrawnBy",
-                "DesignedBy", "CheckedBy", "ApprovedBy" }.Concat(extra).Select(EscapeCsv)),
+                "DesignedBy", "CheckedBy", "ApprovedBy" }.Concat(extra).Append("SourceElementId").Select(EscapeCsv)),
         };
         foreach (var sheet in catalog.Sheets)
         {
@@ -203,6 +205,7 @@ internal static class SheetsCommand
             };
             foreach (string key in extra)
                 fields.Add(sheet.Parameters.TryGetValue(key, out var value) ? value : null);
+            fields.Add(sheet.SourceElementId);
             lines.Add(string.Join(",", fields.Select(EscapeCsv)));
         }
         return string.Join(Environment.NewLine, lines);

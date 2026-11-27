@@ -74,6 +74,8 @@ owner, when the stored owner is not a view, or when it is the element itself.
 
 | Field | Source |
 |---|---|
+| `SheetRecord.ElementId` | document-local 32-bit element id of the sheet |
+| `SheetRecord.SourceElementId` | lossless decimal string of the original 64-bit Revit element ID when the file renumbered it to fit `ElementId` (omitted from JSON when unchanged) |
 | `SheetRecord.Number` | `Sheet Number` parameter (`SHEET_NUMBER`) |
 | `SheetRecord.Name` | `Sheet Name` parameter (`SHEET_NAME`) |
 | `SheetRecord.IssueDate` | `Sheet Issue Date` parameter (`SHEET_ISSUE_DATE`) |
@@ -81,9 +83,23 @@ owner, when the stored owner is not a view, or when it is the element itself.
 | `SheetRecord.DrawnBy`, `DesignedBy`, `CheckedBy`, `ApprovedBy` | the `SHEET_*` by-line parameters |
 | `SheetRecord.ViewportIds` | the viewports whose sheet is this sheet |
 | `SheetRecord.OwnedElementIds` | elements whose `OwnerViewId` is this sheet |
+| `SheetRecord.OwnedElementSourceIds` | original 64-bit Revit element IDs, as decimal strings keyed by the local id, of the renumbered entries of `OwnedElementIds` (omitted from JSON when none was; not a CSV column) |
 | `SheetRecord.Parameters` | text and whole-number project/shared parameters; `SHEET_SCHEDULED` as `Appears In Sheet List` |
-| `ViewportRecord.SheetId` | the referenced sheet |
+| `ViewportRecord.ElementId` | document-local 32-bit element id of the viewport |
+| `ViewportRecord.SourceElementId` | lossless decimal string of the viewport's original 64-bit Revit element ID when renumbered |
+| `ViewportRecord.SheetId` | the referenced sheet's document-local 32-bit element id |
+| `ViewportRecord.SourceSheetId` | lossless decimal string of the referenced sheet's original 64-bit Revit element ID when renumbered |
 | `ViewportRecord.DetailNumber` | `Detail Number` parameter (`VIEWPORT_DETAIL_NUMBER`) |
+
+### Local IDs vs. 64-bit Revit element IDs
+
+Revit 2024 and newer files can assign 64-bit element IDs that exceed 32-bit `int.MaxValue`. When `RvtIO` reads such
+a file into a document-local `int` table, each wide element gets a distinct 32-bit local `ElementId` (used for internal
+links such as `ViewportIds`, `OwnedElementIds`, and `ViewportRecord.SheetId`), while its original 64-bit Revit ID is
+preserved in `SourceElementId` (`ViewportRecord.SourceSheetId` and, for owned elements,
+`SheetRecord.OwnedElementSourceIds`) as lossless decimal text so JSON and CSV consumers never lose precision. In CSV
+output (`--csv`), the last column, `SourceElementId`, holds the original 64-bit decimal ID when renumbered and is empty
+when the ID was unchanged.
 
 Sheets are ordered by number (ordinal, case-insensitive; a sheet without a number keeps document order behind the
 numbered sheets) and then by element id. Viewports, viewport ids and owned element ids are ordered by id.

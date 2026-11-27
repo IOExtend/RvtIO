@@ -32,7 +32,12 @@ public sealed class SheetPrintOptions
 /// <param name="CurveCount">The number of location curves of the sheet's own elements.</param>
 /// <param name="TextCount">The number of text notes of the sheet (their text is not decoded).</param>
 public sealed record PrintableSheet(int SheetId, string? Number, string? Name, double WidthMillimetres,
-    double HeightMillimetres, int CurveCount, int TextCount);
+    double HeightMillimetres, int CurveCount, int TextCount)
+{
+    /// <summary>Lossless decimal native 64-bit Revit element ID when the file renumbered it to fit <see cref="SheetId"/>; null when unchanged.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? SourceElementId { get; init; }
+}
 
 /// <summary>
 /// Prints a sheet to a PDF page from the linework the reader decodes: the location curves of the elements the sheet
@@ -85,7 +90,10 @@ public static class SheetPrinter
             if (curves == 0 || maxX - minX < 50 || maxY - minY < 50) continue;
             sheets.Add(new PrintableSheet(sheet.Id,
                 Text(sheet, BuiltInParameter.SHEET_NUMBER), Text(sheet, BuiltInParameter.SHEET_NAME),
-                maxX - minX, maxY - minY, curves, texts));
+                maxX - minX, maxY - minY, curves, texts)
+            {
+                SourceElementId = RvtIO.Sheets.SheetCatalog.SourceIdText(document.RawData, sheet.Id, sheet),
+            });
             continue;
 
             void Grow(double[] point)

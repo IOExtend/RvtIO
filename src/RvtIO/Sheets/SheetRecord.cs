@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace RvtIO.Sheets;
 
 /// <summary>A sheet of the document (the Revit API's <c>ViewSheet</c>) with the data this release decodes: its number,
@@ -18,7 +20,9 @@ public sealed class SheetRecord
         IReadOnlyList<int> viewportIds,
         IReadOnlyList<int> ownedElementIds,
         IReadOnlyDictionary<string, string>? parameters = null,
-        IReadOnlyCollection<string>? yesNoParameters = null)
+        IReadOnlyCollection<string>? yesNoParameters = null,
+        string? sourceElementId = null,
+        IReadOnlyDictionary<int, string>? ownedElementSourceIds = null)
     {
         ElementId = elementId;
         Number = number;
@@ -35,10 +39,16 @@ public sealed class SheetRecord
         // Names compare case-insensitively everywhere else (Lookup, the filter contract), so a plain
         // array or list of Yes/No names must not turn case-sensitive here.
         YesNoParameters = new HashSet<string>(yesNoParameters ?? [], StringComparer.OrdinalIgnoreCase);
+        SourceElementId = sourceElementId;
+        OwnedElementSourceIds = ownedElementSourceIds;
     }
 
-    /// <summary>The element id of the sheet.</summary>
+    /// <summary>The document-local element id of the sheet.</summary>
     public int ElementId { get; }
+
+    /// <summary>Lossless decimal text of the original 64-bit Revit element ID when the file was renumbered to fit <see cref="ElementId"/>; null when unchanged.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SourceElementId { get; }
 
     /// <summary>The sheet number (the <c>Sheet Number</c> parameter) as stored, null when it is empty. "???" is a
     /// value a project stores, not a decode failure.</summary>
@@ -74,6 +84,11 @@ public sealed class SheetRecord
     /// view-specific graphics and other content placed on the sheet), ascending. Empty when the file decoded no owner
     /// view for its content.</summary>
     public IReadOnlyList<int> OwnedElementIds { get; }
+
+    /// <summary>The original 64-bit Revit element ID, as lossless decimal text, of each entry of
+    /// <see cref="OwnedElementIds"/> that the file renumbered, keyed by the document-local id; null when none was.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyDictionary<int, string>? OwnedElementSourceIds { get; }
 
     /// <summary>The sheet's project and shared parameters as display strings, keyed by display name
     /// (the <c>Definition.Name</c> Revit shows). Only text and whole numbers are included; numbers with
