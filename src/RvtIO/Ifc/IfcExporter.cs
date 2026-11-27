@@ -1945,6 +1945,8 @@ public partial class IfcExporter
                     ? "IFCWALL"
                 : CurrentProfile && elem.CategoryId == RampCategoryId
                     ? "IFCRAMP"
+                : CurrentProfile && elem.CategoryId == VerticalCirculationCategoryId
+                    ? "IFCTRANSPORTELEMENT"
                 : MapCategoryToIfcTypeForSchema(elem.CategoryId, _resolvedConfig.Schema)
                     ?? (elem.CategoryId == null && elem.Transform != null && elem.TypeId > 0
                         ? "IFCBUILDINGELEMENTPROXY"
@@ -4843,6 +4845,8 @@ public partial class IfcExporter
                     $"{S(productGlobalId)},{R(ownerHistId)},{S(elemName)},$,{S(elemTypeName)},{R(elemPlacementId)},{shapeArg},{S(elem.Id.ToString())},.{ResolveNativeStairShape(elem, referenceElementType, elemById, elementIdOccurrenceCounts, CurrentProfile)}.",
                 "IFCRAMP" =>
                     $"{S(productGlobalId)},{R(ownerHistId)},{S(elemName)},$,{S(elemTypeName)},{R(elemPlacementId)},{shapeArg},{S(elem.Id.ToString())},.NOTDEFINED.",
+                "IFCTRANSPORTELEMENT" =>
+                    $"{S(productGlobalId)},{R(ownerHistId)},{S(elemName)},$,{S(elemTypeName)},{R(elemPlacementId)},{shapeArg},{S(elem.Id.ToString())},$,$,$",
                 "IFCSTAIRFLIGHT" =>
                     $"{S(productGlobalId)},{R(ownerHistId)},{S(elemName)},$,{S(elemTypeName)},{R(elemPlacementId)},{shapeArg},{S(elem.Id.ToString())},{(CurrentProfile ? StairFlightAttributes(elem, elemById, stairRuns) : "$,$,$,$")}",
                 "IFCCOLUMN" or "IFCBEAM" or "IFCMEMBER" or "IFCPLATE"
@@ -5014,6 +5018,13 @@ public partial class IfcExporter
                         ifcType, elem, elemById))
                 {
                     ExportBuildingElementProxyCommonPropertySet(
+                        w, elem, elemEntityId, ownerHistId,
+                        quantityTakeOffReferenceValueId.Value);
+                }
+                if (quantityTakeOffReferenceValueId.HasValue
+                    && ifcType == "IFCTRANSPORTELEMENT")
+                {
+                    ExportTransportElementCommonPropertySet(
                         w, elem, elemEntityId, ownerHistId,
                         quantityTakeOffReferenceValueId.Value);
                 }
@@ -7550,7 +7561,7 @@ public partial class IfcExporter
 
         // Reused verbatim by Pset_BuildingElementProxyCommon.Reference
         // (ExportBuildingElementProxyCommonPropertySet).
-        if (ifcType == "IFCBUILDINGELEMENTPROXY")
+        if (ifcType is "IFCBUILDINGELEMENTPROXY" or "IFCTRANSPORTELEMENT")
         {
             if (element.ValidatedProxyTypeReferenceIsBlocked)
                 return null;
@@ -63284,7 +63295,7 @@ public partial class IfcExporter
             or "IFCFLOWCONTROLLER" or "IFCFLOWFITTING" or "IFCFLOWSEGMENT" or "IFCFLOWTERMINAL"
             or "IFCFOOTING" or "IFCFURNISHINGELEMENT" or "IFCMEMBER" or "IFCOPENINGELEMENT"
             or "IFCPLATE" or "IFCRAILING" or "IFCRAMP" or "IFCRAMPFLIGHT"
-            or "IFCROOF" or "IFCSLAB" or "IFCSTAIR" or "IFCSTAIRFLIGHT" or "IFCREINFORCINGMESH"
+            or "IFCROOF" or "IFCSLAB" or "IFCSTAIR" or "IFCSTAIRFLIGHT" or "IFCTRANSPORTELEMENT" or "IFCREINFORCINGMESH"
             or "IFCWALL" or "IFCWALLSTANDARDCASE" or "IFCWINDOW" => true,
         // IFCSITE, IFCBUILDING, IFCBUILDINGSTOREY, IFCSPACE (IfcSpatialStructureElement),
         // IFCDISTRIBUTIONPORT (IfcPort), IFCANNOTATION, IFCGRID - IfcProducts, NOT IfcElements.
@@ -63491,19 +63502,37 @@ public partial class IfcExporter
         return floor.CuttingElementIds?.Contains(elem.Id) != true;
     }
 
+    private static void ExportCommonReferencePropertySet(
+        StepWriter w, Element elem, int elemEntityId, int ownerHistId,
+        int referenceValueId, string propertySetName, string guidSeedPrefix)
+    {
+        int psetId = w.Add("IFCPROPERTYSET",
+            $"{S(IfcGuid.FromName($"{guidSeedPrefix}-pset:{elem.Id}"))},{R(ownerHistId)},{S(propertySetName)},$,{StepWriter.List(R(referenceValueId))}");
+        w.Add("IFCRELDEFINESBYPROPERTIES",
+            $"{S(IfcGuid.FromName($"{guidSeedPrefix}-rel:{elem.Id}"))},{R(ownerHistId)},$,$,{StepWriter.List(R(elemEntityId))},{R(psetId)}");
+    }
+
     /// <summary>
     /// Attaches the one-property occurrence-only Pset_BuildingElementProxyCommon to a selected
     /// proxy that already emitted QTO.
     /// </summary>
     private static void ExportBuildingElementProxyCommonPropertySet(
         StepWriter w, Element elem, int elemEntityId, int ownerHistId,
-        int referenceValueId)
-    {
-        int psetId = w.Add("IFCPROPERTYSET",
-            $"{S(IfcGuid.FromName($"building-element-proxy-common-pset:{elem.Id}"))},{R(ownerHistId)},{S("Pset_BuildingElementProxyCommon")},$,{StepWriter.List(R(referenceValueId))}");
-        w.Add("IFCRELDEFINESBYPROPERTIES",
-            $"{S(IfcGuid.FromName($"building-element-proxy-common-rel:{elem.Id}"))},{R(ownerHistId)},$,$,{StepWriter.List(R(elemEntityId))},{R(psetId)}");
-    }
+        int referenceValueId) =>
+        ExportCommonReferencePropertySet(
+            w, elem, elemEntityId, ownerHistId, referenceValueId,
+            "Pset_BuildingElementProxyCommon", "building-element-proxy-common");
+
+    /// <summary>
+    /// Attaches Pset_TransportElementCommon (Reference) to an IfcTransportElement that already
+    /// emitted QTO.
+    /// </summary>
+    private static void ExportTransportElementCommonPropertySet(
+        StepWriter w, Element elem, int elemEntityId, int ownerHistId,
+        int referenceValueId) =>
+        ExportCommonReferencePropertySet(
+            w, elem, elemEntityId, ownerHistId, referenceValueId,
+            "Pset_TransportElementCommon", "transport-element-common");
 
     /// <summary>Dimensions in millimetres; null when the symbol is no box.</summary>
     internal static (double Width, double Height, double Depth)? ResolveProvisionForVoidDimensions(
@@ -64247,7 +64276,7 @@ public partial class IfcExporter
     {
         "IFCWALL", "IFCWALLSTANDARDCASE", "IFCCURTAINWALL", "IFCSLAB", "IFCROOF", "IFCFOOTING",
         "IFCDOOR", "IFCWINDOW", "IFCBUILDINGELEMENTPROXY", "IFCRAILING", "IFCCOVERING",
-        "IFCSTAIR", "IFCSTAIRFLIGHT", "IFCRAMP", "IFCCOLUMN", "IFCBEAM", "IFCMEMBER", "IFCPLATE",
+        "IFCSTAIR", "IFCSTAIRFLIGHT", "IFCRAMP", "IFCTRANSPORTELEMENT", "IFCCOLUMN", "IFCBEAM", "IFCMEMBER", "IFCPLATE",
         "IFCFURNISHINGELEMENT", "IFCFLOWSEGMENT", "IFCFLOWTERMINAL", "IFCFLOWFITTING",
         "IFCFLOWCONTROLLER", "IFCDISTRIBUTIONFLOWELEMENT", "IFCELECTRICDISTRIBUTIONBOARD",
         "IFCOUTLET", "IFCSWITCHINGDEVICE", "IFCSITE", "IFCREINFORCINGMESH",
@@ -65344,6 +65373,7 @@ public partial class IfcExporter
     private const int RoofCategoryId = -2000035;
     private const int RoofSoffitCategoryId = -2001393;
     private const int GutterCategoryId = -2001391;
+    private const int VerticalCirculationCategoryId = -2001052;
     private const int CurtainSystemCategoryId = -2000090;
     private const int MassExteriorWallCategoryId = -2003413;
     private const int MassInteriorWallCategoryId = -2003412;
@@ -66712,6 +66742,7 @@ public partial class IfcExporter
         ["IFCCURTAINWALL"] = "IFCCURTAINWALLTYPE",
         ["IFCBUILDINGELEMENTPROXY"] = "IFCBUILDINGELEMENTPROXYTYPE",
         ["IFCREINFORCINGMESH"] = "IFCTYPEPRODUCT",
+        ["IFCTRANSPORTELEMENT"] = "IFCTRANSPORTELEMENTTYPE",
         ["IFCFURNISHINGELEMENT"] = "IFCFURNITURETYPE",
         ["IFCSTAIRFLIGHT"] = "IFCSTAIRFLIGHTTYPE",
         ["IFCDOOR"] = "IFCDOORSTYLE",
@@ -66727,6 +66758,7 @@ public partial class IfcExporter
         "IFCWALLTYPE", "IFCSLABTYPE", "IFCMEMBERTYPE", "IFCPLATETYPE", "IFCCOLUMNTYPE",
         "IFCBEAMTYPE", "IFCCOVERINGTYPE", "IFCRAILINGTYPE", "IFCCURTAINWALLTYPE",
         "IFCBUILDINGELEMENTPROXYTYPE", "IFCSTAIRFLIGHTTYPE", "IFCSTAIRTYPE", "IFCRAMPTYPE", "IFCROOFTYPE",
+        "IFCTRANSPORTELEMENTTYPE",
         "IFCLIGHTFIXTURETYPE", "IFCDUCTSEGMENTTYPE", "IFCPIPESEGMENTTYPE", "IFCCABLECARRIERSEGMENTTYPE", "IFCPIPEFITTINGTYPE",
         "IFCCABLECARRIERFITTINGTYPE", "IFCVALVETYPE", "IFCDUCTFITTINGTYPE", "IFCAIRTERMINALTYPE",
         "IFCELECTRICAPPLIANCETYPE", "IFCFIRESUPPRESSIONTERMINALTYPE",
@@ -67557,7 +67589,7 @@ public partial class IfcExporter
                     originalSymbolId = ownSymbolId;
             }
             if ((product.ifcType is "IFCMEMBER" or "IFCPLATE" or "IFCCOLUMN"
-                or "IFCBUILDINGELEMENTPROXY" or "IFCREINFORCINGMESH" or "IFCFURNISHINGELEMENT"
+                or "IFCBUILDINGELEMENTPROXY" or "IFCTRANSPORTELEMENT" or "IFCREINFORCINGMESH" or "IFCFURNISHINGELEMENT"
                 or "IFCFLOWTERMINAL" or "IFCFLOWSEGMENT" or "IFCFLOWFITTING" or "IFCFLOWCONTROLLER"
                 or "IFCSLAB" or "IFCSTAIRFLIGHT" || currentProfile && product.ifcType == "IFCBEAM")
                 && instElem.Geometry?.ExactMappedInstances is { Count: > 0 } mapped
@@ -67584,7 +67616,7 @@ public partial class IfcExporter
             }
             // A beam, column, and a proxy or furnishing element without a GInstance, is keyed by
             // its type element and gets a type of its own when it carries geometry of its own.
-            if (currentProfile && originalSymbolId == 0 && product.ifcType is "IFCBEAM" or "IFCCOLUMN" or "IFCBUILDINGELEMENTPROXY" or "IFCFURNISHINGELEMENT"
+            if (currentProfile && originalSymbolId == 0 && product.ifcType is "IFCBEAM" or "IFCCOLUMN" or "IFCBUILDINGELEMENTPROXY" or "IFCFURNISHINGELEMENT" or "IFCTRANSPORTELEMENT"
                 && UsesInstanceGeometryOfTypeCurrent(instElem, canonicalType))
                 ownerId = instElem.Id;
             // Each gutter has a type of its own.
@@ -67990,7 +68022,7 @@ public partial class IfcExporter
         if (ifcType == "IFCWINDOW" && element.CategoryId == -2000014)
             return Own(element.ValidatedWindowTypeReferenceName, element.ValidatedWindowTypeReferenceIsExplicit,
                 element.ValidatedWindowTypeReferenceIsBlocked);
-        if (ifcType == "IFCBUILDINGELEMENTPROXY")
+        if (ifcType is "IFCBUILDINGELEMENTPROXY" or "IFCTRANSPORTELEMENT")
             return Own(element.ValidatedProxyTypeReferenceName, element.ValidatedProxyTypeReferenceIsExplicit,
                 element.ValidatedProxyTypeReferenceIsBlocked);
         if ((ifcType == "IFCROOF" && element.CategoryId == -2000035)

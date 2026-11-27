@@ -24,7 +24,7 @@ public partial class IfcExporter
         "Pset_ManufacturerTypeInformation", "Pset_MemberCommon", "Pset_PlateCommon",
         "Pset_QuantityTakeOff", "Pset_RailingCommon", "Pset_ReinforcementBarPitchOfBeam",
         "Pset_ReinforcementBarPitchOfSlab", "Pset_ReinforcementBarPitchOfWall", "Pset_SlabCommon",
-        "Pset_StairFlightCommon", "Pset_WallCommon", "Pset_WindowCommon",
+        "Pset_StairFlightCommon", "Pset_TransportElementCommon", "Pset_WallCommon", "Pset_WindowCommon",
     ];
 
     /// <summary>The element class lists of Pset_ConcreteElementGeneral that can occur as types.</summary>
@@ -44,7 +44,7 @@ public partial class IfcExporter
             "IFCMEMBERTYPE" => typeElem.CategoryId is CurtainWallMullionCategoryId or StructuralFramingCategoryId,
             "IFCBEAMTYPE" or "IFCBUILDINGELEMENTPROXYTYPE" or "IFCCOLUMNTYPE" or "IFCCOVERINGTYPE"
                 or "IFCCURTAINWALLTYPE" or "IFCDOORSTYLE" or "IFCPLATETYPE" or "IFCRAILINGTYPE"
-                or "IFCSLABTYPE" or "IFCSTAIRFLIGHTTYPE" or "IFCWALLTYPE" or "IFCWINDOWSTYLE"
+                or "IFCSLABTYPE" or "IFCSTAIRFLIGHTTYPE" or "IFCTRANSPORTELEMENTTYPE" or "IFCWALLTYPE" or "IFCWINDOWSTYLE"
                 or "IFCLIGHTFIXTURETYPE" => true,
             "IFCDISTRIBUTIONELEMENTTYPE" => instanceIfcType == "IFCFLOWTERMINAL",
             _ => false,
@@ -226,6 +226,9 @@ public partial class IfcExporter
                 break;
             case "IFCSTAIRFLIGHTTYPE":
                 Add("Pset_StairFlightCommon", 1, Identifier(), NosingLength());
+                break;
+            case "IFCTRANSPORTELEMENTTYPE":
+                Add("Pset_TransportElementCommon", 1, Identifier());
                 break;
             case "IFCWALLTYPE":
                 Add("Pset_ReinforcementBarPitchOfWall", 1, Label());

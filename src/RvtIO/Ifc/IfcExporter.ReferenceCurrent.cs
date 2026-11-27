@@ -17,7 +17,7 @@ public partial class IfcExporter
         {
             "IFCFLOWFITTING" or "IFCFLOWCONTROLLER" or "IFCFLOWTERMINAL" =>
                 (element.ValidatedDistributionTypeReferenceName, element.ValidatedDistributionTypeReferenceIsBlocked),
-            "IFCBUILDINGELEMENTPROXY" =>
+            "IFCBUILDINGELEMENTPROXY" or "IFCTRANSPORTELEMENT" =>
                 (element.ValidatedProxyTypeReferenceName, element.ValidatedProxyTypeReferenceIsBlocked),
             // The element name of a beam can be another name of the instance; the type name of the product name is used, as for the classes above.
             "IFCBEAM" => (null, false),
