@@ -8,6 +8,40 @@ namespace RvtIO.Tests;
 public class DerivedInstanceParamsTests
 {
     [Fact]
+    public void CategoryInheritanceFollowsTheChainWhileTypeNamesUseTheOriginalNames()
+    {
+        var type = new Element { Id = 301, Name = "Type", CategoryId = -2000011, Category = "OST_Walls" };
+        var middle = new Element { Id = 302, TypeId = type.Id, Name = "Middle" };
+        var instance = new Element { Id = 303, TypeId = middle.Id };
+        var referenced = new Element { Id = 304, References = [instance.Id] };
+
+        ElementBuilder.PostProcess(new RevitFileInfo { Elements = [type, middle, instance, referenced] });
+
+        Assert.Equal(type.CategoryId, instance.CategoryId);
+        Assert.Equal(type.Category, referenced.Category);
+        Assert.Equal("Type", middle.Name);
+        Assert.Equal("Middle", instance.Name);
+    }
+
+    [Fact]
+    public void RecomputingShellsOnACopyPreservesTheOriginalDetailLevels()
+    {
+        var original = new Element();
+        Assert.Equal(new[] { 0, 0, 0 }, original.LevelSolidCounts);
+        Assert.Equal(new SolidQuantities.Shell?[3], original.LevelShells);
+        original.LevelSolidCounts = [1, 0, 0];
+        original.LevelShells = [new SolidQuantities.Shell(1, 2, 3), null, null];
+        var copy = original.ShallowCopy();
+
+        ElementBuilder.ApplyShellQuantities(new RevitFileInfo { Elements = [copy] }, new ParsingState());
+
+        Assert.Equal(new[] { 0, 0, 0 }, copy.LevelSolidCounts);
+        Assert.Equal(new SolidQuantities.Shell?[3], copy.LevelShells);
+        Assert.Equal(1, original.LevelSolidCounts[0]);
+        Assert.Equal(new SolidQuantities.Shell(1, 2, 3), original.LevelShells[0]);
+    }
+
+    [Fact]
     public void RoomSeparationLineDoesNotUseItsNeighborAsAType()
     {
         var line = new Element { Id = 1, CategoryId = -2000066, TypeId = -1, References = [2] };

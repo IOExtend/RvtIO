@@ -2617,11 +2617,23 @@ public partial class RvtFileReader
     internal static void ParseFramedBlocks(ParsingState state, bool collectBlockOnlyIds, List<BlockParser.PendingGRep> pending,
         bool repeatOfFirstPass = false)
     {
+        byte[] geometryBuffer = [];
+        byte[]? BorrowGeometryBuffer(ReadOnlySpan<byte> prefix, int length)
+        {
+            if (prefix.Length < 16) return null;
+            uint cls = BitConverter.ToUInt32(prefix[12..]);
+            // Ordinary GReps are scanned within the declared record length. A crossing GRep
+            // is removed from the deferred geometry queue before the next record can reuse its bytes.
+            if ((cls & 0xFFFF) is not (0x07D7 or 0x07D6) || cls >> 16 == 0xFFFF) return null;
+            if (geometryBuffer.Length < length) geometryBuffer = new byte[length];
+            return geometryBuffer;
+        }
+        PartitionFraming.CrossingRecordBuffer borrow = BorrowGeometryBuffer;
         foreach (var frame in state.FramedPartitions!)
             foreach (var record in frame!.Items)
             {
                 if (record.Channel == 101 || record.Length < 18 || record.Owner > uint.MaxValue || record.Owner == 0 && !state.AllKnownIds.Contains(0)) continue;
-                var (data, start, copied) = frame.Bytes(record);
+                var (data, start, copied) = frame.Bytes(record, borrow);
                 uint eid = (uint)record.Owner;
                 int queued = pending.Count;
                 // Replaying a frame visits identical byte ranges. Text extraction only appends unique

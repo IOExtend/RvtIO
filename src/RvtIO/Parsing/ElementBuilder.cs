@@ -4074,40 +4074,19 @@ internal static partial class ElementBuilder
     internal static void ApplySerializedStairData(
         IReadOnlyList<Element> elements,
         IReadOnlyDictionary<uint, ExactTfRootSource> stairElementSource,
-        IReadOnlyDictionary<uint, ExactTfRootSource> stairTypeSource)
+        IReadOnlyDictionary<uint, ExactTfRootSource> stairTypeSource,
+        IReadOnlyDictionary<int, Element>? uniqueElementsById = null)
     {
-        var uniqueElementsById = new Dictionary<int, Element>();
-        var duplicateIds = new HashSet<int>();
-        foreach (Element element in elements)
-        {
-            if (duplicateIds.Contains(element.Id))
-                continue;
-            if (uniqueElementsById.TryAdd(element.Id, element))
-                continue;
-            uniqueElementsById.Remove(element.Id);
-            duplicateIds.Add(element.Id);
-        }
+        uniqueElementsById ??= BuildUniqueElementIndex(elements);
 
         foreach (Element element in elements)
-        {
-            element.SerializedStairTypeId = null;
-            element.SerializedStairTypeLinkIsResolved = false;
-            element.SerializedStairBaseLevelId = null;
-            element.SerializedStairsTypeClassId = null;
-            element.SerializedActualNumberOfRisers = null;
-            element.SerializedActualRiserHeightFeet = null;
-            element.SerializedActualTreadDepthFeet = null;
-        }
+            element.ClearSerializedStairTypeAndDimensions();
 
-        foreach (Element candidateType in elements)
+        foreach (var (id, source) in stairTypeSource)
         {
-            if (candidateType.Id <= 0
+            if (id is 0 or > int.MaxValue
+                || !uniqueElementsById.TryGetValue((int)id, out var candidateType)
                 || candidateType.CategoryId != -2000120
-                || !uniqueElementsById.TryGetValue(
-                    candidateType.Id, out Element? uniqueType)
-                || !ReferenceEquals(uniqueType, candidateType)
-                || !stairTypeSource.TryGetValue(
-                    (uint)candidateType.Id, out ExactTfRootSource? source)
                 || source.BlockCount != 1
                 || source.Root == null
                 || !source.Root.Fields.TryGetValue(
@@ -4120,15 +4099,11 @@ internal static partial class ElementBuilder
             candidateType.SerializedStairsTypeClassId = 3742;
         }
 
-        foreach (Element occurrence in elements)
+        foreach (var (id, source) in stairElementSource)
         {
-            if (occurrence.Id <= 0
+            if (id is 0 or > int.MaxValue
+                || !uniqueElementsById.TryGetValue((int)id, out var occurrence)
                 || occurrence.CategoryId != -2000120
-                || !uniqueElementsById.TryGetValue(
-                    occurrence.Id, out Element? uniqueOccurrence)
-                || !ReferenceEquals(uniqueOccurrence, occurrence)
-                || !stairElementSource.TryGetValue(
-                    (uint)occurrence.Id, out ExactTfRootSource? source)
                 || source.BlockCount != 1
                 || source.Root == null
                 || !source.Root.Fields.TryGetValue(
@@ -5996,41 +5971,28 @@ internal static partial class ElementBuilder
             .Where(pair => pair.Value is { BlockCount: 1, Name: not null })
             .ToDictionary(pair => (int)pair.Key, pair => pair.Value.Name!);
 
-        var idToName = new Dictionary<int, string>();
         var elemByIdLookup = rvtInfo.Elements.ToDictionary(e => e.Id);
-        foreach (var e in rvtInfo.Elements)
-        {
-            if (!string.IsNullOrEmpty(e.Name))
-                idToName[e.Id] = e.Name;
-        }
 
         // Inherit category from type element or references Phase 1: TypeId and ELEM_TYPE_PARAM
         // (safe, direct type->instance)
-        var idToCategory = new Dictionary<int, (int catId, string? catName)>();
-        foreach (var e in rvtInfo.Elements)
-            if (e.CategoryId.HasValue)
-                idToCategory[e.Id] = (e.CategoryId.Value, e.Category);
-
         foreach (var e in rvtInfo.Elements)
         {
             if (e.CategoryId.HasValue) continue;
 
             // Previously resolved type element id, never an ElemRec history value.
-            if (e.TypeId > 0 && idToCategory.TryGetValue(e.TypeId, out var typeCat))
+            if (e.TypeId > 0 && elemByIdLookup.TryGetValue(e.TypeId, out var type) && type.CategoryId.HasValue)
             {
-                e.CategoryId = typeCat.catId;
-                e.Category = typeCat.catName;
-                idToCategory[e.Id] = typeCat;
+                e.CategoryId = type.CategoryId;
+                e.Category = type.Category;
                 continue;
             }
 
             // ELEM_TYPE_PARAM from record body
             var typeParam = e.Parameters.FirstOrDefault(p => p.Id == -1002050);
-            if (typeParam?.Value is int tpId && idToCategory.TryGetValue(tpId, out var tpCat))
+            if (typeParam?.Value is int tpId && elemByIdLookup.TryGetValue(tpId, out type) && type.CategoryId.HasValue)
             {
-                e.CategoryId = tpCat.catId;
-                e.Category = tpCat.catName;
-                idToCategory[e.Id] = tpCat;
+                e.CategoryId = type.CategoryId;
+                e.Category = type.Category;
             }
         }
 
@@ -6050,12 +6012,11 @@ internal static partial class ElementBuilder
                 foreach (var refId in e.References)
                 {
                     if (refId == e.Id) continue;
-                    if (idToCategory.TryGetValue(refId, out var refCat)
-                        && !NoPropagateCategories.Contains(refCat.catId))
+                    if (elemByIdLookup.TryGetValue(refId, out var source) && source.CategoryId is int category
+                        && !NoPropagateCategories.Contains(category))
                     {
-                        e.CategoryId = refCat.catId;
-                        e.Category = refCat.catName;
-                        idToCategory[e.Id] = refCat;
+                        e.CategoryId = category;
+                        e.Category = source.Category;
                         added++;
                         break;
                     }
@@ -6096,7 +6057,6 @@ internal static partial class ElementBuilder
                     // View name is the authoritative source for level names; always use it
                     // (overrides scan-string garbage like 'SunAndSky-002')
                     e.Name = viewInfo.name;
-                    idToName[e.Id] = viewInfo.name;
                 }
             }
         }
@@ -6123,11 +6083,10 @@ internal static partial class ElementBuilder
                     foreach (var refId in e.References)
                     {
                         if (refId == e.Id) continue;
-                        if (idToName.TryGetValue(refId, out var rn) && !string.IsNullOrEmpty(rn))
+                        if (elemByIdLookup.TryGetValue(refId, out var refElem) && !string.IsNullOrEmpty(refElem.Name))
                         {
-                            var refElem = elemByIdLookup.GetValueOrDefault(refId);
-                            if (refElem?.Category is "OST_PreviewLegendComponents" or "OST_Materials") continue;
-                            materialName = rn;
+                            if (refElem.Category is "OST_PreviewLegendComponents" or "OST_Materials") continue;
+                            materialName = refElem.Name;
                             break;
                         }
                     }
@@ -6141,7 +6100,6 @@ internal static partial class ElementBuilder
                 if (materialName != null && widthMm > 0)
                 {
                     e.Name = $"{funcName} - {materialName} {widthMm}мм";
-                    idToName[e.Id] = e.Name;
                 }
             }
         }
@@ -6157,7 +6115,8 @@ internal static partial class ElementBuilder
                     ThicknessMm = Math.Round(l.ThicknessFt * 304.8, 2),
                     Function = CompoundLayer.FunctionName(l.Function),
                     MaterialId = l.MaterialId,
-                    MaterialName = l.MaterialId > 0 && idToName.TryGetValue(l.MaterialId, out var mn) ? mn : null,
+                    MaterialName = l.MaterialId > 0 && elemByIdLookup.TryGetValue(l.MaterialId, out var material)
+                        && material.Name is { Length: > 0 } name ? name : null,
                     LayerIndex = l.LayerIndex
                 }).ToList();
             }
@@ -6245,8 +6204,8 @@ internal static partial class ElementBuilder
                 p.Value = e.TypeId;
             }
         }
-        // Rebuild idToName after TypeId fix
-        idToName.Clear();
+        // Capture source names before instances start inheriting names in element order.
+        var idToName = new Dictionary<int, string>();
         foreach (var e in rvtInfo.Elements)
         {
             if (!string.IsNullOrEmpty(e.Name))
@@ -6675,7 +6634,7 @@ internal static partial class ElementBuilder
                 rvtInfo.Elements, state.NativeParams, state.ElemClassIdx);
         }
         FixCategoryFromClassIdx(rvtInfo, state);
-        PropagateInstanceCategoryFromType(rvtInfo);
+        PropagateInstanceCategoryFromType(rvtInfo, elemByIdLookup);
         TraceElement(rvtInfo, "before-prune");
         PruneNativeFieldTableOutsideDomains(rvtInfo, state?.ElemClassIdx);
         TraceElement(rvtInfo, "after-prune");
@@ -6689,7 +6648,7 @@ internal static partial class ElementBuilder
             ApplySerializedStairData(
                 rvtInfo.Elements,
                 state.StairElementRootSource,
-                state.StairTypeRootSource);
+                state.StairTypeRootSource, elemByIdLookup);
             StairComponentSource.Apply(rvtInfo.Elements, state, elemByIdLookup);
         }
         if (state != null)
@@ -7018,28 +6977,24 @@ internal static partial class ElementBuilder
     }
 
     /// <summary>An instance's category equals its type's category.</summary>
-    private static void PropagateInstanceCategoryFromType(RevitFileInfo info)
+    private static void PropagateInstanceCategoryFromType(RevitFileInfo info, IReadOnlyDictionary<int, Element> byId)
     {
-        var catById = new Dictionary<int, (int cat, string? name)>();
-        foreach (var e in info.Elements)
-            if (e.CategoryId is int c && c != -1) catById[e.Id] = (c, e.Category);
-
         for (int pass = 0; pass < 4; pass++)
         {
             int added = 0;
             foreach (var e in info.Elements)
             {
                 if (e.CategoryId is int ec && ec != -1) continue; // already categorized
-                if (e.TypeId <= 0 || !catById.TryGetValue(e.TypeId, out var tc)) continue;
-                e.CategoryId = tc.cat;
-                e.Category = tc.name;
-                catById[e.Id] = tc;
+                if (e.TypeId <= 0 || !byId.TryGetValue(e.TypeId, out var type)
+                    || type.CategoryId is not int category || category == -1) continue;
+                e.CategoryId = category;
+                e.Category = type.Category;
                 var cp = e.Parameters.FirstOrDefault(p => p.Id == -1140362);
-                if (cp != null) { cp.Value = tc.cat; cp.StorageType = StorageType.ElementId; }
-                else e.Parameters.Add(BipHelpers.MakeBipParam(-1140362, "ELEM_CATEGORY_PARAM", StorageType.ElementId, tc.cat));
+                if (cp != null) { cp.Value = category; cp.StorageType = StorageType.ElementId; }
+                else e.Parameters.Add(BipHelpers.MakeBipParam(-1140362, "ELEM_CATEGORY_PARAM", StorageType.ElementId, category));
                 var cpm = e.Parameters.FirstOrDefault(p => p.Id == -1140363);
-                if (cpm != null) { cpm.Value = tc.cat; cpm.StorageType = StorageType.ElementId; }
-                else e.Parameters.Add(BipHelpers.MakeBipParam(-1140363, "ELEM_CATEGORY_PARAM_MT", StorageType.ElementId, tc.cat));
+                if (cpm != null) { cpm.Value = category; cpm.StorageType = StorageType.ElementId; }
+                else e.Parameters.Add(BipHelpers.MakeBipParam(-1140363, "ELEM_CATEGORY_PARAM_MT", StorageType.ElementId, category));
                 added++;
             }
             if (added == 0) break;

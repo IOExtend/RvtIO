@@ -21,8 +21,54 @@ namespace RvtIO.Model
     /// <summary>A Revit element: an instance or a type, with its identity, parameters and geometry.</summary>
     public class Element
     {
-        /// <summary>A copy that shares all members with this element; the caller replaces what it changes.</summary>
-        internal Element ShallowCopy() => (Element)MemberwiseClone();
+        private sealed record StairData
+        {
+            internal int? RailingAttrId;
+            internal int? BaseRailingSymbolId;
+            internal double? RailingTopHeightFeet;
+            internal int? TypeId;
+            internal int? BaseLevelId;
+            internal bool TypeLinkIsResolved;
+            internal ushort? TypeClassId;
+            internal Internal.StairComponentSource.CoreComponent[]? Core;
+            internal int[]? CopyLevelIds;
+            internal Parsing.TfBlockDeserializer.StairRunInput? RunInput;
+            internal string? OccurrenceName;
+            internal List<Parameter>? NameParameters;
+            internal int? RailingHostId;
+            internal double? MinInsideTreadFeet;
+            internal double? NosingFeet;
+            internal int? ActualNumberOfRisers;
+            internal double? ActualRiserHeightFeet;
+            internal double? ActualTreadDepthFeet;
+            internal string? ComponentTypeName;
+        }
+
+        private StairData? _stairs;
+
+        // Clearing fields during validation must not allocate storage on unrelated elements.
+        private StairData? StairDataForWrite(bool create) =>
+            _stairs ?? (create ? LazyInitializer.EnsureInitialized(ref _stairs, static () => new StairData()) : null);
+
+        internal void ClearSerializedStairTypeAndDimensions()
+        {
+            if (_stairs is not { } stairs) return;
+            stairs.TypeId = null;
+            stairs.TypeLinkIsResolved = false;
+            stairs.BaseLevelId = null;
+            stairs.TypeClassId = null;
+            stairs.ActualNumberOfRisers = null;
+            stairs.ActualRiserHeightFeet = null;
+            stairs.ActualTreadDepthFeet = null;
+        }
+
+        /// <summary>Copies the element's property values and shares their reference-valued contents.</summary>
+        internal Element ShallowCopy()
+        {
+            var copy = (Element)MemberwiseClone();
+            if (_stairs is { } stairs) copy._stairs = stairs with { };
+            return copy;
+        }
 
         /// <summary>The document-local element key used by the existing 32-bit APIs. Use <see cref="ElementId"/>
         /// for the ID as stored in the RVT.</summary>
@@ -327,7 +373,11 @@ namespace RvtIO.Model
 
         /// <summary>Exact BaseRailing.m_baseRailingSymbolId stored by this occurrence.</summary>
         [JsonIgnore]
-        internal int? SerializedBaseRailingSymbolId { get; set; }
+        internal int? SerializedBaseRailingSymbolId
+        {
+            get => _stairs?.BaseRailingSymbolId;
+            set => StairDataForWrite(value is not null)?.BaseRailingSymbolId = value;
+        }
 
         /// <summary>Own unique InstanceInfo.m_symbolId resolving to a FamilySymbol
         /// with known semantic kind/owner prefix. The original symbol,
@@ -369,31 +419,55 @@ namespace RvtIO.Model
 
         /// <summary>Exact BaseRailing.m_stairsRailingAttrId stored by this occurrence.</summary>
         [JsonIgnore]
-        internal int? SerializedStairsRailingAttrId { get; set; }
+        internal int? SerializedStairsRailingAttrId
+        {
+            get => _stairs?.RailingAttrId;
+            set => StairDataForWrite(value is not null)?.RailingAttrId = value;
+        }
 
         /// <summary>Exact BaseRailingAttr.m_topRailHeight reached through
         /// <see cref="SerializedStairsRailingAttrId"/>, in Revit internal feet.</summary>
         [JsonIgnore]
-        internal double? SerializedRailingTopHeightFeet { get; set; }
+        internal double? SerializedRailingTopHeightFeet
+        {
+            get => _stairs?.RailingTopHeightFeet;
+            set => StairDataForWrite(value is not null)?.RailingTopHeightFeet = value;
+        }
 
         /// <summary>Exact StairsElement.m_typeId from this occurrence's unique complete
         /// class-3681 root, after resolving one unique class-3742 StairsType target.</summary>
         [JsonIgnore]
-        internal int? SerializedStairTypeId { get; set; }
+        internal int? SerializedStairTypeId
+        {
+            get => _stairs?.TypeId;
+            set => StairDataForWrite(value is not null)?.TypeId = value;
+        }
 
         /// <summary>Exact StairsElement.m_baseLevelId of the same class-3681 root (STAIRS_BASE_LEVEL_PARAM).</summary>
         [JsonIgnore]
-        internal int? SerializedStairBaseLevelId { get; set; }
+        internal int? SerializedStairBaseLevelId
+        {
+            get => _stairs?.BaseLevelId;
+            set => StairDataForWrite(value is not null)?.BaseLevelId = value;
+        }
 
         /// <summary>True only while <see cref="SerializedStairTypeId"/> resolves to the
         /// unique materialized stair type validated by its own exact class-3742 root.</summary>
         [JsonIgnore]
-        internal bool SerializedStairTypeLinkIsResolved { get; set; }
+        internal bool SerializedStairTypeLinkIsResolved
+        {
+            get => _stairs?.TypeLinkIsResolved ?? false;
+            set => StairDataForWrite(value)?.TypeLinkIsResolved = value;
+        }
 
         /// <summary>Exact raw Tf class of this materialized StairsType target. Kept after
         /// public TypeId normalization so the exporter can revalidate the raw boundary.</summary>
         [JsonIgnore]
-        internal ushort? SerializedStairsTypeClassId { get; set; }
+        internal ushort? SerializedStairsTypeClassId
+        {
+            get => _stairs?.TypeClassId;
+            set => StairDataForWrite(value is not null)?.TypeClassId = value;
+        }
 
         /// <summary>Own semantic class from a single validated Element base prefix;
         /// not the first geometry frame or the public normalized TypeId.</summary>
@@ -485,30 +559,54 @@ namespace RvtIO.Model
         /// <summary>Own helper core, reciprocally owned and equal to the native typed
         /// inverse ownership set. Ordering is not an API naming ordinal.</summary>
         [JsonIgnore]
-        internal Internal.StairComponentSource.CoreComponent[]? SerializedStairCore { get; set; }
+        internal Internal.StairComponentSource.CoreComponent[]? SerializedStairCore
+        {
+            get => _stairs?.Core;
+            set => StairDataForWrite(value is not null)?.Core = value;
+        }
         /// <summary>Levels a multistory stair is repeated on, in stored order.</summary>
         [JsonIgnore]
-        internal int[]? SerializedStairCopyLevelIds { get; set; }
+        internal int[]? SerializedStairCopyLevelIds
+        {
+            get => _stairs?.CopyLevelIds;
+            set => StairDataForWrite(value is not null)?.CopyLevelIds = value;
+        }
 
         /// <summary>Single complete own run graph's native style and cached API path
         /// directions, with independent semantic class and reciprocal ElemRec owner.</summary>
         [JsonIgnore]
-        internal Parsing.TfBlockDeserializer.StairRunInput? SerializedStairRunInput { get; set; }
+        internal Parsing.TfBlockDeserializer.StairRunInput? SerializedStairRunInput
+        {
+            get => _stairs?.RunInput;
+            set => StairDataForWrite(value is not null)?.RunInput = value;
+        }
 
         /// <summary>Native IDS_STAIR instance name from the saved locale's resource,
         /// admitted only for a complete own native stair/type/core. Not the type Name.</summary>
         [JsonIgnore]
-        internal string? ValidatedStairOccurrenceName { get; set; }
+        internal string? ValidatedStairOccurrenceName
+        {
+            get => _stairs?.OccurrenceName;
+            set => StairDataForWrite(value is not null)?.OccurrenceName = value;
+        }
 
         /// <summary>Own complete parameter-store scope for native instance naming;
         /// null is unvalidated, an empty list is validated absence. Never public heuristics.</summary>
         [JsonIgnore]
-        internal List<Parameter>? SerializedStairNameParameters { get; set; }
+        internal List<Parameter>? SerializedStairNameParameters
+        {
+            get => _stairs?.NameParameters;
+            set => StairDataForWrite(value is not null)?.NameParameters = value;
+        }
 
         /// <summary>Own single class-485 BaseRailing.m_stairsId, separately from
         /// ElemRec ownership, registered lists, and the adjustment start component.</summary>
         [JsonIgnore]
-        internal int? SerializedRailingStairHostId { get; set; }
+        internal int? SerializedRailingStairHostId
+        {
+            get => _stairs?.RailingHostId;
+            set => StairDataForWrite(value is not null)?.RailingHostId = value;
+        }
 
         /// <summary>Material.m_name from this material's own single MaterialElem root.</summary>
         [JsonIgnore]
@@ -590,11 +688,19 @@ namespace RvtIO.Model
 
         /// <summary>StairsType.m_minTreadWidthOnInsideBoundary in feet (own stairs type root).</summary>
         [JsonIgnore]
-        internal double? SerializedStairsTypeMinInsideTreadFeet { get; set; }
+        internal double? SerializedStairsTypeMinInsideTreadFeet
+        {
+            get => _stairs?.MinInsideTreadFeet;
+            set => StairDataForWrite(value is not null)?.MinInsideTreadFeet = value;
+        }
 
         /// <summary>StairsRunType.m_nosingLength in feet (own stairs run type root).</summary>
         [JsonIgnore]
-        internal double? SerializedStairRunTypeNosingFeet { get; set; }
+        internal double? SerializedStairRunTypeNosingFeet
+        {
+            get => _stairs?.NosingFeet;
+            set => StairDataForWrite(value is not null)?.NosingFeet = value;
+        }
 
         /// <summary>Family instance connectors in stored order: Connector.m_nIndex, the stored hvac (2381) or
         /// piping (2382) connector calculation direction and its system type (null when the domains are mixed
@@ -688,15 +794,27 @@ namespace RvtIO.Model
 
         /// <summary>Exact StairsElement.m_actualNumberOfRisers occurrence value.</summary>
         [JsonIgnore]
-        internal int? SerializedActualNumberOfRisers { get; set; }
+        internal int? SerializedActualNumberOfRisers
+        {
+            get => _stairs?.ActualNumberOfRisers;
+            set => StairDataForWrite(value is not null)?.ActualNumberOfRisers = value;
+        }
 
         /// <summary>Exact StairsElement.m_actualRiserHeight in Revit internal feet.</summary>
         [JsonIgnore]
-        internal double? SerializedActualRiserHeightFeet { get; set; }
+        internal double? SerializedActualRiserHeightFeet
+        {
+            get => _stairs?.ActualRiserHeightFeet;
+            set => StairDataForWrite(value is not null)?.ActualRiserHeightFeet = value;
+        }
 
         /// <summary>Exact StairsElement.m_actualTreadDepth in Revit internal feet.</summary>
         [JsonIgnore]
-        internal double? SerializedActualTreadDepthFeet { get; set; }
+        internal double? SerializedActualTreadDepthFeet
+        {
+            get => _stairs?.ActualTreadDepthFeet;
+            set => StairDataForWrite(value is not null)?.ActualTreadDepthFeet = value;
+        }
 
         /// <summary>Exact WallType.m_function serialized by this element's own
         /// NewCurtainWallType root block (0=Interior, 1=Exterior, ...).</summary>
@@ -899,7 +1017,11 @@ namespace RvtIO.Model
         /// <summary>THIS stair component type's own SymbolInfo name, independent of
         /// the public Name/TypeId propagation. Never a borrowed level or occurrence name.</summary>
         [JsonIgnore]
-        internal string? ValidatedStairComponentTypeName { get; set; }
+        internal string? ValidatedStairComponentTypeName
+        {
+            get => _stairs?.ComponentTypeName;
+            set => StairDataForWrite(value is not null)?.ComponentTypeName = value;
+        }
 
         /// <summary>THIS CorniceAttr type's own SymbolInfo name. Never a borrowed
         /// public Name; used only with its original system family for IFC type naming.</summary>
@@ -946,11 +1068,15 @@ namespace RvtIO.Model
         /// <summary>Closed-shell quantities of the solids at the Coarse, Medium and Fine detail levels (index 0, 1, 2); null at a level whose
         /// solids are not all closed shells of plane faces. See <c>ElementBuilder.ApplyInstanceQuantities</c>.</summary>
         [JsonIgnore]
-        internal Parsing.SolidQuantities.Shell?[] LevelShells { get; set; } = new Parsing.SolidQuantities.Shell?[3];
+        internal IReadOnlyList<Parsing.SolidQuantities.Shell?> LevelShells { get; set; } = EmptyLevelShells;
+
+        private static readonly IReadOnlyList<Parsing.SolidQuantities.Shell?> EmptyLevelShells = [null, null, null];
 
         /// <summary>Number of solids at Coarse, Medium and Fine.</summary>
         [JsonIgnore]
-        internal int[] LevelSolidCounts { get; set; } = new int[3];
+        internal IReadOnlyList<int> LevelSolidCounts { get; set; } = EmptyLevelSolidCounts;
+
+        private static readonly IReadOnlyList<int> EmptyLevelSolidCounts = [0, 0, 0];
 
         /// <summary>Revit BuiltInCategory ID (e.g. -2000011 = OST_Walls).</summary>
         public int? CategoryId { get; set; }

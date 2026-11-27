@@ -2785,12 +2785,15 @@ internal static partial class GRepParserV2
                 }
             }
         }
-        void CollectFaceSegments(bool captureWorld = false)
+        void CollectFaceSegments(bool captureWorld = false, HashSet<uint>? changedFaces = null)
         {
             foreach (var e in c.Edges)
             {
-                bool firstFace = !cylinderLoopEdges.TryGetValue(e.FaceA, out var firstLoopEdges) || firstLoopEdges.Contains(e.Handle);
-                bool secondFace = !cylinderLoopEdges.TryGetValue(e.FaceB, out var secondLoopEdges) || secondLoopEdges.Contains(e.Handle);
+                bool firstFace = (changedFaces == null || changedFaces.Contains(e.FaceA))
+                    && (!cylinderLoopEdges.TryGetValue(e.FaceA, out var firstLoopEdges) || firstLoopEdges.Contains(e.Handle));
+                bool secondFace = (changedFaces == null || changedFaces.Contains(e.FaceB))
+                    && (!cylinderLoopEdges.TryGetValue(e.FaceB, out var secondLoopEdges) || secondLoopEdges.Contains(e.Handle));
+                if (!firstFace && !secondFace) continue;
                 var a = e.Start;
                 for (int i = 0; i <= e.Interior.Count; i++)
                 {
@@ -2868,6 +2871,7 @@ internal static partial class GRepParserV2
         }
 
         List<double>? splitFractions = null;
+        HashSet<uint>? changedFaces = null;
         foreach (var edge in c.Edges)
         {
             bool periodicA = handleToSurf.TryGetValue(edge.FaceA, out var surfaceA)
@@ -2883,6 +2887,7 @@ internal static partial class GRepParserV2
             var points = new List<EdgeUV>(edge.Interior.Count + 2) { edge.Start };
             points.AddRange(edge.Interior);
             points.Add(edge.EndP);
+            bool unwrapped = false;
             if (periodicA || periodicB)
             {
                 for (int index = 1; index < points.Count; index++)
@@ -2895,13 +2900,16 @@ internal static partial class GRepParserV2
                     if (periodicB)
                         point.UB += Math.Round((previous.UB - point.UB) / (2 * Math.PI))
                             * (2 * Math.PI);
+                    unwrapped |= BitConverter.DoubleToInt64Bits(point.UA) != BitConverter.DoubleToInt64Bits(points[index].UA)
+                        || BitConverter.DoubleToInt64Bits(point.UB) != BitConverter.DoubleToInt64Bits(points[index].UB);
                     points[index] = point;
                 }
             }
 
-            var refined = new List<EdgeUV> { points[0] };
-            var sharedRefined = edge.SharedBoundaryPoints is { } sourceShared && sourceShared.Count == points.Count
-                ? new List<double[]> { sourceShared[0] } : null;
+            List<EdgeUV>? refined = null;
+            List<double[]>? sharedRefined = null;
+            var sharedPoints = edge.SharedBoundaryPoints;
+            if (sharedPoints?.Count != points.Count) sharedPoints = null;
             var fractions = splitFractions ??= new();
             for (int index = 0; index + 1 < points.Count; index++)
             {
@@ -2946,6 +2954,11 @@ internal static partial class GRepParserV2
                 {
                     if (fraction == previousFraction) continue;
                     previousFraction = fraction;
+                    if (refined == null)
+                    {
+                        refined = points.GetRange(0, index + 1);
+                        sharedRefined = sharedPoints?.GetRange(0, index + 1);
+                    }
                     refined.Add(new EdgeUV
                     {
                         UA = first.UA + (second.UA - first.UA) * fraction,
@@ -2961,19 +2974,27 @@ internal static partial class GRepParserV2
                             .Select(axis => firstPoint[axis] + (secondPoint[axis] - firstPoint[axis]) * fraction).ToArray());
                     }
                 }
-                refined.Add(second);
+                refined?.Add(second);
                 if (sharedRefined != null) sharedRefined.Add(edge.SharedBoundaryPoints![index + 1]);
             }
-            edge.Start = refined[0];
-            edge.EndP = refined[^1];
-            edge.Interior = refined.GetRange(1, refined.Count - 2);
-            edge.SharedBoundaryPoints = sharedRefined;
+            edge.SharedBoundaryPoints = refined == null ? sharedPoints : sharedRefined;
+            if (refined == null && !unwrapped) continue;
+            var updated = refined ?? points;
+            edge.Start = updated[0];
+            edge.EndP = updated[^1];
+            edge.Interior = updated.GetRange(1, updated.Count - 2);
+            changedFaces ??= [];
+            changedFaces.Add(edge.FaceA);
+            changedFaces.Add(edge.FaceB);
         }
 
-        if (splitFractions != null)
+        if (changedFaces != null)
         {
-            byFace = new();
-            CollectFaceSegments();
+            // Preserve face order and the authored sampling lists for edges that did not change.
+            byFace = new(authoredSamplingEdges);
+            foreach (uint handle in changedFaces)
+                if (byFace.ContainsKey(handle)) byFace[handle] = [];
+            CollectFaceSegments(changedFaces: changedFaces);
         }
 
         var gd = new GRepData
@@ -3241,7 +3262,7 @@ internal static partial class GRepParserV2
                 if (c.Curves.TryGetValue(surf.ProfileHandle, out var arc))
                 {
                     var sampling = periodicSamplingEdges[kv.Key];
-                    var trim = ReferenceEquals(byFace, authoredSamplingEdges) ? sampling
+                    var trim = ReferenceEquals(kv.Value, authoredSamplingEdges[kv.Key]) ? sampling
                         : CloseRevolutionPoleEdges(NormalizePeriodicEdges(kv.Value, 2 * Math.PI), arc);
                     foreach (var quad in TessellateRevolution(c.RingGraph, surf, arc, trim, sampling, kv.Value.Count >= 3, emitPolygons))
                     {
@@ -3265,7 +3286,7 @@ internal static partial class GRepParserV2
             {
                 // Cylindrical face: tessellate over the u(angle)/v(axial) span of its edges.
                 var normalizedSamples = periodicSamplingEdges[kv.Key];
-                var normalizedEdges = ReferenceEquals(byFace, authoredSamplingEdges) ? normalizedSamples
+                var normalizedEdges = ReferenceEquals(kv.Value, authoredSamplingEdges[kv.Key]) ? normalizedSamples
                     : NormalizePeriodicEdges(kv.Value, 2 * Math.PI);
                 if (c.Debug)
                 {
