@@ -8,7 +8,6 @@ API between minor releases.
 
 ### Fixed
 
-- Omit unplaced group template geometry from opaque fine sections.
 - Clip projected wall and railing uprights behind opaque slab sides in fine sections.
 - Mask projected geometry behind closed floor cuts in fine section callouts.
 

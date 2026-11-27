@@ -336,7 +336,6 @@ within the pane.
 Regular cropped fine sections with the saved opaque display exclude model geometry in categories hidden in that view.
 When the project element table has been read exactly, these sections leave geometry discovered outside the table out of the projection.
 Opaque fine sections with an exact element table project placed family instances and skip geometry directly owned by a family definition.
-Opaque fine sections omit the defining instances of model groups and their template members.
 Fill pattern definitions supply material graphics for faces and are excluded from the model geometry pass.
 A sloping wall edge at constant view depth keeps the spans outside closer opaque planar faces in
 regular sections and callouts. Visibility is resolved in model face order before painting the

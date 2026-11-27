@@ -442,7 +442,7 @@ public static partial class ElevationPrinter
             ? document.RawData.ViewHiddenCategories?.GetValueOrDefault(planeView!.Id) : null;
         foreach (var element in document.Elements)
         {
-            if (opaqueFineSection && element.IsGroupTemplate || hiddenElements?.Contains(element.Id) == true
+            if (hiddenElements?.Contains(element.Id) == true
                 || element.CategoryId is int category && hiddenCategories?.Contains(category) == true) continue;
             if (opaqueFineSection && document.RawData.ElemTableIsExact
                 && element.SerializedOwningElementId is > 0 and int owner

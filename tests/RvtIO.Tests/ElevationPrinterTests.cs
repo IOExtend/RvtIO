@@ -2588,21 +2588,23 @@ public class ElevationPrinterTests
     [Theory]
     [InlineData(BuiltInCategory.OST_IOSModelGroups)]
     [InlineData(BuiltInCategory.OST_Furniture)]
-    public void Collect_UsesPlacedGroupGeometryAndSkipsItsTemplate(BuiltInCategory category)
+    public void Collect_ProjectsGroupTemplateGeometryWithItsInstance(BuiltInCategory category)
     {
+        // The reference draws the group template copy as well as the placed instance: skipping templates costs
+        // 0.6% raster recall on the sample's stair sheet, so both rings project.
         var view = SectionView(900, [10, 0, 0]);
         Add(view, BuiltInParameter.VIEW_SCALE, StorageType.Integer, 20);
         view.ViewCrop = new(10, 0, 0, [0, 1, 0], [0, 0, 1], [-1, 0, 0], -2, -1, 5, 5, true);
         var placed = QuadWall(601, [[8, 0, 0], [8, 2, 0], [8, 2, 2], [8, 0, 2]], [1, 0, 0], (int)category);
-        var template = QuadWall(602, [[9, 0, 0], [9, 2, 0], [9, 2, 2], [9, 0, 2]], [1, 0, 0], (int)category);
+        var template = QuadWall(602, [[8, 3, 0], [8, 5, 0], [8, 5, 2], [8, 3, 2]], [1, 0, 0], (int)category);
         template.IsGroupTemplate = true;
         var document = Document(view, placed, template);
         document.RawData.OpaquePlanViews = new HashSet<int> { view.Id };
 
         var content = ElevationPrinter.Collect(document, "section", planeView: view)!;
 
-        Assert.Equal(-8 * FeetToMillimetres, Assert.Single(content.Faces).Depth, 6);
-        Assert.Equal(4, content.Edges.Count(edge => edge.CategoryId == (int)category));
+        Assert.Equal(2, content.Faces.Count);
+        Assert.Equal(8, content.Edges.Count(edge => edge.CategoryId == (int)category));
     }
 
     [Fact]
