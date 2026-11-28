@@ -1085,6 +1085,14 @@ missing geometry in most places:
   no element-level link back to the sketch or the view; `FilledRegionCurveData` (1863/1864) are not root records.
   Placing the already-known pattern needs a sketch-curve ownership decoder, not another lookup.
 
+- The sketch behind `m_sketchId` is a `VarSketch` (class 4065) with a curve-only GRep the parser drops. The
+  `--diag-dump` of element `1018116` shows a 470-byte GRep block with `GCurve`/`GPoint` markers, but
+  `GRepParserV2` stores no `GRepData` for it, so the model sees no faces, curves or bounding box; the filled
+  region `1018117` has its own 960-byte GRep, likewise dropped. The region's owner `1018045` is not one of the
+  printable views, and view `958303` owns only two break-line masks, so the A103 block's crosshatch is not a
+  filled region of that view either. Getting the polygon now means teaching the GRep parser curve-only sketch
+  representations, which is a format decoder of its own; the print pipeline has no path to it today.
+
 - The frontmost-copy rule for the A103 rails is the sum of parts that were each measured. Selecting the frontmost
   copy is the echo pass already in the code (nearest of the copies that project within a millimetre, A103
   95.9/93.5%). Clipping each rail only by faces in front of that copy gives A103 96.4/92.6%, A104 96.6/93.7%,
