@@ -1112,6 +1112,14 @@ missing geometry in most places:
   nothing, while unrelated covers then remove the remaining spans. Reverted. The panel spans must be compared to
   the 45 native DXF lines offline; a runtime whitelist of those lines would not generalise and is not added.
 
+- Clipping by the occluding element's projected silhouette (convex hull of all its faces) does not recover the
+  precision either. Replacing the per-triangle covers with per-element convex hulls gives A103 96.3/91.5,
+  A104 96.8/93.9 and A105 92.9/91.4 (tone 3.0/2.9/3.3) against HEAD 95.9/93.5, 96.3/95.6, 92.6/93.6. Recall rises
+  0.3-0.5 and precision still falls 1.7-2.2. The added ink is the short visible stubs of edges that cross an
+  occluder: Revit's embedded 321 dpi raster does not resolve them at the scorer's 100 dpi, so they count as
+  unmatched ink even though the geometry keeps them. This is the scorer's thin-stroke limit, not a missing
+  hidden-line rule. Reverted; the silhouette variant was the last geometric variant tried.
+
 - The frontmost-copy rule for the A103 rails is the sum of parts that were each measured. Selecting the frontmost
   copy is the echo pass already in the code (nearest of the copies that project within a millimetre, A103
   95.9/93.5%). Clipping each rail only by faces in front of that copy gives A103 96.4/92.6%, A104 96.6/93.7%,
