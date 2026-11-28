@@ -1014,6 +1014,27 @@ missing geometry in most places:
   pixels from the ink set, so the metric prefers the hard edge; the reference's penumbra is not what the score
   rewards. Reverted.
 
+- The shadow-caster plane fit is a measured dead end. A face of a triangulated surface can be warped, and the
+  stored normal then puts its plane through the first vertex up to 7.3 mm off the other vertices (element
+  `701300`, the site surface, 1435 such faces). Fitting the plane to the ring's own winding and anchoring it at
+  the centroid halves that (3.6 mm), but the reference's shadow follows the stored normal: A101 recall 94.4% ->
+  92.5%, precision 93.2% -> 92.7%, tone MAE 2.5 -> 2.7. Reverted. The warped quad is a triangulated surface
+  whose fold a single plane cannot represent, so the anchor stays at the first vertex.
+
+- A solar study casts shadows from transparent surfaces too. The caster test was opaque-only, so the windows and
+  the PV array's glass top (material `772432`, transmits) never entered the shadow pass. In a view with a
+  solar-study shadow pass the test now ignores transmission; the added window shadows land down-right of the
+  facade, on page 1555-1627 x 360-389 pt, where the reference is inked. Measured: A101 recall 94.4% -> 94.5%,
+  precision 93.2% and tone MAE 2.5 unchanged; A001 and A102-A105 unchanged. Ordinary shaded views keep the
+  opaque-only shortcut.
+
+- Rendering the cast shadows after the sun-path dome raises A101 recall but costs precision. The dome blends
+  75 % yellow over the model, which lifts a shadowed pixel to nearly the lit tone, and applying the shadow pass
+  after the dome restores the contrast: A101 recall 94.4% -> 94.9% with 775 more reference ink pixels matched.
+  The same pass overshoots that block: it carries 58.2k dark pixels at 600 dpi against the reference's 47.6k
+  (the base print has 15.2k), and 196 of the new ink pixels lie outside the reference's strokes, so precision
+  falls 93.2% -> 93.1%. Not kept.
+
 - The frontmost-copy rule for the A103 rails is the sum of parts that were each measured. Selecting the frontmost
   copy is the echo pass already in the code (nearest of the copies that project within a millimetre, A103
   95.9/93.5%). Clipping each rail only by faces in front of that copy gives A103 96.4/92.6%, A104 96.6/93.7%,
