@@ -992,6 +992,15 @@ missing geometry in most places:
   is already at its best measured value, so the remaining tone error is the accuracy of the cast shadows
   themselves, not the gradient.
 
+- The A101 shadow caster set is complete; the residual is the shadow's edge. Instrumenting `AddCaster` with the
+  owning element and logging the hits over the kerb band (page 579,492 mm) names two casters: the retaining wall
+  `599841` (`SWall "Retaining - 300mm Concrete"`, 19 hits, sun-projected box −205.6/−115.8 … −196.1/−106.9) and
+  the RPC car `950367` (`M_RPC Beetle`, 686 faces, many small hits). Both are legitimate and both are in the
+  caster list. The shadow does land on the band, but its edge sits two to three millimetres from the reference's:
+  at (576,494) mm we read 120 against the reference's 151 (we are darker there), while at (579,492) we read 163
+  against 76 (we are lighter). So the shade strength is now right and the caster set is right; the difference is
+  the projected position of the shadow boundary, which follows the saved sun direction and the caster geometry.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
