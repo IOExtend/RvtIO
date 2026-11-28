@@ -1001,6 +1001,13 @@ missing geometry in most places:
   against 76 (we are lighter). So the shade strength is now right and the caster set is right; the difference is
   the projected position of the shadow boundary, which follows the saved sun direction and the caster geometry.
 
+- The sun vector is not the cause of the shadow-edge offset. Rotating the study's sun azimuth by ±3° and ±6°
+  (an environment hook in `SolarStudyOverlay`) moves the A101 tone mean absolute error only between 5.095 and
+  5.111 against 5.101 for the unrotated print — noise, and in the direction that would need about 30° to shift a
+  shadow by the observed 2–3 mm, which would visibly change every other shadow in the study. The ephemeris is
+  therefore not offset; the residual is the shape and softness of the shadow itself (the reference renders a
+  feathered edge, ours is hard, and the caster set only approximates the building mass). The hook is removed.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
