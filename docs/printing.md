@@ -1061,6 +1061,16 @@ missing geometry in most places:
   (a basin outline) that we do not draw; the room's stipple fill around it matches. Symbolic family curves remain
   outside the decoded subset.
 
+- Re-baselining at the reference's own raster resolution invalidates the high-dpi recall figure. The reference
+  pages carry their drawing as 81 tiles of 1063 × 876 px over 238 × 210 pt, i.e. a 321 dpi raster. Scoring at
+  320 dpi with the 0.5 mm radius gives precision 96.4–99.8 % on every page but recall 99.0/27.7/97.8/40.4/12.9/99.2 %
+  — pages A101, A103 and A104 collapse while A001, A102 and A105 stay at 98–99 %. The cause is the scorer's
+  stroke extraction: `line_ink` keeps pixels that survive a 3 × 3 erosion, and our 0.1 mm vector lines are 1.3 px
+  at 320 dpi, so erosion removes them, while the reference's raster lines (0.085 mm drawn, ~2 px of antialiased
+  dark) survive. Our precision stays high because what little ink we produce lies on the reference's strokes. The
+  100 dpi grid, where both sides alias to the same pixel scale, remains the only fair comparison; higher-dpi
+  recall measures line width, not missing geometry.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
