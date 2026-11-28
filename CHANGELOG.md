@@ -25,9 +25,15 @@ API between minor releases.
   and cubic units in both profiles. Default IFC output and JSON units are unchanged. Centimetre areas and volumes are
   written in cm² and cm³ and declared as the conversion-based units `SQUARE CENTIMETRE` and `CUBIC CENTIMETRE`, as the
   inch and foot units are.
+- `RvtReaderOptions.ReleasePartitions` releases the decompressed partition streams before the element model is built,
+  instead of keeping them to the end of the read. The model that is read is the same and is built with less memory in
+  use. It applies to a file of Revit 2022 or of an unknown release; a file that is read by its own class schema keeps
+  its streams, also with `R22Layout`. Off by default.
 
 ### Changed
 
+- `RvtSceneReader.Read(path)` and `RvtSceneReader.ReadStream` read with `RvtReaderOptions.ReleasePartitions`, which lowers
+  the peak memory of reading a scene from a file of Revit 2022 or of an unknown release. The scene is unchanged.
 - Reading reuses local family symbol geometry, builds independent elements in parallel, and reduces parameter and geometry
   allocations during decoding and post-processing. Compact JSON prepares properties in bounded batches and writes them
   in element ID order.

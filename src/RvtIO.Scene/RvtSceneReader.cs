@@ -77,12 +77,14 @@ public static class RvtSceneReader
         return Map(document, ElementMeshes.Extract(document, MeshOptions(options)), key, ReadDiagnostics(readDiagnostics));
     }
 
-    private static RvtReaderOptions ReaderOptions(RvtReadDiagnostics diagnostics, RvtSceneOptions? options)
+    internal static RvtReaderOptions ReaderOptions(RvtReadDiagnostics diagnostics, RvtSceneOptions? options)
         => new()
         {
             R22Layout = true,
             SystemFamilyNameLocale = "ENU",
             SeparateFacesWithDistinctOpenings = true,
+            // The scene is mapped from the document alone, so the raw partitions would only raise the peak memory of the read.
+            ReleasePartitions = true,
             Diagnostics = diagnostics,
             Progress = options?.ReadProgress,
         };

@@ -29,6 +29,9 @@ public partial class RvtFileReader
     // readers and the second wide-layout read can still need the original partitions.
     internal bool ReleaseExportPartitions { get; init; }
 
+    // The public option asks for the release that the Compact JSON export turns on for itself.
+    private bool ReleasesPartitions => ReleaseExportPartitions || _options.ReleasePartitions;
+
     /// <summary>The wide-schema model when <see cref="RvtReaderOptions.PreserveWideLayout"/> was requested.</summary>
     internal RevitFileInfo? WideModel { get; private set; }
 
@@ -147,7 +150,7 @@ public partial class RvtFileReader
         diag?.WriteLine($"ElemRec histories: {(elemRecHistories != null ? $"{elemRecHistories.Count} (exact)" : "unavailable")}");
 
         LogPhase("Decompression done");
-        bool releasePartitions = ReleaseExportPartitions && wideSchema == null;
+        bool releasePartitions = ReleasesPartitions && wideSchema == null;
         var storage = releasePartitions ? ExtensibleStorageReader.Read(root, elemTableIsExact, framedStreams) : null;
         var (rvtInfo, state) = ParseModel(root, chunks, readFrames, partitionChunkCount,
             r22View, partitionStreams, framedStreams, wideSchema, elemTable, elemWorksets, fileMetadata,
@@ -233,7 +236,7 @@ public partial class RvtFileReader
         // ParseBlocks has finished adding record/block-only IDs. The scalar walk and
         // geometry recovery only read that set; neither consumes the scanned strings.
         // Snapshot the ID set: the background geometry decode still runs while the scan reads it.
-        bool releasePartitions = ReleaseExportPartitions && wideSchema == null;
+        bool releasePartitions = ReleasesPartitions && wideSchema == null;
         var scanIds = new HashSet<uint>(state.AllKnownIds);
         var stringScan = blockGeometry != null ? Task.Run(ScanElementStrings) : null;
         // The anchored walk reaches blocks spanning chunks and decodes the native parameter stores.
