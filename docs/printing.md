@@ -1052,6 +1052,17 @@ missing geometry in most places:
   black, so both the pattern source and the cut pen need the project's Object Styles display table, which the reader
   does not parse.
 
+- The view side of that decode is empty too. The view's `m_oGraphicOverrides` (view class 1016) is a
+  `GraphicOverrides` object (class 2104) whose `m_fillPatternsCut` and `m_backgroundFillPatternsCut` are vectors of
+  `pair<ElementId, ElementId>`; a temporary extractor parsed it for every detail view, and view `958303` and the
+  other details all report zero entries. A scan of the file's whole material pattern table finds 27 materials with
+  any pattern and none that references a dense crosshatch (`Diagonal crosshatch`, `Diagonal Crosshatch1`,
+  `Rigid Insulation`, `Crosshatch`, `Kreuzschraffur`); the roof stack materials read `cut = -1/0/429`, and the only
+  dense multi-grid patterns in use are `Concrete` (13 grids), `Earth` (6) and `Sand` (3) on the structural walls
+  and pads. The block's crosshatch is therefore not reachable through the category, graphics style, view override
+  or material records the reader holds; it belongs to view-owned annotation data (a filled region) that the
+  reader does not load. The extractor was removed after the measurement.
+
 - The frontmost-copy rule for the A103 rails is the sum of parts that were each measured. Selecting the frontmost
   copy is the echo pass already in the code (nearest of the copies that project within a millimetre, A103
   95.9/93.5%). Clipping each rail only by faces in front of that copy gives A103 96.4/92.6%, A104 96.6/93.7%,
