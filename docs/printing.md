@@ -906,6 +906,16 @@ missing geometry in most places:
   99.1/93.2/96.9/93.5/95.6/93.6%). Hatching that block needs the slab's own section graphics, not the soil
   pattern.
 
+- The slab's compound layers carry no cut pattern either. Element 512683 is a `Floor "Timber Suspended Floor"`
+  (type 185144) with two host layers: layer 0 material 713090 "Interior finish" and layer 1 material 185148
+  "Rendering appearance not upgraded". Layer 0 decodes a surface pattern only (429, twelve dashed segments at
+  0.0067 ft = 2.0 mm), layer 1 decodes no pattern at all; neither has a cut pattern. The observed 12–14 px
+  courses at 1200 dpi (0.25–0.35 mm) are a sampling beat, not a pattern: the 2.0 mm pattern is 0.02 mm on paper
+  at 1:100, which is 0.945 px at 1200 dpi, and a 0.945 px period aliases to a beat of 1/(1−0.945) ≈ 18 px — the
+  same order as the measured 12–14 px. The reference's texture is therefore the resampled 2 mm pattern, and the
+  closest decoded pattern would print as a near-solid band rather than reproduce that texture. No decoded
+  pattern matches the visible pitch, so nothing is applied and the print is unchanged.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
