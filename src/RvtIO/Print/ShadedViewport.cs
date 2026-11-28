@@ -207,8 +207,11 @@ internal static class ShadedViewport
                         .Select(hole => hole.Select(vertex => vertex.Point).ToArray()));
                 int materialId = face.RenderStyleId ?? face.NestedRenderStyleId ?? 0;
                 var material = Material(materialId);
-                // shortcut: opaque casters, until the renderer can accumulate transmission through separate panes.
-                if (casterNormal != null && !material.TransmitsLight) shadows!.AddCaster(rings, casterNormal);
+                // A solar study measures exposure, so every surface blocks the sun there, glass included. In an
+                // ordinary shaded view the shortcut stays opaque casters, until the renderer can accumulate
+                // transmission through separate panes.
+                bool castsShadow = !material.TransmitsLight || shadows != null;
+                if (casterNormal != null && castsShadow) shadows!.AddCaster(rings, casterNormal);
                 if (!visible) continue;
                 ViewportSurfacePattern? pattern = null;
                 if (showPatterns && face.ModelPattern != null)
