@@ -1081,6 +1081,21 @@ missing geometry in most places:
   prints of one tree differ only in the title block's date stamp (x 2330-2339, y 1508-1531 pt on A001, A103 and
   A104); mask that rectangle before calling a change real.
 
+- The A103 panel block is now attributed natively. A DXF export of view 247014 (Longitudinal Section) carries the
+  element id and category in XDATA: the two inserts read `800329`/`800350`, type `776839`, category `-2001040`,
+  and their blocks hold 31 and 14 `LINE` entities in view coordinates (x -13581..-12271, y 424..1030 mm) - 45
+  segments. Hiding `800329`/`800350` in the view and re-exporting removes exactly those two inserts and nothing
+  else, so Revit attributes the panel linework to them.
+
+- Stage trace for those panels: after projection and `DedupeEdges` the panel carries 236 edges, and the
+  hidden-line pass keeps only 4 because it drops an edge whole when its midpoint is covered; the occluders are the
+  panels themselves (`800329` 893 and `800350` 899 midpoint hits) - a tilted array hides its own far end. Clipping
+  each edge by the covering polygons and re-testing depth at every span's midpoint raises the panel output to 35
+  spans (reference 45) and the sheets to A103 96.4/91.2, A104 96.9/93.7 and A105 92.9/91.2: recall +0.5..+0.6,
+  precision -1.9..-2.4, tone MAE 3.0/2.9/3.4. The "recall up without precision loss" rule rejects the change, so
+  it is not committed; the remaining error is the per-span depth used for non-planar faces (`MinDepth`), which
+  still over- or under-covers slivers between the array's triangles, not the midpoint rule alone.
+
 - The frontmost-copy rule for the A103 rails is the sum of parts that were each measured. Selecting the frontmost
   copy is the echo pass already in the code (nearest of the copies that project within a millimetre, A103
   95.9/93.5%). Clipping each rail only by faces in front of that copy gives A103 96.4/92.6%, A104 96.6/93.7%,
