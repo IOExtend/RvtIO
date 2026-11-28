@@ -1,4 +1,5 @@
 using RvtIO.Model;
+using RvtIO.Print;
 using Xunit;
 
 namespace RvtIO.Tests;
@@ -8,7 +9,25 @@ namespace RvtIO.Tests;
 /// (rvt-prt titleblock.py).</summary>
 public class TitleBlockLinesTests
 {
+    [Theory]
+    [InlineData(0x200, -9)]
+    [InlineData(0x400, -3)]
+    [InlineData(0x800, 3)]
+    public void FirstBaseline_UsesTheStoredVerticalAnchor(int flags, double expected)
+    {
+        Assert.Equal(expected, SheetComposer.TitleBlockFirstBaseline(9, 12, flags));
+    }
+
     [Fact]
+    public void SheetScale_ReportsMixedScalesInTheOutputLanguage()
+    {
+        Assert.Empty(SheetComposer.TitleBlockScale([], false));
+        Assert.Equal(" 1 : 100", SheetComposer.TitleBlockScale([100], false));
+        Assert.Equal("As indicated", SheetComposer.TitleBlockScale([50, 100], false));
+        Assert.Equal("Как указано", SheetComposer.TitleBlockScale([50, 100], true));
+    }
+
+    [SkippableFact]
     public void SampleFile_DecodesA1TitleBlockSymbol()
     {
         string? path = TestFiles.TryFind("Test_2022.rvt");
@@ -43,7 +62,7 @@ public class TitleBlockLinesTests
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_DecodesTitleBlockTextsAndLabels()
     {
         string? path = TestFiles.TryFind("Test_2022.rvt");
@@ -74,5 +93,11 @@ public class TitleBlockLinesTests
             Assert.True(double.IsFinite(label.Ox) && double.IsFinite(label.Oy));
             Assert.True(label.Height > 0 && label.Width >= 0);
         }
+        var heightByType = document.RawData.TitleBlockCapHeightsFeet!;
+        var number = Assert.Single(labels[382615], label => label.ParamId == -1007401);
+        Assert.Equal(8, Assert.Contains(number.AttrId, heightByType) * 304.8, 7);
+        Assert.True(Assert.Single(labels[382615], label => label.ParamId == -1007400).Wrap);
+        var scale = Assert.Single(labels[382615], label => label.ParamId == -1007402);
+        Assert.Equal(5, Assert.Contains(scale.AttrId, heightByType) * 304.8, 7);
     }
 }

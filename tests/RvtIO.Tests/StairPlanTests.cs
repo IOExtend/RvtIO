@@ -7,7 +7,7 @@ namespace RvtIO.Tests;
 
 public class StairPlanTests
 {
-    [Fact]
+    [SkippableFact]
     public void SampleFile_Level2DrawsTheArrivingStair()
     {
         // The main stair runs from Level 1 to Level 2 (STAIRS_BASE_LEVEL_PARAM / STAIRS_TOP_LEVEL_PARAM), so

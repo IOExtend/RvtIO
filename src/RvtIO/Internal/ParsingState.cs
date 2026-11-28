@@ -157,6 +157,7 @@ internal class ParsingState
     public Dictionary<uint, Dictionary<int, int>> ElemBipInts { get; set; } = new();
     public Dictionary<uint, BaseElementFields> ElemBaseFields { get; set; } = new();
     public Dictionary<uint, GRepData> GrepBlocks { get; set; } = new();
+    public Dictionary<uint, PlanFixtureGraphics> PlanFixtureGraphicsBySymbol { get; } = new();
     internal Dictionary<uint, (int BlockCount, TfBlockDeserializer.OwnRailingQuantityInput? Input)> RailingQuantityInputs { get; } = new();
 
     /// <summary>While set, the symbols placed from <see cref="GrepBlocks"/> are taken at the Coarse detail level.</summary>
@@ -281,7 +282,12 @@ internal class ParsingState
 
     /// <summary>Material element id -> the cut and surface fill pattern ids of its Material record (-1 when the
     /// material has no pattern of that kind), for the blocks that decoded exactly once.</summary>
-    public Dictionary<uint, (int BlockCount, int CutPatternId, int SurfacePatternId)> MaterialPatterns { get; } = new();
+    public Dictionary<uint, (int BlockCount, int CutPatternId, int SurfacePatternId, int? SurfacePatternColor, int? CutPatternColor)> MaterialPatterns { get; } = new();
+
+    public (double BaseFeet, int MaterialId)? SiteCutGraphics { get; set; }
+    public int SiteCutGraphicsCount { get; set; }
+    public (int Method, int Units)? PropertyBearingFormat { get; set; }
+    public int PropertyBearingFormatCount { get; set; }
 
     /// <summary>GStyleElem (class 2050) -> GStyle.m_materialElemId and the style's category; MaterialId is null when the
     /// block did not decode. A repeated block clears it.</summary>
@@ -342,7 +348,7 @@ internal class ParsingState
 
     /// <summary>Own wall-root (SWall/ArcWall) top-attachment source: every root counts;
     /// an unreadable root records null. Duplicates clear the value.</summary>
-    public Dictionary<uint, (int BlockCount, bool? JoinedToTop)> WallJoinedToTop { get; } = new();
+    public Dictionary<uint, (int BlockCount, bool? JoinedToTop, int[]? Targets)> WallJoinedToTop { get; } = new();
 
     /// <summary>Control joins of each wall's own driver
     /// (<see cref="Parsing.TfBlockDeserializer.ExtractWallEndJoins"/>); null when the block is
@@ -428,6 +434,7 @@ internal class ParsingState
 
     /// <summary>GeoSite (class 2071) latitude and longitude in radians by element id; the last block wins.</summary>
     internal Dictionary<uint, (double Latitude, double Longitude)> GeoSites { get; } = new();
+    internal Dictionary<uint, double> GeoSiteTimeZones { get; } = new();
 
     /// <summary>GeoSite (class 2071) m_placeName by element id; the last block wins.</summary>
     internal Dictionary<uint, string> GeoSitePlaceNames { get; } = new();
@@ -452,6 +459,9 @@ internal class ParsingState
     /// Null when the block did not decode; a repeated block clears it.</summary>
     public Dictionary<uint, (int BlockCount, Parsing.TfBlockDeserializer.LevelDatum? Datum)> LevelDatums { get; } = new();
 
+    public Dictionary<int, (int BlockCount, Parsing.TfBlockDeserializer.ViewDatumExtents Extents)> DatumExtents { get; } = new();
+    public Dictionary<int, Parsing.TfBlockDeserializer.DatumHead?> DatumHeads { get; } = new();
+
     /// <summary>GridAttributes block (class 2109) -> the center-segment category id whose projection
     /// graphics style inks the grid's center line. Null when the block did not decode; a repeated
     /// block clears it.</summary>
@@ -470,7 +480,7 @@ internal class ParsingState
 
     /// <summary>Curve line style + length from the full CurveElem schema walk (handles
     /// detail arcs the GInfoBlob pattern scan can't reach).</summary>
-    public Dictionary<uint, (int GStyle, double Length)> CurveGeometry { get; set; } = new();
+    public Dictionary<uint, (int GStyle, double Length, (double X, double Y, double Radius)? Circle)> CurveGeometry { get; set; } = new();
 
     /// <summary>Native parameter stores per element, deserialized from the Element base
     /// class m_pParamValueSet* containers (schema-driven).</summary>

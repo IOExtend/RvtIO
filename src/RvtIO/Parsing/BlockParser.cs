@@ -19,8 +19,13 @@ internal static class BlockParser
     {
         if (pending.Count == 0) return;
         var decoded = new Internal.GRepData?[pending.Count];
+        var planFixtures = new PlanFixtureGraphics?[pending.Count];
         Parallel.For(0, decoded.Length, new ParallelOptions(), index =>
-            decoded[index] = GRepParserV2.Parse(pending[index].Chunk, pending[index].Start, pending[index].Size));
+        {
+            var job = pending[index];
+            decoded[index] = GRepParserV2.Parse(job.Chunk, job.Start, job.Size,
+                collectPlanFixtures: job.IsFamilyCut ? null : graphics => planFixtures[index] = graphics);
+        });
         for (int index = 0; index < decoded.Length; index++)
         {
             var job = pending[index];
@@ -30,7 +35,12 @@ internal static class BlockParser
                     && decoded[index] is { } familyCut && IsAuthoredFamilyComplexCutter(familyCut))
                     state.FamilyCutGreps[job.Eid] = familyCut;
             }
-            else ApplyGRepBlock(state, job.Eid, decoded[index]);
+            else
+            {
+                if (planFixtures[index] is { } graphics)
+                    state.PlanFixtureGraphicsBySymbol.TryAdd(job.Eid, graphics);
+                ApplyGRepBlock(state, job.Eid, decoded[index]);
+            }
             decoded[index] = null;
         }
     }

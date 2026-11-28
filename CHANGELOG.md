@@ -6,6 +6,252 @@ API between minor releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- A railing repeats every bar in its element and in the nested symbol it places; the copies project within a
+  millimetre of each other, so both were inked and the sheet carried a doubled line. The elevation now groups the
+  horizontal railing bars within a one-millimetre tolerance and keeps the copy nearest the viewer, leaving a
+  second bar more than 20 mm behind as its own line. Measured: raster line score A001 recall 98.6% → 98.7%,
+  A103 95.8% → 95.9% with precision 93.4% → 93.5%; A101, A102, A104 and A105 unchanged. New test:
+  `Collect_KeepsOneOfTwoCoincidentRailingBars`.
+- Clip projected wall and railing uprights behind opaque slab sides in fine sections.
+- Mask projected geometry behind closed floor cuts in fine section callouts.
+
+- Omit RPC planting cut by an active 3D section box plane using the placed type outline.
+- Draw and light both sides of RPC planting meshes in shaded views.
+- Print the saved daily and hourly boundaries of multi-day solar studies with their geometric horizon times.
+- Shade the exposed solar band from the saved sunlight intensity over the model and paper background.
+- Opaque model geometry can hide the solar compass markings behind it on the saved ground plane.
+- Shaded solar-study views use the saved sunlight intensity and active sun direction to tint vertical terrain cuts.
+- Orthographic shaded views print the saved soil cut hatch and colour on the section box's terrain faces.
+- Evaluated schedule rows with a supported uniform Arial style print with their Revit row pitch and text baseline.
+- Elevations and sections print supported drafting patterns on saved planar wall paint regions.
+- Fine section callouts include screen-space ambient shadows from glazed curtain panels onto visible walls.
+- Fine section callouts retain the contour of closed furniture meshes with saved cylindrical facets.
+- Opaque fine section callouts clip upright wall and railing strokes behind nearer slab sides facing the view.
+- Elevations use the topography cut pen on the soil side of a building pad's cut contour.
+- Elevations clip projected wall and foundation edges behind opaque faces after the ground cut trims them, including
+  upright edges in building pad excavations.
+- Opaque building sections clip window jambs and opening marks behind nearer furniture and preserve the dash phase.
+- Elevation soil cuts use the saved outline to exclude RPC plants that lie wholly in front of the view.
+- Regular fine sections use projected ambient shadows on aligned inner finishes of exterior walls with unattached tops.
+- Regular fine sections with ambient shadows use the saved graphics colour of opaque fixture finishes.
+- Section views shade upright, view-aligned risers of cut stairs using occluders with a visible projection.
+- Plans print view-owned horizontal detail circles and preserve the outline of thin projected generic-model facets.
+- Opaque plans print the projection and cut outlines of closed generic-model instances within the saved view range.
+- Lit elevations retain shadows from fully clipped RPC plants on visible RPC foliage.
+- Opaque fine sections tone projected single-layer exterior structural walls above their saved base level.
+  Below that level, ambient occlusion also samples more distant geometry within the section's crop and depth.
+- Glazed curtain panels in opaque fine sections cover surfaces behind them and use the saved ambient intensity.
+- Cropped plan grid ends use the paper-space crop margin when annotation cropping is off.
+- Solar studies shade the exposed side of the solar band that faces away from the saved active sun.
+- Shaded 3D views honor saved model category visibility and clip ground-plane shadows at the section box.
+- Hidden-line site views print visible roof glazing inside the saved skylight openings.
+- Site views keep cast shadows on their receiving roof surfaces and cast shadows from opaque skylight frames.
+- Site views project visible horizontal stair treads and landings with their cast shadows.
+- Site views draw visible top rail outlines and project shadows from their planar faces.
+- Site views draw visible horizontal floor slabs and preserve skylight glazing over them.
+- Elevations hide covered skylight frame edges when the glazing is seen edge-on.
+- Elevations project shadows from opaque skylight frames onto their sloped host roofs.
+- Elevations project cast shadows onto oblique vertical wall faces using the saved light direction.
+- Elevations project shadows from explicitly opaque model faces onto planar mesh facets of structural foundations.
+- Cropped sections trim projected edges where a nearer cut stroke covers them.
+- Fine sections soften distant ambient shadows on exposed finishes of exterior walls with attached tops.
+- Fine sections use the saved top attachment to exclude the joined roof from ambient shading on the exterior finish.
+- In elevations, planar opaque faces of placed structural columns cast shadows using the saved light direction.
+- Cropped detail views clip model edges added by layer boundaries and roof-wall joins to the saved viewport.
+- Overview sections trim sloping railing lines behind nearer opaque wall faces.
+- Fine section callouts with ambient shadows use the saved graphics colour of supported wall finish layers.
+- Visible slab sides in opaque details shade from samples outside the nearer cut caps.
+- Opaque detail cuts use the projection pen on the shared boundary between touching roof and wall profiles.
+- Opaque fine section details preserve the visible spans of railing posts and curtain-wall mullions behind nearer model faces.
+- Elevations retain distinct railing profile edges when the same visible face separates them by more than the projection pen width.
+- Fine sections mask backing geometry at closed stair cuts and correct self-shadowing on verified convex stair solids.
+- Sheet schedules localize evaluated Yes/No cells for the Russian print UI culture.
+- Floor-plan room tags print the square-metre symbol in Cyrillic for the Russian print UI culture.
+- Floor plans place continuous section marks from their saved view-specific extents, including filled heads and tails on jogged traces.
+- Cropped section details shade oblique wall faces using their view angle and preserve the transmitted tone through nearer glazing.
+- Unshaded floor plans print supported wall tops below the cut with their saved outline and projection pen.
+- Fixture outlines in floor plans keep closed components that reference an identical deduplicated face.
+- Floor plans smooth curved fixture outlines using the native arcs of the placed horizontal faces.
+- Floor plans print closed sections of placed curtain panels and mullions with their saved category cut pens.
+  Horizontal mullions below the cut project their saved top faces within the plan range.
+- Descending sketched stairs project their attached top rails and clip nosings by the saved rail faces.
+- Regular fine sections cover surfaces behind simple closed wall cuts with the wall's cut face.
+- Fine hidden-line sections shade white structural slab sides using nearby geometry and the distance to the section plane.
+- Cropped construction details draw the stored layer interfaces of rectangular ceiling cuts.
+- Overlapping cut contours in opaque construction details preserve their saved pen widths along each span.
+- Nearer opaque faces clip round flue outlines in elevations and preserve the spans visible through decoded openings.
+- Continuous drafting lines on supported fine section surfaces keep their saved positions through PDF rendering.
+- Cropped opaque overview sections shade crossed planting panels from the saved solar position and ambient and sunlight intensities.
+- Opaque overview sections keep intersected crossed entourage figures whole and resolve their visible panel outlines.
+- Opaque overview sections print the visible outline of supported revolved assemblies behind the cut.
+- Regular fine sections print the visible silhouette of placed specialty equipment built from closed revolved meshes.
+- Fine model sections preserve visible door jambs at their original depths and print saved finishes on opaque doors.
+- Regular fine sections shade the open areas of supported glass panes using nearby model geometry.
+- Site plans print saved electrical and site equipment symbols, including photovoltaic panels and wind turbines.
+- Visible site equipment with supported symbols casts shadows using the saved site lighting.
+- Site plans size RPC planting marks from the saved plant height and draw the common radial profile.
+
+- Site plans respect the saved visibility of terrain, planting and entourage categories. A view that hides Property Lines
+  prints neither the property boundaries nor their segment tags.
+- Floor plans leave out the leaf, glass, frame outline and mark of a door or window that the view hides, by element or
+  category, and keep its opening in the wall. Saved opening marks of hidden hosts are not printed, and the view's own
+  saved marks still stand in for the generated ones. Hidden stairs, railings and their top rails draw no outline.
+- Upper floor plans draw the descending arrow of supported sketched stairs along their saved centre paths.
+- Upper hidden-line plans draw saved nosings and mask room colour across the opening of a supported sketched stair run with a view-owned path.
+- Patterned overview elevations print the visible axes of verified horizontal and inclined railing tubes whose diameter is narrower than the projection pen.
+- Patterned overview elevations retain visible nearer copies of stair edges when a coincident farther projection was hidden.
+- In lit elevations, RPC planting inserted in front of the view plane retains its terrain shadows and is excluded from the shadow pass on visible model and planting surfaces.
+- Lit elevations use the saved light to shade the visible unlit faces of crossed-plane entourage, with depth clipping against the model and planting.
+- Elevations outline crossed-plane entourage display meshes without printing their triangulation diagonals.
+- Soil cut shadows in cropped elevations use the foreground planting facets that face the view plane.
+- Section callouts keep projected face indices paired with their depths until sloping wall edge clipping is complete.
+- Opaque plans draw saved top-view region edges, masks and symbolic curves for supported plumbing and furniture families at medium detail.
+- Opaque plan furniture respects saved geometry exclusions for the top view.
+- Opaque plans draw visible solid outlines and top opening rims of supported multi-solid fixtures.
+- Plan viewports omit projected roof-opening outlines outside their saved vertical range and for hidden inserts.
+- Patterned overview elevations restore verified round flue outlines and shade them using the saved light.
+- Cropped opaque section details use the projected depth of planar walls, slabs and stairs, preserve visible coincident stair edges, and retain silhouettes of placed site objects.
+- Cropped section details with saved ambient shadows show the backing through supported transparent glazing.
+- In cropped section details with saved ambient shadows, transparent mass surfaces preserve the backing visible through them.
+- Opaque cropped section details honor the view's saved hidden categories when projecting and cutting geometry.
+- Fine sections with ambient shadows apply the saved glazing tone where a pane has no opaque backing.
+- Regular cropped fine sections respect saved category visibility and keep the exposed spans of sloping wall edges.
+- Fine sections project verified round structural columns with their material patterns and mask their projection at closed pad cuts.
+- Opaque overview sections draw verified round column silhouettes with their surface patterns and use the exact element table for placed columns and casework.
+- Opaque overview sections also use the exact element table for furniture, plumbing fixtures, speciality equipment and structural foundations. Placed terrain clips projected building pads behind it.
+- Opaque overview sections at fine detail draw the saved floor layers and thin drafting hatches inside supported closed cuts.
+- Cropped opaque overview sections trim projected wall edges inside overlapping coplanar faces of the same wall type and material.
+- Patterned elevations and overview sections draw the open edges of placed planting meshes with their category pen, clipping them behind nearer geometry and the ground cut.
+- Fine sections omit internal handrail seams shared by coplanar faces, including repeated faces from embedded rail components.
+- Opaque fine sections use exact ownership to omit family definition geometry and retain exposed sloping wall edges in callouts.
+- Regular cropped fine sections exclude embedded family geometry when the project table is exact, clip edges behind round shafts, and mask projections behind closed floor cuts.
+- Regular cropped fine sections include placed terrain and verified planar facets in ambient occlusion.
+- Fine sections shade thin frames missed by the regular sampling grid and retain both edges of thin rails where visible around nearer posts.
+- Elevations clip shadows on convex terrain facets against the closer terrain.
+- Cropped elevations with cast terrain shadows hide supported planar faces and projection edges behind nearer placed terrain.
+- Cropped overview sections hide the projected wall edges and structural foundation faces and edges behind nearer placed terrain.
+- Cropped overview sections fill the placed terrain behind the section plane, including small facets between the larger polygons.
+- Overview sections keep the visible stair treads and compare nearby wall depth at the projected stair and railing edges.
+- Overview sections compare oblique stair risers at the projected tread position within the same native stair assembly.
+- Elevations with cast terrain shadows draw the saved ground colour below the horizon and clip cut terrain at the view plane.
+- Cropped elevations project foreground planting shadows onto the soil cut at the saved view plane.
+- Elevations respect authored shading colours on supported grouped electrical equipment and keep its transparent covers unfilled.
+- Straight section traces in plans print the supported filled head and tail, with the viewport detail and sheet numbers.
+- Plans use the saved cut height, material pattern and category pen for closed column profiles.
+- Elevations and sections omit discovered light-source construction faces. Regular fine sections with
+  saved ambient shadows shade supported opaque surfaces from nearby model geometry.
+- Fine section callouts use the saved glass tint over their opaque background.
+- Fine sections retain visible lighting fixture outlines and thin suspension geometry.
+- Fine section ambient shadows use the saved ambient and direct light levels. Occluded sample points
+  contribute to the tonal gradient across the exposed parts of the same face.
+- Unshaded sheet plans keep native wall ends and jambs when a closed model section preserves the saved hosted openings.
+- Unshaded sheet plans retain wall mitres from closed model cuts at the saved cut height.
+- Floor plan wall fills use a white base when the saved view uses unshaded hidden lines.
+- Axis-aligned floor plans on sheets draw saved circular elevation markers with one attached view and its sheet reference.
+- Supported level heads print names and elevations with their saved family label positions, sizes and backgrounds.
+- Elevation and section levels with model extents use their saved leader positions. The East elevation
+  on A105 aligns straight levels with the saved head column of the jogged levels.
+- Detail callout boundaries use round caps on their fitted dash segments.
+- Cropped hidden-line construction sections hide internal cut edges where walls of the same material
+  overlap in a closed profile.
+- Closed wall, floor, foundation and pad cuts in cropped hidden-line construction sections print a white
+  base behind their material hatches. Projected surfaces retain their view shading.
+- Construction sections with a saved crop print the terrain cut and its material hatch. The ground strip
+  is visible at the bottom of Typ. Wall Section on A104.
+- Fine sections clip door and window outlines at nearer railing faces. On A105 the visible jamb
+  segments in Stair Section and Main Stair Detail remain between the rails.
+- Title block revision tables with supported regular Arial styles use the saved header and body text sizes
+  for the heading and row heights. A hidden title section preserves the visible column header and its styles.
+- Sections use the cut depths and jog positions of the saved front-cut trace. On A104 the deeper span
+  of Building Section reveals the terrace, floor and living room. Coincident projected outlines
+  underneath the cut strokes are clipped to their uncovered spans.
+- Cropped section details ink the original face edges while keeping the cropped polygons for fills and occlusion.
+- Sections draw saved right-only level heads and leaders with the model extent at the other end.
+- Elevations and sections draw visible window and door opening symbols from the saved direction filters,
+  including families whose opening marks apply at every detail level.
+- Elevations and sections ink coincident site mesh strokes once after clipping. On A104 this removes
+  repeated entourage strokes from West and Building Section and restores the outline of the figure
+  seen from behind using its saved mesh.
+
+- Elevations and sections respect saved hidden element lists. Fine section projections trim edges where they
+  pass behind the face of a stair tread or riser.
+
+- Elevations and sections omit viewport annotation geometry and meshes attached to discovered material,
+  constraint and reference plane records.
+  Fine sections preserve the distinct edges of cut stairs, runs and treads.
+
+- Fine sections show saved glazing patterns where recovered curtain panels cover the fallback faces of an
+  incomplete curtain assembly.
+
+- Fine sections keep coincident skylight frame edges at their model depths until hidden lines are resolved.
+  Transparent glazing leaves the visible edges of the frame behind it.
+
+- Fine sections clip placed site geometry at the section plane and omit unplaced site and planting symbols.
+  Regular fine sections with annotation cropping disabled use the saved full envelope for default grid heads.
+
+- Planting on elevations with cast shadows keeps its visible silhouette and shade in front of distant model
+  faces. Geometry closer to the viewer masks the covered portion of the planting.
+
+- Title-block text uses the family's font sizes and alignment. Labels wrap at their stored widths, and the scale
+  field shows a shared scale or the localized "As indicated" caption for mixed scales.
+
+- Site viewports draw saved terrain contours, roof footprints, cast shadows from model faces for supported view lighting, and
+  planting tags with their saved leaders. The north marker uses its family curves and saved placement.
+  Sloped terrain receives shadows and casts them beyond its edge onto the authored ground plane.
+  Primary and secondary terrain contours use their Object Styles pens. Supported roof patterns use the
+  saved face placement and leave skylight openings clear. Contour labels use their stored positions and directions.
+  Property boundaries fit the saved dash pattern to both ends. Supported segment tags show the bearing and
+  distance, including chord distances on arcs.
+
+- Fine sections print supported projected material patterns, including the stair views' timber cladding.
+  The Stair Section draws the saved callout for Main Stair Detail. Round railing tubes retain their
+  cylindrical silhouettes in fine sections. Cropped stair details use the saved annotation crop for default
+  grid and level ends. Straight top rails retain their native contours in fine sections, including when
+  the front and back faces project to the same outline.
+  Fine cropped stair sections use the saved cut patterns of their wall and floor layers.
+  Elevations and sections draw supported roof seam grids from the saved face placement and skylight openings.
+
+- Supported circular generic annotations print from the saved family fill, border and text. Sheet viewports
+  use the separate annotation crop, including on rotated site plans.
+
+- Opaque hidden-line sections with both shadow modes off use white model surfaces with their existing cut pens
+  and material patterns.
+
+- Supported viewport titles use their saved annotation-family geometry, font sizes, wrapping and display settings.
+  The extension line uses its stored placement and length.
+
+- Floor-plan door and window tags use their saved view anchors, annotation-family outlines, and instance or
+  type marks specified by the family labels.
+
+- Floor-plan room tags use their saved placement, supported leaders, and annotation family labels and frames. Area labels
+  use the project's display units.
+
+- Furniture and fixtures follow the saved floor plan range, including lowered levels. Opaque hidden-line
+  views mask room fills with the projected face boundaries, including holes. Hidden section marks stay hidden.
+
+- Cropped plans print supported linear dimension chains at their saved positions, with their witnesses, ticks
+  and project units. Horizontal text notes use their saved frames and leader geometry.
+
+- Cropped plan viewports print supported grid bubbles and leaders beyond the model crop from their saved datum
+  settings. Plan room fills and legend swatches use solid background colours saved in the view's room-name scheme.
+
+- Draw title-block PNGs from their saved placements and evaluate supported itemized schedule rows from stored
+  instance parameters. Render merged schedule text within its band.
+
+- Print rendered views at their saved paper size, project authored property boundaries onto the cropped site plan,
+  print rooms with curved boundaries, place room legends at their saved anchors, and include the building context
+  inside the stair section crop.
+
+- Cropped construction details draw stored straight callouts, batt insulation and computed break masks. Exact
+  wall and slab cuts can use the drafting cut patterns of their decoded layers.
+
+- Printing places cropped construction details by the stored viewport offset whenever the mapped crop
+  intersects the sheet. Details use their active annotation crop for default datum endpoints and print the
+  supported level and grid heads at their saved sizes. The four construction details on the Revit sample
+  sheet A104 now align with the reference export.
+
 ### Changed
 
 - The printing docs say what is still not drawn (the plane of a section, the detail views without linework, the graphic
@@ -14,6 +260,13 @@ API between minor releases.
   `ViewPrinter` and the section directions of `ElevationPrinter`.
 
 ### Added
+
+- Use `--viewport-image ID X Y WIDTH HEIGHT JPEG` when printing sheets to include native rendered graphics for a
+  specific viewport, including the solar study. Bounds are measured in sheet millimetres. The option needs `--sheet` or
+  `--all-sheets`. An image that cannot be read exits with code 2; a repeated ID, a blank path and bounds that cannot be
+  drawn exit with code 1 and the usage text, and a file that is not a JPEG, a file over 64 MiB and a viewport that is
+  not on the printed sheets exit with code 1 and a message that names the viewport by its ID.
+  `SheetComposer.RenderSheets` throws `ArgumentException` for the same invalid `ViewportImages` entries.
 
 - CLI and API: `rvtio sheets` lists sheet parameters and filters sheets by them, ported from rvt-prt's `list --params/--where` (Unreleased after 0.1.0). `SheetRecord.Parameters` carries the text and whole-number project/shared parameters of each sheet as display strings (numbers with units stay out until their units are read); Yes/No parameters (`Appears In Sheet List` and project/shared parameters of Yes/No kind, named in `SheetRecord.YesNoParameters`) read as `Yes`/`No`. `rvtio sheets --where NAME=VALUE` (also `!=` and `~` for contains, `*`/`?` wildcards, repeatable, case-insensitive) keeps only matching sheets; on a Yes/No parameter `true/false/1/0` mean `Yes`/`No`, every other field compares literally. A misspelt name or an empty match exits with code 1. `--params` lists each kept sheet's parameters on standard error, `--csv` writes them as CSV, `--json` keeps the default JSON. New API: `SheetFilter.TryParse/Matches`, `SheetCatalog.FromFiltered`, `SheetFilter.AvailableNames`. New tests: `SheetFilterTests`.
 
@@ -272,7 +525,27 @@ The text of a sheet prints too: a text note's RTF string (class 0x0F83 block) is
 
 - Windows and doors ink through their host wall: a window sits inside its wall, whose face decodes with no opening, so the wall face up to half a metre in front of a window or door edge no longer hides it — before, the whole window vanished behind its own wall (the West elevation drew no windows at all in the sampled bay). A genuinely separate mass further in front still hides them. The sampled bay now draws the four window frames with their sashes where the reference draws them (its dashed diagonals are family symbolism with no decoded source — the types carry only degenerate points). Measured: raster line score recall 34.6% -> 35.7% (A104), 42.5% -> 42.8% (A103), 36.3% -> 36.8% (A105) with precision 56.3% -> 56.5%, 73.3% -> 73.0%, 73.5% -> 73.1%; `rvt_prt compare` recall up on A103-A105 (92.0%, 78.5%, 88.4%) with lower vector-only precision on the raster-backed pages. New test: `OccludeEdges_KeepsWindowsSetIntoTheirWall`. Full print suites 138/138 green on net8.0+net10.0.
 
-  Documented dead end: filling each subdivided layer span with its decoded cut pattern (Sand, Diagonal up 1.5 mm and the like resolve for the thin skins, while the structural core has none) added ~190 in of vector ink with zero recall gain on A104 (measured `rvt_prt` 79.1% / 64.1% -> 79.1% / 60.2% with the hatch, raster flat at 35.7% / 56.5%). The decoded patterns do not match what the reference draws inside these strips, so only the layer boundaries ink. No code ships for this; the ground hatch has no source either (the file holds no terrain mesh, the pad type has no material, no pattern is referenced by any ground element).
+- Plan fittings keep their inner loop: the bathtub's basin is an inner loop of its top face, and the face-union silhouette inks only the outer rim. The plan now draws each top face's inner loops after the silhouette (the reference shows the basin rim and the drain). Measured: raster line score A102 recall 93.86% -> 94.00%, precision unchanged 96.91%; other sheets unchanged. Test updated: `SampleFile_Level1FurnitureIsASilhouette` (over 90% of the lines are 5 mm grid edges, the rest are inner loops). Print test classes 593/593 green on net8.0+net10.0.
+
+  Documented dead end: filling each subdivided layer span with its decoded cut pattern (Sand, Diagonal up 1.5 mm and the like resolve for the thin skins, while the structural core has none) added ~190 in of vector ink with zero recall gain on A104 (measured `rvt_prt` 79.1% / 64.1% -> 79.1% / 60.2% with the hatch, raster flat at 35.7% / 56.5%). The decoded patterns do not match what the reference draws inside these strips, so only the layer boundaries ink.
+
+- Occlusion on elevations and sections uses the stored host wall ID for windows and doors. A deeply inset window or door stays visible through its own wall. A skylight can show through the decoded opening of its host roof face, while other faces of the roof can still hide it. Separate foreground elements use the standard depth tolerance, and faces within the insert keep their existing clearance for inset frame detail.
+
+- Coarse elevations and sections at 1:100 or smaller keep the shared jamb of adjacent windows on the same host. Faces that project across the jamb retain the usual occlusion rule.
+
+- Overview sections at 1:100 and coarser print the grade from the intersection with the decoded topography. Projected building faces and solid building-pad footprints clip out concealed spans before PDF export.
+
+- Overview elevations print the decoded grade at the stored view plane where it crosses a solid building pad. The pad footprint and model faces in front of the plane clip the grade line.
+
+- Overview elevations hatch the ground below the visible grade and building pad from the project's site cut material and poche base. Drafting grids use the view origin and the hatch is clipped to the viewport.
+
+- Overview sections use the same site cut material below the cut terrain and pads. Projected model faces clip the hatch strokes before PDF export.
+
+- Ground hatch rows join overlapping and touching terrain spans before placing the drafting dashes.
+
+- Elevations and sections print supported round datum heads at their saved positions. Levels use the view's stored endpoints and leaders. Grid heads use their family dimensions and authored vertical extents.
+
+- The model crop clips terrain and planting fills before the datum annotation strip.
 
 ## [0.4.0] - 2026-11-13
 

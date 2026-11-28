@@ -1,5 +1,7 @@
+using System.Globalization;
 using RvtIO.BuiltIns;
 using RvtIO.Model;
+using RvtIO.Parsing;
 using RvtIO.Pdf;
 
 namespace RvtIO.Print;
@@ -25,7 +27,18 @@ public sealed class SheetComposeOptions
     /// <summary>True (the default) draws the page border and, at its lower-right corner, the sheet number and name.
     /// This stands in for the title block while the linework of its family is not decoded.</summary>
     public bool DrawPageFrame { get; set; } = true;
+
+    /// <summary>Rendered graphics by viewport element id. Bounds are in millimetres from the sheet's lower left.</summary>
+    public IReadOnlyDictionary<int, SheetViewportImage>? ViewportImages { get; set; }
 }
+
+/// <summary>A rendered viewport and its bounds on a sheet, in millimetres.</summary>
+/// <param name="Image">The rendered graphics, drawn in place of the viewport's own content.</param>
+/// <param name="X">The left edge, from the lower left corner of the sheet.</param>
+/// <param name="Y">The bottom edge, from the lower left corner of the sheet.</param>
+/// <param name="Width">The width; positive and finite.</param>
+/// <param name="Height">The height; positive and finite.</param>
+public sealed record SheetViewportImage(IPdfImage Image, double X, double Y, double Width, double Height);
 
 /// <summary>A sheet that can be composed: the element id, its number and name, the page its title block spans and the
 /// number of placed viewports and text notes.</summary>
@@ -44,7 +57,7 @@ public sealed record ComposedSheet(int SheetId, string? Number, string? Name, Pd
 /// labelled with its name and scale, and the sheet's own text notes are written at their positions. The linework of the
 /// title block family and the fills of rooms are not decoded yet (see docs/printing.md).
 /// </summary>
-public static class SheetComposer
+public static partial class SheetComposer
 {
     private const double FeetToMillimetres = 304.8;
 
@@ -93,6 +106,9 @@ public static class SheetComposer
     /// <param name="sheetIds">The element ids of the sheets.</param>
     /// <param name="options">The paper and labels; null uses the defaults.</param>
     /// <exception cref="InvalidOperationException">An element id is not a sheet with a number.</exception>
+    /// <exception cref="ArgumentException"><see cref="SheetComposeOptions.ViewportImages"/> holds an entry that is not a
+    /// viewport of the selected sheets, has no image, or has bounds that are not finite with a positive width and
+    /// height.</exception>
     public static PdfDocument RenderSheets(RvtDocument document, IReadOnlyList<int> sheetIds,
         SheetComposeOptions? options = null)
     {
@@ -100,6 +116,8 @@ public static class SheetComposer
         ArgumentNullException.ThrowIfNull(sheetIds);
         options ??= new SheetComposeOptions();
         var pdf = new PdfDocument { Font = PdfFonts.TryFind(out _), Compress = true };
+        if (ViewportImageProblem(document, sheetIds, options.ViewportImages) is { } problem)
+            throw new ArgumentException(problem, nameof(options));
         var plans = new Dictionary<int, PlanView>();
         foreach (var view in PlanPrinter.Views(document)) plans[view.ViewId] = view;
         foreach (int sheetId in sheetIds)
@@ -112,6 +130,27 @@ public static class SheetComposer
         }
         if (pdf.Pages.Count == 0) throw new InvalidOperationException("No sheet was given to compose.");
         return pdf;
+    }
+
+    /// <summary>Names the first entry of <paramref name="images"/> that cannot be drawn on the selected sheets, or null
+    /// when every entry can: the key is a viewport of one of the sheets, the entry has an image, and its bounds are
+    /// finite with a positive width and height.</summary>
+    internal static string? ViewportImageProblem(RvtDocument document, IReadOnlyList<int> sheetIds,
+        IReadOnlyDictionary<int, SheetViewportImage>? images)
+    {
+        if (images == null) return null;
+        var selected = sheetIds.ToHashSet();
+        foreach (var (id, raster) in images)
+        {
+            var viewport = document.GetElement(id);
+            if (viewport?.OwnerViewId is not int owner || !selected.Contains(owner) || viewport.ViewportViewId == null)
+                return $"Element {id} is not a viewport on the selected sheets.";
+            if (raster?.Image == null) return $"Viewport {id} has no image.";
+            if (!double.IsFinite(raster.X) || !double.IsFinite(raster.Y) || !double.IsFinite(raster.Width)
+                || !double.IsFinite(raster.Height) || raster.Width <= 0 || raster.Height <= 0)
+                return $"Viewport {id} needs finite image bounds with a positive width and height.";
+        }
+        return null;
     }
 
     private static void AddSheetPage(PdfDocument pdf, RvtDocument document, Element sheet,
@@ -212,12 +251,19 @@ public static class SheetComposer
                 centerY = offset[1] * FeetToMillimetres - originY;
             }
             double frameX = centerX, frameY = centerY, frameWidth = 0, frameHeight = 0;
-            if (placed && view?.RootClassName == "DBView3d" && !IsAnalysisView(view))
+            var raster = options.ViewportImages?.GetValueOrDefault(element.Id);
+            bool rendered = raster != null;
+            if (raster != null)
+                page2.DrawImage(raster.Image, raster.X, raster.Y, raster.Width, raster.Height);
+            else if (placed && view?.RootClassName == "DBView3d" && IsAnalysisView(view))
             {
-                // A 3D view: an isometric projection of the model, white faces with their outlines, as the massing the
-                // view would show without its rendering. A sun or lighting analysis prints as its shaded study, not
-                // as vector massing (the reference shows no such linework, and rvt-prt draws 3D only with a camera
-                // looking off-axis): those viewports print nothing vector, like an unplaced view.
+                effectiveScale = element.ViewportScale ?? scale;
+                if (ShadedViewport.Render(page2, document, view, centerX, centerY, effectiveScale) is { } frame)
+                    (frameX, frameY, frameWidth, frameHeight) = frame;
+            }
+            else if (placed && view?.RootClassName == "DBView3d" && !IsAnalysisView(view))
+            {
+                // A 3D view without a rendered study prints as isometric massing.
                 var model = ElevationPrinter.Collect(document, "iso");
                 if (model != null)
                 {
@@ -237,18 +283,28 @@ public static class SheetComposer
             else if (placed && view?.RootClassName == "DBViewRendering")
             {
                 // A rendering: the JPEG Revit stored for the view, placed at the offset of its viewport.
-                if (RenderingImage(document, viewId) is { } jpeg)
+                if (RenderingImage(document, viewId) is { } rendering)
                 {
+                    var jpeg = rendering.Image;
                     double height = 110, width = height * jpeg.Width / jpeg.Height;
-                    if (width > 240)
+                    double x;
+                    if (rendering.Size is { } size)
                     {
-                        width = 240;
-                        height = width * jpeg.Height / jpeg.Width;
+                        width = size.Width * FeetToMillimetres;
+                        height = size.Height * FeetToMillimetres;
+                        x = centerX - width / 2;
                     }
-                    // The images keep clear of the title block strip on the right.
-                    double stripLeft = layout.WidthMillimetres - 5
-                        - Math.Min(180, layout.WidthMillimetres * 0.22) - 3;
-                    double x = Math.Min(centerX - width / 2, stripLeft - width);
+                    else
+                    {
+                        if (width > 240)
+                        {
+                            width = 240;
+                            height = width * jpeg.Height / jpeg.Width;
+                        }
+                        double stripLeft = layout.WidthMillimetres - 5
+                            - Math.Min(180, layout.WidthMillimetres * 0.22) - 3;
+                        x = Math.Min(centerX - width / 2, stripLeft - width);
+                    }
                     page2.DrawImage(jpeg, x, centerY - height / 2, width, height);
                 }
             }
@@ -284,22 +340,52 @@ public static class SheetComposer
                     {
                         ClipFrame(frameX, frameY, frameWidth, frameHeight);
                     }
+                    var planGrids = cropped && view != null && planCrop != null
+                        ? PlanPrinter.CollectPlanGrids(document, view, planCrop, drawScale) : null;
+                    var planDimensions = cropped && planCrop != null
+                        ? PlanPrinter.CollectPlanDimensions(document, viewId, planCrop) : [];
+                    var sectionMarks = ElevationPrinter.SectionMarks(document, viewId, viewScale);
                     PlanPrinter.DrawContent(page2, content, drawScale, drawOriginX, drawOriginY, 0.9,
-                        ElevationPrinter.SectionMarks(document, viewId, viewScale), document,
+                        sectionMarks.Where(mark => !mark.UsesPlanExtent).ToArray(), document,
                         (frameX, frameY, frameX + frameWidth, frameY + frameHeight),
-                        clipRect: cropped && planCrop != null ? CropContentRect(planCrop) : null);
+                        clipRect: cropped && planCrop != null ? CropContentRect(planCrop) : null,
+                        drawGrids: planGrids == null, drawFallbackDimensions: planDimensions.Count == 0, planViewId: viewId);
+                    PlanPrinter.DrawStairPaths(page2, document, viewId, plan.LevelId, content, drawScale, drawOriginX, drawOriginY);
                     page2.EndClip();
+                    PlanPrinter.DrawSectionMarks(page2, content, drawScale, drawOriginX, drawOriginY,
+                        sectionMarks.Where(mark => mark.UsesPlanExtent).ToArray(), null, document, viewId);
+                    CircularAnnotations.DrawViewport(page2, document, view, CircularAnnotations.Project(document, viewId),
+                        drawScale, drawOriginX, drawOriginY, content.MinX, content.MinY, cropped ? planCrop : null);
+                    if (planGrids != null)
+                        PlanPrinter.DrawPlanGrids(page2, document, planGrids, content, drawScale, drawOriginX, drawOriginY);
+                    PlanPrinter.DrawPlanDimensions(page2, planDimensions, content, drawScale, drawOriginX, drawOriginY);
+                    if (cropped && planCrop != null)
+                        PlanPrinter.DrawPlanNotes(page2, document, viewId, planCrop, content, drawScale, drawOriginX, drawOriginY);
+                    if (cropped && planCrop != null && view != null)
+                        PlanElevationMarks.Draw(page2, document, view, planCrop, drawScale, centerX, centerY);
                     effectiveScale = (int)Math.Round(drawScale);
                     if (options.DrawRoomLegend && pdf.Font != null && content.Rooms.Count > 0)
-                        DrawRoomLegend(page2, content.Rooms.Select(room => room.Name), Math.Max(frameX, 8),
-                            frameY - 16);
+                    {
+                        var legend = document.Elements.FirstOrDefault(e => e.OwnerViewId == viewId && e.RoomLegendOrigin.HasValue);
+                        var names = content.Rooms.Select(room => room.Name);
+                        if (legend?.RoomLegendOrigin is { } anchor)
+                        {
+                            double x = drawOriginX + (anchor.X * FeetToMillimetres - content.MinX) / drawScale;
+                            double y = drawOriginY + (anchor.Y * FeetToMillimetres - content.MinY) / drawScale;
+                            var swatch = document.GetElement(legend.TypeId)?.ColorLegendSwatch;
+                            DrawRoomLegend(page2, names, x, y, swatch, content.RoomColors);
+                        }
+                        else
+                        {
+                            DrawRoomLegend(page2, names, Math.Max(frameX, 8), frameY - 16, null, content.RoomColors);
+                        }
+                    }
                 }
             }
             else if (placed && name.Contains("site", StringComparison.OrdinalIgnoreCase))
             {
-                // A site view: the planting tags over the paper, not the plan of a level. The reference
-                // site plan draws no building, terrain or planting graphics, so no level is collected for it.
-                var site = SitePrinter.Collect(document);
+                // Site graphics and the building footprint share the site's view projection.
+                var site = SitePrinter.Collect(document, viewId);
                 if (site != null)
                 {
                     // The building stands on the site: the walls of the level with most walls go on the same plan,
@@ -319,13 +405,14 @@ public static class SheetComposer
                         if (bestLevel is int levelId)
                             sitePlan = PlanPrinter.CollectLevel(document, levelId);
                     }
-                    if (sitePlan != null)
+                    if (sitePlan != null && view?.ViewCrop is not { Active: true })
                         site = KeepSiteNearBuilding(site, sitePlan);
                     // A site view whose crop basis is turned prints its plan turned: the Site view's crop Right is
                     // (0.7986, -0.6018), a -37 degree view, and the reference site plan is drawn turned with it.
                     // Project the graphics on the view's own axes; the tags and the north arrow stay upright.
-                    if (view?.ViewCrop is { Active: true } basisCrop
-                        && Math.Abs(basisCrop.Right[1]) > 1e-6)
+                    var basisCrop = view?.ViewCrop is { Active: true } basis && Math.Abs(basis.Right[1]) > 1e-6
+                        ? basis : null;
+                    if (basisCrop != null)
                     {
                         site = SitePrinter.InViewBasis(site, basisCrop.Right, basisCrop.Up);
                         if (sitePlan != null)
@@ -362,7 +449,13 @@ public static class SheetComposer
                         siteDrawOriginX = frameX;
                         siteDrawOriginY = frameY;
                     }
-                    SitePrinter.DrawContent(page2, site, drawScale, siteDrawOriginX, siteDrawOriginY);
+                    bool opaqueSite = document.RawData.OpaquePlanViews?.Contains(viewId) == true;
+                    var graphics = opaqueSite ? SitePrinter.CollectOpaqueGraphics(document, viewId, basisCrop) : null;
+                    var plantingTags = SitePrinter.CollectTags(document, viewId, basisCrop);
+                    var outlines = document.RawData.PlanOutlineAnnotations?.GetValueOrDefault(viewId);
+                    SitePrinter.DrawContent(page2, site, drawScale, siteDrawOriginX, siteDrawOriginY, document,
+                        opaqueSite, graphics, drawFallbackTags: plantingTags.Count == 0, drawFallbackNorth: outlines == null,
+                        viewId: viewId, basis: basisCrop);
                     effectiveScale = (int)Math.Round(drawScale);
                     if (sitePlan is { } building)
                     {
@@ -394,7 +487,19 @@ public static class SheetComposer
                             wallsOriginX, wallsOriginY, 0.9, null, document);
 
                     }
+                    if (graphics != null)
+                        SitePrinter.DrawSurfaces(page2, document, graphics, site, drawScale, siteDrawOriginX, siteDrawOriginY);
                     page2.EndClip();
+                    SitePrinter.DrawTags(page2, document, plantingTags, site, drawScale, siteDrawOriginX, siteDrawOriginY);
+                    SitePrinter.DrawPropertyTags(page2, document, viewId, basisCrop,
+                        site, drawScale, siteDrawOriginX, siteDrawOriginY);
+                    if (outlines != null)
+                        SitePrinter.DrawOutlineAnnotations(page2, document, outlines, basisCrop,
+                            site, drawScale, siteDrawOriginX, siteDrawOriginY);
+                    CircularAnnotations.DrawViewport(page2, document, view,
+                        CircularAnnotations.Project(document, viewId, basisCrop?.Right, basisCrop?.Up),
+                        drawScale, siteDrawOriginX, siteDrawOriginY, site.MinX, site.MinY,
+                        siteCropped ? view?.ViewCrop : null);
                     // The planting schedule sits under the view title, clear of the site plan, unless its real
                     // instance drew at its own origin below.
                     if (pdf.Font != null && !SchedulesOnSheet(document, sheet).Any(schedule => schedule.CategoryId == PlantingCategoryId))
@@ -409,15 +514,17 @@ public static class SheetComposer
                 // An elevation or a section: the model faces projected on the view's plane when the reader decoded it
                 // (a section is then cut at its plane), otherwise on the plane of the direction taken from the name.
                 Element? viewElement = document.GetElement(viewId);
+                bool unshadedHiddenLine = document.RawData.UnshadedHiddenLineViews?.Contains(viewId) == true;
                 // A detail section (1:10 to 1:50) is drawn from its own file crop frame: the crop rectangle is
                 // the detail's true extent (a roof detail's crop sits at roof height), while the old
                 // plane-origin window showed the wrong slice (the plane origin sits floors below the crop).
                 // Without a usable crop the invented window stays as a fallback. A stair section is printed
                 // whole like a building section, not as a detail; a stair detail (1:20) shows the stair in
                 // its enclosure through the file's own crop frame, the way the reference places it next to
-                // the stair section.
+                // the stair section. With the authored crop, the surrounding cut belongs in the section.
                 bool stairSection = name.Contains("stair", StringComparison.OrdinalIgnoreCase);
-                bool stairsOnly = stairSection && scale >= 50;
+                bool stairsOnly = stairSection && scale >= 50
+                    && !(view?.ViewCrop is { Active: true } stairCrop && ViewBasisMatches(viewElement, stairCrop));
                 double stripLeftForStair = layout.WidthMillimetres - 5
                     - Math.Min(180, layout.WidthMillimetres * 0.22) - 3;
                 bool detailSection = direction == "section" && scale < 100 && !stairSection
@@ -429,10 +536,7 @@ public static class SheetComposer
                 bool detailCropUsable = detailSection && viewElement?.ViewCrop is { Active: true } detailCrop
                     && ViewBasisMatches(viewElement, detailCrop);
                 (double Width, double Height)? detailWindow = detailSection && !detailCropUsable ? (3000, 2200) : null;
-                // A fallback-windowed detail the file puts against the border or outside the page is still
-                // printed: Revit lays such callouts out in a bottom row above their own titles (A104's four
-                // details), so the frame is anchored on the decoded title label instead of the file offset.
-                // A crop-drawn detail relocates the same way in the crop branch below.
+                // Without a model crop, an off-page detail uses the decoded title as its fallback anchor.
                 bool detailRelocated = detailWindow != null
                     && !(centerX > 40 && centerX < stripLeft - 40 && centerY > 40 && centerY < layout.HeightMillimetres - 40)
                     && element.ViewportLabelOrigin is { Length: >= 2 }
@@ -441,7 +545,7 @@ public static class SheetComposer
                     ElevationPrinter.Collect(document, direction, stairsOnly, viewElement, detailWindow,
                         isDetail: detailSection,
                         cropWindow: detailSection && detailCropUsable && viewElement?.ViewCrop is { Active: true } dc
-                            ? CropContentRect(dc) : null);
+                            ? CropContentRect(dc) : null, viewportScale: scale);
                 // A viewport whose view decoded a crop frame draws the crop at the view's own scale, placed by
                 // the viewport offset (sheet = offset + view / scale): the frame is the crop rectangle and the
                 // content is clipped to it, nothing is reduced to fit. The crop applies only where the collection
@@ -456,13 +560,10 @@ public static class SheetComposer
                         out frameX, out frameY, out frameWidth, out frameHeight, out double cropOriginX, out double cropOriginY))
                 {
                     effectiveScale = scale;
-                    // A crop-drawn detail the file parked off the page is laid out in a bottom row above its own
-                    // title (A104's four details): anchor the frame on the decoded title label instead of the
-                    // file offset. The viewport center anchors the view origin (view coordinates 0, 0), not the
-                    // frame center, so back out the crop offset: the frame lands centered on the title with its
-                    // bottom clearing the title text (about 20 mm above its line on A104).
+                    // A detail's projected view origin can be far from its crop, especially at large scales.
+                    // Fall back to the title only when the mapped crop is entirely off the sheet.
                     if (detailSection
-                        && !(centerX > 40 && centerX < stripLeft - 40 && centerY > 40 && centerY < layout.HeightMillimetres - 40)
+                        && !CropOverlapsSheet(frameX, frameY, frameWidth, frameHeight, layout.WidthMillimetres, layout.HeightMillimetres)
                         && element.ViewportLabelOrigin is { Length: >= 2 } cropLabelOrigin
                         && element.ViewportLabelLength is double cropLabelLength && cropLabelLength > 0)
                     {
@@ -494,8 +595,16 @@ public static class SheetComposer
                     double clipExtra = elevation.Levels.Count > 0 ? 45 : 0;
                     page2.BeginClip(frameX, frameY, Math.Max(0, frameWidth + clipExtra), Math.Max(0, frameHeight));
                     ElevationPrinter.DrawContent(page2, elevation, scale, cropOriginX, cropOriginY,
-                        direction == "section" ? 0.82 : 1, document, (cropX0, cropY0, cropX1, cropY1));
+                        direction == "section" ? 0.82 : 1, document, (cropX0, cropY0, cropX1, cropY1),
+                        drawNativeDatums: false, unshadedHiddenLine: unshadedHiddenLine);
                     page2.EndClip();
+                    ElevationPrinter.DrawNativeDatums(page2, elevation, scale, cropOriginX, cropOriginY, document,
+                        (cropX0, cropY0, cropX1, cropY1));
+                    CircularAnnotations.DrawViewport(page2, document, viewElement, elevation.AnnotationSymbols ?? [],
+                        scale, cropOriginX, cropOriginY, elevation.MinX, elevation.MinY, crop);
+                    if (direction == "section" && viewElement != null)
+                        DetailAnnotations.DrawCallouts(page2, document, sheet, viewElement, crop, scale,
+                            cropOriginX - elevation.MinX / scale, cropOriginY - elevation.MinY / scale);
                     placedRects.Add((frameX, frameY, frameWidth, frameHeight));
                 }
                 else if (elevation != null)
@@ -520,7 +629,8 @@ public static class SheetComposer
                         effectiveScale = scale;
                         page2.BeginClip(frameX, frameY, Math.Max(0, frameWidth), Math.Max(0, frameHeight));
                         ElevationPrinter.DrawContent(page2, elevation, drawScale, frameX, frameY,
-                            direction == "section" ? 0.82 : 1, document);
+                            direction == "section" ? 0.82 : 1, document,
+                            unshadedHiddenLine: unshadedHiddenLine);
                         page2.EndClip();
                         placedRects.Add((frameX, frameY, frameWidth, frameHeight));
                     }
@@ -596,13 +706,15 @@ public static class SheetComposer
                     }
                     ClipFrame(frameX, frameY, frameWidth, frameHeight);
                     ElevationPrinter.DrawContent(page2, elevation, drawScale, frameX, frameY,
-                        direction == "section" ? 0.82 : 1, document);
+                        direction == "section" ? 0.82 : 1, document,
+                        unshadedHiddenLine: unshadedHiddenLine);
                     page2.EndClip();
                     placedRects.Add((frameX, frameY, frameWidth, frameHeight));
                     }
                 }
             }
-            if (placed && frameWidth > 0)
+            // The analysis viewport has its own scale label and does not determine the sheet scale.
+            if (placed && frameWidth > 0 && !(view?.RootClassName == "DBView3d" && IsAnalysisView(view)))
             {
                 effectiveScales[effectiveScale] = effectiveScales.TryGetValue(effectiveScale, out int counted)
                     ? counted + 1 : 1;
@@ -611,7 +723,8 @@ public static class SheetComposer
             // study is a raster) is not titled either — except the analysis views: their title line and label are
             // sheet annotation the reference prints, even though the study itself is an image.
             if (options.DrawViewLabels && pdf.Font != null
-                && (!placed || frameHeight > 0 || IsAnalysisView(view)))
+                && (!placed || frameHeight > 0 || rendered || IsAnalysisView(view))
+                && !DrawViewportTitle(page2, document, element, view, name, effectiveScale, originX, originY))
             {
                 // The view title as Revit draws it: a circled detail number, the view name beside it, the scale below
                 // and the extension line under the title. The file stores the line's origin on the sheet and its
@@ -662,24 +775,14 @@ public static class SheetComposer
                     page2.DrawText(detail, frameX + 3, labelY + 0.2, 2.4, PdfTextAlignment.Center);
                     textX = frameX + 8;
                 }
-                page2.DrawLine(ruleX0, ruleY, ruleX1, ruleY, gridPen);
+                if (document.RawData.ViewportTitles?.GetValueOrDefault(element.Id)?.ShowExtensionLine != false)
+                    page2.DrawLine(ruleX0, ruleY, ruleX1, ruleY, gridPen);
                 page2.DrawText(name, textX, labelY, 3.5);
                 page2.DrawText($"1:{effectiveScale}", textX, labelY - 3.5, 2.5, PdfTextAlignment.Left, 0.45);
             }
         }
 
-        foreach (var element in document.Elements)
-        {
-            if (element.OwnerViewId != sheet.Id) continue;
-            if (element.Text is not { Length: > 0 } text || element.TextPosition is not { Length: >= 2 } position)
-                continue;
-            double x = position[0] * FeetToMillimetres - originX;
-            double y = position[1] * FeetToMillimetres - originY;
-            double height = element.TextFontSizePoints is double points && points > 0 ? points * 25.4 / 72 : 2.5;
-            string[] lines = text.Split('\n');
-            for (int line = 0; line < lines.Length; line++)
-                page2.DrawText(lines[line], x, y - line * height * 1.25, height);
-        }
+        SheetPrinter.DrawSheetNotes(page2, document, sheet.Id, -originX, -originY);
 
         // The title block goes last, over the drawings. Decoded linework draws at its sheet position with its
         // annotation pens (0.7 pt where the style has no pen, as rvt-prt draws it), with its fixed texts and
@@ -688,6 +791,7 @@ public static class SheetComposer
         // and no drawing line runs under the strip.
         if (options.DrawPageFrame && pdf.Font != null)
         {
+            var titleScales = effectiveScales.Keys;
             string scaleText = effectiveScales.Count > 0
                 ? "1:" + effectiveScales.OrderByDescending(pair => pair.Value).First().Key
                 : "";
@@ -704,16 +808,24 @@ public static class SheetComposer
                     if (scale == 0) continue;
                     nominal[scale] = nominal.TryGetValue(scale, out int count) ? count + 1 : 1;
                 }
-                if (nominal.Count > 0) scaleText = "1:" + nominal.OrderByDescending(pair => pair.Value).First().Key;
+                if (nominal.Count > 0)
+                {
+                    titleScales = nominal.Keys;
+                    scaleText = "1:" + nominal.OrderByDescending(pair => pair.Value).First().Key;
+                }
             }
             if (titleLines != null)
             {
-                IReadOnlyList<(double Ox, double Oy, double Height, double Width, int Flags, double Bx, double By, byte[] Rtf)>? titleTexts = null;
-                IReadOnlyList<(double Ox, double Oy, double Height, double Width, int Flags, double Bx, double By, int ParamId, string Prefix, string Suffix)>? titleLabels = null;
-                document.RawData.TitleBlockTexts?.TryGetValue(titleSymbolId, out titleTexts);
-                document.RawData.TitleBlockLabels?.TryGetValue(titleSymbolId, out titleLabels);
-                DrawTitleBlockSymbol(page2, document, sheet, scaleText, titleLines,
+                var titleTexts = document.RawData.TitleBlockTexts?.GetValueOrDefault(titleSymbolId);
+                var titleLabels = document.RawData.TitleBlockLabels?.GetValueOrDefault(titleSymbolId);
+                var scaleOverride = sheet.LookupParameter(BuiltInParameter.SHEET_SCALE_OVERRIDE)?.Value as string;
+                string titleScale = !string.IsNullOrWhiteSpace(scaleOverride) ? scaleOverride
+                    : TitleBlockScale(titleScales, CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "ru");
+                DrawTitleBlockSymbol(page2, document, sheet, titleScale, titleLines,
                     titleTexts, titleLabels, originX, originY);
+                foreach (var (image, x, y, width, height) in TitleBlockImages(document, titleSymbolId))
+                    page2.DrawImage(image, x * FeetToMillimetres - originX, y * FeetToMillimetres - originY,
+                        width * FeetToMillimetres, height * FeetToMillimetres);
             }
             else
             {
@@ -726,6 +838,8 @@ public static class SheetComposer
             // their stored rows, the header and grid always drawn (rvt-prt tables.py).
             DrawSchedules(page2, document, sheet, originX, originY);
         }
+        CircularAnnotations.Draw(page2, document, CircularAnnotations.Project(document, sheet.Id), 1,
+            x => x - originX, y => y - originY);
     }
 
     private const int RevisionsCategoryId = -2006070;
@@ -737,8 +851,13 @@ public static class SheetComposer
     internal sealed record ScheduleOnSheet(int InstanceId, int ScheduleId, double Ox, double Oy,
         List<(string Heading, double WidthFt)> Columns, int CategoryId,
         bool ShowTitle, bool ShowHeaders, bool ShowGridLines, bool ShowOutline, string Title,
-        double TitleHeightFt, List<(double HeightFt, string Text)> TitleBands, List<Parsing.TfBlockDeserializer.ScheduleBodySection> BodySections,
-        int GridStyleId, int OutlineStyleId, double FixedHeightFt);
+        double TitleHeightFt, TfBlockDeserializer.ScheduleTextStyle TitleStyle,
+        List<(double HeightFt, string Text, TfBlockDeserializer.ScheduleTextStyle Style)> TitleBands,
+        List<TfBlockDeserializer.ScheduleBodySection> BodySections,
+        int GridStyleId, int OutlineStyleId, double FixedHeightFt)
+    {
+        internal (double Header, double Body)? RevisionCapHeightsFt { get; init; }
+    }
 
     /// <summary>The schedule instances placed on the sheet whose placement and table both decoded: the revision
     /// schedules of the title block, the planting schedule and the How-do-I table.</summary>
@@ -757,8 +876,9 @@ public static class SheetComposer
             result.Add(new(element.Id, placement.ScheduleId, placement.Ox, placement.Oy,
                 table.Columns, table.CategoryId, table.ShowTitle, table.ShowHeaders,
                 table.ShowGridLines, table.ShowOutline, title,
-                table.TitleHeightFt, table.TitleBands, table.BodySections,
-                table.GridStyleId, table.OutlineStyleId, table.FixedHeightFt));
+                table.TitleHeightFt, table.TitleStyle, table.TitleBands, table.BodySections,
+                table.GridStyleId, table.OutlineStyleId, table.FixedHeightFt)
+                { RevisionCapHeightsFt = table.RevisionCapHeightsFt });
         }
         return result;
     }
@@ -772,6 +892,16 @@ public static class SheetComposer
             DrawSchedule(page, document, sheet, schedule, originX, originY);
     }
 
+    internal static double? ScheduleTextSize(PdfTrueTypeFont? font, TfBlockDeserializer.ScheduleTextStyle style)
+    {
+        if (font is not { CapHeight: > 0 } || style is not
+            { CapHeightPixels: > 0 and <= 256, HorizontalAlignment: 0 or 1, VerticalAlignment: 4 or 8 }) return null;
+        // The schedule style stores cap height in 96-dpi pixels; PDF places an em at the corresponding half-point size.
+        double emPoints = style.CapHeightPixels * 72 / 96 * font.UnitsPerEm / font.CapHeight;
+        double points = Math.Round(emPoints * 2, MidpointRounding.AwayFromZero) / 2;
+        return points > 0 ? points * 25.4 / 72 : null;
+    }
+
     private static void DrawSchedule(PdfPage page, RvtDocument document, Element sheet, ScheduleOnSheet schedule,
         double originX, double originY)
     {
@@ -779,7 +909,7 @@ public static class SheetComposer
         const double PtToMm = 25.4 / 72.0;
         const double InchToMm = 25.4;
         bool revision = schedule.CategoryId == RevisionsCategoryId;
-        // Measured styles (rvt-prt tables.py SCHEDULE_STYLES): the file decodes no text sizes.
+        // Defaults for table areas whose text style has not been decoded.
         // The revision body pitch is measured on the sample's reference (16.30 pt rows of 12 pt Arial);
         // rvt-prt's 0.2559 in overshoots here and would drift the grid out of tolerance within a few rows.
         double titleH = revision ? 0 : 0.37 * InchToMm;
@@ -787,6 +917,28 @@ public static class SheetComposer
         double bodyH = revision ? 16.30 * PtToMm : 0.2395 * InchToMm;
         double titlePt = 19, headPt = revision ? 19 : 12.5, bodyPt = 12.5;
         double insetMm = 0.037 * InchToMm;
+        const double pixelMm = InchToMm / 96;
+        IReadOnlyList<TfBlockDeserializer.ScheduleTextStyle>? revisionHeaderStyles = null;
+        double revisionHeaderCapMm = 0;
+        if (revision && schedule.RevisionCapHeightsFt is { } cap
+            && page.Owner.Font is { CapHeight: > 0 } revisionFont
+            && string.Equals(revisionFont.Name, "Arial", StringComparison.OrdinalIgnoreCase)
+            && schedule.BodySections is [{ HeaderStyles: { } savedRevisionStyles }]
+            && savedRevisionStyles.Count == schedule.Columns.Count
+            && savedRevisionStyles.All(style => style is { HorizontalAlignment: 1, VerticalAlignment: 8, Flags: 1 }
+                && string.Equals(style.FontName, "Arial", StringComparison.OrdinalIgnoreCase)
+                && Math.Abs(style.CapHeightPixels * pixelMm - cap.Header * FeetToMillimetres) < 1e-6))
+        {
+            // shortcut: the measured Arial revision-cell metrics, until other fonts and styles are verified.
+            const double revisionRowPerCapHeight = 23d / 12;
+            revisionHeaderStyles = savedRevisionStyles;
+            revisionHeaderCapMm = cap.Header * FeetToMillimetres;
+            double bodyCapMm = cap.Body * FeetToMillimetres;
+            headH = revisionHeaderCapMm * revisionRowPerCapHeight;
+            bodyH = bodyCapMm * revisionRowPerCapHeight;
+            bodyPt = Math.Round(bodyCapMm * revisionFont.UnitsPerEm / revisionFont.CapHeight / PtToMm * 2,
+                MidpointRounding.AwayFromZero) / 2;
+        }
         // The stored title height wins where the file decodes it (the How-do-I title area: stored 20.2 pt
         // against measured 26.6; the planting title: stored 30 pt against measured 26.6).
         if (!revision && schedule.TitleHeightFt > 0)
@@ -801,6 +953,15 @@ public static class SheetComposer
         for (int i = 0; i < widths.Length; i++) edges[i + 1] = edges[i] + widths[i];
 
         List<List<string>> rows = new();
+        bool russian = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "ru";
+        string yes = russian ? "Да" : "Yes", no = russian ? "Нет" : "No";
+        var authoredRows = document.RawData.EvaluatedScheduleRows?.GetValueOrDefault(schedule.ScheduleId)
+            ?.Select(row => row.Select(cell => cell.Boolean switch
+            {
+                true => yes,
+                false => no,
+                _ => cell.Text,
+            }).ToList()).ToList();
         if (revision)
         {
             // The revisions explicitly present on this sheet (rvt-prt sheet_revs): the reference lists none,
@@ -824,11 +985,6 @@ public static class SheetComposer
             foreach (var (mark, name, count) in PlantingRows(document))
                 rows.Add([mark, name, count]);
         }
-        else
-        {
-            // Other schedules draw their stored body sections below (one header per section, then the
-            // stored body row count as an empty grid: the body cells carry no evaluated text).
-        }
         foreach (var row in rows)
             while (row.Count < widths.Length) row.Add("");
 
@@ -850,63 +1006,86 @@ public static class SheetComposer
 
         double y = yTop;
         double tableTop = yTop;
-        // Schedule titles print one ascent below the row top (measured 18.4 pt below at 19 pt on both
-        // the How-do-I and planting titles), not centred in the row.
         bool drewTitleArea = false;
         if (schedule.ShowTitle && titlePt > 0 && schedule.Title.Length > 0 && !schedule.Title.StartsWith("<", StringComparison.Ordinal))
         {
-            page.DrawText(schedule.Title, (edges[0] + edges[^1]) / 2, y - 0.97 * titlePt * PtToMm,
-                titlePt * PtToMm, PdfTextAlignment.Center);
+            if (ScheduleTextSize(page.Owner.Font, schedule.TitleStyle) is double size)
+                DrawCellText([schedule.Title], titleH, size, schedule.TitleStyle, edges[0], edges[^1]);
+            else
+                page.DrawText(schedule.Title, (edges[0] + edges[^1]) / 2, y - 0.97 * titlePt * PtToMm,
+                    titlePt * PtToMm, PdfTextAlignment.Center);
             y -= titleH;
             drewTitleArea = true;
             if (schedule.ShowGridLines)
                 page.DrawLine(edges[0], y, edges[^1], y, gridMm);
         }
-        // Stored title bands (the How-do-I long-text band): merged rows with no internal grid, the text
-        // top-aligned (measured 5.5 pt below the band top at 12.5 pt).
+        // Stored title bands are merged rows with no internal grid.
         foreach (var band in schedule.TitleBands)
         {
             double bandH = band.HeightFt * FeetToMillimetres;
             if (!(bandH > 0) || bandH > 1000) continue;
             if (band.Text.Length > 0)
-                page.DrawText(band.Text, edges[0] + insetMm, y - 5.5 * PtToMm, bodyPt * PtToMm);
+            {
+                page.BeginClip(edges[0], y - bandH, edges[^1] - edges[0], bandH);
+                if (ScheduleTextSize(page.Owner.Font, band.Style) is double size)
+                {
+                    var lines = Wrap(band.Text, edges[^1] - edges[0] - 6 * pixelMm, size);
+                    DrawCellText(lines, bandH, size, band.Style, edges[0], edges[^1]);
+                }
+                else
+                {
+                    double fallbackSize = bodyPt * PtToMm;
+                    double baseline = y - insetMm - fallbackSize * 0.85;
+                    foreach (string line in Wrap(band.Text, edges[^1] - edges[0] - 2 * insetMm, fallbackSize))
+                    {
+                        page.DrawText(line, edges[0] + insetMm, baseline, fallbackSize);
+                        baseline -= fallbackSize * 1.125;
+                    }
+                }
+                page.EndClip();
+            }
             y -= bandH;
             drewTitleArea = true;
             if (schedule.ShowGridLines)
                 page.DrawLine(edges[0], y, edges[^1], y, gridMm);
         }
-        // Header texts wrap into their columns ("Type Mark" wraps to two lines in its narrow column):
-        // the header grows one body row per wrapped line after the first (measured 31.8 pt for two lines
-        // against 17.3 for one), each column's lines centred as a block.
-        List<List<string>> WrapHeaders(List<string> header, double sizeMm)
+        void DrawCellText(IReadOnlyList<string> lines, double height, double size,
+            TfBlockDeserializer.ScheduleTextStyle style, double left, double right)
         {
-            var wrapped = new List<List<string>>(widths.Length);
-            for (int i = 0; i < widths.Length; i++)
-            {
-                string text = i < header.Count ? header[i] : "";
-                var lines = new List<string>();
-                if (text.Length > 0)
-                {
-                    foreach (string word in text.Split(' '))
-                    {
-                        string candidate = lines.Count == 0 ? word : lines[^1] + " " + word;
-                        if (lines.Count > 0 && page.MeasureText(candidate, sizeMm) <= widths[i])
-                            lines[^1] = candidate;
-                        else
-                            lines.Add(word);
-                    }
-                }
-                if (lines.Count == 0) lines.Add("");
-                wrapped.Add(lines);
-            }
-            return wrapped;
+            var font = page.Owner.Font!;
+            double linePitch = Math.Round(size * (font.Ascent - font.Descent) / font.UnitsPerEm / pixelMm) * pixelMm;
+            double baseline = style.VerticalAlignment == 8
+                ? y - height + 3 * pixelMm - size * font.Descent / font.UnitsPerEm + (lines.Count - 1) * linePitch
+                : y - height / 2 - size * (font.Ascent + font.Descent) / (2 * font.UnitsPerEm)
+                    + (lines.Count - 1) * linePitch / 2;
+            var alignment = style.HorizontalAlignment == 1 ? PdfTextAlignment.Center : PdfTextAlignment.Left;
+            double x = alignment == PdfTextAlignment.Center ? (left + right) / 2 : left + 3 * pixelMm;
+            for (int i = 0; i < lines.Count; i++)
+                page.DrawText(lines[i], x, baseline - i * linePitch, size, alignment);
         }
+        // Header texts wrap into their columns ("Type Mark" wraps to two lines in its narrow column):
+        // The header expands for the tallest wrapped column before each cell applies its alignment.
+        List<string> Wrap(string text, double width, double size)
+        {
+            var lines = new List<string>();
+            foreach (string word in text.Split(' '))
+            {
+                string candidate = lines.Count == 0 ? word : lines[^1] + " " + word;
+                if (lines.Count > 0 && page.MeasureText(candidate, size) <= width)
+                    lines[^1] = candidate;
+                else
+                    lines.Add(word);
+            }
+            return lines;
+        }
+
         // Header texts come from the stored section header where the file decodes one, else from the
         // schedule fields; other schedules draw one header per stored body section.
-        List<(List<string> Header, List<List<string>> Rows)> sections = new();
+        List<(List<string> Header, List<List<string>> Rows, TfBlockDeserializer.ScheduleBodySection? Layout)> sections = new();
         if (revision || schedule.CategoryId == PlantingCategoryId)
         {
-            sections.Add((schedule.Columns.Select(column => column.Heading).ToList(), rows));
+            sections.Add((schedule.Columns.Select(column => column.Heading).ToList(), rows,
+                revision ? null : schedule.BodySections.FirstOrDefault()));
         }
         else
         {
@@ -915,13 +1094,14 @@ public static class SheetComposer
                 var header = bodySection.Header.Count == widths.Length
                     ? bodySection.Header.ToList()
                     : schedule.Columns.Select(column => column.Heading).ToList();
-                var body = new List<List<string>>();
-                for (int i = 0; i < bodySection.BodyRows && body.Count < 10000; i++)
-                    body.Add(Enumerable.Repeat("", widths.Length).ToList());
-                sections.Add((header, body));
+                var body = authoredRows ?? new List<List<string>>();
+                if (authoredRows == null)
+                    for (int i = 0; i < bodySection.BodyRows && body.Count < 10000; i++)
+                        body.Add(Enumerable.Repeat("", widths.Length).ToList());
+                sections.Add((header, body, bodySection));
             }
             if (sections.Count == 0)
-                sections.Add((schedule.Columns.Select(column => column.Heading).ToList(), new()));
+                sections.Add((schedule.Columns.Select(column => column.Heading).ToList(), new(), null));
         }
         // The grid starts below the title area. Outer verticals run header-top to table bottom at the
         // outline weight when the schedule shows its outline (else the header box stands alone at the grid
@@ -931,21 +1111,53 @@ public static class SheetComposer
         // A wrapped header line after the first adds the measured extra line pitch (the planting header:
         // 31.8 pt for two lines against 17.3 for one).
         double extraHeaderLineMm = 14.55 * PtToMm;
-        foreach (var (header, body) in sections)
+        foreach (var (header, body, layout) in sections)
         {
+            bool styledBody = authoredRows != null && layout?.UniformBodyStyle is
+                { CapHeightPixels: 12, HorizontalAlignment: 0, VerticalAlignment: 0, Flags: 1 } bodyStyle
+                && string.Equals(bodyStyle.FontName, "Arial", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(page.Owner.Font?.Name, bodyStyle.FontName, StringComparison.OrdinalIgnoreCase);
+            // Plain Arial at 12 cap-height pixels uses the print layout's 23-pixel row and 16.8-pixel baseline.
+            double rowHeight = styledBody ? 23 * pixelMm : bodyH;
+            double styledBaseline = 16.8 * pixelMm;
+            double styledInset = 3.6 * pixelMm;
             if (schedule.ShowHeaders)
             {
                 // The header top rule is the title-area rule above, drawn where nothing stands over it.
                 if (firstHeader && !drewTitleArea && schedule.ShowGridLines)
                     page.DrawLine(edges[0], y, edges[^1], y, gridMm);
-                var wrapped = revision
-                    ? header.Select(text => new List<string> { text }).ToList()
-                    : WrapHeaders(header, headPt * PtToMm);
-                int headerLines = Math.Max(1, wrapped.Max(lines => lines.Count));
-                double headerH = revision ? headH : bodyH + (headerLines - 1) * extraHeaderLineMm;
+                var headers = new (IReadOnlyList<string> Lines, double? Size, TfBlockDeserializer.ScheduleTextStyle Style)[widths.Length];
+                var styles = revisionHeaderStyles ?? layout?.HeaderStyles;
                 for (int i = 0; i < widths.Length; i++)
                 {
-                    var lines = i < wrapped.Count ? wrapped[i] : new List<string> { "" };
+                    string text = i < header.Count ? header[i] : "";
+                    var style = styles?.Count == widths.Length ? styles[i] : default;
+                    double? size = ScheduleTextSize(page.Owner.Font, style);
+                    headers[i] = (revision ? [text] : Wrap(text, widths[i], size ?? headPt * PtToMm), size, style);
+                }
+                int headerLines = Math.Max(1, headers.Max(cell => cell.Lines.Count));
+                double headerH = revision ? headH : rowHeight + (headerLines - 1) * extraHeaderLineMm;
+                for (int i = 0; i < widths.Length; i++)
+                {
+                    var (lines, size, style) = headers[i];
+                    if (size is double nativeSize)
+                    {
+                        if (revisionHeaderStyles != null)
+                        {
+                            // The supported Arial revision heading baseline sits 1.42 caps below the top rule.
+                            page.DrawText(lines[0], (edges[i] + edges[i + 1]) / 2,
+                                y - revisionHeaderCapMm * 1.42, nativeSize, PdfTextAlignment.Center);
+                        }
+                        else if (styledBody && headerLines == 1 && style is
+                            { CapHeightPixels: 12, HorizontalAlignment: 1, VerticalAlignment: 8, Flags: 1 }
+                            && string.Equals(style.FontName, "Arial", StringComparison.OrdinalIgnoreCase))
+                        {
+                            page.DrawText(lines[0], (edges[i] + edges[i + 1]) / 2,
+                                y - styledBaseline, nativeSize, PdfTextAlignment.Center);
+                        }
+                        else DrawCellText(lines, headerH, nativeSize, style, edges[i], edges[i + 1]);
+                        continue;
+                    }
                     for (int j = 0; j < lines.Count; j++)
                     {
                         if (lines[j].Length == 0) continue;
@@ -975,13 +1187,16 @@ public static class SheetComposer
                     string cell = i < row.Count ? row[i] : "";
                     if (cell.Length == 0) continue;
                     double sizeMm = bodyPt * PtToMm;
-                    if (revision || i == 0)
-                        page.DrawText(cell, edges[i] + insetMm, y - bodyH / 2 - 0.35 * sizeMm, sizeMm);
+                    int alignment = layout?.BodyAlignment is { } saved && saved.Count == widths.Length ? saved[i] : -1;
+                    if (styledBody)
+                        page.DrawText(cell, edges[i] + styledInset, y - styledBaseline, sizeMm);
+                    else if (alignment == 0 || alignment != 1 && (revision || authoredRows != null || i == 0))
+                        page.DrawText(cell, edges[i] + insetMm, y - rowHeight / 2 - 0.35 * sizeMm, sizeMm);
                     else
-                        page.DrawText(cell, (edges[i] + edges[i + 1]) / 2, y - bodyH / 2 - 0.35 * sizeMm, sizeMm,
+                        page.DrawText(cell, (edges[i] + edges[i + 1]) / 2, y - rowHeight / 2 - 0.35 * sizeMm, sizeMm,
                             PdfTextAlignment.Center);
                 }
-                y -= bodyH;
+                y -= rowHeight;
                 if (schedule.ShowGridLines)
                     page.DrawLine(edges[0], y, edges[^1], y, gridMm);
             }
@@ -1037,8 +1252,8 @@ public static class SheetComposer
     /// style has no pen, as rvt-prt draws it), each fixed text and label at its anchor.</summary>
     private static void DrawTitleBlockSymbol(PdfPage page, RvtDocument document, Element sheet, string scaleText,
         IReadOnlyList<(double X0, double Y0, double X1, double Y1, int StyleId)> lines,
-        IReadOnlyList<(double Ox, double Oy, double Height, double Width, int Flags, double Bx, double By, byte[] Rtf)>? texts,
-        IReadOnlyList<(double Ox, double Oy, double Height, double Width, int Flags, double Bx, double By, int ParamId, string Prefix, string Suffix)>? labels,
+        IReadOnlyList<TfBlockDeserializer.TitleBlockText>? texts,
+        IReadOnlyList<TfBlockDeserializer.TitleBlockLabel>? labels,
         double originX, double originY)
     {
         const double FeetToMillimetres = 304.8;
@@ -1060,41 +1275,106 @@ public static class SheetComposer
                 if (parsed?.Text is not { Length: > 0 } plain) continue;
                 double sizeMm = parsed.Value.FontSizePoints is double points && points > 0
                     ? points * 25.4 / 72.0 : 2.5;
-                DrawTitleBlockText(page, plain, text.Ox * FeetToMillimetres - originX,
-                    text.Oy * FeetToMillimetres - originY, sizeMm, text.Flags, text.Bx, text.By);
+                DrawTitleBlockText(page, plain.Split('\n'), text.Ox * FeetToMillimetres - originX,
+                    text.Oy * FeetToMillimetres - originY, sizeMm, text.Height * FeetToMillimetres,
+                    text.Flags, text.Bx, text.By, text.Hx, text.Hy);
             }
         }
-        if (labels != null)
+        if (labels != null && page.Owner.Font is { } font)
         {
             foreach (var label in labels)
             {
                 string value = TitleBlockLabelValue(document, sheet, scaleText, label.ParamId);
                 if (value.Length == 0) continue;
                 value = label.Prefix + value + label.Suffix;
-                // A label with no decoded text type prints at its box height, as rvt-prt sizes it.
-                double sizeMm = label.Height * 304.8 / 1.257;
-                DrawTitleBlockText(page, value, label.Ox * FeetToMillimetres - originX,
-                    label.Oy * FeetToMillimetres - originY, sizeMm, label.Flags, label.Bx, label.By);
+                double height = label.Height * FeetToMillimetres;
+                double cap = document.RawData.TitleBlockCapHeightsFeet?.GetValueOrDefault(label.AttrId) ?? 0;
+                double sizeMm = SymbolLabelTextSize(font, height, cap);
+                double width = label.Width * FeetToMillimetres;
+                bool wrap = label.Wrap && width > 0 && page.MeasureText(value, sizeMm) > width;
+                var wrapped = PlanPrinter.WrapPlanNoteText(page, value, sizeMm, width, wrap);
+                DrawTitleBlockText(page, wrapped, label.Ox * FeetToMillimetres - originX,
+                    label.Oy * FeetToMillimetres - originY, sizeMm, height * wrapped.Count,
+                    label.Flags, label.Bx, label.By, label.Hx, label.Hy);
             }
         }
     }
 
-    private static void DrawTitleBlockText(PdfPage page, string text, double x, double y,
-        double sizeMm, int flags, double bx, double by)
+    internal static double SymbolLabelTextSize(PdfTrueTypeFont font, double frameHeight, double capHeightFeet)
     {
-        if (string.IsNullOrEmpty(text) || sizeMm <= 0) return;
+        // The font element stores physical cap height. Text sizes are written in half points.
+        double nominalSize = capHeightFeet > 0 && font.CapHeight > 0
+            ? capHeightFeet * FeetToMillimetres * font.UnitsPerEm / font.CapHeight
+            : frameHeight * font.UnitsPerEm / (font.Ascent - font.Descent);
+        return Math.Round(nominalSize * 144 / 25.4, MidpointRounding.AwayFromZero) * 25.4 / 144;
+    }
+
+    internal static void DrawTitleBlockText(PdfPage page, IReadOnlyList<string> parts, double x, double y,
+        double sizeMm, double height, int flags, double bx, double by, double ux, double uy, bool opaque = false,
+        bool useArialLayout = false)
+    {
+        if (parts.Count == 0 || !(sizeMm > 0 && double.IsFinite(sizeMm))
+            || !double.IsFinite(x) || !double.IsFinite(y)
+            || !double.IsFinite(bx) || !double.IsFinite(by) || !double.IsFinite(ux) || !double.IsFinite(uy)
+            || page.Owner.Font is not { } font) return;
+        if (!(height > 0 && double.IsFinite(height))) height = 0;
         var alignment = (flags & 0x80) != 0 ? PdfTextAlignment.Center
             : (flags & 0x100) != 0 ? PdfTextAlignment.Right : PdfTextAlignment.Left;
         double angle = Math.Atan2(by, bx) * 180.0 / Math.PI;
-        string[] parts = text.Split('\n');
-        for (int i = 0; i < parts.Length; i++)
+        double ascent = sizeMm * font.Ascent / font.UnitsPerEm;
+        double first = TitleBlockFirstBaseline(ascent, height, flags);
+        double spacing = height > 0 ? height / parts.Count : sizeMm * 1.25;
+        for (int i = 0; i < parts.Count; i++)
         {
             if (parts[i].Length == 0) continue;
-            double lineY = y - i * sizeMm * 1.25;
-            if (Math.Abs(angle) < 1e-6) page.DrawText(parts[i], x, lineY, sizeMm, alignment);
-            else page.DrawTextRotated(parts[i], x, lineY, sizeMm, angle, alignment);
+            double offset = first - i * spacing;
+            double lineX = x + ux * offset, lineY = y + uy * offset;
+            if (Math.Abs(angle) < 1e-6)
+            {
+                if (useArialLayout && WindowsArialLayout.TryMeasure(parts[i], sizeMm, out double layoutWidth, out double layoutAscent))
+                {
+                    double left = TextLeft(lineX, layoutWidth);
+                    lineY += ascent - layoutAscent;
+                    if (opaque) page.DrawRectangle(left, lineY + layoutAscent - spacing, layoutWidth, spacing, 0, 1);
+                    page.DrawText(parts[i], left, lineY, sizeMm);
+                }
+                else
+                {
+                    if (opaque)
+                    {
+                        double width = page.MeasureText(parts[i], sizeMm);
+                        page.DrawRectangle(TextLeft(lineX, width), lineY + ascent - spacing, width, spacing, 0, 1);
+                    }
+                    page.DrawText(parts[i], lineX, lineY, sizeMm, alignment);
+                }
+            }
+            else page.DrawTextRotated(parts[i], lineX, lineY, sizeMm, angle, alignment);
         }
+
+        double TextLeft(double anchor, double width) => alignment switch
+        {
+            PdfTextAlignment.Center => anchor - width / 2,
+            PdfTextAlignment.Right => anchor - width,
+            _ => anchor,
+        };
     }
+
+    internal static double TitleBlockFirstBaseline(double ascent, double height, int flags)
+        => (flags & 0xe00) switch
+        {
+            0x200 => -ascent,
+            0x400 => height / 2 - ascent,
+            0x800 => height - ascent,
+            _ => 0,
+        };
+
+    internal static string TitleBlockScale(IReadOnlyCollection<int> scales, bool russian)
+        => scales.Count switch
+        {
+            0 => "",
+            1 => FormattableString.Invariant($" 1 : {scales.Single()}"),
+            _ => russian ? "Как указано" : "As indicated",
+        };
 
     /// <summary>The printed value of a title block label: the sheet number and name, the drawn/checked by, the
     /// print time, the view scale, or a project information field, as rvt-prt resolves them.</summary>
@@ -1121,12 +1401,35 @@ public static class SheetComposer
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, PdfRasterImage?> Logos = new();
 
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string Path, int ViewId), PdfJpegImage?>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string Path, int SymbolId),
+        IReadOnlyList<(PdfRasterImage Image, double X, double Y, double Width, double Height)>> TitleImages = new();
+
+    private static IReadOnlyList<(PdfRasterImage Image, double X, double Y, double Width, double Height)>
+        TitleBlockImages(RvtDocument document, int symbolId)
+    {
+        if (document.SourcePath is not { Length: > 0 } path) return [];
+        return TitleImages.GetOrAdd((path, symbolId), key =>
+        {
+            var images = new List<(PdfRasterImage, double, double, double, double)>();
+            foreach (var placement in RvtRaster.FindSheetImagePlacements(key.Path, key.SymbolId))
+            {
+                var symbol = document.GetElement(placement.SymbolId);
+                if (symbol?.ImagePaperSize is not { } size || symbol.ImageHolderId is not int holder
+                    || RvtRaster.FindImagePng(key.Path, holder) is not { } image) continue;
+                double width = size.Width * placement.ScaleX, height = size.Height * placement.ScaleY;
+                images.Add((image, placement.X - width / 2, placement.Y - height / 2, width, height));
+            }
+            return images;
+        });
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string Path, int ViewId),
+        (PdfJpegImage Image, (double Width, double Height)? Size)?>
         Renderings = new();
 
     /// <summary>The JPEG a rendering view stores: the image symbol the view owns carries its type, and the type's block
     /// holds the image.</summary>
-    private static PdfJpegImage? RenderingImage(RvtDocument document, int viewId)
+    private static (PdfJpegImage Image, (double Width, double Height)? Size)? RenderingImage(RvtDocument document, int viewId)
     {
         if (document.SourcePath is not { Length: > 0 } path) return null;
         return Renderings.GetOrAdd((path, viewId), key =>
@@ -1136,7 +1439,16 @@ public static class SheetComposer
                 if (element.OwnerViewId != key.ViewId || element.RootClassName != "ImageSymbol") continue;
                 if (element.TypeId <= 0) continue;
                 var image = RvtRaster.FindJpeg(key.Path, element.TypeId);
-                if (image != null) return image;
+                if (image == null) continue;
+                var size = element.ImagePaperSize;
+                if (size is { } bounds)
+                {
+                    var placement = document.Elements.FirstOrDefault(e => e.OwnerViewId == key.ViewId
+                        && e.RootClassName == "ImageInstance" && e.TypeId == element.Id);
+                    if (placement?.ImageInstanceScale is { } scale)
+                        size = (bounds.Width * scale.Width, bounds.Height * scale.Height);
+                }
+                return (image, size);
             }
             return null;
         });
@@ -1191,7 +1503,8 @@ public static class SheetComposer
 
     /// <summary>Writes the room legend: a title and one row per kind of room, a colour swatch and the name. The rows
     /// start at (x, y) and go down.</summary>
-    private static void DrawRoomLegend(PdfPage page, IEnumerable<string> names, double x, double y)
+    private static void DrawRoomLegend(PdfPage page, IEnumerable<string> names, double x, double y,
+        (double Width, double Height)? swatch, IReadOnlyDictionary<string, uint>? colors)
     {
         var seen = new List<string>();
         foreach (string name in names)
@@ -1201,12 +1514,28 @@ public static class SheetComposer
                 seen.Add(name);
         }
         if (seen.Count == 0) return;
+        if (swatch is { } style)
+        {
+            double width = style.Width * FeetToMillimetres, height = style.Height * FeetToMillimetres;
+            // shortcut: scale text and spacing from the swatch until the legend's font and row styles are decoded.
+            page.DrawText("Room Legend", x, y + height * 0.92, height * 0.93);
+            double rowTop = y; // The stored origin is the top left of the first swatch.
+            foreach (string name in seen.OrderBy(name => name, StringComparer.OrdinalIgnoreCase))
+            {
+                double bottom = rowTop - height;
+                page.DrawPolyline([(x, bottom), (x + width, bottom), (x + width, rowTop), (x, rowTop)], 0.15, true,
+                    PlanPrinter.RoomFill(name, colors));
+                page.DrawText(name, x + width + height / 4, bottom + height * 0.27, height * 0.67);
+                rowTop -= height * 4 / 3;
+            }
+            return;
+        }
         page.DrawText("Room Legend", x, y, 3.5);
         double row = y - 6;
         foreach (string name in seen)
         {
             page.DrawPolyline([(x, row), (x + 4, row), (x + 4, row + 4), (x, row + 4)], 0.15, true,
-                PlanPrinter.RoomFill(name));
+                PlanPrinter.RoomFill(name, colors));
             page.DrawText(name, x + 6, row + 0.8, 2.8);
             row -= 5.5;
         }
@@ -1319,6 +1648,10 @@ public static class SheetComposer
         return true;
     }
 
+    internal static bool CropOverlapsSheet(double frameX, double frameY, double frameWidth, double frameHeight,
+        double sheetWidth, double sheetHeight) =>
+        frameX + frameWidth > 0 && frameY + frameHeight > 0 && frameX < sheetWidth && frameY < sheetHeight;
+
     /// <summary>True when the view's decoded plane matches the crop frame's basis and origin: the collection
     /// projected the model with these very axes, so the crop rectangle maps onto its content. Guards the crop
     /// path where the collection fell back to compass axes.</summary>
@@ -1334,8 +1667,7 @@ public static class SheetComposer
             && Math.Abs(origin[0] - crop.OriginX) + Math.Abs(origin[1] - crop.OriginY) + Math.Abs(origin[2] - crop.OriginZ) < 1e-3;
     }
 
-    /// <summary>True when the view is a sun, lighting or energy analysis: it prints as its shaded study,
-    /// not as vector massing, so a sheet viewport of it draws nothing (the reference shows no such linework).</summary>
+    /// <summary>True for sun, lighting and energy analysis views, whose sheets use a shaded viewport.</summary>
     internal static bool IsAnalysisView(Element? view) =>
         view?.Name is string name && (name.Contains("Solar", StringComparison.OrdinalIgnoreCase)
             || name.Contains("Lighting", StringComparison.OrdinalIgnoreCase)
@@ -1386,9 +1718,13 @@ public static class SheetComposer
         foreach (var line in contours) { Grow(line.X1, line.Y1); Grow(line.X2, line.Y2); }
         foreach (var plant in plants) { Grow(plant.X - plant.Radius, plant.Y - plant.Radius); Grow(plant.X + plant.Radius, plant.Y + plant.Radius); }
         foreach (var polygon in entourage) foreach (var point in polygon) Grow(point.X, point.Y);
+        if (site.PropertyLines != null)
+            foreach (var line in site.PropertyLines)
+                foreach (var point in line) Grow(point.X, point.Y);
         Grow(building.MinX, building.MinY);
         Grow(building.MaxX, building.MaxY);
         if (!(minX <= maxX) || !(minY <= maxY)) return site;
-        return new SitePrinter.SiteContent(topography, contours, plants, entourage, minX, minY, maxX, maxY);
+        return new SitePrinter.SiteContent(topography, contours, plants, entourage, minX, minY, maxX, maxY,
+            site.PropertyLines, site.NativePrimaryLevels);
     }
 }

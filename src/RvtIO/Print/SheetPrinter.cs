@@ -18,8 +18,7 @@ public sealed class SheetPrintOptions
     /// <summary>How far the linework extent may be from a standard paper size and still snap to it.</summary>
     public double PaperToleranceMillimetres { get; set; } = 8;
 
-    /// <summary>True writes the sheet number and name in the upper-left corner; the title block text itself is not
-    /// decoded.</summary>
+    /// <summary>True writes the sheet number and name in a corner when the sheet has no decoded text notes.</summary>
     public bool DrawSheetFields { get; set; } = true;
 }
 
@@ -30,15 +29,13 @@ public sealed class SheetPrintOptions
 /// <param name="WidthMillimetres">The width of the decoded linework in millimetres, 0 when nothing is drawn.</param>
 /// <param name="HeightMillimetres">The height of the decoded linework in millimetres.</param>
 /// <param name="CurveCount">The number of location curves of the sheet's own elements.</param>
-/// <param name="TextCount">The number of text notes of the sheet (their text is not decoded).</param>
+/// <param name="TextCount">The number of text notes belonging to the sheet.</param>
 public sealed record PrintableSheet(int SheetId, string? Number, string? Name, double WidthMillimetres,
     double HeightMillimetres, int CurveCount, int TextCount);
 
 /// <summary>
-/// Prints a sheet to a PDF page from the linework the reader decodes: the location curves of the elements the sheet
-/// owns (the border, the title block frame and its rules) at their sheet coordinates. Text notes are not decoded, so a
-/// title block is printed as its linework with the sheet number and name written in a corner; the placed views are not
-/// composed yet (see docs/printing.md).
+/// Prints a sheet's decoded linework and text notes at their sheet coordinates.
+/// Use <see cref="SheetComposer"/> to print the placed views and title block.
 /// </summary>
 public static class SheetPrinter
 {
@@ -196,24 +193,7 @@ public static class SheetPrinter
 
         // The text notes of the sheet, at the positions the file stores (sheet coordinates, feet). The text is real,
         // selectable PDF text when the document has an embedded font.
-        bool drewText = false;
-        if (pdf.Font != null)
-        {
-            foreach (var element in document.Elements)
-            {
-                if (element.OwnerViewId != sheet.Id) continue;
-                if (element.Text is not { Length: > 0 } text || element.TextPosition is not { Length: >= 2 } position)
-                    continue;
-                double x = position[0] * FeetToMillimetres + offsetX;
-                double y = position[1] * FeetToMillimetres + offsetY;
-                double height = element.TextFontSizePoints is double points && points > 0
-                    ? points * 25.4 / 72 : 2.5;
-                string[] lines = text.Split('\n');
-                for (int line = 0; line < lines.Length; line++)
-                    page.DrawText(lines[line], x, y - line * height * 1.25, height);
-                drewText = true;
-            }
-        }
+        bool drewText = pdf.Font != null && DrawSheetNotes(page, document, sheet.Id, offsetX, offsetY);
 
         // The number and name in a corner only when the sheet has no decoded text of its own (the stamp labels are
         // then missing and the corner identifies the page).
@@ -224,6 +204,33 @@ public static class SheetPrinter
             string title = (number + "  " + name).Trim();
             if (title.Length > 0) page.DrawText(title, margin + 1, paper.HeightMillimetres - 3.5, 2.8);
         }
+    }
+
+    internal static bool DrawSheetNotes(PdfPage page, RvtDocument document, int sheetId, double offsetX, double offsetY)
+    {
+        var nativeNotes = document.RawData.PlanNotes?.GetValueOrDefault(sheetId)?.ToDictionary(note => note.ElementId);
+        double X(double feet) => feet * FeetToMillimetres + offsetX;
+        double Y(double feet) => feet * FeetToMillimetres + offsetY;
+        bool drewText = false;
+        foreach (var element in document.Elements)
+        {
+            if (element.OwnerViewId != sheetId) continue;
+            if (nativeNotes?.TryGetValue(element.Id, out var note) == true
+                && PlanPrinter.DrawTextNote(page, document, note, X, Y))
+            {
+                drewText = true;
+                continue;
+            }
+            if (element.Text is not { Length: > 0 } text || element.TextPosition is not { Length: >= 2 } position)
+                continue;
+            double x = X(position[0]), y = Y(position[1]);
+            double size = element.TextFontSizePoints is double points && points > 0 ? points * 25.4 / 72 : 2.5;
+            string[] lines = text.Split('\n');
+            for (int i = 0; i < lines.Length; i++)
+                page.DrawText(lines[i], x, y - i * size * 1.25, size);
+            drewText = true;
+        }
+        return drewText;
     }
 
     /// <summary>The paper that holds the extent: the standard size it matches within the tolerance, else the extent

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using RvtIO.BuiltIns;
 using RvtIO.Internal;
 using RvtIO.Model;
 using RvtIO.Parsing;
@@ -91,6 +92,55 @@ public class OwnFamilyCutoutInputTests
         Assert.Equal(before, JsonSerializer.Serialize(elements));
         ElementBuilder.ApplyOwnFamilyCutoutInputs(elements, new ParsingState());
         Assert.Null(instance.OwnSingleFamilyCutout);
+    }
+
+    [Theory]
+    [InlineData("door", true)] [InlineData("window", false)] [InlineData("no_category", false)]
+    [InlineData("no_block", false)] [InlineData("no_symbols", false)] [InlineData("empty_symbols", false)]
+    [InlineData("other_symbol_block", false)] [InlineData("not_a_single_occurrence", false)]
+    public void OwnDoorPlanSymbolsComeFromTheGRepOfTheSymbolAndTravelWithThePlacementOfTheDoor(string mutation, bool expected)
+    {
+        var instance = new Element
+        {
+            Id = 100, ValidatedOriginalFamilySymbolId = 600, SerializedHostId = 300,
+            CategoryId = mutation switch
+            {
+                "window" => (int)BuiltInCategory.OST_Windows,
+                "no_category" => null,
+                _ => (int)BuiltInCategory.OST_Doors,
+            },
+        };
+        var elements = new List<Element> { instance, new() { Id = 600 } };
+        double[] matrix = [1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 20, 30];
+        var state = new ParsingState();
+        state.ComputedFamilySymbols[100] = (1, new(600, 1, 400, 504)
+            { Transform = matrix, SubInstanceCount = 0, HostId = 300, InsertOrientation = 0 });
+        state.ComputedSymbolTargetClasses[100] = (1, 1794);
+        state.ComputedSymbolTargetClasses[600] = (1, 1829);
+        IReadOnlyList<DoorPlanSymbol> symbols = [new DoorPlanSymbol(null, [new GRepParserV2.ArcRec()])];
+        switch (mutation)
+        {
+            case "no_block": break;
+            case "no_symbols": state.GrepBlocks[600] = new GRepData(); break;
+            case "empty_symbols": state.GrepBlocks[600] = new GRepData { DoorPlanSymbols = [] }; break;
+            // The symbols belong to the symbol of the door, not to the door element or to another symbol.
+            case "other_symbol_block": state.GrepBlocks[100] = new GRepData { DoorPlanSymbols = symbols }; break;
+            default: state.GrepBlocks[600] = new GRepData { DoorPlanSymbols = symbols }; break;
+        }
+        // A value from an earlier run must not survive an element that no longer qualifies.
+        instance.OwnDoorPlanSymbols = ([new DoorPlanSymbol(null, [])], new double[12]);
+        if (mutation == "not_a_single_occurrence") elements.Add(new() { Id = 100 });
+
+        ElementBuilder.ApplyOwnFamilyCutoutInputs(elements, state);
+
+        if (expected)
+        {
+            var own = instance.OwnDoorPlanSymbols!.Value;
+            Assert.Same(symbols, own.Symbols);
+            Assert.Same(matrix, own.Transform);
+            Assert.Null(instance.OwnSingleFamilyCutout);
+        }
+        else Assert.Null(instance.OwnDoorPlanSymbols);
     }
 
     [Theory]

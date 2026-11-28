@@ -23,6 +23,7 @@ internal static class PrintCommand
         var viewTexts = new List<string>();
         var sheetTexts = new List<string>();
         var whereTexts = new List<string>();
+        var imageFiles = new Dictionary<int, (double X, double Y, double Width, double Height, string Path)>();
         int scale = 100;
         PdfPageSize? paper = null;
         bool listLevels = false, listViews = false, listSheets = false, allViews = false, allSheets = false;
@@ -64,6 +65,16 @@ internal static class PrintCommand
                     if (i + 1 >= args.Length) return Usage(error, "--where needs a filter: NAME=VALUE, NAME!=VALUE or NAME~TEXT.");
                     whereTexts.Add(args[++i]);
                     break;
+                case "--viewport-image":
+                    if (i + 6 >= args.Length
+                        || !int.TryParse(args[i + 1], NumberStyles.None, CultureInfo.InvariantCulture, out int viewportId)
+                        || viewportId <= 0 || !Coordinate(i + 2, out double x) || !Coordinate(i + 3, out double y)
+                        || !Coordinate(i + 4, out double width) || width <= 0
+                        || !Coordinate(i + 5, out double height) || height <= 0 || string.IsNullOrWhiteSpace(args[i + 6])
+                        || !imageFiles.TryAdd(viewportId, (x, y, width, height, args[i + 6])))
+                        return Usage(error, "--viewport-image requires a unique viewport ID, X Y WIDTH HEIGHT in mm, and a JPEG path.");
+                    i += 6;
+                    break;
                 default:
                     if (arg.StartsWith("--where=", StringComparison.Ordinal))
                     {
@@ -77,6 +88,8 @@ internal static class PrintCommand
                     break;
             }
         }
+        bool Coordinate(int index, out double value) =>
+            double.TryParse(args[index], NumberStyles.Float, CultureInfo.InvariantCulture, out value) && double.IsFinite(value);
         if (file == null) return Usage(error, "print requires the file.");
         var whereFilters = new List<SheetFilter>();
         foreach (string text in whereTexts)
@@ -88,6 +101,8 @@ internal static class PrintCommand
         if (whereFilters.Count > 0 && sheetTexts.Count == 0 && !allSheets && !listSheets)
             return Usage(error, "--where selects sheets; it needs --sheet, --all-sheets or --list-sheets.");
         bool listing = listLevels || listViews || listSheets;
+        if (imageFiles.Count > 0 && (listing || (!allSheets && sheetTexts.Count == 0) || allViews))
+            return Usage(error, "--viewport-image requires --sheet or --all-sheets.");
         if (!listing && outputPath == null) return Usage(error, "print requires the output PDF path.");
         // The comparison is the file's identity, not the spelling of the paths: an output path that is a hard link,
         // symbolic link or junction to the input PDF would truncate the model. ExportReport.SameFile guards the other
@@ -96,6 +111,38 @@ internal static class PrintCommand
         {
             error.WriteLine("The output path is the input file. Nothing was read or written.");
             return RvtExitCodes.Usage;
+        }
+
+        var composeOptions = new SheetComposeOptions { PaperSize = paper };
+        if (imageFiles.Count > 0)
+        {
+            var images = new Dictionary<int, SheetViewportImage>();
+            foreach (var (id, input) in imageFiles)
+            {
+                if (ExportReport.SameFile(outputPath!, input.Path))
+                    return Usage(error, "The PDF output path is a viewport image input.");
+                try
+                {
+                    using var stream = File.OpenRead(input.Path);
+                    if (stream.Length is < 4 or > 64 * 1024 * 1024)
+                        return Usage(error, $"Viewport image {id} must be a JPEG no larger than 64 MiB.");
+                    var bytes = new byte[(int)stream.Length];
+                    stream.ReadExactly(bytes);
+                    // The header is read here so that a file that is not a JPEG is reported by name, without the
+                    // parameter name of the constructor.
+                    var (jpegWidth, jpegHeight, _) = PdfJpegImage.ReadHeader(bytes);
+                    if (jpegWidth <= 0 || jpegHeight <= 0)
+                        return Usage(error, $"Viewport image {id} ({input.Path}) is not a JPEG.");
+                    images.Add(id, new SheetViewportImage(new PdfJpegImage(bytes),
+                        input.X, input.Y, input.Width, input.Height));
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    error.WriteLine($"Cannot read viewport image {input.Path}: {exception.Message}");
+                    return RvtExitCodes.InputError;
+                }
+            }
+            composeOptions.ViewportImages = images;
         }
 
         RvtDocument document;
@@ -204,8 +251,10 @@ internal static class PrintCommand
                     error.WriteLine("No numbered sheet was found; nothing to compose.");
                     return RvtExitCodes.DecodeError;
                 }
-                pdf = SheetComposer.RenderSheets(document, toCompose.Select(sheet => sheet.SheetId).ToList(),
-                    new SheetComposeOptions { PaperSize = paper });
+                var composeIds = toCompose.Select(sheet => sheet.SheetId).ToList();
+                if (SheetComposer.ViewportImageProblem(document, composeIds, composeOptions.ViewportImages) is { } problem)
+                    return Usage(error, problem);
+                pdf = SheetComposer.RenderSheets(document, composeIds, composeOptions);
             }
             else if (allViews)
             {
@@ -239,8 +288,12 @@ internal static class PrintCommand
                 }
                 var sheetIds = selection.SheetIds;
                 var composedIds = selection.ComposedIds;
+                if (composeOptions.ViewportImages != null && sheetIds.Count > 0)
+                    return Usage(error, "Viewport images require sheets with decoded viewports.");
+                if (SheetComposer.ViewportImageProblem(document, composedIds, composeOptions.ViewportImages) is { } imageProblem)
+                    return Usage(error, imageProblem);
                 pdf = sheetIds.Count == 0
-                    ? SheetComposer.RenderSheets(document, composedIds, new SheetComposeOptions { PaperSize = paper })
+                    ? SheetComposer.RenderSheets(document, composedIds, composeOptions)
                     : SheetPrinter.RenderSheets(document, sheetIds, new SheetPrintOptions { PaperSize = paper });
             }
             else if (viewTexts.Count > 0)
@@ -412,7 +465,7 @@ internal static class PrintCommand
         error.WriteLine(problem);
         error.WriteLine("Usage: rvtio print <file.rvt> <out.pdf> [--level <id|name>] [--view <id|name>] [--sheet <id|number>] "
             + "[--where FILTER] [--all-views] [--all-sheets] [--scale <n>] [--paper A4|A3|A2|A1|A0] "
-            + "[--list-levels] [--list-views] [--list-sheets]");
+            + "[--viewport-image ID X Y WIDTH HEIGHT JPEG] [--list-levels] [--list-views] [--list-sheets]");
         return RvtExitCodes.Usage;
     }
 }

@@ -41,6 +41,7 @@ internal static class PartitionFraming
     internal sealed record Framed(IReadOnlyList<byte[]> Segments, List<ProjectItem> Items, int IdWidth, int? Partition = null)
     {
         private long[]? starts;
+        internal List<(string Key, ProjectItem Item)>? FamilyAnnotationItems { get; init; }
 
         /// <summary>Where the bytes of the item are: in its segment when it lies in one, else in a copy (an item can run into the next segment
         /// of its chain); Copied tells which.</summary>

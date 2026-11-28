@@ -74,35 +74,45 @@ internal static partial class TfBlockDeserializer
         if (count > 100_000 || count * 30L + 16 > end - position) return false;
         var options = new UnitFormatOption[(int)count];
         var specs = new HashSet<string>(StringComparer.Ordinal);
-        bool ReadId(out string value)
-        {
-            value = "";
-            if (position > end - 4) return false;
-            uint length = BitConverter.ToUInt32(data, position); position += 4;
-            if (length > 10_000 || length * 2L > end - position) return false;
-            try { value = UnitIdUtf16.GetString(data, position, (int)length * 2); }
-            catch (DecoderFallbackException) { return false; }
-            position += (int)length * 2;
-            return true;
-        }
         for (int index = 0; index < options.Length; index++)
         {
-            if (!ReadId(out string spec) || !ReadId(out string symbol) || !ReadId(out string unit)
-                || !specs.Add(spec) || position > end - 18) return false;
-            double accuracy = BitConverter.ToDouble(data, position);
-            if (!double.IsFinite(accuracy) || accuracy < 0) return false;
-            for (int flag = 12; flag < 18; flag++)
-                if (data[position + flag] > 1) return false;
-            options[index] = new(spec, symbol, unit, accuracy, BitConverter.ToInt32(data, position + 8),
-                data[position + 12], data[position + 13], data[position + 14],
-                data[position + 15], data[position + 16], data[position + 17]);
-            position += 18;
+            if (!ReadUnitId(data, ref position, end, out string spec)
+                || !specs.Add(spec)
+                || ReadUnitFormatOption(data, ref position, end, spec) is not { } option) return false;
+            options[index] = option;
         }
         if (position > end - 16) return false;
         units = new(options, BitConverter.ToInt32(data, position), BitConverter.ToInt32(data, position + 4),
             BitConverter.ToInt32(data, position + 8), BitConverter.ToInt32(data, position + 12));
         finish = position + 16;
         return true;
+    }
+
+    private static bool ReadUnitId(byte[] data, ref int position, int end, out string value)
+    {
+        value = "";
+        if (position > end - 4) return false;
+        uint length = BitConverter.ToUInt32(data, position); position += 4;
+        if (length > 10_000 || length * 2L > end - position) return false;
+        try { value = UnitIdUtf16.GetString(data, position, (int)length * 2); }
+        catch (DecoderFallbackException) { return false; }
+        position += (int)length * 2;
+        return true;
+    }
+
+    private static UnitFormatOption? ReadUnitFormatOption(byte[] data, ref int position, int end, string spec)
+    {
+        if (!ReadUnitId(data, ref position, end, out string symbol)
+            || !ReadUnitId(data, ref position, end, out string unit) || position > end - 18) return null;
+        double accuracy = BitConverter.ToDouble(data, position);
+        if (!double.IsFinite(accuracy) || accuracy < 0) return null;
+        for (int flag = 12; flag < 18; flag++)
+            if (data[position + flag] > 1) return null;
+        var option = new UnitFormatOption(spec, symbol, unit, accuracy, BitConverter.ToInt32(data, position + 8),
+            data[position + 12], data[position + 13], data[position + 14],
+            data[position + 15], data[position + 16], data[position + 17]);
+        position += 18;
+        return option;
     }
 
     private static bool UnitOptionSchemasMatch()

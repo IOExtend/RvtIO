@@ -27,3 +27,9 @@ public sealed record ViewCropFrame(
     double X1,
     double Y1,
     bool Active);
+
+internal sealed record ViewModelBounds(double[] Origin, double[][] Axes, double[] Offsets, bool[] Active);
+
+internal sealed record ViewSolarStudy(double[] Outline, int SizePercent, int GroundLevelId, int AnnotationId,
+    uint Start, uint End, int Interval, double ActiveFrame, int ShadowIntensity = 0,
+    bool ShowSurfacePatterns = false, bool ShowEdges = false, int? SunlightIntensity = null);

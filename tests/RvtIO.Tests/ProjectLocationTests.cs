@@ -185,6 +185,7 @@ public class ProjectLocationTests
     public void Resolve_IdentityRotationTranslatesByTheNegatedOrigin()
     {
         var state = Resolvable(Identity, [SsOriginX, SsOriginY, SsOriginZ]);
+        state.GeoSiteTimeZones[1283] = 5.5;
 
         var location = RvtFileReader.ResolveActiveProjectLocation(state, null);
 
@@ -193,6 +194,7 @@ public class ProjectLocationTests
             location!.SharedTransform);
         Assert.Equal(0.9730210579868378, location.Latitude);
         Assert.Equal(0.6579891413176677, location.Longitude);
+        Assert.Equal(5.5, location.TimeZoneHours);
         Assert.Equal(11.975065616797893, location.ElevationFeet);
     }
 

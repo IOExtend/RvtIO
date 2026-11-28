@@ -135,7 +135,7 @@ internal static partial class TfBlockDeserializer
                         continue;
                     }
                     var tail = new Cursor { D = data, Pos = objectStart, End = cursor.End };
-                    if (!TryReadExactWallGeomStep(tail, cls, out _, out _, out string? why))
+                    if (!TryReadExactWallGeomStep(tail, cls, out _, out _, out string? why, out _))
                     { failure += $":{why}"; return Result(failure); }
                     if (tail.Pos < cursor.Pos) throw Fail;
                     cursor.Pos = tail.Pos;

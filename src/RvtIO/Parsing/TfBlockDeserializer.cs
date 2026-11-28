@@ -1,4 +1,5 @@
 using System.Text.Json;
+using RvtIO.BuiltIns;
 using RvtIO.Internal;
 using RvtIO.Model;
 
@@ -37,6 +38,21 @@ internal static partial class TfBlockDeserializer
         public bool RootParameterStoresComplete { get; set; }
         /// <summary>Class tags of the cells of the element's CellList, when the deferred walk reached that object.</summary>
         public List<int>? CellClasses { get; set; }
+        internal BreakLineProfile? DetailBreak { get; set; }
+        internal IReadOnlyList<(double X, double Y)>? SitePropertyCurve { get; set; }
+        internal (double X, double Y)? SitePropertyArcCenter { get; set; }
+        internal List<RoomColorEntry>? RoomColors { get; set; }
+        internal List<double[]>? DimensionReferences { get; set; }
+        internal List<double>? DimensionValues { get; set; }
+        internal (double[] Origin, double[] Direction)? DimensionLine { get; set; }
+        internal (string Text, double? FontSizePoints)? PlanNoteText { get; set; }
+        internal List<PlanNoteLeader>? PlanNoteLeaders { get; set; }
+        internal HashSet<int>? ViewHiddenElements { get; set; }
+        internal HashSet<int>? ViewHiddenCategories { get; set; }
+        internal ViewModelBounds? ModelClipBox { get; set; }
+        internal double[]? SunStudyOutline { get; set; }
+        internal List<SiteContour>? SiteContours { get; set; }
+        internal SiteContourLabelData? SiteContourLabels { get; set; }
         /// <summary>The deferred walk consumed every queued object of the record (so the NamedParams and cells are complete).</summary>
         public bool TailWalkComplete { get; set; }
         public List<(int ParamId, double Value)> Doubles { get; } = new();
@@ -58,7 +74,7 @@ internal static partial class TfBlockDeserializer
         public double[]? PlanViewRangeOffsets { get; set; }
         public int[]? PlanViewRangeLevelIds { get; set; }
         public int Count => Doubles.Count + Ints.Count + Strings.Count + ElementIds.Count
-            + Fields.Count + DoubleFields.Count + StringFields.Count;
+            + Fields.Count + DoubleFields.Count + StringFields.Count + (SitePropertyCurve == null ? 0 : 1);
     }
 
     /// <summary>One NamedParam of FamilyParams.m_params. Which of Value/ElemId/Int/Str is meaningful depends on the
@@ -230,6 +246,7 @@ internal static partial class TfBlockDeserializer
         "602:m_idSystemCategory", "602:m_iEndReference", "602:m_idLevelStart", "602:m_pCurveDriver", "602:m_pConnectorManager",
         "527:m_leader", "527:m_leaderEndCondition", "527:m_tagRelOffsetCondition", "527:m_isRelPosValid", "527:m_hideTagIn3DView",
         "527:m_oTagOrientationCell", "527:m_symbolId", "527:m_taggedEntitiesCell", "527:m_multiReferenceAnnotationId",
+        "3936:m_isStraightLeader", "3936:m_needReconcile",
         "1990:m_dbViewId", "1990:m_dbDrawingId", "1990:m_viewportOrientation", "1990:m_clipping", "1990:m_detailNumber",
     ];
 
@@ -303,6 +320,49 @@ internal static partial class TfBlockDeserializer
         "37:m_cellList",
         // HVAC zones: the default zone flag of a ZoneElement and the zone of a space (RoomElem).
         "4215:m_bDefault", "3471:m_zoneElementId",
+        "2239:m_width", "2239:m_scale", "2239:m_mirrored",
+        "2202:m_widthInFeet", "2202:m_heightInFeet", "2197:m_dWidthScale", "2197:m_dHeightScale",
+        "2202:m_idImageHolder",
+        "689:m_origin@0", "689:m_origin@1", "689:m_idSchemeCategory",
+        "697:m_swatchWidth", "697:m_swatchHeight",
+        "690:m_categoryId", "690:m_paramId", "690:m_bByRange", "693:m_bBackground",
+        "174:m_tickCategoryId", "174:m_dimensionStyleType", "174:m_linearDimType",
+        "174:m_textAlignment", "174:m_textLoc", "174:m_alternateUnits", "174:m_dimWitnCntrlExtBelow",
+        "174:m_arrowHeadStyleId", "174:m_interiorTickMarkStyleId", "174:m_prefix", "174:m_suffix",
+        "2295:m_tickType", "625:m_fontId", "625:m_categoryId", "1923:m_size", "1923:m_name", "84:m_bUseDefault",
+        "3702:m_stairsPathOffset", "3703:m_startFromRiser", "3703:m_endAtRiser", "3703:m_startSymbolTypeId",
+        "160:m_flags", "160:m_useEqualityFormula", "160:m_showLabelGP", "159:m_multiReferenceAnnotationId",
+        "3928:m_orig@0", "3928:m_orig@1", "3928:m_baseVec@0", "3928:m_baseVec@1",
+        "3928:m_upVec@0", "3928:m_upVec@1", "3928:m_flags", "3928:m_attrId", "3928:m_height",
+        "3928:m_lineWidth", "3928:m_bNoWrapping", "3931:m_leaderOffsetSheet", "3931:m_textBoxVisibility",
+        "625:m_background", "3971:m_bArcLeaders",
+        "625:m_bBold", "625:m_bItalic", "625:m_bUnderline",
+        "836:m_baseElevation",
+        "1861:m_sketchId", "1860:m_bMasking", "1862:m_fillPatternElemId", "1862:m_backgroundPatternElemId",
+        "621:m_bAnnotationCropActive", "334:m_leftRightTopBottomOffsets@0", "334:m_leftRightTopBottomOffsets@1",
+        "334:m_leftRightTopBottomOffsets@2", "334:m_leftRightTopBottomOffsets@3",
+        "2247:m_pos@0", "2247:m_pos@1", "2247:m_symbolId", "2248:m_parentId",
+        "621:m_dbViewId", "621:m_projMethodType", "4122:m_modelClipBoxId", "2505:m_viewer3dId",
+        "2249:m_coarserScale", "1020:m_elevatnAttrId",
+        "2251:m_elevationSymbolId", "2251:m_shape", "2251:m_ahAngleDouble", "2251:m_ahFilled",
+        "1763:first", "1724:m_masterSymId",
+        "4108:m_surfaces", "4108:m_transparency", "4108:m_edges", "4108:m_bShowSurfacePatterns",
+        "4107:m_hlr", "4107:m_lighting",
+        "4103:m_type", "4103:m_backgroundColor", "4103:m_skyColor", "4103:m_groundColor",
+        "4110:m_ambientShadows", "4110:m_castShadows", "4106:m_ambientLightIntensity",
+        "4106:m_sunlightIntensity", "4106:m_shadowIntensity", "4106:m_sunAndShadowSettingsId",
+        "3878:m_dAzimuth", "3878:m_dAltitude", "3878:m_type", "3878:m_idLevel",
+        "3878:m_bGroundPlane", "3878:m_bRelativeToView",
+        "3878:m_idAnnotation", "3878:m_sunPathSize", "3878:m_startDateTime", "3878:m_endDateTime",
+        "3878:m_activeFrame", "3878:m_eSunStudyTimeInterval", "3878:m_sunriseToSunset",
+        "108:m_bCustomScaleName", "108:m_strCustomScaleName",
+        "3475:m_symbolId", "3475:m_bLeader", "3475:m_bLeaderIsStraight",
+        "3475:m_leaderAnchor@0", "3475:m_leaderAnchor@1",
+        "3475:m_tagOffset@0", "3475:m_tagOffset@1",
+        "3934:m_headLocation@0", "3934:m_headLocation@1", "3934:m_rotationAngle",
+        "3934:m_orientation", "3934:m_isSpatialElementTag",
+        "2479:m_bUseRenderAppearance",
+        "3546:m_sectionHeadFamilyTagId", "3546:m_sectionTailFamilyTagId",
         .. RoomRuleFieldKeys,
         .. ListFactFieldKeys,
     ];
@@ -388,7 +448,7 @@ internal static partial class TfBlockDeserializer
     {
         "m_scale", "m_topRailHeight",
         // GeoSite (project location symbol): latitude / longitude in radians.
-        "m_dLatitude", "m_dLongitude",
+        "m_dLatitude", "m_dLongitude", "m_dTimeZone",
     };
 
     /// <summary>String schema fields captured into StringFields.</summary>
@@ -592,6 +652,11 @@ internal static partial class TfBlockDeserializer
         var queue = new List<(ushort Cls, uint Id)>();
         cur.RootQueue = queue;
         var res = new NativeParams();
+        int breakFaces = -1, breakPlanes = -1;
+        int propertyCurve = -1, dimensionLine = -1, linearFormat = -1;
+        int noteRtf = -1, noteLeaderStart = -1, noteLeaderEnd = -1;
+        int viewHiddenElements = -1, viewHiddenCategories = -1, viewDisplay = -1, planRange = -1;
+        int contourLabels = -1;
         if (CaptureAllFields)
         {
             diagRootQueue = queue;
@@ -599,7 +664,61 @@ internal static partial class TfBlockDeserializer
         }
         try
         {
-            foreach (var f in fields) ReadField(cur, f, queue, 0, res);
+            foreach (var f in fields)
+            {
+                int next = queue.Count;
+                if (classId is 986 or 1005 or 1016
+                    && f is { Declaring: 108, Name: "m_explicitlyHiddenElements", Type: 14, Mods: 80, Ref: 20 })
+                    res.ViewHiddenElements = ReadViewIdSet(cur);
+                else
+                    ReadField(cur, f, queue, 0, res);
+                if (classId == 1829 && f is { Declaring: 1829, Name: "m_refFaces", Type: 14, Mods: 81 }
+                    && queue.Count - next == BreakReferenceCount
+                    && queue.Skip(next).All(entry => entry.Cls == 1589))
+                    breakFaces = next;
+                if (classId == 3070 && f is { Declaring: 3070, Name: "m_curve", Type: 14, Mods: 1 }
+                    && queue.Count == next + 1 && queue[next].Cls is 1736 or 1974)
+                    propertyCurve = next;
+                if (classId == 837 && f is { Declaring: 838, Name: "m_data" }
+                    && next < queue.Count && queue[next].Cls == 840)
+                    contourLabels = next;
+                if (classId == 2335 && f is { Declaring: 158, Name: "m_pDimLine", Type: 14, Mods: 2 }
+                    && queue.Count == next + 1 && queue[next].Cls == 1736)
+                    dimensionLine = next;
+                if (classId == 174 && f is { Declaring: 174, Name: "m_oLinFormatOptions", Type: 14, Mods: 2 }
+                    && queue.Count == next + 1 && queue[next].Cls == 84)
+                    linearFormat = next;
+                if (classId is 3971 or 3927 && f is { Declaring: 3928, Name: "m_oSavedRtfData", Type: 14, Mods: 1 }
+                    && queue.Count == next + 1 && queue[next].Cls == 3487)
+                    noteRtf = next;
+                if (classId == 3971 && f is { Declaring: 3971, Name: "m_leaders", Type: 14, Mods: 81 }
+                    && queue.Count > next && queue.Skip(next).All(entry => entry.Cls == 622))
+                {
+                    noteLeaderStart = next;
+                    noteLeaderEnd = queue.Count;
+                }
+                if (classId is 986 or 1005 or 1016 && queue.Count == next + 1)
+                {
+                    if (f is { Declaring: 108, Name: "m_oHiddenElementsViewSettings" }
+                        && queue[next].Cls == 2160)
+                        viewHiddenElements = next;
+                    if (f is { Declaring: 108, Name: "m_pViewDisplayMgr" } && queue[next].Cls == 4107)
+                        viewDisplay = next;
+                    if (f is { Declaring: 1005, Name: "m_pPlanViewRange2", Type: 14, Mods: 2 }
+                        && queue[next].Cls == 2974)
+                        planRange = next;
+                }
+                if (classId is 986 or 1005 or 1016
+                    && f is { Declaring: 108, Name: "m_oaDrawFilters", Type: 14, Mods: 81 })
+                {
+                    for (int i = next; i < queue.Count; i++)
+                        if (queue[i].Cls == 2190)
+                        {
+                            viewHiddenCategories = i;
+                            break;
+                        }
+                }
+            }
         }
         catch (DecodeFail)
         {
@@ -673,7 +792,71 @@ internal static partial class TfBlockDeserializer
                         walked?.Append(queue[qi].Cls).Append("<").Append(origin).Append("@").Append(cur.Pos).Append(qf == null ? "!," : ",");
                         if (walked != null && WalkHexClasses.Contains(queue[qi].Cls)) walked.Append("[").Append(Convert.ToHexString(cur.D, cur.Pos, Math.Min(800, cur.End - cur.Pos))).Append("]");
                         if (qf == null) break;
-                        if (queue[qi].Cls == 2974)
+                        if (qi == breakPlanes)
+                            res.DetailBreak = ReadBreakReferencePlanes(cur.D.AsSpan(cur.Pos, cur.End - cur.Pos));
+                        if (qi == propertyCurve)
+                        {
+                            res.SitePropertyCurve = ReadSitePropertyCurve(cur, queue[qi].Cls, out var center);
+                            res.SitePropertyArcCenter = center;
+                            continue;
+                        }
+                        if (qi == contourLabels)
+                        {
+                            res.SiteContourLabels = ReadSiteContourLabels(cur, qf, queue);
+                            continue;
+                        }
+                        if (qi == viewDisplay)
+                        {
+                            if (!TryReadViewDisplayMgr(cur, queue, out _, tail)) throw Fail;
+                            continue;
+                        }
+                        if (qi == viewHiddenElements)
+                        {
+                            foreach (var field in qf)
+                            {
+                                if (field is { Declaring: 2160, Name: "m_hiddenElements", Type: 14, Mods: 80, Ref: 20 })
+                                    (res.ViewHiddenElements ??= []).UnionWith(ReadViewIdSet(cur));
+                                else
+                                    ReadField(cur, field, queue, 1, null);
+                            }
+                            continue;
+                        }
+                        if (qi == viewHiddenCategories)
+                        {
+                            foreach (var field in qf)
+                            {
+                                if (field is { Declaring: 2190, Name: "m_categoryIds", Type: 14, Mods: 80, Ref: 20 })
+                                    res.ViewHiddenCategories = ReadViewIdSet(cur);
+                                else
+                                    ReadField(cur, field, queue, 1, null);
+                            }
+                            continue;
+                        }
+                        if (qi == noteRtf)
+                        {
+                            res.PlanNoteText = ReadPlanNoteRtf(cur, qf);
+                            continue;
+                        }
+                        if (qi >= noteLeaderStart && qi < noteLeaderEnd)
+                        {
+                            if (ReadPlanNoteLeader(cur, qf, queue) is { } leader)
+                                (res.PlanNoteLeaders ??= new()).Add(leader);
+                            continue;
+                        }
+                        if (qi == dimensionLine)
+                        {
+                            res.DimensionLine = ReadDimensionLine(cur, qf, queue);
+                            continue;
+                        }
+                        if (qi == linearFormat)
+                        {
+                            var format = new NativeParams();
+                            foreach (var field in qf) ReadField(cur, field, queue, 1, format);
+                            if (format.Fields.TryGetValue("84:m_bUseDefault", out int useDefault))
+                                res.Fields["174:linearFormatUsesDefault"] = useDefault;
+                            continue;
+                        }
+                        if (qi == planRange)
                         {
                             // PlanViewRange2: two five-element arrays of the view's own block. Keeping its
                             // offsets and level ids lets a plan decide which elements below the level it shows.
@@ -694,8 +877,8 @@ internal static partial class TfBlockDeserializer
                             }
                             if (offsetCount == 5 && levelCount == 5)
                             {
-                                tail.PlanViewRangeOffsets = offsets;
-                                tail.PlanViewRangeLevelIds = levelIds;
+                                res.PlanViewRangeOffsets = offsets;
+                                res.PlanViewRangeLevelIds = levelIds;
                             }
                             continue;
                         }
@@ -731,7 +914,18 @@ internal static partial class TfBlockDeserializer
                         bool driveSpline = qi == cur.CurveDriverCurveQueueIndex && queue[qi].Cls == 2020;
                         if (driveSpline) cur.HermiteNodes = new List<double[]>();
                         int cellsBefore = queue[qi].Cls == 653 ? queue.Count : -1;
+                        int nextObject = queue.Count;
                         foreach (var sf in qf) { lastField = FieldKey(sf) + "/" + sf.Type + "/" + sf.Mods + "/" + sf.Ref; ReadField(cur, sf, queue, 1, tail); }
+                        if (breakFaces >= 0 && qi >= breakFaces && qi < breakFaces + BreakReferenceCount)
+                        {
+                            if (queue.Count != nextObject + 1 || queue[nextObject].Cls != 522
+                                || (qi != breakFaces && nextObject != breakPlanes + qi - breakFaces))
+                            {
+                                breakFaces = -1;
+                                breakPlanes = -1;
+                            }
+                            else if (qi == breakFaces) breakPlanes = nextObject;
+                        }
                         if (cellsBefore >= 0 && ReferenceEquals(queue, cur.RootQueue))
                             tail.CellClasses = queue.Skip(cellsBefore).Select(entry => (int)entry.Item1).ToList();
                         KeepAnyAttachTop(tail, queue[qi].Cls, attachedTopBefore);
@@ -778,6 +972,7 @@ internal static partial class TfBlockDeserializer
                 if (walked != null) tail.StringFields["walk:"] = walked.ToString() + " queue=" + queue.Count + " rest=" + (cur.End - cur.Pos);
                 res.TailWalkComplete = tailDone;
                 MergeKeyed(tail, res);
+                res.SiteContours = tail.SiteContours;
                 res.NamedParams.AddRange(tail.NamedParams);
                 if (tail.CellClasses != null) res.CellClasses = tail.CellClasses;
             }
@@ -3159,7 +3354,7 @@ internal static partial class TfBlockDeserializer
                 {
                     failure = $"step {queuedClass}";
                     if (!TryReadExactWallGeomStep(cur, queuedClass,
-                            out uint stepOwner, out _, out string? stepFailure))
+                            out uint stepOwner, out _, out string? stepFailure, out _))
                     {
                         failure = $"step {queuedClass} {stepFailure}";
                         return null;
@@ -3212,7 +3407,12 @@ internal static partial class TfBlockDeserializer
     /// <param name="failure">Why no value was produced, for diagnostics.</param>
     internal static bool? ExtractWallJoinedToTop(
         byte[] d, int blockStart, uint dataSize, ushort classId, out string? failure)
+        => ExtractWallJoinedToTop(d, blockStart, dataSize, classId, out failure, out _);
+
+    internal static bool? ExtractWallJoinedToTop(byte[] d, int blockStart, uint dataSize, ushort classId,
+        out string? failure, out int[]? topTargetIds)
     {
+        topTargetIds = null;
         failure = "framing";
         if (classId is not (3524 or 361)
             || blockStart < 0
@@ -3240,6 +3440,7 @@ internal static partial class TfBlockDeserializer
         var decodedSteps = new HashSet<int>();
         uint? owner = null;
         bool joinedToTop = false;
+        List<int>? topTargets = null;
         try
         {
             failure = "root";
@@ -3297,7 +3498,8 @@ internal static partial class TfBlockDeserializer
                     int stepStart = cur.Pos - blockStart;
                     failure = $"step {queuedClass} @{stepStart}";
                     if (!TryReadExactWallGeomStep(cur, queuedClass,
-                            out uint stepOwner, out bool stepJoinsTop, out string? stepFailure, anyVersion: true))
+                            out uint stepOwner, out bool stepJoinsTop, out string? stepFailure, out var targets,
+                            anyVersion: true))
                     {
                         failure = $"step {queuedClass} {stepFailure} @{stepStart}";
                         return null;
@@ -3309,9 +3511,17 @@ internal static partial class TfBlockDeserializer
                     }
                     owner = stepOwner;
                     joinedToTop |= stepJoinsTop;
+                    if (stepJoinsTop && stepIndices?.Contains(queueIndex) == true)
+                    {
+                        topTargets ??= [];
+                        for (int i = 0; i < targets.Count; i++)
+                            topTargets.Add(BitConverter.ToInt32(d, targets.Offset + 4 * i));
+                    }
                     decodedSteps.Add(queueIndex);
                     if (stepIndices != null && stepIndices.IsSubsetOf(decodedSteps))
                     {
+                        if (topTargets?.All(id => id > 0) == true)
+                            topTargetIds = topTargets.Distinct().ToArray();
                         failure = null;
                         return joinedToTop;
                     }
@@ -3426,20 +3636,63 @@ internal static partial class TfBlockDeserializer
         catch (DecodeFail) { return null; }
     }
 
+    internal static (double BaseFeet, int MaterialId)? ExtractSiteCutGraphics(
+        byte[] data, int start, uint size, ushort classId, out (int Method, int Units)? bearing)
+    {
+        bearing = null;
+        const ushort trueNorth = 4007;
+        if (classId != trueNorth || !HasExactOwnElementRoot(data, start, size, classId)) return null;
+        var fields = SerializationFields(classId)!;
+        if (!HasExactSchemaField(fields, 37, "m_famId", 14, 0, 20)
+            || !HasExactSchemaField(fields, trueNorth, "m_pocheDepth", 7, 0, null)
+            || !HasExactSchemaField(fields, trueNorth, "m_siteCutMaterialId", 14, 0, 20)) return null;
+
+        var cursor = new Cursor { D = data, Pos = start + 14, End = start + 12 + (int)size };
+        var queue = new List<(ushort Cls, uint Id)>();
+        double baseFeet = double.NaN;
+        int materialId = -1, method = -1, units = -1;
+        try
+        {
+            foreach (var field in fields)
+            {
+                if (field is { Declaring: 37, Name: "m_famId" })
+                {
+                    // Embedded families have their own TrueNorth settings.
+                    if (ReadI32(cursor) != -1) return null;
+                }
+                else if (field is { Declaring: trueNorth, Name: "m_pocheDepth" })
+                    baseFeet = ReadF64(cursor);
+                else if (field is { Declaring: trueNorth, Name: "m_siteCutMaterialId" })
+                    materialId = ReadI32(cursor);
+                else if (field is { Declaring: trueNorth, Name: "m_propertyBearingMethod", Type: 4, Mods: 0 })
+                    method = ReadI32(cursor);
+                else if (field is { Declaring: trueNorth, Name: "m_propertyBearingUnits", Type: 4, Mods: 0 })
+                    units = ReadI32(cursor);
+                else
+                    ReadField(cursor, field, queue, 0, null);
+            }
+        }
+        catch (DecodeFail) { return null; }
+        if (method >= 0 && units >= 0) bearing = (method, units);
+        return double.IsFinite(baseFeet) && materialId > 0 ? (baseFeet, materialId) : null;
+    }
+
     /// <summary>One line family of a fill pattern: its angle (radians), origin, shift (along the line) and
     /// offset (between lines) in the pattern's own feet, and its repeating dash list (dash, gap, ...; a zero
     /// dash is a dot).</summary>
     internal sealed record PatternGrid(double Angle, double OriginX, double OriginY, double Shift, double Offset,
-        double[] Segments);
+        double[] Segments, int Target = -1, int Orientation = -1);
 
     /// <summary>Reads a material's cut and surface fill patterns: the MaterialElem root (class 2486) owns one
     /// deferred Material (class 2479) through m_pMaterial, whose m_cutPatternId and m_surfacePatternId name the
     /// pattern elements. Both ids are -1 when the material has no pattern of that kind. False when anything
     /// fails to decode.</summary>
     internal static bool TryExtractMaterialPatterns(
-        byte[] d, int blockStart, uint dataSize, ushort classId, out int cutPatternId, out int surfacePatternId)
+        byte[] d, int blockStart, uint dataSize, ushort classId, out int cutPatternId, out int surfacePatternId,
+        out int? surfacePatternColor, out int? cutPatternColor)
     {
         cutPatternId = surfacePatternId = -1;
+        surfacePatternColor = cutPatternColor = null;
         if (classId != 2486
             || blockStart < 0
             || dataSize > int.MaxValue
@@ -3491,9 +3744,19 @@ internal static partial class TfBlockDeserializer
                     cutPatternId = ReadI32(cur);
                     continue;
                 }
+                if (field is { Declaring: 2479, Name: "m_cutPatternColor", Type: 5, Mods: 0 })
+                {
+                    cutPatternColor = ReadI32(cur);
+                    continue;
+                }
                 if (field is { Declaring: 2479, Name: "m_surfacePatternId", Type: 14, Mods: 0, Ref: 20 })
                 {
                     surfacePatternId = ReadI32(cur);
+                    continue;
+                }
+                if (field is { Declaring: 2479, Name: "m_surfacePatternColor", Type: 5, Mods: 0 })
+                {
+                    surfacePatternColor = ReadI32(cur);
                     return true;
                 }
                 ReadField(cur, field, queue, 1, null);
@@ -3520,9 +3783,9 @@ internal static partial class TfBlockDeserializer
 
     /// <summary>Walks the deferred objects queued before <paramref name="stopIndex"/>, so the cursor reaches the
     /// object whose fields the caller wants to read next. Parameter-set stores are read as their own records.</summary>
-    private static void SkipQueuedObjects(Cursor cur, List<(ushort Cls, uint Id)> queue, int stopIndex)
+    private static void SkipQueuedObjects(Cursor cur, List<(ushort Cls, uint Id)> queue, int stopIndex, int startIndex = 0)
     {
-        for (int queueIndex = 0; queueIndex < stopIndex; queueIndex++)
+        for (int queueIndex = startIndex; queueIndex < stopIndex; queueIndex++)
         {
             ushort queuedClass = queue[queueIndex].Cls;
             if (ParamSetTags.TryGetValue(queuedClass, out var parameterStore))
@@ -3590,14 +3853,16 @@ internal static partial class TfBlockDeserializer
             if (patternIndex < 0 || !ownOwnerRead) return false;
             SkipQueuedObjects(cur, queue, patternIndex);
 
-            int gridCount = 0;
+            int gridCount = -1, target = -1, orientation = -1;
             foreach (var field in patternFields)
             {
                 if (field is { Declaring: 1849, Name: "m_gridsArr", Type: 14, Mods: 81 })
                 {
-                    int before = queue.Count;
+                    int start = cur.Pos, before = queue.Count;
                     ReadField(cur, field, queue, 1, null);
                     gridCount = queue.Count - before;
+                    if (cur.Pos - start < 4 || BitConverter.ToUInt32(d, start) != (uint)gridCount)
+                        return false;
                 }
                 else if (field is { Declaring: 1849, Name: "m_name", Type: 8, Mods: 96 })
                     name = ReadString(cur);
@@ -3605,10 +3870,14 @@ internal static partial class TfBlockDeserializer
                     ReadF64(cur);
                 else if (field is { Declaring: 1849, Name: "m_windowSize", Type: 7, Mods: 0 })
                     ReadF64(cur);
+                else if (field is { Declaring: 1849, Name: "m_fpTarget", Type: 4, Mods: 0 })
+                    target = ReadI32(cur);
+                else if (field is { Declaring: 1849, Name: "m_fpOrientation", Type: 4, Mods: 0 })
+                    orientation = ReadI32(cur);
                 else
                     ReadField(cur, field, queue, 1, null);
             }
-            if (gridCount <= 0) return false;
+            if (gridCount < 0) return false;
 
             // The queued children are read in the stream order the pointers were seen: a CellList may have
             // queued a PatternHelper before the grids, so skip every non-FillGrid object up to the last grid.
@@ -3652,7 +3921,7 @@ internal static partial class TfBlockDeserializer
                     else
                         ReadField(cur, field, queue, 1, null);
                 }
-                result.Add(new PatternGrid(angle, ox, oy, shift, offset, segments));
+                result.Add(new PatternGrid(angle, ox, oy, shift, offset, segments, target, orientation));
             }
             if (result.Count != gridCount) return false;
             grids = result;
@@ -4011,7 +4280,10 @@ internal static partial class TfBlockDeserializer
     /// <summary>A label of a title block family symbol, in symbol feet: the anchor, the box, the flags, the base
     /// direction and the parameter it prints (a BuiltInParameter id) with its prefix, suffix and sample text.</summary>
     internal sealed record TitleBlockLabel(double Ox, double Oy, double Oz, double Hx, double Hy, double Bx, double By,
-        double Height, double Width, int AttrId, int Flags, int ParamId, string Prefix, string Suffix);
+        double Height, double Width, int AttrId, int Flags, int ParamId, string Prefix, string Suffix,
+        UnitFormatOption? SingleParameterFormat = null, bool Wrap = false);
+
+    private sealed record TagLabelParameter(int ParamId, string Prefix, string Suffix, UnitFormatOption? Format);
 
     /// <summary>A schedule instance placed on a sheet: the DBViewSchedule it shows and its top-left origin in
     /// sheet feet.</summary>
@@ -4074,7 +4346,14 @@ internal static partial class TfBlockDeserializer
 
     /// <summary>A body section of a schedule table: its stored header texts (one per visible column,
     /// empty when the file stores none), the count of leading all-empty body rows and the total body row count.</summary>
-    internal sealed record ScheduleBodySection(List<string> Header, int LeadingEmpty, int BodyRows);
+    internal sealed record ScheduleBodySection(List<string> Header, int LeadingEmpty, int BodyRows)
+    {
+        internal IReadOnlyList<ScheduleTextStyle>? HeaderStyles { get; init; }
+        internal IReadOnlyList<int>? BodyAlignment { get; init; }
+        internal ScheduleTextStyle? UniformBodyStyle { get; init; }
+    }
+    internal readonly record struct ScheduleTextStyle(double CapHeightPixels, int HorizontalAlignment,
+        int VerticalAlignment, string? FontName = null, int Flags = 0);
 
     /// <summary>A schedule definition decoded from its DBViewSchedule block: the visible columns (heading and width
     /// in feet, in order), the category id, the show flags, the title height and merged bands of the first shown
@@ -4082,21 +4361,30 @@ internal static partial class TfBlockDeserializer
     internal sealed record ScheduleTableDef(List<(string Heading, double WidthFt)> Columns, int CategoryId,
         bool ShowTitle, bool ShowHeaders, bool ShowGridLines, bool ShowOutline,
         int GridStyleId, int OutlineStyleId,
-        double TitleHeightFt, List<(double HeightFt, string Text)> TitleBands, List<ScheduleBodySection> BodySections,
-        double FixedHeightFt);
+        double TitleHeightFt, List<(double HeightFt, string Text, ScheduleTextStyle Style)> TitleBands,
+        List<ScheduleBodySection> BodySections,
+        double FixedHeightFt)
+    {
+        internal ScheduleRowBindings? RowBindings { get; init; }
+        internal ScheduleTextStyle TitleStyle { get; init; }
+        internal (int Header, int Body) TextTypeIds { get; init; }
+        internal (double Header, double Body)? RevisionCapHeightsFt { get; init; }
+    }
 
     /// <summary>A section annotation (class 3545) boiled down to what places its mark on a plan: the parent view
     /// (a section/elevation view for a callout, -1 for a top-level section), the coarsest scale it shows at,
     /// and the front-cut polyline in model feet (null when undecodable; the trace the reference draws).</summary>
-    internal sealed record SectionViewdata(int ParentViewId, double CoarserScale, List<double[]>? FrontCut);
+    internal sealed record SectionViewdata(int ParentViewId, double CoarserScale, List<double[]>? FrontCut,
+        (double Left, double Right, double Top, double Bottom)? AnnotationCrop = null,
+        double[]? CalloutHead = null,
+        (double X, double Y)? TraceOrigin = null);
 
     internal static bool TryExtractSectionViewdata(
         byte[] d, int blockStart, uint dataSize, ushort classId, out SectionViewdata viewdata)
         => TryExtractSectionViewdata(d, blockStart, dataSize, classId, out viewdata, out _);
 
-    /// <summary>Reads a section annotation (class 3545): the parent view id and the coarsest scale. Stops before
-    /// the front-cut polyline (a composite the generic walk cannot stride); every earlier field walks generically.
-    /// False when anything fails to decode.</summary>
+    /// <summary>Reads a section annotation (class 3545): the parent view, coarsest scale and, when available,
+    /// the front cut and annotation crop offsets. False when the parent or scale cannot be read.</summary>
     internal static bool TryExtractSectionViewdata(
         byte[] d, int blockStart, uint dataSize, ushort classId, out SectionViewdata viewdata, out string failure)
     {
@@ -4130,6 +4418,9 @@ internal static partial class TfBlockDeserializer
             int parentViewId = 0;
             double coarserScale = 0;
             bool parentRead = false, coarserRead = false;
+            (double X, double Y)? traceOrigin = null;
+            int annotationCropIndex = -1;
+            bool annotationCropActive = false;
             foreach (var field in fields)
             {
                 if (field is { Declaring: 2249, Name: "m_frontCut" }) break;
@@ -4140,6 +4431,12 @@ internal static partial class TfBlockDeserializer
                         if (field is not { Type: 14, Mods: 0, Ref: 20 }) { failure = "parent-type"; return false; }
                         parentViewId = ReadI32(cur);
                         parentRead = true;
+                    }
+                    else if (field is { Declaring: 2249, Name: "m_pntForViewData", Type: 7, Mods: 16, Cnt: 3 })
+                    {
+                        double x = ReadF64(cur), y = ReadF64(cur);
+                        ReadF64(cur);
+                        if (double.IsFinite(x) && double.IsFinite(y)) traceOrigin = (x, y);
                     }
                     else if (field is { Declaring: 2249, Name: "m_coarserScale" })
                     {
@@ -4155,11 +4452,17 @@ internal static partial class TfBlockDeserializer
                         for (int i = 0; i < 3; i++) ReadF64(cur);
                         if (!cur.Take(72 + 48 + 6 + 1)) throw Fail;
                     }
-                    else if (field.Name == "m_viewerFlags" && field.Type == 3)
+                    else if (field is { Declaring: 621, Name: "m_pAnnotationCropOffsets", Type: 14, Mods: 2 })
                     {
-                        // A two-byte flags field where the generic single-byte scalar stride would misalign
-                        // the four one-byte flags and the view-layout pointer after it.
-                        if (!cur.Take(2)) throw Fail;
+                        int index = queue.Count;
+                        ReadPtr(cur, queue);
+                        if (queue.Count == index + 1 && queue[index].Cls == 334)
+                            annotationCropIndex = index;
+                    }
+                    else if (field is { Declaring: 621, Name: "m_bAnnotationCropActive", Type: 1, Mods: 0 })
+                    {
+                        if (!cur.Take(1)) throw Fail;
+                        annotationCropActive = cur.D[cur.Pos - 1] == 1;
                     }
                     else ReadField(cur, field, queue, 0, null);
                 }
@@ -4175,7 +4478,12 @@ internal static partial class TfBlockDeserializer
             // The loop stopped at the front-cut polyline: a count-prefixed array of XYZ points in model
             // feet. A failure here never loses the parent/scale facts above; the mark just falls back
             // to its straight-line trace.
-            viewdata = new(parentViewId, coarserScale, TryReadFrontCut(cur));
+            var frontCut = TryReadFrontCut(cur);
+            double[]? calloutHead = null;
+            var annotationCrop = frontCut != null
+                ? ReadSectionDecorations(cur, queue, annotationCropActive ? annotationCropIndex : -1,
+                    fields, parentViewId, out calloutHead) : null;
+            viewdata = new(parentViewId, coarserScale, frontCut, annotationCrop, calloutHead, traceOrigin);
             return true;
         }
         catch (DecodeFail) { failure = $"decodefail pos={cur.Pos}"; return false; }
@@ -4190,8 +4498,11 @@ internal static partial class TfBlockDeserializer
         {
             if (cur.Pos + 4 > cur.End || cur.Pos < 0) return null;
             uint n = BitConverter.ToUInt32(cur.D, cur.Pos);
-            if (n == 0xFFFFFFFF) return new List<double[]>();
-            if (n == 0) return new List<double[]>();
+            if (n is 0 or uint.MaxValue)
+            {
+                cur.Pos += 4;
+                return [];
+            }
             if (n > 10000 || cur.Pos + 4L + n * 24 > cur.End) return null;
             cur.Pos += 4;
             var points = new List<double[]>((int)n);
@@ -4211,6 +4522,53 @@ internal static partial class TfBlockDeserializer
         {
             return null;
         }
+    }
+
+    private static (double Left, double Right, double Top, double Bottom)? ReadSectionDecorations(
+        Cursor cur, List<(ushort Cls, uint Id)> queue, int index, IReadOnlyList<TfField> fields,
+        int parentViewId, out double[]? calloutHead)
+    {
+        calloutHead = null;
+        if (!HasExactSchemaField(fields, 2249, "m_pCreationViewData", 14, 1, null)
+            || !HasExactSchemaField(fields, 2249, "m_viewDataMapForCallout", 14, 80, null)) return null;
+        try
+        {
+            ReadPtr(cur, queue);
+            uint count = ReadU32(cur);
+            if (count == uint.MaxValue) count = 0;
+            if (count > 10000) return null;
+            // The map serializes an ElementId followed by an inline CalloutGraphicsViewData.
+            bool foundParent = false;
+            double[]? point = null;
+            for (uint i = 0; i < count; i++)
+            {
+                int owner = ReadI32(cur);
+                int start = cur.Pos;
+                ReadInlineStruct(cur, 626, queue, 0);
+                if (owner != parentViewId || owner <= 0) continue;
+                if (foundParent) return null;
+                foundParent = true;
+                // A straight leader uses its head point at the rim of the tag.
+                if (cur.Pos - start == 153 && cur.D[cur.Pos - 1] == 1
+                    && SerializationFields(626) is
+                        [{ Name: "m_headPoint", Type: 7, Mods: 16, Cnt: 3 }, _, _])
+                {
+                    var head = new[] { BitConverter.ToDouble(cur.D, start), BitConverter.ToDouble(cur.D, start + 8),
+                        BitConverter.ToDouble(cur.D, start + 16) };
+                    if (head.All(value => Math.Abs(value) < 1_000_000)) point = head;
+                }
+            }
+            calloutHead = point;
+            if (index < 0 || SerializationFields(334) is not
+                [{ Name: "m_leftRightTopBottomOffsets", Type: 7, Mods: 16, Cnt: 4 }]) return null;
+            for (int i = 0; i < index; i++)
+                ReadInlineStruct(cur, queue[i].Cls, queue, 0);
+            double left = ReadF64(cur), right = ReadF64(cur), top = ReadF64(cur), bottom = ReadF64(cur);
+            return Valid(left) && Valid(right) && Valid(top) && Valid(bottom) ? (left, right, top, bottom) : null;
+        }
+        catch (DecodeFail) { return null; }
+
+        static bool Valid(double value) => value is >= 0 and < 100;
     }
 
     /// <summary>Reads a schedule instance (class 3532): the DBViewSchedule it shows and its top-left origin in
@@ -4337,13 +4695,18 @@ internal static partial class TfBlockDeserializer
         cur.RootQueue = queue;
         try
         {
+            int headerTextTypeId = -1, bodyTextTypeId = -1;
             try
             {
                 foreach (var field in fields)
                 {
                     try
                     {
-                        ReadField(cur, field, queue, 0, null);
+                        if (field is { Declaring: 1012, Name: "m_headerTextTypeId", Type: 14, Mods: 0, Ref: 20 })
+                            headerTextTypeId = ReadI32(cur);
+                        else if (field is { Declaring: 1012, Name: "m_bodyTextTypeId", Type: 14, Mods: 0, Ref: 20 })
+                            bodyTextTypeId = ReadI32(cur);
+                        else ReadField(cur, field, queue, 0, null);
                     }
                     catch (DecodeFail)
                     {
@@ -4366,7 +4729,9 @@ internal static partial class TfBlockDeserializer
             var sectionInfos = new List<(int Index, List<int> RowQis, List<int> CellQis, bool Hide)>();
             var rowHeights = new Dictionary<int, double>();
             var rowCellQis = new Dictionary<int, List<int>>();
-            var cellInfos = new Dictionary<int, (string Text, int CellType, int CoverBottom, int CoverRight)>();
+            var cellInfos = new Dictionary<int, (string Text, int CellType, int CoverBottom, int CoverRight, int Style)>();
+            var cellStyles = new Dictionary<int, ScheduleTextStyle>();
+            var rowBindings = new ScheduleRowBindings();
             double fixedHeightFt = 0;
             for (int qi = 0; qi < queue.Count; qi++)
             {
@@ -4397,17 +4762,33 @@ internal static partial class TfBlockDeserializer
                 }
                 if (queuedClass == 3528)
                 {
-                    if (!TryReadScheduleField(cur, queue, out var heading, out var widthFt, out var hidden, out string fieldFailure))
+                    if (!TryReadScheduleField(cur, queue, out var heading, out var widthFt, out var hidden,
+                            out int parameterId, out int source, out string fieldFailure))
                     {
                         failure = $"field qi={qi} pos={cur.Pos} {fieldFailure}";
                         return false;
                     }
                     if (!hidden) columns.Add((heading, widthFt));
+                    rowBindings.Fields[qi] = (parameterId, hidden, source);
+                    continue;
+                }
+                if (queuedClass == 3542)
+                {
+                    rowBindings.Sorts[qi] = (ReadI32(cur), ReadI32(cur), ReadI32(cur));
+                    continue;
+                }
+                if (queuedClass == 3530)
+                {
+                    int fieldId = ReadI32(cur), type = ReadI32(cur);
+                    ReadString(cur); // ParamStorage's string slot.
+                    ReadF64(cur);
+                    ReadI32(cur);
+                    rowBindings.Filters[qi] = (fieldId, type, ReadI32(cur), ReadI32(cur));
                     continue;
                 }
                 if (queuedClass == 3535)
                 {
-                    if (!TryReadScheduleSchemaFlags(cur, queue, out int category, out bool title, out bool headers, out bool grid, out bool outline, out int gridStyle, out int outlineStyle, out string schemaFailure))
+                    if (!TryReadScheduleSchemaFlags(cur, queue, rowBindings, out int category, out bool title, out bool headers, out bool grid, out bool outline, out int gridStyle, out int outlineStyle, out string schemaFailure))
                     {
                         failure = $"schema qi={qi} pos={cur.Pos} {schemaFailure}";
                         return false;
@@ -4463,12 +4844,35 @@ internal static partial class TfBlockDeserializer
                 }
                 if (queuedClass == 3921)
                 {
-                    if (!TryReadScheduleCell(cur, queue, out string cellText, out int cellType, out int coverBottom, out int coverRight, out string cellFailure))
+                    if (!TryReadScheduleCell(cur, queue, out string cellText, out int cellType,
+                            out int coverBottom, out int coverRight, out int style, out string cellFailure))
                     {
                         failure = $"tablecell qi={qi} pos={cur.Pos} {cellFailure}";
                         return false;
                     }
-                    cellInfos[qi] = (cellText, cellType, coverBottom, coverRight);
+                    cellInfos[qi] = (cellText, cellType, coverBottom, coverRight, style);
+                    continue;
+                }
+                if (queuedClass == 3922)
+                {
+                    double size = 0;
+                    int horizontal = -1, vertical = -1, flags = 0;
+                    string? fontName = null;
+                    foreach (var styleField in SerializationFields(queuedClass) ?? throw Fail)
+                    {
+                        if (styleField is { Declaring: 3922, Name: "m_textSize", Type: 7, Mods: 0 })
+                            size = ReadF64(cur);
+                        else if (styleField is { Declaring: 3922, Name: "m_fontName", Type: 8, Mods: 96 })
+                            fontName = ReadString(cur);
+                        else if (styleField is { Declaring: 3922, Name: "m_flag", Type: 4, Mods: 0 })
+                            flags = ReadI32(cur);
+                        else if (styleField is { Declaring: 3922, Name: "m_horizontalAlignment", Type: 5, Mods: 0 })
+                            horizontal = ReadI32(cur);
+                        else if (styleField is { Declaring: 3922, Name: "m_verticalAlignment", Type: 5, Mods: 0 })
+                            vertical = ReadI32(cur);
+                        else ReadField(cur, styleField, queue, 1, null);
+                    }
+                    if (size is > 0 and <= 256) cellStyles[qi] = new(size, horizontal, vertical, fontName, flags);
                     continue;
                 }
                 if (queuedClass == 3539)
@@ -4524,10 +4928,11 @@ internal static partial class TfBlockDeserializer
                 failure = $"empty schema={schemaRead} cols={columns.Count} queue={queue.Count}";
                 return false;
             }
-            AssembleScheduleTitleBody(sectionInfos, rowHeights, rowCellQis, cellInfos,
-                out double titleHeightFt, out List<(double HeightFt, string Text)> titleBands, out List<ScheduleBodySection> bodySections);
+            AssembleScheduleTitleBody(sectionInfos, rowHeights, rowCellQis, cellInfos, cellStyles,
+                out double titleHeightFt, out var titleStyle, out var titleBands, out var bodySections);
             table = new ScheduleTableDef(columns, categoryId, showTitle, showHeaders, showGridLines, showOutline,
-                gridStyleId, outlineStyleId, titleHeightFt, titleBands, bodySections, fixedHeightFt);
+                gridStyleId, outlineStyleId, titleHeightFt, titleBands, bodySections, fixedHeightFt)
+                { RowBindings = rowBindings, TitleStyle = titleStyle, TextTypeIds = (headerTextTypeId, bodyTextTypeId) };
             return true;
         }
         catch (DecodeFail)
@@ -4545,45 +4950,60 @@ internal static partial class TfBlockDeserializer
         List<(int Index, List<int> RowQis, List<int> CellQis, bool Hide)> sectionInfos,
         Dictionary<int, double> rowHeights,
         Dictionary<int, List<int>> rowCellQis,
-        Dictionary<int, (string Text, int CellType, int CoverBottom, int CoverRight)> cellInfos,
-        out double titleHeightFt, out List<(double HeightFt, string Text)> titleBands, out List<ScheduleBodySection> bodySections)
+        Dictionary<int, (string Text, int CellType, int CoverBottom, int CoverRight, int Style)> cellInfos,
+        Dictionary<int, ScheduleTextStyle> cellStyles,
+        out double titleHeightFt, out ScheduleTextStyle titleStyle,
+        out List<(double HeightFt, string Text, ScheduleTextStyle Style)> titleBands, out List<ScheduleBodySection> bodySections)
     {
         titleHeightFt = 0;
+        titleStyle = default;
         titleBands = new();
         bodySections = new();
         var shown = sectionInfos.Where(section => !section.Hide).OrderBy(section => section.Index).ToList();
         if (shown.Count == 0) return;
-        var first = shown[0];
+        // A hidden title section still owns index zero. The first visible section can be the column header.
+        var first = shown[0].Index == 0 ? shown[0] : (Index: 0, RowQis: new List<int>(), CellQis: new List<int>(), Hide: true);
+        if (first.CellQis.Count > 0 && rowCellQis.GetValueOrDefault(first.CellQis[0]) is { Count: > 0 } titleCells
+            && cellInfos.TryGetValue(titleCells[0], out var titleCell))
+            titleStyle = cellStyles.GetValueOrDefault(titleCell.Style);
         if (first.RowQis.Count > 0 && rowHeights.TryGetValue(first.RowQis[0], out double titleHeight)
             && titleHeight > 0 && titleHeight <= 10)
             titleHeightFt = titleHeight;
         // Later rows of the first section form merged bands: a band extends while its last row's cells
         // carry a bottom cover into the next row (the How-do-I long-text band spans two stored rows).
-        var bands = new List<(double HeightFt, string Text)>();
+        var bands = new List<(double HeightFt, string Text, ScheduleTextStyle Style)>();
         var bandRows = new List<int>();
         string bandText = "";
         double bandHeight = 0;
+        ScheduleTextStyle bandStyle = default;
         for (int i = 1; i < first.RowQis.Count; i++)
         {
             int rowQi = first.RowQis[i];
             double height = rowHeights.TryGetValue(rowQi, out double h) ? h : 0;
-            string text = FirstCellText(first, i, rowCellQis, cellInfos);
+            int cellGroup = first.CellQis[i];
+            var cell = rowCellQis.GetValueOrDefault(cellGroup)?
+                .Select(qi => cellInfos.GetValueOrDefault(qi)).FirstOrDefault(item => !string.IsNullOrEmpty(item.Text));
             bool extends = bandRows.Count > 0 && BandExtends(bandRows[^1], first, rowCellQis, cellInfos);
             if (!extends && bandRows.Count > 0 && bandHeight > 0 && bandHeight <= 20)
             {
-                bands.Add((bandHeight, bandText));
+                bands.Add((bandHeight, bandText, bandStyle));
                 bandRows.Clear();
                 bandText = "";
                 bandHeight = 0;
+                bandStyle = default;
             }
             bandRows.Add(rowQi);
             if (height > 0 && height <= 10) bandHeight += height;
-            if (bandText.Length == 0 && text.Length > 0) bandText = text;
+            if (bandText.Length == 0 && cell is { Text.Length: > 0 } cellWithText)
+            {
+                bandText = cellWithText.Text;
+                bandStyle = cellStyles.GetValueOrDefault(cellWithText.Style);
+            }
         }
         if (bandRows.Count > 0 && bandHeight > 0 && bandHeight <= 20)
-            bands.Add((bandHeight, bandText));
+            bands.Add((bandHeight, bandText, bandStyle));
         titleBands = bands;
-        foreach (var section in shown.Skip(1))
+        foreach (var section in shown.Where(section => section.Index != 0))
         {
             var header = SectionRowTexts(section, 0, rowCellQis, cellInfos);
             int bodyRows = Math.Max(0, section.RowQis.Count - 1);
@@ -4595,13 +5015,49 @@ internal static partial class TfBlockDeserializer
                 if (SectionRowTexts(section, i, rowCellQis, cellInfos).Any(text => text.Length > 0)) break;
                 leadingEmpty++;
             }
-            bodySections.Add(new ScheduleBodySection(header, leadingEmpty, bodyRows));
+            ScheduleTextStyle[]? StylesAt(int row) => rowCellQis.TryGetValue(section.CellQis[row], out var cells)
+                ? cells.Select(cellQi => cellInfos.TryGetValue(cellQi, out var cell)
+                    ? cellStyles.GetValueOrDefault(cell.Style) : default).ToArray()
+                : null;
+            var headerStyles = section.CellQis.Count > 0 ? StylesAt(0) : null;
+            int[]? bodyAlignment = null;
+            // Evaluated rows can be reordered, so carry an alignment only when all stored data rows agree.
+            for (int row = 1 + leadingEmpty; row < section.CellQis.Count; row++)
+            {
+                if (StylesAt(row) is not { Length: > 0 } styles || styles.Length != header.Count)
+                {
+                    bodyAlignment = null;
+                    break;
+                }
+                if (bodyAlignment == null)
+                    bodyAlignment = styles.Select(style => style.CapHeightPixels > 0 ? style.HorizontalAlignment : -1).ToArray();
+                else
+                    for (int col = 0; col < styles.Length; col++)
+                        if (styles[col].CapHeightPixels <= 0 || styles[col].HorizontalAlignment != bodyAlignment[col])
+                            bodyAlignment[col] = -1;
+            }
+            // Evaluated rows need the style even when the saved cells have no text.
+            ScheduleTextStyle? uniformBodyStyle = null;
+            if (header.Count > 0 && section.CellQis.Count > 1
+                && StylesAt(1) is { Length: > 0 } firstBodyStyles
+                && firstBodyStyles[0] is { CapHeightPixels: > 0 } firstStyle
+                && Enumerable.Range(1, section.CellQis.Count - 1).All(row =>
+                    StylesAt(row) is { } styles && styles.Length == header.Count
+                    && styles.All(style => style == firstStyle)))
+                uniformBodyStyle = firstStyle;
+
+            bodySections.Add(new ScheduleBodySection(header, leadingEmpty, bodyRows)
+            {
+                HeaderStyles = headerStyles,
+                BodyAlignment = bodyAlignment,
+                UniformBodyStyle = uniformBodyStyle,
+            });
         }
     }
 
     private static List<string> SectionRowTexts((int Index, List<int> RowQis, List<int> CellQis, bool Hide) section, int rowPos,
         Dictionary<int, List<int>> rowCellQis,
-        Dictionary<int, (string Text, int CellType, int CoverBottom, int CoverRight)> cellInfos)
+        Dictionary<int, (string Text, int CellType, int CoverBottom, int CoverRight, int Style)> cellInfos)
     {
         var texts = new List<string>();
         if (rowPos < 0 || rowPos >= section.CellQis.Count) return texts;
@@ -4617,18 +5073,9 @@ internal static partial class TfBlockDeserializer
         return texts;
     }
 
-    private static string FirstCellText((int Index, List<int> RowQis, List<int> CellQis, bool Hide) section, int rowPos,
-        Dictionary<int, List<int>> rowCellQis,
-        Dictionary<int, (string Text, int CellType, int CoverBottom, int CoverRight)> cellInfos)
-    {
-        foreach (string text in SectionRowTexts(section, rowPos, rowCellQis, cellInfos))
-            if (text.Length > 0) return text;
-        return "";
-    }
-
     private static bool BandExtends(int rowQi, (int Index, List<int> RowQis, List<int> CellQis, bool Hide) section,
         Dictionary<int, List<int>> rowCellQis,
-        Dictionary<int, (string Text, int CellType, int CoverBottom, int CoverRight)> cellInfos)
+        Dictionary<int, (string Text, int CellType, int CoverBottom, int CoverRight, int Style)> cellInfos)
     {
         int pos = section.RowQis.IndexOf(rowQi);
         if (pos < 0 || pos >= section.CellQis.Count) return false;
@@ -4638,11 +5085,12 @@ internal static partial class TfBlockDeserializer
     }
 
     private static bool TryReadScheduleField(Cursor cur, List<(ushort, uint)> queue,
-        out string heading, out double widthFt, out bool hidden, out string failure)
+        out string heading, out double widthFt, out bool hidden, out int parameterId, out int source, out string failure)
     {
         heading = "";
         widthFt = 0;
         hidden = false;
+        parameterId = source = 0;
         failure = "ok";
         var fieldFields = SerializationFields(3528);
         if (fieldFields == null) { failure = "no-schema-3528"; return false; }
@@ -4669,6 +5117,8 @@ internal static partial class TfBlockDeserializer
                 cur.Pos++;
                 hiddenRead = true;
             }
+            else if (field is { Declaring: 3528, Name: "m_paramElemId" }) parameterId = ReadI32(cur);
+            else if (field is { Declaring: 3528, Name: "m_sourceType" }) source = ReadI32(cur);
             else ReadField(cur, field, queue, 1, null);
         }
         if (!headRead || !widthRead || !hiddenRead) { failure = "missing-schedule-field"; return false; }
@@ -4676,7 +5126,7 @@ internal static partial class TfBlockDeserializer
         return true;
     }
 
-    private static bool TryReadScheduleSchemaFlags(Cursor cur, List<(ushort, uint)> queue,
+    private static bool TryReadScheduleSchemaFlags(Cursor cur, List<(ushort, uint)> queue, ScheduleRowBindings bindings,
         out int categoryId, out bool showTitle, out bool showHeaders, out bool showGridLines, out bool showOutline,
         out int gridStyleId, out int outlineStyleId, out string failure)
     {
@@ -4690,6 +5140,7 @@ internal static partial class TfBlockDeserializer
         foreach (var field in schemaFields)
         {
             if (field.Declaring != 3535) { ReadField(cur, field, queue, 1, null); continue; }
+            if (ReadScheduleBindingField(bindings, cur, field, queue)) continue;
             if (field is { Name: "m_categoryId" })
             {
                 if (field is not { Type: 14, Mods: 0, Ref: 20 }) { failure = "category-type"; return false; }
@@ -4850,17 +5301,24 @@ internal static partial class TfBlockDeserializer
     }
 
     private static bool TryReadScheduleCell(Cursor cur, List<(ushort, uint)> queue,
-        out string text, out int cellType, out int coverBottom, out int coverRight, out string failure)
+        out string text, out int cellType, out int coverBottom, out int coverRight, out int style, out string failure)
     {
         text = "";
         cellType = coverBottom = coverRight = 0;
+        style = -1;
         failure = "ok";
         var fields = SerializationFields(3921);
         if (fields == null) { failure = "no-schema-3921"; return false; }
         bool textRead = false, typeRead = false, bottomRead = false, rightRead = false;
         foreach (var field in fields)
         {
-            if (field is { Declaring: 3921, Name: "m_text" })
+            if (field is { Declaring: 3921, Name: "m_oTableCellStyle" })
+            {
+                int before = queue.Count;
+                ReadField(cur, field, queue, 1, null);
+                if (queue.Count == before + 1 && queue[before].Item1 == 3922) style = before;
+            }
+            else if (field is { Declaring: 3921, Name: "m_text" })
             {
                 if (field is not { Type: 8, Mods: 96 }) { failure = "text-type"; return false; }
                 text = ReadString(cur);
@@ -4895,14 +5353,19 @@ internal static partial class TfBlockDeserializer
     /// (the file's own schema names their classes; the shipped schema leaves them unreferenced, so the generic
     /// walk would read them as polymorphic handles and misalign). The two raytrace settings stay queued owned
     /// pointers. False when anything fails to decode.</summary>
-    private static bool TryReadViewDisplayMgr(Cursor cur, List<(ushort, uint)> queue, out string failure)
+    private static bool TryReadViewDisplayMgr(Cursor cur, List<(ushort, uint)> queue, out string failure,
+        NativeParams? capture = null)
     {
         failure = "ok";
         var fields = SerializationFields(4107);
         if (fields == null) { failure = "no-schema-4107"; return false; }
         foreach (var field in fields)
         {
-            if (field.Declaring != 4107 || field is not { Type: 14, Mods: 0 }) { ReadField(cur, field, queue, 1, null); continue; }
+            if (field.Declaring != 4107 || field is not { Type: 14, Mods: 0 })
+            {
+                ReadField(cur, field, queue, 1, capture);
+                continue;
+            }
             int inlineClass = field.Name switch
             {
                 "m_background" => 4103,
@@ -4915,7 +5378,7 @@ internal static partial class TfBlockDeserializer
                 _ => 0,
             };
             if (inlineClass == 0) ReadField(cur, field, queue, 1, null);
-            else ReadInlineStruct(cur, inlineClass, queue, 1);
+            else ReadInlineStruct(cur, inlineClass, queue, 1, inlineClass is 4103 or 4106 or 4108 or 4110 ? capture : null);
         }
         return true;
     }
@@ -5003,7 +5466,7 @@ internal static partial class TfBlockDeserializer
             // TextNoteData queues its RtfData; TagNoteData carries its parameter formatting inline.
             var geoms = new List<(double T0, double T1, double Ox, double Oy, double Oz, double Dx, double Dy, double Dz, int Tag, int Control, int CategoryId, uint Flags)>();
             var rawTexts = new List<(double Ox, double Oy, double Oz, double Hx, double Hy, double Bx, double By, double Height, double Width, int AttrId, int Flags, int RtfQi)>();
-            var rawLabels = new List<(double Ox, double Oy, double Oz, double Hx, double Hy, double Bx, double By, double Height, double Width, int AttrId, int Flags, List<(int ParamId, string Prefix, string Suffix, string Sample)> Params)>();
+            var rawLabels = new List<(double Ox, double Oy, double Oz, double Hx, double Hy, double Bx, double By, double Height, double Width, int AttrId, int Flags, bool Wrap, List<TagLabelParameter> Params)>();
             var rtfBlobs = new Dictionary<int, byte[]>();
             for (int qi = 0; qi < queue.Count; qi++)
             {
@@ -5133,7 +5596,8 @@ internal static partial class TfBlockDeserializer
                 }
                 if (paramId == 0) continue;
                 labels.Add(new TitleBlockLabel(raw.Ox, raw.Oy, raw.Oz, raw.Hx, raw.Hy, raw.Bx, raw.By,
-                    raw.Height, raw.Width, raw.AttrId, raw.Flags, paramId, prefix, suffix));
+                    raw.Height, raw.Width, raw.AttrId, raw.Flags, paramId, prefix, suffix,
+                    raw.Params.Count == 1 ? raw.Params[0].Format : null, raw.Wrap));
             }
             failure = $"ok glines={geoms.Count} kept={lines.Count} texts={texts.Count} labels={labels.Count} queue={queue.Count}";
             return true;
@@ -5228,10 +5692,11 @@ internal static partial class TfBlockDeserializer
     private static bool TryReadTextDataBase(Cursor cur, List<(ushort Cls, uint Id)> queue,
         out double ox, out double oy, out double oz, out double hx, out double hy,
         out double bx, out double by, out double height, out double width,
-        out int attrId, out int flags, out string failure)
+        out int attrId, out int flags, out bool wrap, out string failure)
     {
         ox = oy = oz = hx = hy = bx = by = height = width = 0;
         attrId = flags = 0;
+        wrap = false;
         failure = "ok";
         var baseFields = SerializationFields(3933);
         if (baseFields == null)
@@ -5277,6 +5742,11 @@ internal static partial class TfBlockDeserializer
                 if (field is not { Type: 4, Mods: 0 }) { failure = "flags-type"; return false; }
                 flags = ReadI32(cur); f = true;
             }
+            else if (field is { Declaring: 3933, Name: "m_bNoWrapping", Type: 1, Mods: 0 })
+            {
+                if (!cur.Take(1)) throw Fail;
+                wrap = cur.D[cur.Pos - 1] == 0;
+            }
             else ReadField(cur, field, queue, 1, null);
         }
         if (!o || !u || !b || !h || !w || !a || !f) { failure = "missing-base"; return false; }
@@ -5290,7 +5760,7 @@ internal static partial class TfBlockDeserializer
         failure = "ok";
         if (!TryReadTextDataBase(cur, queue, out double ox, out double oy, out double oz,
             out double hx, out double hy, out double bx, out double by, out double height, out double width,
-            out int attrId, out int flags, out string baseFailure))
+            out int attrId, out int flags, out _, out string baseFailure))
         {
             failure = baseFailure;
             return false;
@@ -5329,20 +5799,20 @@ internal static partial class TfBlockDeserializer
     }
 
     private static bool TryReadTagNoteData(Cursor cur, List<(ushort Cls, uint Id)> queue,
-        out (double Ox, double Oy, double Oz, double Hx, double Hy, double Bx, double By, double Height, double Width, int AttrId, int Flags, List<(int ParamId, string Prefix, string Suffix, string Sample)> Params) label, out string failure)
+        out (double Ox, double Oy, double Oz, double Hx, double Hy, double Bx, double By, double Height, double Width, int AttrId, int Flags, bool Wrap, List<TagLabelParameter> Params) label, out string failure)
     {
         label = default;
         failure = "ok";
         if (!TryReadTextDataBase(cur, queue, out double ox, out double oy, out double oz,
             out double hx, out double hy, out double bx, out double by, out double height, out double width,
-            out int attrId, out int flags, out string baseFailure))
+            out int attrId, out int flags, out bool wrap, out string baseFailure))
         {
             failure = baseFailure;
             return false;
         }
         var tagFields = SerializationFields(3932);
         if (tagFields == null) { failure = "no-schema-3932"; return false; }
-        var collected = new List<(int ParamId, string Prefix, string Suffix, string Sample)>();
+        var collected = new List<TagLabelParameter>();
         bool arrRead = false;
         foreach (var field in tagFields)
         {
@@ -5364,26 +5834,27 @@ internal static partial class TfBlockDeserializer
                         failure = $"parr[{i}] {paramFailure}";
                         return false;
                     }
-                    collected.Add(param);
+                    collected.Add(param!);
                 }
                 arrRead = true;
             }
             else ReadField(cur, field, queue, 1, null);
         }
         if (!arrRead) { failure = "missing-parr"; return false; }
-        label = (ox, oy, oz, hx, hy, bx, by, height, width, attrId, flags, collected);
+        label = (ox, oy, oz, hx, hy, bx, by, height, width, attrId, flags, wrap, collected);
         return true;
     }
 
     private static bool TryReadTagParam(Cursor cur, List<(ushort Cls, uint Id)> queue,
-        out (int ParamId, string Prefix, string Suffix, string Sample) param, out string failure)
+        out TagLabelParameter? param, out string failure)
     {
         param = default;
         failure = "ok";
         var paramFields = SerializationFields(3929);
         if (paramFields == null) { failure = "no-schema-3929"; return false; }
         int paramId = 0;
-        string prefix = "", sample = "", suffix = "";
+        string prefix = "", suffix = "";
+        int formatStart = -1, formatEnd = -1;
         bool idRead = false, preRead = false, samRead = false, sufRead = false;
         foreach (var field in paramFields)
         {
@@ -5398,16 +5869,30 @@ internal static partial class TfBlockDeserializer
             }
             else if (field is { Declaring: 3929, Name: "m_sampleText" })
             {
-                sample = ReadString(cur); samRead = true;
+                ReadString(cur); samRead = true;
             }
             else if (field is { Declaring: 3929, Name: "m_suffix" })
             {
                 suffix = ReadString(cur); sufRead = true;
             }
+            else if (field is { Declaring: 3929, Name: "m_formatOptions", Type: 14, Mods: 0, Ref: 84 })
+            {
+                formatStart = cur.Pos;
+                ReadField(cur, field, queue, 1, null);
+                formatEnd = cur.Pos;
+            }
             else ReadField(cur, field, queue, 1, null);
         }
         if (!idRead || !preRead || !samRead || !sufRead) { failure = "missing-param"; return false; }
-        param = (paramId, prefix, suffix, sample);
+        UnitFormatOption? format = null;
+        if (formatStart >= 0 && (BuiltInParameter)paramId is BuiltInParameter.PROPERTY_SEGMENT_N_S
+            or BuiltInParameter.PROPERTY_SEGMENT_BEARING or BuiltInParameter.PROPERTY_SEGMENT_E_W
+            or BuiltInParameter.PROPERTY_SEGMENT_DISTANCE)
+        {
+            format = ReadUnitFormatOption(cur.D, ref formatStart, formatEnd, "");
+            if (formatStart != formatEnd) format = null;
+        }
+        param = new(paramId, prefix, suffix, format);
         return true;
     }
 
@@ -5621,8 +6106,10 @@ internal static partial class TfBlockDeserializer
     /// ElementId&gt; 8, an affected-edge entry an ElementId plus a counted tag set, a merged
     /// face entry an int key plus a counted int set.</summary>
     private static bool TryReadExactWallGeomStep(
-        Cursor c, ushort classId, out uint owner, out bool joinsTop, out string? failure, bool anyVersion = false)
+        Cursor c, ushort classId, out uint owner, out bool joinsTop, out string? failure,
+        out (int Offset, uint Count) topTargets, bool anyVersion = false)
     {
+        topTargets = default;
         owner = 0;
         joinsTop = false;
         failure = null;
@@ -5681,11 +6168,13 @@ internal static partial class TfBlockDeserializer
             case 2262:
             {
                 uint targets = Count();
+                int targetsOffset = c.Pos;
                 Skip(4L * targets);
                 int baseOrTop = ReadI32(c);
                 ReadI32(c);
                 if (targets == 0 || baseOrTop is not (0 or 1)) { failure = "join to roof"; return false; }
                 joinsTop = baseOrTop == 1;
+                if (joinsTop) topTargets = (targetsOffset, targets);
                 break;
             }
             case 4098:
@@ -5925,10 +6414,11 @@ internal static partial class TfBlockDeserializer
     }
 
     /// <summary>Decode a CurveElem (0x346) block fully (root + all deferred objects) and
-    /// return the curve's line style (BUILDING_CURVE_GSTYLE) and length (CURVE_ELEM_LENGTH).
+    /// return the curve's line style, length, and the geometry of a closed horizontal circle.
     /// Detail arcs store geometry as deferred GArc/GLine/GEllipse objects the pattern scan
     /// couldn't reach; the full schema walk with rules R1-R7 recovers them.</summary>
-    public static (int GStyle, double Length)? ExtractCurveGeometry(byte[] d, int blockStart, uint dataSize)
+    public static (int GStyle, double Length, (double X, double Y, double Radius)? Circle)?
+        ExtractCurveGeometry(byte[] d, int blockStart, uint dataSize)
     {
         var fields = SerializationFields(0x346);
         if (fields == null) return null;
@@ -5939,6 +6429,7 @@ internal static partial class TfBlockDeserializer
 
         var cur = new Cursor { D = d, Pos = payloadStart, End = payloadEnd - 4, Curves = new() };
         var queue = new List<(ushort Cls, uint Id)>();
+        (double X, double Y, double Radius)? circle = null;
         try
         {
             foreach (var f in fields) ReadField(cur, f, queue, 0, null);
@@ -5961,12 +6452,29 @@ internal static partial class TfBlockDeserializer
                 if (qf == null) throw Fail;
                 bool isCurve = cls is 0x7B6 or 0x7DA or 0x6C8;
                 if (isCurve) { cur.Ep0 = cur.Ep1 = cur.Radius = cur.XLen = cur.YLen = 0; }
+                if (cls == 0x7B6) cur.FamilyLineCapture = new();
                 foreach (var sf in qf) ReadField(cur, sf, queue, 1, null);
                 if (isCurve)
                     cur.Curves!.Add((cls, cur.Ep0, cur.Ep1, cur.Radius, cur.XLen, cur.YLen));
+                if (cur.FamilyLineCapture is { } vectors)
+                {
+                    double sweep = Math.Abs(cur.Ep1 - cur.Ep0);
+                    if ((sweep < 1e-12 || Math.Abs(sweep - 2 * Math.PI) < 1e-9)
+                        && cur.Radius > 0 && double.IsFinite(cur.Radius)
+                        && vectors.GetValueOrDefault("m_center") is [var x, var y, var z]
+                        && double.IsFinite(x) && double.IsFinite(y) && double.IsFinite(z)
+                        && vectors.GetValueOrDefault("m_xVec") is [var ax, var ay, var az]
+                        && vectors.GetValueOrDefault("m_yVec") is [var bx, var by, var bz]
+                        && Math.Abs(az) < 1e-8 && Math.Abs(bz) < 1e-8
+                        && Math.Abs(ax * ax + ay * ay - 1) < 1e-8
+                        && Math.Abs(bx * bx + by * by - 1) < 1e-8
+                        && Math.Abs(ax * bx + ay * by) < 1e-8)
+                        circle = (x, y, cur.Radius);
+                    cur.FamilyLineCapture = null;
+                }
             }
         }
-        catch (DecodeFail) { } // Expected: an unsupported or truncated field ends the scan; fall through to the no-value result
+        catch (DecodeFail) { circle = null; } // Keep metadata from fully traversed objects.
 
         double? length = null;
         // Prefer a GArc/GEllipse over a GLine (a detail arc may carry a helper line).
@@ -6005,7 +6513,8 @@ internal static partial class TfBlockDeserializer
 
         int gs = cur.GStyle == int.MinValue ? -1 : cur.GStyle;
         if (gs < 0 && length == null) return null;
-        return (gs, length ?? 0);
+        // A circle can be accompanied by a straight helper curve.
+        return (gs, length ?? 0, cur.Pos == cur.End && cur.Curves!.Count(g => g.Kind != 0x6C8) == 1 ? circle : null);
     }
 
     /// <summary>Decode the two coordinate representations stored by a BasePoint block.
@@ -6636,6 +7145,26 @@ internal static partial class TfBlockDeserializer
         if (hi == 5)
         {
             uint n = ReadU32(c);
+            if (capture != null && n == 4
+                && f is { Declaring: 2247, Name: "m_arrowIds", Type: 14, Mods: 80, Ref: 20 }
+                    or { Declaring: 2251, Name: "m_orderedSubIndices", Type: 4, Mods: 80 })
+            {
+                for (int i = 0; i < 4; i++) capture.Fields[$"{FieldKey(f)}@{i}"] = ReadI32(c);
+                return;
+            }
+            if (capture != null && n == 4 && c.RootClassId == 1829
+                && f is { Declaring: 1829, Name: "m_subInstData", Type: 14, Mods: 80, Ref: 1763 })
+            {
+                for (int i = 0; i < 4; i++)
+                {
+                    var item = new NativeParams();
+                    ReadInlineStruct(c, 1763, queue, depth, item);
+                    if (item.Fields.TryGetValue("1763:first", out int index)
+                        && item.Fields.TryGetValue("1724:m_masterSymId", out int symbol))
+                        capture.Fields.TryAdd($"1829:m_subInstData@{index}", symbol);
+                }
+                return;
+            }
             if (capture != null && c.RootClassId == 1772
                 && f is { Declaring: 1772, Name: "m_refTypeIds", Type: 4, Mods: 80, Ref: null, Cnt: null })
             {
@@ -6880,11 +7409,31 @@ internal static partial class TfBlockDeserializer
     {
         switch (f.Declaring, f.Name)
         {
+            case (690, "m_colorFillArr") when f is { Type: 14, Mods: 80, Ref: 687 } && capture != null:
+                capture.RoomColors = ReadRoomColorEntries(c);
+                return true;
+            case (693, "m_categoryToSchema") when f is { Type: 14, Mods: 80, Ref: 24 } && capture != null:
+            {
+                uint count = ReadU32(c);
+                if (count == uint.MaxValue) return true;
+                if (count > 10_000) throw Fail;
+                for (uint i = 0; i < count; i++)
+                {
+                    int category = ReadI32(c), scheme = ReadI32(c);
+                    if (category == -2000160)
+                        capture.Fields["693:m_roomColorScheme"] = scheme;
+                }
+                return true;
+            }
             // An attribute symbol's line-and-text attributes are an inline LineAndTextAttr struct (font id,
             // category id, background, bold/italic/underline flags: 15 bytes), not the polymorphic pointer
             // the typeless field would read (which drifts every later field of a GridAttributes root).
             case (624, "m_lineAndTextAttr") when f.Type == 14 && f.Mods == 0 && f.Ref == null:
-                if (!c.Take(15)) throw Fail;
+                if (c.RootClassId is 3972 or 1862 or 836 or 3930) ReadInlineStruct(c, 625, queue, depth, capture);
+                else if (!c.Take(15)) throw Fail;
+                return true;
+            case (838, "m_data") when c.RootClassId == 837 && f is { Type: 14, Mods: 0, Ref: null }:
+                ReadInlineStruct(c, 839, queue, depth, capture);
                 return true;
             // A mullion's nominal axis belongs to the first reference of its own symbol, not its trimmed solid.
             case (1829, "m_refs") when IsSubclassOf(c.RootClassId, 1829) && f.Type == 14 && f.Mods == 81
@@ -6926,6 +7475,27 @@ internal static partial class TfBlockDeserializer
             case (2008, "m_bBox" or "m_tightbBox") when f.Type == 13 && f.Mods == 16 && f.Cnt == 2:
                 if (!c.Take(48)) throw Fail;
                 return true;
+            // The viewer flags occupy two bytes before the annotation crop switch.
+            case (621, "m_viewerFlags") when f is { Type: 3, Mods: 0 }:
+                if (!c.Take(2)) throw Fail;
+                return true;
+            case (554, "m_boundedSpace") when c.RootClassId == 2505
+                && f is { Type: 14, Mods: 0, Ref: 553 } && capture != null:
+            {
+                double[] Point() => [ReadF64(c), ReadF64(c), ReadF64(c)];
+                double[] origin = Point();
+                double[][] axes = [Point(), Point(), Point()];
+                var offsets = new double[6];
+                for (int i = 0; i < offsets.Length; i++) offsets[i] = ReadF64(c);
+                if (!c.Take(7)) throw Fail;
+                var flags = c.D.AsSpan(c.Pos - 7, 7);
+                if (flags[6] == 1 && flags[..6].IndexOfAnyExcept((byte)0, (byte)1) < 0
+                    && origin.All(double.IsFinite) && axes.All(axis => axis.All(double.IsFinite))
+                    && offsets.All(double.IsFinite)
+                    && offsets[0] >= offsets[1] && offsets[2] >= offsets[3] && offsets[4] >= offsets[5])
+                    capture.ModelClipBox = new(origin, axes, offsets, flags[..6].ToArray().Select(flag => flag == 1).ToArray());
+                return true;
+            }
             // BoundedSpace (553) composites are wider than Cnt x 8 per element: the basis is 3 x XYZ (72 bytes),
             // the bound offsets 3 pairs of doubles (48 bytes) and the active flags 3 pairs of booleans (6 bytes).
             // The generic stride under-reads them and misaligns every following field of a viewer root.
@@ -6988,7 +7558,8 @@ internal static partial class TfBlockDeserializer
             }
             // SpatialElementCalculationPointRegenData.m_position is an XYZ struct (three doubles); read here so that they are
             // kept under the key of the field (the key of the struct's own field, "171:m_xyz", is not a captured one).
-            case (3639, "m_position") when f.Type == 14 && f.Mods == 0 && f.Ref == 171 && capture != null:
+            case (3639, "m_position") or (3702, "m_downTextOffset")
+                when f.Type == 14 && f.Mods == 0 && f.Ref == 171 && capture != null:
             {
                 if (SerializationFields(171) is not [{ Name: "m_xyz", Type: 7, Mods: 16, Cnt: 3 }]) throw Fail;
                 for (int i = 0; i < 3; i++) capture.DoubleFields[FieldKey(f) + "@" + i] = ReadF64(c);
@@ -7015,6 +7586,57 @@ internal static partial class TfBlockDeserializer
                 if (count == uint.MaxValue) return true;
                 if (count > 1_000_000 || count > (c.End - c.Pos) / 8) throw Fail;
                 if (!c.Take((int)count * 8)) throw Fail;
+                return true;
+            }
+            case (527, "m_taggedEntitiesCell") when f is { Type: 14, Mods: 0, Ref: null }:
+            {
+                if (SerializationFields(528) is not { Count: 1 } entries
+                    || entries[0] is not { Declaring: 528, Name: "m_taggedEntities", Type: 14, Mods: 81, Ref: 528 }
+                    || c.End - c.Pos < 4) throw Fail;
+                bool single = BitConverter.ToUInt32(c.D, c.Pos) == 1;
+                int first = queue.Count;
+                ReadField(c, entries[0], queue, depth + 1, null);
+                if (capture != null && single && queue.Count == first + 1 && queue[first].Item1 == 3935)
+                    capture.Fields["527:singleTaggedElement"] = 1;
+                return true;
+            }
+            case (844, "m_contourCache") when c.RootClassId == 3595
+                && f is { Type: 14, Mods: 80, Ref: null }:
+            {
+                var contours = ReadSiteContours(c);
+                if (capture != null) capture.SiteContours = contours;
+                return true;
+            }
+            case (3936, "m_elbowOffset" or "m_endOffset") when c.RootClassId == 527
+                && f is { Type: 14, Mods: 0, Ref: 171 } && capture != null:
+                capture.DoubleFields[$"3936:{f.Name}@0"] = ReadF64(c);
+                capture.DoubleFields[$"3936:{f.Name}@1"] = ReadF64(c);
+                ReadF64(c);
+                return true;
+            case (3935, "m_taggedId") when c.RootClassId == 527 && f is { Type: 14, Mods: 0, Ref: 180 }
+                && capture != null:
+                capture.Fields["3935:elementOrLinkId"] = ReadI32(c);
+                capture.Fields["3935:linkedElementId"] = ReadI32(c);
+                return true;
+            case (3475, "m_taggedRoomElemId") when f is { Type: 14, Mods: 0, Ref: 180 } && capture != null:
+                capture.Fields["3475:roomOrLinkId"] = ReadI32(c);
+                capture.Fields["3475:linkedRoomId"] = ReadI32(c);
+                return true;
+            case (1740, "m_contentDocGUID") when f is { Type: 14, Mods: 0, Ref: 30 }
+                && c.RootClassId == 1772 && capture != null:
+                if (!c.Take(16)) throw Fail;
+                capture.StringFields["1740:contentDoc"] = Convert.ToHexString(c.D.AsSpan(c.Pos - 16, 16));
+                return true;
+            case (1807, "m_paramDrivenData") when f is { Type: 14, Mods: 80, Ref: null, Cnt: null }:
+                ReadInlineContainer(c, 1808, queue, depth);
+                return true;
+            case (3927, "m_paramDataFormattingArr") when f is { Type: 14, Mods: 80, Ref: null }:
+                ReadInlineContainer(c, 3929, queue, depth);
+                return true;
+            case (3702, "m_stairsLinkElementId") when f is { Type: 14, Mods: 0, Ref: 180 } && c.TailWalk:
+            {
+                int host = ReadI32(c), link = ReadI32(c);
+                if (capture != null && host > 0 && link == -1) capture.Fields[FieldKey(f)] = host;
                 return true;
             }
             // The r22 schema's self-reference is not a recursive inline object:
@@ -7405,6 +8027,15 @@ internal static partial class TfBlockDeserializer
             case (716, "m_offsetGeomMap"):
                 ReadInlineContainer(c, 717, queue, depth, capture);
                 return true;
+            case (3878, "m_outline") when c.RootClassId == 3878
+                && f is { Type: 14, Mods: 0, Ref: 297 } && capture != null:
+            {
+                var bounds = new double[6];
+                for (int i = 0; i < bounds.Length; i++) bounds[i] = ReadF64(c);
+                if (bounds.All(double.IsFinite) && bounds[0] <= bounds[3] && bounds[1] <= bounds[4]
+                    && bounds[2] <= bounds[5]) capture.SunStudyOutline = bounds;
+                return true;
+            }
             // Outline.m_minmax is a fixed array of two XYZ POD values.
             case (297, "m_minmax"):
                 if (!c.Take(2 * 3 * 8)) throw Fail;
@@ -7447,14 +8078,48 @@ internal static partial class TfBlockDeserializer
                         ReadField(c, record, queue, depth + 1, null);
                 return true;
             }
+            case (174, "m_equalityFormattingArr") when f is { Type: 14, Mods: 80, Ref: null }:
+                ReadInlineContainer(c, 175, queue, depth);
+                return true;
+            case (175, "m_formatOptions") when f is { Type: 14, Mods: 0, Ref: 175 }:
+                ReadInlineStruct(c, 84, queue, depth);
+                return true;
+            case (160, "m_refPnts") when c.RootClassId == 2335 && capture != null
+                && f is { Type: 13, Mods: 80, Cnt: null }:
+            {
+                int count = ReadI32(c);
+                if (count is < -1 or > 100_000) throw Fail;
+                if (count >= 0) capture.Fields["m_refPnts#"] = count;
+                if (count is < 2 or > 128)
+                {
+                    if (!c.Take(Math.Max(0, count) * 24)) throw Fail;
+                    return true;
+                }
+                capture.DimensionReferences = new List<double[]>(count);
+                for (int i = 0; i < count; i++) capture.DimensionReferences.Add(ReadStoredPoint(c));
+                return true;
+            }
             case (0xA0, "m_ArrSegInfo"):                      // D1: [count] x inline DimSegInfo
+                if (c.RootClassId == 2335 && capture?.DimensionReferences != null)
+                    capture.DimensionValues = new List<double>();
                 ReadInlineContainer(c, 0xA1, queue, depth, capture);
                 return true;
             case (0xA0, "m_ArrEqualityFormulaInfo_DimEqSegInfoArr"): // D3: inline DimEqSegInfoArr
                 ReadInlineStruct(c, 0xA5, queue, depth);
                 return true;
             case (0x9F, "m_witnessRefs"):                     // D4
-                ReadInlineContainer(c, 0xA7, queue, depth);
+                ReadInlineContainer(c, 0xA7, queue, depth, capture?.DimensionValues != null ? capture : null);
+                return true;
+            case (161, "m_offset") when capture?.DimensionValues != null && f is { Type: 7, Mods: 16, Cnt: 2 }:
+            {
+                double x = ReadF64(c), y = ReadF64(c);
+                if (x != 0 || y != 0) capture.DimensionValues = null;
+                return true;
+            }
+            case (167, "m_modified" or "m_useDistToDimLn") when capture?.DimensionValues != null
+                && f is { Type: 1, Mods: 0 }:
+                if (!c.Take(1)) throw Fail;
+                if (c.D[c.Pos - 1] != 0) capture.DimensionValues = null;
                 return true;
             case (0x162, "m_witnessRefs"):                    // D4 (radial chain)
                 ReadInlineContainer(c, 0x163, queue, depth);
@@ -7483,7 +8148,16 @@ internal static partial class TfBlockDeserializer
                     queue.Add((tag, 0xFFFFFFFF));
                 }
                 else if (hdr > 1000) throw Fail;
+                int first = c.Pos, queued = queue.Count;
                 for (int i = 0; i < 3; i++) ReadInlineStruct(c, 0xA3, queue, depth);
+                if (capture?.DimensionValues is { } values)
+                {
+                    // Each value owns its text overrides and format state. Only plain measured labels are supported.
+                    if (hdr != 0xFFFFFFFF && queued == queue.Count)
+                        values.Add(BitConverter.ToDouble(c.D, first));
+                    else
+                        capture.DimensionValues = null;
+                }
                 return true;
             }
             case (0xA1, "m_id"):                              // D6: plain i32 (may be -1)
@@ -7499,6 +8173,9 @@ internal static partial class TfBlockDeserializer
                 return true;
 
             // CurveElem / arc geometry (rules R1-R7)
+            case (838, "m_referenceType") when c.RootClassId == 837:
+                if (!c.Take(4)) throw Fail;
+                return true;
             case (0x346, "m_referenceType"):                 // R1: field i32 + a hidden extra i32
                 if (!c.Take(8)) throw Fail;
                 return true;

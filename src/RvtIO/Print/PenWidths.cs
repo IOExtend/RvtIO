@@ -13,8 +13,11 @@ internal static class PenWidths
     /// <summary>The pen number a category's cut (isCut) or projection lines use, from the document's
     /// Object Styles. False when the category has no style for that kind.</summary>
     internal static bool TryGetPenNumber(RvtDocument document, int categoryId, bool isCut, out int pen)
+        => TryGetStyle(document, categoryId, isCut, out pen, out _);
+
+    internal static bool TryGetStyle(RvtDocument document, int categoryId, bool isCut, out int pen, out int color)
     {
-        pen = 0;
+        pen = color = 0;
         var styles = document.RawData.GraphicsStylePens;
         if (styles == null) return false;
         int kind = isCut ? 2 : 1;
@@ -23,6 +26,7 @@ internal static class PenWidths
             if (style.CategoryId == categoryId && style.OwnerId == -1 && style.GStyleType == kind)
             {
                 pen = style.PenNumber;
+                color = style.Color;
                 return true;
             }
         }
@@ -35,22 +39,9 @@ internal static class PenWidths
     {
         widthMillimetres = 0;
         var info = document.RawData;
-        if (info.GraphicsStylePens == null || info.PenWidthTable == null) return false;
-        if (scaleDenominator <= 0) return false;
-        int kind = isCut ? 2 : 1;
-        int pen = 0;
-        bool found = false;
-        foreach (var style in info.GraphicsStylePens.Values)
-        {
-            if (style.CategoryId == categoryId && style.OwnerId == -1 && style.GStyleType == kind)
-            {
-                pen = style.PenNumber;
-                found = true;
-                break;
-            }
-        }
-        if (!found) return false;
-        return TryPenWidth(info.PenWidthTable.Value, pen, scaleDenominator, out widthMillimetres);
+        return info.PenWidthTable is { } table && scaleDenominator > 0
+            && TryGetPenNumber(document, categoryId, isCut, out int pen)
+            && TryPenWidth(table, pen, scaleDenominator, out widthMillimetres);
     }
 
     /// <summary>Width in millimetres a model pen prints at for a view scale denominator. False when the pen is out

@@ -53,6 +53,10 @@ public sealed class PdfTrueTypeFont
         XMax = BinaryPrimitives.ReadInt16BigEndian(file.AsSpan(head.Offset + 40));
         YMax = BinaryPrimitives.ReadInt16BigEndian(file.AsSpan(head.Offset + 42));
 
+        if (tables.TryGetValue("OS/2", out var os2) && os2.Length >= 90
+            && os2.Offset >= 0 && os2.Offset <= file.Length - 90
+            && BinaryPrimitives.ReadUInt16BigEndian(file.AsSpan(os2.Offset)) >= 2)
+            CapHeight = BinaryPrimitives.ReadInt16BigEndian(file.AsSpan(os2.Offset + 88));
         Ascent = BinaryPrimitives.ReadInt16BigEndian(file.AsSpan(hhea.Offset + 4));
         Descent = BinaryPrimitives.ReadInt16BigEndian(file.AsSpan(hhea.Offset + 6));
         int metrics = BinaryPrimitives.ReadUInt16BigEndian(file.AsSpan(hhea.Offset + 34));
@@ -87,6 +91,7 @@ public sealed class PdfTrueTypeFont
     internal int XMax { get; }
     internal int YMax { get; }
     internal int Ascent { get; }
+    internal int CapHeight { get; }
     internal int Descent { get; }
 
     /// <summary>The font file, embedded whole.</summary>

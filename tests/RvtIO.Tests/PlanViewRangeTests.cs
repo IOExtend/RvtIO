@@ -7,7 +7,7 @@ namespace RvtIO.Tests;
 
 public class PlanViewRangeTests
 {
-    [Fact]
+    [SkippableFact]
     public void SampleFile_DecodesTheLevel2PlanViewRange()
     {
         // PlanViewRange2 is a nested object of the view's block, not an element block: its five offsets are the
@@ -31,7 +31,7 @@ public class PlanViewRangeTests
         Assert.Contains(levelId, range.LevelIds);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_Level2DrawsTheDeckTopRail()
     {
         // The observation deck's top rail stands on the roof below Level 2 (its base is the ceiling level), so it

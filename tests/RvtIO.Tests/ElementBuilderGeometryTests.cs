@@ -116,6 +116,39 @@ public class ElementBuilderGeometryTests
         Assert.True(param.IsApproximate);
     }
 
+    [Theory]
+    [InlineData(1.0, true)]
+    [InlineData(-1.0, true)]
+    [InlineData(2.0, false)]
+    public void TransformGeometry_PreservesStoredArcsThroughRigidPlacements(double axis, bool rigid)
+    {
+        var arc = new Arc([1, 2, 0], [1, 0, 0], [0, 1, 0], 2, 0, Math.PI / 2, Edge: 12);
+        var geometry = new GeometryData
+        {
+            Faces = [new GeoFace { OuterVertices = [[1, 2, 0], arc.At(arc.First), arc.At(arc.Last)], MeshArcs = [arc] }],
+        };
+        var placed = ElementBuilder.TransformGeometry(geometry, [0, -1, 0, axis, 0, 0, 0, 0, 1, 10, 20, 3]);
+        var face = Assert.Single(placed!.Faces);
+        if (rigid)
+        {
+            var transformed = Assert.Single(face.MeshArcs!);
+            Assert.Equal(arc.Edge, transformed.Edge);
+            Assert.Equal(arc.Radius, transformed.Radius);
+            Assert.Equal(new[] { 8, 20 + axis, 3 }, transformed.Centre);
+            Assert.Equal(face.OuterVertices![1], transformed.At(transformed.First));
+            Assert.Equal(face.OuterVertices[2], transformed.At(transformed.Last));
+
+            var copied = ElementBuilder.ClipGeometryToBounds(placed, [0, 10, 2, 12, 25, 4], out bool wasClipped);
+            Assert.False(wasClipped);
+            Assert.Same(transformed, Assert.Single(Assert.Single(copied!.Faces).MeshArcs!));
+
+            var clipped = ElementBuilder.ClipGeometryToBounds(placed, [7, 10, 2, 12, 25, 4], out wasClipped);
+            Assert.True(wasClipped);
+            Assert.Null(Assert.Single(clipped!.Faces).MeshArcs);
+        }
+        else Assert.Null(face.MeshArcs);
+    }
+
     [Fact]
     public void ClipGeometryToBounds_UsesExactSerializedPlane()
     {
@@ -141,5 +174,40 @@ public class ElementBuilderGeometryTests
             point => Assert.InRange(point[2], 0, 1.25));
         Assert.Contains(clipped.Faces.SelectMany(face => face.OuterVertices!),
             point => BitConverter.DoubleToInt64Bits(point[2]) == BitConverter.DoubleToInt64Bits(1.25));
+    }
+
+    private static ViewFacingLine ProjectedLine(double x) => new([x, 0, 0], [x + 1, 0, 0], [0, 0, 1], 7);
+
+    private static GeometryData SquareWithLines(params ViewFacingLine[] lines) => new()
+    {
+        Faces = [new GeoFace { OuterVertices = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]] }],
+        ViewFacingLines = lines.ToList(),
+    };
+
+    [Fact]
+    public void ClipGeometryToBounds_GivesTheResultItsOwnViewFacingLines()
+    {
+        var source = SquareWithLines(ProjectedLine(0));
+
+        var clipped = ElementBuilder.ClipGeometryToBounds(source, [-5, -5, -5, 5, 5, 5])!;
+        // Appending a symbol to the clipped geometry must not reach back into the source it was cut from.
+        ElementBuilder.AppendGeometry(clipped, SquareWithLines(ProjectedLine(10)));
+
+        Assert.NotSame(source.ViewFacingLines, clipped.ViewFacingLines);
+        Assert.Equal(2, clipped.ViewFacingLines!.Count);
+        Assert.Single(source.ViewFacingLines!);
+    }
+
+    [Fact]
+    public void BuildGeometryData_GivesTheResultItsOwnViewFacingLines()
+    {
+        var grep = new GRepData { BoundingBox = [0, 0, 0, 1, 1, 0], ViewFacingLines = [ProjectedLine(0)] };
+
+        var built = ElementBuilder.BuildGeometryData(grep)!;
+        ElementBuilder.AppendGeometry(built, SquareWithLines(ProjectedLine(10)));
+
+        Assert.NotSame(grep.ViewFacingLines, built.ViewFacingLines);
+        Assert.Equal(2, built.ViewFacingLines!.Count);
+        Assert.Single(grep.ViewFacingLines);
     }
 }

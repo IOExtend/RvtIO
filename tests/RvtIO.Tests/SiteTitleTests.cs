@@ -8,7 +8,7 @@ namespace RvtIO.Tests;
 
 public class SiteTitleTests
 {
-    [Fact]
+    [SkippableFact]
     public void SampleFile_SolarAnalysisViewportIsTitled()
     {
         // A sun study's content is an image, so the composer draws no vector frame for its viewport; the title

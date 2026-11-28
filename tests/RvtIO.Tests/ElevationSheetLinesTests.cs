@@ -7,7 +7,7 @@ namespace RvtIO.Tests;
 
 public class ElevationSheetLinesTests
 {
-    [Fact]
+    [SkippableFact]
     public void SampleFile_SouthElevationInksTheHorizontalContours()
     {
         // Every visible edge inks, horizontals included: the printed reference shows the wall top, the roof and the
@@ -37,7 +37,7 @@ public class ElevationSheetLinesTests
         Assert.Contains(edges, edge => Math.Abs(edge.X2 - edge.X1) < 0.5 && Math.Abs(edge.Y2 - edge.Y1) > 1000);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_LongitudinalSectionKeepsItsCutProfile()
     {
         // A section shows the cut profile of every slab it passes through (the sample's roof slab at z = 6898 /
@@ -58,7 +58,7 @@ public class ElevationSheetLinesTests
         Assert.Contains(edges, edge => Math.Abs(edge.X2 - edge.X1) < 0.5 && Math.Abs(edge.Y2 - edge.Y1) > 1000);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_StairDetailKeepsItsRailDiagonals()
     {
         // A railing's continuous rail projects as a long diagonal across the stair; the printed reference shows it.
@@ -84,7 +84,7 @@ public class ElevationSheetLinesTests
             && Math.Abs(edge.X2 - edge.X1) <= 100);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SampleFile_FoundationBelowTheLowestLevelIsDrawn()
     {
         // Work below the lowest decoded level still inks: the printed reference shows the foundation walls and their

@@ -1,4 +1,5 @@
 using RvtIO.BuiltIns;
+using RvtIO.Internal;
 using RvtIO.Model;
 using RvtIO.Parsing;
 using RvtIO.Pdf;
@@ -43,7 +44,7 @@ public sealed record PlanView(int ViewId, string Name, int LevelId, int Scale);
 /// geometry, not Revit's generated linework, so floors, stairs, annotations, room fills, dimensions, tags and the title
 /// block are not on the page yet (see the notes in docs/printing.md).
 /// </summary>
-public static class PlanPrinter
+public static partial class PlanPrinter
 {
     private const double FeetToMillimetres = 304.8;
 
@@ -65,7 +66,18 @@ public static class PlanPrinter
         List<(List<(double X, double Y)> Polygon, IReadOnlyList<TfBlockDeserializer.PatternGrid> Grids)>? RoomPatterns = null,
         List<(double X1, double Y1, double X2, double Y2)>? StairLines = null,
         List<(double X1, double Y1, double X2, double Y2)>? RailLines = null,
-        List<(double X1, double Y1, double X2, double Y2)>? FurnitureLines = null);
+        List<(double X1, double Y1, double X2, double Y2)>? FurnitureLines = null,
+        IReadOnlyDictionary<string, uint>? RoomColors = null,
+        List<List<(double X, double Y)>>? FurnitureFillRings = null)
+    {
+        internal List<(DoorPlanSymbol Symbol, double[] Transform)>? DoorSymbols { get; init; }
+        internal List<(double X1, double Y1, double X2, double Y2, int StyleId)>? FixtureLines { get; init; }
+        internal List<(double X1, double Y1, double X2, double Y2, bool Cut)>? GenericModelLines { get; init; }
+        internal List<(double X, double Y, double Radius)>? DetailCircles { get; init; }
+        internal Dictionary<int, ColumnProfile>? ColumnProfiles { get; init; }
+        internal Dictionary<int, List<(double X, double Y)>>? ProjectedWallTops { get; init; }
+        internal List<(int CategoryId, bool IsCut, List<(double X, double Y)> Ring)>? CurtainProfiles { get; init; }
+    }
 
     /// <summary>The same plan seen in a rotated view: every point is projected on the view's own axes, so a site
     /// plan whose crop basis is turned draws its building turned with it. Wall-relative data (gaps, door and
@@ -142,7 +154,41 @@ public static class PlanPrinter
             return content with { MinX = content.MinX, MinY = content.MinY, MaxX = content.MaxX, MaxY = content.MaxY };
         return new PlanContent(walls, columns, grids, content.Gaps, content.WindowGaps, content.DoorGaps,
             floorLoops, openingLoops, rooms, furniture, tags, minX, minY, maxX, maxY,
-            roomPatterns, stairLines, railLines, furnitureLines);
+            roomPatterns, stairLines, railLines, furnitureLines, content.RoomColors,
+            content.FurnitureFillRings?.Select(MapPolygon).ToList())
+        {
+            ProjectedWallTops = content.ProjectedWallTops?.ToDictionary(entry => entry.Key, entry => MapPolygon(entry.Value)),
+            CurtainProfiles = content.CurtainProfiles?.Select(profile =>
+                (profile.CategoryId, profile.IsCut, MapPolygon(profile.Ring))).ToList(),
+            ColumnProfiles = content.ColumnProfiles?.ToDictionary(entry => entry.Key, entry =>
+            {
+                var profile = entry.Value;
+                (double X, double Y, double Radius)? circle = null;
+                if (profile.Circle is { } source)
+                {
+                    var centre = Map(source.X, source.Y);
+                    circle = (centre.X, centre.Y, source.Radius);
+                }
+                return profile with { Ring = MapPolygon(profile.Ring), Circle = circle };
+            }),
+            DetailCircles = content.DetailCircles?.Select(circle =>
+            {
+                var center = Map(circle.X, circle.Y);
+                return (center.X, center.Y, circle.Radius);
+            }).ToList(),
+            GenericModelLines = content.GenericModelLines?.Select(line =>
+            {
+                var a = Map(line.X1, line.Y1);
+                var b = Map(line.X2, line.Y2);
+                return (a.X, a.Y, b.X, b.Y, line.Cut);
+            }).ToList(),
+            FixtureLines = content.FixtureLines?.Select(line =>
+            {
+                var a = Map(line.X1, line.Y1);
+                var b = Map(line.X2, line.Y2);
+                return (a.X, a.Y, b.X, b.Y, line.StyleId);
+            }).ToList(),
+        };
     }
 
     /// <summary>The levels a plan can be printed for: those that own at least one wall or column with a location line,
@@ -299,6 +345,9 @@ public static class PlanPrinter
     {
         var walls = new List<(int Id, double X1, double Y1, double X2, double Y2, double Width)>();
         var columns = new List<(double X, double Y, double Width, double Height)>();
+        Dictionary<int, ColumnProfile>? columnProfiles = null;
+        double? cutHeight = viewId is int cutView ? PlanCutHeight(document, cutView) : null;
+        var planRange = GetPlanRange(document, levelId, viewId);
         double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
         void Grow(double x, double y)
         {
@@ -327,6 +376,8 @@ public static class PlanPrinter
                 if (box is not { Length: 6 } || box[3] <= box[0] || box[4] <= box[1]) continue;
                 double x = box[0] * FeetToMillimetres, y = box[1] * FeetToMillimetres;
                 double width = (box[3] - box[0]) * FeetToMillimetres, height = (box[4] - box[1]) * FeetToMillimetres;
+                if (cutHeight is double cut && CutColumnProfile(document, element, cut) is { } profile)
+                    (columnProfiles ??= []).Add(columns.Count, profile);
                 columns.Add((x, y, width, height));
                 Grow(x, y); Grow(x + width, y + height);
             }
@@ -341,10 +392,38 @@ public static class PlanPrinter
         var gaps = new Dictionary<int, List<(double From, double To)>>();
         var windowGaps = new List<(int HostId, double From, double To)>();
         var doorGaps = new List<(int HostId, double From, double To)>();
+        List<(DoorPlanSymbol Symbol, double[] Transform)>? doorSymbols = null;
+        var hiddenElements = viewId is int openingView ? document.RawData.ViewHiddenElements?.GetValueOrDefault(openingView) : null;
+        var hiddenCategories = viewId is int categoryView ? document.RawData.ViewHiddenCategories?.GetValueOrDefault(categoryView) : null;
+        bool IsHidden(Element element) => hiddenElements?.Contains(element.Id) == true
+            || element.CategoryId is int category && hiddenCategories?.Contains(category) == true;
         var tags = new List<(double MidX, double MidY, double Nx, double Ny, string Text, bool IsWindow)>();
         foreach (var insert in document.Elements)
         {
             if (insert.CategoryId is not ((int)BuiltInCategory.OST_Doors or (int)BuiltInCategory.OST_Windows)) continue;
+            // A hidden door or window leaves its opening in the wall: the opening is the wall's, and only what the
+            // insert itself draws (its leaf, glass, symbol and tag) is dropped.
+            bool hiddenInsert = IsHidden(insert);
+            if (Environment.GetEnvironmentVariable("RVTIO_DEBUG_DOOR") == "2" && viewId == 312)
+                Console.WriteLine($"[ins] id={insert.Id} cat={insert.CategoryId} '{insert.Name}' mark=" +
+                    $"'{insert.LookupParameter(BuiltInParameter.DOOR_NUMBER)?.Value}' host={insert.SerializedHostId} " +
+                    $"inWalls={wallById.ContainsKey(insert.SerializedHostId ?? -1)} symbols={insert.OwnDoorPlanSymbols?.Symbols.Count ?? 0} " +
+                    $"cut={cutHeight:F2}");
+            bool savedDoor = false;
+            // A curtain-wall door hangs in a host the plan wall list does not carry (a curtain wall has no wall
+            // curve), so the saved symbol must not depend on the host: its own transform places it.
+            if (!hiddenInsert && cutHeight is double height
+                && insert.OwnDoorPlanSymbols is { } display
+                && SelectDoorPlanSymbol(display.Symbols, display.Transform, height, insert.BoundingBox) is { } symbol)
+            {
+                (doorSymbols ??= []).Add((symbol, display.Transform));
+                savedDoor = true;
+                if (Environment.GetEnvironmentVariable("RVTIO_DEBUG_DOOR") == "1")
+                    Console.WriteLine($"[door] level={levelId} view={viewId} insert={insert.Id} " +
+                        $"'{insert.Name}' host={insert.SerializedHostId} bbox=({insert.BoundingBox?[0]:F1},{insert.BoundingBox?[1]:F1}) " +
+                        $"transform=({display.Transform[9]:F1},{display.Transform[10]:F1}) " +
+                        $"curves={symbol.Curves.Count} arcs={symbol.Curves.Count(c => c.R > 0)} cut={symbol.CutRange} h={cutHeight:F2}");
+            }
             if (insert.OwnSingleFamilyCutout is not { } cutout || cutout.Transform is not { Length: 12 } matrix) continue;
             if (!wallById.TryGetValue(cutout.HostId, out var wall)) continue;
             double dx = wall.X2 - wall.X1, dy = wall.Y2 - wall.Y1;
@@ -371,8 +450,9 @@ public static class PlanPrinter
             if (to - from < 1) continue;
             if (!gaps.TryGetValue(wall.Id, out var list)) gaps[wall.Id] = list = new List<(double From, double To)>();
             list.Add((from, to));
+            if (hiddenInsert) continue;
             if (insert.CategoryId == (int)BuiltInCategory.OST_Windows) windowGaps.Add((wall.Id, from, to));
-            else doorGaps.Add((wall.Id, from, to));
+            else if (!savedDoor) doorGaps.Add((wall.Id, from, to));
             // The tag of a door is its mark, the tag of a window its type mark: both are placed beside the opening on
             // the side it opens into.
             bool isWindow = insert.CategoryId == (int)BuiltInCategory.OST_Windows;
@@ -409,7 +489,7 @@ public static class PlanPrinter
             if (element.CategoryId != (int)BuiltInCategory.OST_Rooms) continue;
             if (element.LookupParameter(BuiltInParameter.ROOM_LEVEL_ID)?.Value is not int roomLevel
                 || roomLevel != levelId) continue;
-            if (element.SerializedSpaceBoundary is not { Faces.Count: > 0 } boundary) continue;
+            if (element.SerializedSpaceBoundaryCurrent is not { Faces.Count: > 0 } boundary) continue;
             List<(double X, double Y)>? polygon = null;
             double bestArea = 0;
             foreach (var face in boundary.Faces)
@@ -424,7 +504,8 @@ public static class PlanPrinter
                 polygon = candidate;
             }
             if (polygon == null) continue;
-            double areaFeet = element.LookupParameter(BuiltInParameter.ROOM_AREA)?.Value is double value ? value : 0;
+            double areaFeet = element.LookupParameter(BuiltInParameter.ROOM_AREA)?.Value is double value
+                ? value : bestArea / (FeetToMillimetres * FeetToMillimetres);
             string number = element.LookupParameter(BuiltInParameter.ROOM_NUMBER)?.Value as string ?? "";
             rooms.Add((polygon, element.Name ?? "", number, areaFeet));
         }
@@ -448,7 +529,8 @@ public static class PlanPrinter
                 var layers = type?.SerializedHostTypeLayers;
                 if (layers is not { Length: > 0 } || layers[0].RawMaterialId <= 0) continue;
                 if (!materialPatterns.TryGetValue(layers[0].RawMaterialId, out var material)
-                    || material.SurfacePatternId <= 0 || !fillPatterns.ContainsKey(material.SurfacePatternId)) continue;
+                    || !fillPatterns.TryGetValue(material.SurfacePatternId, out var surfacePattern)
+                    || surfacePattern.Grids.Count == 0) continue;
                 List<(double X, double Y)>? top = null;
                 double topZ = double.MinValue;
                 foreach (var face in geometry.Faces)
@@ -486,17 +568,25 @@ public static class PlanPrinter
         var openingLoops = new List<List<(double X, double Y)>>();
         foreach (var insert in document.Elements)
         {
-            if (insert.CategoryId is not ((int)BuiltInCategory.OST_Doors or (int)BuiltInCategory.OST_Windows)) continue;
+            if (insert.CategoryId is not ((int)BuiltInCategory.OST_Doors or (int)BuiltInCategory.OST_Windows)
+                || IsHidden(insert)) continue;
             if (insert.OwnSingleFamilyCutout is not { } cutout || cutout.Transform is not { Length: 12 } matrix) continue;
+            // A roof opening projects a separate plan outline. Wall loops are used for the jambs.
+            bool roofOpening = document.GetElement(cutout.HostId)?.CategoryId == (int)BuiltInCategory.OST_Roofs;
             var points = new List<(double X, double Y)>(cutout.Loop.Vertices.Count);
+            double low = double.PositiveInfinity, high = double.NegativeInfinity;
             foreach (var vertex in cutout.Loop.Vertices)
             {
                 double wx = (matrix[0] * vertex[0] + matrix[1] * vertex[1] + matrix[2] * vertex[2] + matrix[9])
                     * FeetToMillimetres;
                 double wy = (matrix[3] * vertex[0] + matrix[4] * vertex[1] + matrix[5] * vertex[2] + matrix[10])
                     * FeetToMillimetres;
+                double z = matrix[6] * vertex[0] + matrix[7] * vertex[1] + matrix[8] * vertex[2] + matrix[11];
+                low = Math.Min(low, z);
+                high = Math.Max(high, z);
                 points.Add((wx, wy));
             }
+            if (roofOpening && planRange is { } range && (high < range.Bottom || low > range.Top)) continue;
             if (points.Count >= 3) openingLoops.Add(points);
         }
 
@@ -519,17 +609,113 @@ public static class PlanPrinter
         var furniture = new List<List<(double X, double Y)>>();
         var furnitureKeys = new HashSet<string>(StringComparer.Ordinal);
         var furnitureLines = new List<(double X1, double Y1, double X2, double Y2)>();
+        var furnitureFill = new List<List<(double X, double Y)>>();
+        List<(double X1, double Y1, double X2, double Y2, int StyleId)>? fixtureLines = null;
+        List<(double X1, double Y1, double X2, double Y2, bool Cut)>? genericModelLines = null;
+        List<(double X, double Y, double Radius)>? detailCircles = null;
+        bool opaqueFurniture = viewId is int fixtureView && document.RawData.OpaquePlanViews?.Contains(fixtureView) == true;
+        int? planDetail = viewId is int detailView
+            ? document.GetElement(detailView)?.LookupParameter(BuiltInParameter.VIEW_DETAIL_LEVEL)?.Value as int?
+            : null;
+        var savedStairs = new HashSet<int>();
+        var savedTopRails = new HashSet<int>();
+        var stairTopRails = opaqueFurniture && planRange != null
+            ? (from rail in document.Elements
+               where rail is { CategoryId: (int)BuiltInCategory.OST_RailingTopRail, RootClassName: "TopRail",
+                   SerializedOwningElementId: > 0, Geometry.Faces.Count: > 0 }
+                   && !IsHidden(rail)
+               let owner = rail.SerializedOwningElementId.GetValueOrDefault()
+               where !(document.GetElement(owner) is { } ownerRailing ? IsHidden(ownerRailing) : hiddenElements?.Contains(owner) == true)
+               let host = document.GetElement(owner)?.SerializedRailingStairHostId ?? 0
+               where host > 0
+               select (Host: host, Rail: rail)).ToLookup(item => item.Host, item => item.Rail)
+            : null;
         foreach (var element in document.Elements)
         {
-            if (element.CategoryId is not ((int)BuiltInCategory.OST_Furniture or (int)BuiltInCategory.OST_Casework
-                or (int)BuiltInCategory.OST_PlumbingFixtures or (int)BuiltInCategory.OST_SpecialityEquipment
-                or (int)BuiltInCategory.OST_Stairs or (int)BuiltInCategory.OST_StairsRailing))
-                continue;
-            if (LevelOf(element) != levelId || element.Geometry is not { Faces.Count: > 0 } geometry) continue;
-            if (element.CategoryId is (int)BuiltInCategory.OST_Furniture or (int)BuiltInCategory.OST_Casework
-                or (int)BuiltInCategory.OST_PlumbingFixtures or (int)BuiltInCategory.OST_SpecialityEquipment)
+            if (IsHidden(element)) continue;
+            if (viewId is int circleView && element.OwnerViewId == circleView
+                && element.RootClassName == "CurveElem" && element.CategoryId == (int)BuiltInCategory.OST_Lines
+                && element.DetailCircle is { } circle)
+                (detailCircles ??= []).Add((circle.X * FeetToMillimetres, circle.Y * FeetToMillimetres,
+                    circle.Radius * FeetToMillimetres));
+            if (opaqueFurniture && element is { CategoryId: (int)BuiltInCategory.OST_GenericModel,
+                    RootClassName: "FamilyInstance", BoundingBox: { Length: 6 } bounds, Geometry: { } modelGeometry }
+                && planRange is { } modelRange && double.IsFinite(bounds[2]) && double.IsFinite(bounds[5])
+                && bounds[2] < modelRange.Cut && bounds[5] >= modelRange.Cut)
             {
-                var outline = SilhouetteLines(element, 5.0);
+                CollectSectionedGenericModel(modelGeometry, modelRange.Bottom, modelRange.Cut,
+                    furnitureFill, ref genericModelLines);
+                continue;
+            }
+
+            // Generic families entirely below the cut draw their projection in the visible portion of the plan.
+            bool projectedFamily = element.CategoryId is (int)BuiltInCategory.OST_Furniture or (int)BuiltInCategory.OST_Casework
+                or (int)BuiltInCategory.OST_PlumbingFixtures or (int)BuiltInCategory.OST_SpecialityEquipment
+                or (int)BuiltInCategory.OST_FurnitureSystems
+                || element is { CategoryId: (int)BuiltInCategory.OST_GenericModel, RootClassName: "FamilyInstance",
+                    BoundingBox: { Length: 6 } box } && planRange is { } range
+                    && double.IsFinite(box[5]) && box[5] < range.Cut;
+            if (!projectedFamily && element.CategoryId is not ((int)BuiltInCategory.OST_Stairs or (int)BuiltInCategory.OST_StairsRailing))
+                continue;
+            if (element.PlacedPlanFixtureGraphics is { } fixture && element.Geometry is not { Faces.Count: > 0 })
+            {
+                if (!FurnitureInView(element, levelId, planRange))
+                    continue;
+                foreach (var line in fixture.Lines)
+                    (fixtureLines ??= []).Add((line.Start[0] * FeetToMillimetres, line.Start[1] * FeetToMillimetres,
+                        line.End[0] * FeetToMillimetres, line.End[1] * FeetToMillimetres, line.StyleId));
+                if (opaqueFurniture)
+                    foreach (var mask in fixture.Masks)
+                    {
+                        var ring = mask.Select(point => (point[0] * FeetToMillimetres, point[1] * FeetToMillimetres)).ToList();
+                        if (SignedArea(ring) < 0) ring.Reverse();
+                        furnitureFill.Add(ring);
+                    }
+                continue;
+            }
+            if (element.CategoryId == (int)BuiltInCategory.OST_Stairs
+                && opaqueFurniture && viewId is int planView && planRange is { } stairRange
+                && OnLevel(element, levelId)
+                && CollectSavedStair(document, element, planView, levelId, stairRange, stairTopRails?[element.Id] ?? [],
+                    savedTopRails, furnitureFill, ref fixtureLines))
+            {
+                savedStairs.Add(element.Id);
+                continue;
+            }
+            if (element.Geometry is not { Faces.Count: > 0 } geometry) continue;
+            if (projectedFamily)
+            {
+                if (element.RootClassName == "FamilySymbol"
+                    || !FurnitureInView(element, levelId, planRange))
+                    continue;
+                if (opaqueFurniture && planRange != null && planDetail == 2
+                    && element.PlacedPlanFixtureGraphics?.MediumProjection is { Masks.Count: > 0 } projection
+                    && geometry.Faces.Any(face => face.ExcludedFromTopPlan)
+                    && (element.CategoryId == (int)BuiltInCategory.OST_PlumbingFixtures
+                        ? geometry.Faces.All(face => face.ExcludedFromTopPlan || face.GeometryNode < 0)
+                        : FixtureProjectionCoversBody(projection, geometry)))
+                {
+                    foreach (var line in projection.Lines)
+                        (fixtureLines ??= []).Add((line.Start[0] * FeetToMillimetres, line.Start[1] * FeetToMillimetres,
+                            line.End[0] * FeetToMillimetres, line.End[1] * FeetToMillimetres, line.StyleId));
+                    foreach (var mask in projection.Masks)
+                    {
+                        var ring = mask.Select(InPlan).ToList();
+                        if (SignedArea(ring) < 0) ring.Reverse();
+                        furnitureFill.Add(ring);
+                    }
+                    continue;
+                }
+                var faces = opaqueFurniture && element.CategoryId == (int)BuiltInCategory.OST_Furniture
+                    ? FurnitureFaces(geometry.Faces.Where(face => !face.ExcludedFromTopPlan)) : null;
+                // A direction filter can replace the entire model with a symbol. Until that
+                // symbol is decoded, retain the model silhouette when no faces can project.
+                if (faces is not { Count: > 0 }) faces = FurnitureFaces(geometry.Faces);
+                bool containedFixture = opaqueFurniture && planRange is { } fixtureRange
+                    && element.BoundingBox is { Length: 6 } fixtureBounds
+                    && fixtureBounds[2] >= fixtureRange.Bottom && fixtureBounds[5] <= fixtureRange.Cut
+                    && element.CategoryId is ((int)BuiltInCategory.OST_PlumbingFixtures or (int)BuiltInCategory.OST_GenericModel);
+                var outline = (containedFixture ? FixtureProfiles(geometry) : null) ?? SilhouetteLines(faces, 5.0);
                 if (outline.Count == 0) continue;
                 double sMinX = outline.Min(s => Math.Min(s.X1, s.X2));
                 double sMaxX = outline.Max(s => Math.Max(s.X1, s.X2));
@@ -538,8 +724,31 @@ public static class PlanPrinter
                 string silhouetteKey = $"{sMinX:0}:{sMinY:0}:{sMaxX:0}:{sMaxY:0}";
                 if (!furnitureKeys.Add(silhouetteKey)) continue;
                 furnitureLines.AddRange(outline);
+                // A fitting's top face often carries its basin as an inner loop (the bathtub rim): the silhouette
+                // keeps only the outer boundary, so the loops ink on their own.
+                foreach (var face in faces)
+                {
+                    foreach (var hole in face.Holes)
+                    {
+                        for (int i = 0; i < hole.Count; i++)
+                        {
+                            var a = hole[i];
+                            var b = hole[(i + 1) % hole.Count];
+                            furnitureLines.Add((a.X, a.Y, b.X, b.Y));
+                        }
+                    }
+                }
+                if (opaqueFurniture)
+                {
+                    foreach (var face in faces)
+                    {
+                        furnitureFill.Add(face.Outer);
+                        furnitureFill.AddRange(face.Holes);
+                    }
+                }
                 continue;
             }
+            if (LevelOf(element) != levelId) continue;
             foreach (var face in geometry.Faces)
             {
                 if (Math.Abs(face.Normal[2]) < 0.9) continue;
@@ -568,12 +777,24 @@ public static class PlanPrinter
         const double annotation = 1000;
         minX -= annotation; minY -= annotation; maxX += annotation; maxY += annotation;
         var stairLines = new List<(double X1, double Y1, double X2, double Y2)>();
-        CollectStairLines(document, levelId, stairLines);
+        CollectStairLines(document, levelId, savedStairs, IsHidden, stairLines);
         var railLines = new List<(double X1, double Y1, double X2, double Y2)>();
-        CollectRailingLines(document, levelId, viewId, railLines);
+        CollectRailingLines(document, levelId, viewId, savedTopRails, IsHidden, railLines);
 
+        var colors = viewId is int planId ? document.RawData.ViewRoomColors?.GetValueOrDefault(planId) : null;
         return new PlanContent(walls, columns, grids, gaps, windowGaps, doorGaps, floorLoops, openingLoops, rooms,
-            furniture, tags, minX, minY, maxX, maxY, roomPatterns, stairLines, railLines, furnitureLines);
+            furniture, tags, minX, minY, maxX, maxY, roomPatterns, stairLines, railLines, furnitureLines, colors, furnitureFill)
+        {
+            DoorSymbols = doorSymbols, FixtureLines = fixtureLines, ColumnProfiles = columnProfiles,
+            GenericModelLines = genericModelLines,
+            DetailCircles = detailCircles,
+            ProjectedWallTops = viewId is int wallView && planRange is { } wallRange
+                && document.RawData.UnshadedHiddenLineViews?.Contains(wallView) == true
+                ? CollectProjectedWallTops(document, walls.Select(wall => wall.Id), gaps, wallRange.Bottom, wallRange.Cut)
+                : null,
+            CurtainProfiles = viewId is int curtainView && cutHeight is double curtainCut
+                ? CollectCurtainProfiles(document, curtainView, curtainCut, planRange?.Bottom) : null,
+        };
     }
 
     /// <summary>True when the element belongs to the plan of the level. A stair runs from its base level to its top
@@ -587,13 +808,14 @@ public static class PlanPrinter
 
     /// <summary>The plan linework of a stair: the outlines of its horizontal faces (tread and landing tops) seen from
     /// above, which is what a plan draws as the tread courses between the stair's sides.</summary>
-    private static void CollectStairLines(RvtDocument document, int levelId,
-        List<(double X1, double Y1, double X2, double Y2)> lines)
+    private static void CollectStairLines(RvtDocument document, int levelId, HashSet<int> savedStairs,
+        Func<Element, bool> isHidden, List<(double X1, double Y1, double X2, double Y2)> lines)
     {
         var keys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var element in document.Elements)
         {
-            if (element.CategoryId != (int)BuiltInCategory.OST_Stairs || !OnLevel(element, levelId)) continue;
+            if (element.CategoryId != (int)BuiltInCategory.OST_Stairs || savedStairs.Contains(element.Id)
+                || isHidden(element) || !OnLevel(element, levelId)) continue;
             if (element.Geometry is not { Faces.Count: > 0 } geometry) continue;
             foreach (var face in geometry.Faces)
             {
@@ -620,8 +842,8 @@ public static class PlanPrinter
     /// the deck edge. The view range's top and bottom clips decide which rails are visible (a roof deck's rails
     /// stand below the plan's level but above its bottom clip), so an element outside the band is skipped; a
     /// view without a decoded range keeps only the rails of the plan's own level.</summary>
-    private static void CollectRailingLines(RvtDocument document, int levelId, int? viewId,
-        List<(double X1, double Y1, double X2, double Y2)> lines)
+    private static void CollectRailingLines(RvtDocument document, int levelId, int? viewId, HashSet<int> savedTopRails,
+        Func<Element, bool> isHidden, List<(double X1, double Y1, double X2, double Y2)> lines)
     {
         double levelElevation = document.GetElement(levelId)?.LookupParameter(BuiltInParameter.LEVEL_ELEV)?.Value
             is double elevation ? elevation : 0;
@@ -639,7 +861,11 @@ public static class PlanPrinter
         var keys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var element in document.Elements)
         {
-            if (element.CategoryId != (int)BuiltInCategory.OST_RailingTopRail) continue;
+            if (element.CategoryId != (int)BuiltInCategory.OST_RailingTopRail || savedTopRails.Contains(element.Id)
+                || isHidden(element)
+                || element.SerializedOwningElementId is int owner
+                    && (savedTopRails.Contains(owner) || document.GetElement(owner) is { } ownerRailing && isHidden(ownerRailing)))
+                continue;
             if (element.Geometry is not { Faces.Count: > 0 } geometry) continue;
             if (banded)
             {
@@ -718,7 +944,8 @@ public static class PlanPrinter
         IReadOnlyList<SectionMark>? sectionMarks = null,
         RvtDocument? document = null,
         (double X0, double Y0, double X1, double Y1)? frame = null,
-        (double X0, double Y0, double X1, double Y1)? clipRect = null)
+        (double X0, double Y0, double X1, double Y1)? clipRect = null, bool drawGrids = true,
+        bool drawFallbackDimensions = true, int? planViewId = null)
     {
         double ToX(double x) => (x - content.MinX) / scale + originX;
         double ToY(double y) => (y - content.MinY) / scale + originY;
@@ -728,14 +955,13 @@ public static class PlanPrinter
         // section trace with the Sections projection pen (pen 1 annotates 0.1 mm on the reference, where
         // the old hardcoded 0.22 mm inked every trace heavy).
         int scaleDenominator = (int)Math.Round(scale);
-        double wallLine = 0.2, gridLine = 0.18, furnitureLine = 0.12, columnLine = 0.2, sectionLine = 0.1;
+        double wallLine = 0.2, gridLine = 0.18, furnitureLine = 0.12, columnLine = 0.2;
         if (document != null)
         {
             if (PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Walls, true, scaleDenominator, out double w)) wallLine = w;
             if (PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Columns, true, scaleDenominator, out double c)) columnLine = c;
             if (PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Grids, false, scaleDenominator, out double g)) gridLine = g;
             if (PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Furniture, false, scaleDenominator, out double f)) furnitureLine = f;
-            if (PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Sections, false, scaleDenominator, out double s)) sectionLine = s;
         }
 
         foreach (var floor in content.FloorLoops)
@@ -743,7 +969,7 @@ public static class PlanPrinter
 
         foreach (var room in content.Rooms)
             page.DrawPolyline(room.Polygon.Select(point => (ToX(point.X), ToY(point.Y))).ToList(), 0, true,
-                RoomFill(room.Name));
+                RoomFill(room.Name, content.RoomColors));
 
         // A room's floor material may name a surface pattern (the sunken living room's carpet names "Sand"):
         // the reference prints that hatch inside the room's colour fill, and both the material and the pattern
@@ -758,7 +984,7 @@ public static class PlanPrinter
         double[]? gridDashes = document != null && LinePatterns.TryGetGridDashes(document, out var decodedGrid)
             ? decodedGrid
             : [36.0, 9.0, 9.0, 9.0];
-        foreach (var grid in content.Grids)
+        foreach (var grid in drawGrids ? content.Grids : [])
         {
             // Grids run past the crop to their bubbles (the reference draws them to the bubble row, like
             // rvt-prt growing the crop by the type end length): cutting them at the crop edge loses the
@@ -771,11 +997,33 @@ public static class PlanPrinter
             Bubble(page, ToX(grid.X2), ToY(grid.Y2), grid.Name, gridLine);
         }
 
+        if (content.FurnitureFillRings is { Count: > 0 } furnitureFill)
+        {
+            if (clipRect is { } clip)
+                page.BeginClip(ToX(clip.X0), ToY(clip.Y0), ToX(clip.X1) - ToX(clip.X0), ToY(clip.Y1) - ToY(clip.Y0));
+            page.FillPolygonUnion(furnitureFill.Select(ring => ring.Select(point => (ToX(point.X), ToY(point.Y))).ToArray()), 1);
+            if (clipRect != null) page.EndClip();
+        }
+
         var wallById = new Dictionary<int, (int Id, double X1, double Y1, double X2, double Y2, double Width)>();
         foreach (var wall in content.Walls) wallById[wall.Id] = wall;
+        double wallShade = planViewId is int viewId && document?.RawData.UnshadedHiddenLineViews?.Contains(viewId) == true
+            ? 1 : 0.72;
+        var wallFill = new PdfColor(wallShade, wallShade, wallShade);
+        var wallCuts = wallShade == 1 && document != null && planViewId is int cutView
+            ? CollectWallCuts(document, cutView, content) : [];
 
+        double wallProjectionLine = document != null
+            && PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Walls, false, scaleDenominator, out double projectionWidth)
+            ? projectionWidth : wallLine;
         foreach (var wall in content.Walls)
         {
+            if (wallCuts.ContainsKey(wall.Id)) continue;
+            if (content.ProjectedWallTops?.TryGetValue(wall.Id, out var top) == true)
+            {
+                DrawClippedOutline(page, top, ToX, ToY, wallProjectionLine, wallFill, clipRect);
+                continue;
+            }
             double dx = wall.X2 - wall.X1, dy = wall.Y2 - wall.Y1;
             double length = Math.Sqrt(dx * dx + dy * dy);
             if (length < 1e-9) continue;
@@ -785,13 +1033,24 @@ public static class PlanPrinter
             {
                 double ax = wall.X1 + ux * from, ay = wall.Y1 + uy * from;
                 double bx = wall.X1 + ux * to, by = wall.Y1 + uy * to;
-                // The wall is poche: the stretch between its two sides is filled, the way a printed plan fills a cut
-                // wall, and the four edges are inked over it.
+                // The wall fill masks the plan geometry underneath before its cut edges are inked.
                 DrawClippedOutline(page,
                 [
                     (ax + nx, ay + ny), (bx + nx, by + ny),
                     (bx - nx, by - ny), (ax - nx, ay - ny),
-                ], ToX, ToY, wallLine, new PdfColor(0.72, 0.72, 0.72), clipRect);
+                ], ToX, ToY, wallLine, wallFill, clipRect);
+            }
+        }
+        DrawWallCuts(page, wallCuts, ToX, ToY, wallLine, clipRect);
+        if (document != null && content.CurtainProfiles is { Count: > 0 } curtainProfiles)
+        {
+            foreach (var style in curtainProfiles.GroupBy(profile => (profile.IsCut, profile.CategoryId))
+                .OrderBy(group => group.Key.IsCut))
+            {
+                double width = PenWidths.TryGetWidth(document, style.Key.CategoryId, style.Key.IsCut,
+                    scaleDenominator, out double savedWidth) ? savedWidth : wallLine;
+                foreach (var profile in style)
+                    DrawClippedOutline(page, profile.Ring, ToX, ToY, width, new PdfColor(1, 1, 1), clipRect);
             }
         }
 
@@ -807,8 +1066,8 @@ public static class PlanPrinter
                 ToX(wall.X1 + ux * to), ToY(wall.Y1 + uy * to), 0.15, 0.35);
         }
 
-        // The room names and areas, at the centre of the footprint, in plan millimetres.
-        if (page.Owner.Font != null)
+        // A level-only print has no owning view and keeps the footprint-based room labels.
+        if (page.Owner.Font != null && !DrawPlanRoomTags(page, document, planViewId, ToX, ToY))
         {
             foreach (var room in content.Rooms)
             {
@@ -825,7 +1084,7 @@ public static class PlanPrinter
                     0.18, true, 1);
                 page.DrawText(room.Number, pageX - boxWidth / 2 + 2, pageY - 1.1, 2.4);
                 if (room.AreaSquareFeet > 0)
-                    page.DrawText($"{room.AreaSquareFeet * 0.092903:0} m²", pageX + boxWidth / 2 - 2, pageY - 1,
+                    page.DrawText(LocalizeRoomArea($"{room.AreaSquareFeet * 0.092903:0} m²"), pageX + boxWidth / 2 - 2, pageY - 1,
                         2, PdfTextAlignment.Right);
             }
         }
@@ -859,6 +1118,36 @@ public static class PlanPrinter
             else
                 page.DrawLine(ToX(line.X1), ToY(line.Y1), ToX(line.X2), ToY(line.Y2), furnitureLine);
         }
+        if (content.GenericModelLines is { Count: > 0 } genericModelLines)
+        {
+            foreach (var group in genericModelLines.GroupBy(line => line.Cut).OrderBy(group => group.Key))
+            {
+                double width = document != null && PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_GenericModel,
+                    group.Key, scaleDenominator, out double savedWidth) ? savedWidth : furnitureLine;
+                foreach (var line in group)
+                {
+                    var (x0, y0, x1, y1, _) = line;
+                    if (clipRect is { } clip && !ElevationPrinter.ClipSegment(x0, y0, x1, y1,
+                        clip.X0, clip.Y0, clip.X1, clip.Y1, out x0, out y0, out x1, out y1)) continue;
+                    page.DrawLine(ToX(x0), ToY(y0), ToX(x1), ToY(y1), width);
+                }
+            }
+        }
+        if (content.FixtureLines is { Count: > 0 } fixtureLines)
+            DrawFixtureLines(page, document, fixtureLines, scale, furnitureLine, ToX, ToY, clipRect);
+
+        if (content.DetailCircles is { Count: > 0 } circles)
+        {
+            if (clipRect is { } clip)
+                page.BeginClip(ToX(clip.X0), ToY(clip.Y0),
+                    ToX(clip.X1) - ToX(clip.X0), ToY(clip.Y1) - ToY(clip.Y0));
+            double width = document != null && PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Lines,
+                false, scaleDenominator, out double savedWidth) ? savedWidth : 0.1;
+            foreach (var circle in circles)
+                page.DrawArc(ToX(circle.X), ToY(circle.Y), circle.Radius / scale, 0, 360, width);
+            if (clipRect != null) page.EndClip();
+        }
+
         foreach (var line in content.RailLines ?? [])
         {
             if (clipRect is { } railClip)
@@ -876,8 +1165,8 @@ public static class PlanPrinter
         // wall and on the side of the building the door opens into.
         double centerX = (content.MinX + content.MaxX) / 2, centerY = (content.MinY + content.MaxY) / 2;
 
-        // The marks of the doors and windows, in a small circle beside the opening.
-        if (page.Owner.Font != null)
+        // A generated level has no owning view for its opening marks.
+        if (page.Owner.Font != null && !DrawPlanOpeningTags(page, document, planViewId, ToX, ToY))
         {
             foreach (var tag in content.Tags)
             {
@@ -902,6 +1191,10 @@ public static class PlanPrinter
             }
         }
 
+        if (content.DoorSymbols is { Count: > 0 } savedDoors)
+            foreach (var saved in savedDoors)
+                DrawDoorPlanSymbol(page, saved.Symbol, saved.Transform, scale, ToX, ToY, clipRect);
+
         foreach (var door in content.DoorGaps)
         {
             if (!wallById.TryGetValue(door.HostId, out var wall)) continue;
@@ -914,10 +1207,7 @@ public static class PlanPrinter
             double hx = wall.X1 + ux * door.From, hy = wall.Y1 + uy * door.From;
             double ex = wall.X1 + ux * door.To, ey = wall.Y1 + uy * door.To;
             double midX = (hx + ex) / 2, midY = (hy + ey) / 2;
-            // The swing side: the file stores a per-instance flip that the reader does not decode, so the
-            // side comes from the building centroid — and it opens away from it. Measured on the sample
-            // plan, opening away is the side the reference draws (A102 precision 90.3 -> 90.5, 6 in fewer
-            // unmatched segments, recall unchanged).
+            // shortcut: use the existing swing approximation when no matching saved cut symbol is available.
             double side = (centerX - midX) * nx + (centerY - midY) * ny >= 0 ? -1 : 1;
             double tipX = hx + nx * side * width, tipY = hy + ny * side * width;
             double ex0 = hx, ey0 = hy, ex1 = tipX, ey1 = tipY;
@@ -931,15 +1221,15 @@ public static class PlanPrinter
             page.DrawArc(ToX(hx), ToY(hy), width / scale, a0, a1, 0.15, 0.4);
         }
 
-        DimChains(page, content, ToX, ToY, clipRect);
+        if (drawFallbackDimensions) DimChains(page, content, ToX, ToY, clipRect);
 
         foreach (var opening in content.OpeningLoops)
             DrawClippedOutline(page, opening, ToX, ToY, 0.18, (PdfColor?)null, clipRect);
 
-        foreach (var column in content.Columns)
-            page.DrawRectangle(ToX(column.X), ToY(column.Y), column.Width / scale, column.Height / scale, columnLine, 1);
+        DrawColumns(page, document, content, scale, columnLine, ToX, ToY, clipRect);
 
-        if (sectionMarks is { Count: > 0 }) DrawSectionMarks(page, content, scale, originX, originY, sectionMarks, frame, sectionLine);
+        if (sectionMarks is { Count: > 0 })
+            DrawSectionMarks(page, content, scale, originX, originY, sectionMarks, frame, document, planViewId);
     }
 
     /// <summary>Draws the plan of a level as one page of the document.</summary>
@@ -1012,10 +1302,14 @@ public static class PlanPrinter
 
     /// <summary>Draws the section marks of a plan: the trace of each section plane across the drawing, a tick at both
     /// ends and a bubble with the letter of the view, as a plan shows where it is cut.</summary>
-    private static void DrawSectionMarks(PdfPage page, PlanContent content, double scale, double originX,
+    internal static void DrawSectionMarks(PdfPage page, PlanContent content, double scale, double originX,
         double originY, IReadOnlyList<SectionMark> marks,
-        (double X0, double Y0, double X1, double Y1)? frame = null, double sectionLine = 0.1)
+        (double X0, double Y0, double X1, double Y1)? frame, RvtDocument? document, int? planViewId)
     {
+        if (marks.Count == 0) return;
+        double sectionLine = document != null
+            && PenWidths.TryGetWidth(document, (int)BuiltInCategory.OST_Sections, false, (int)Math.Round(scale), out double width)
+            ? width : 0.1;
         double ToX(double x) => (x - content.MinX) / scale + originX;
         double ToY(double y) => (y - content.MinY) / scale + originY;
         // The trace runs across the building, not across the site: its ends are the bounds of the walls.
@@ -1059,6 +1353,10 @@ public static class PlanPrinter
                 line = [(px + dx * tMin, py + dy * tMin), (px + dx * tMax, py + dy * tMax)];
             }
             if (line.Count < 2) continue;
+            if (document != null && planViewId is int planId && mark.Bounded
+                && (line.Count == 2 || mark.UsesPlanExtent)
+                && TryDrawFilledSectionMark(page, document, planId, mark.ViewId, line, frame, sectionLine))
+                continue;
             // The scorer counts vectors, not the page clip: cut every leg to the viewport frame at generation,
             // so nothing is inked outside the drawn frame. Legs clipped apart stay apart (no connectors).
             var runs = new List<List<(double X, double Y)>>();
@@ -1191,8 +1489,10 @@ public static class PlanPrinter
     /// green, a hall blue, a kitchen tan, a laundry brown, a living room light green, a mechanical room green, a master
     /// bedroom blue violet, a master bath magenta, a bedroom cyan, an entry hall yellow, a linen teal; anything else light
     /// grey.</summary>
-    internal static PdfColor RoomFill(string name)
+    internal static PdfColor RoomFill(string name, IReadOnlyDictionary<string, uint>? colors = null)
     {
+        if (colors != null && colors.TryGetValue(name, out uint rgb))
+            return new PdfColor((rgb & 255) / 255.0, ((rgb >> 8) & 255) / 255.0, ((rgb >> 16) & 255) / 255.0);
         string lower = name.ToLowerInvariant();
         PdfColor color = lower switch
         {
@@ -1215,7 +1515,7 @@ public static class PlanPrinter
     }
 
     /// <summary>The signed area of a polygon (shoelace); its magnitude is the area and its sign the winding.</summary>
-    private static double SignedArea(List<(double X, double Y)> points)
+    internal static double SignedArea(List<(double X, double Y)> points)
     {
         double sum = 0;
         for (int i = 0; i < points.Count; i++)
@@ -1227,58 +1527,8 @@ public static class PlanPrinter
         return sum / 2;
     }
 
-    /// <summary>The plan silhouette of a piece of furniture: the boundary of the union of all its faces projected on
-    /// XY, traced on a grid of <paramref name="cell"/> millimetres. The non-convex plan shape (a chair back, the gap
-    /// between legs) survives, which the convex hull and the single top face both lose.</summary>
-    private static List<(double X1, double Y1, double X2, double Y2)> SilhouetteLines(
-        Element element, double cell)
-    {
-        if (element.Geometry is not { Faces.Count: > 0 } geometry) return [];
-        var faces = new List<(List<(double X, double Y)> Points, double MinX, double MaxX, double MinY, double MaxY)>();
-        foreach (var face in geometry.Faces)
-        {
-            if (face.OuterVertices is not { Count: >= 3 } vertices) continue;
-            var points = vertices.Select(vertex => (X: vertex[0] * FeetToMillimetres,
-                Y: vertex[1] * FeetToMillimetres)).ToList();
-            faces.Add((points, points.Min(point => point.X), points.Max(point => point.X),
-                points.Min(point => point.Y), points.Max(point => point.Y)));
-        }
-        if (faces.Count == 0) return [];
-        double x0 = faces.Min(face => face.MinX), x1 = faces.Max(face => face.MaxX);
-        double y0 = faces.Min(face => face.MinY), y1 = faces.Max(face => face.MaxY);
-        int nx = (int)Math.Ceiling((x1 - x0) / cell) + 1;
-        int ny = (int)Math.Ceiling((y1 - y0) / cell) + 1;
-        if (nx < 1 || ny < 1 || (long)nx * ny > 400_000) return [];
-        var inside = new bool[nx, ny];
-        for (int i = 0; i < nx; i++)
-            for (int j = 0; j < ny; j++)
-            {
-                double cx = x0 + (i + 0.5) * cell, cy = y0 + (j + 0.5) * cell;
-                foreach (var face in faces)
-                {
-                    if (cx < face.MinX || cx > face.MaxX || cy < face.MinY || cy > face.MaxY) continue;
-                    if (!PointInPolygon(cx, cy, face.Points)) continue;
-                    inside[i, j] = true;
-                    break;
-                }
-            }
-        var lines = new List<(double X1, double Y1, double X2, double Y2)>();
-        for (int i = 0; i < nx; i++)
-            for (int j = 0; j < ny; j++)
-            {
-                if (!inside[i, j]) continue;
-                double left = x0 + i * cell, right = left + cell;
-                double bottom = y0 + j * cell, top = bottom + cell;
-                if (i == 0 || !inside[i - 1, j]) lines.Add((left, bottom, left, top));
-                if (i == nx - 1 || !inside[i + 1, j]) lines.Add((right, bottom, right, top));
-                if (j == 0 || !inside[i, j - 1]) lines.Add((left, bottom, right, bottom));
-                if (j == ny - 1 || !inside[i, j + 1]) lines.Add((left, top, right, top));
-            }
-        return lines;
-    }
-
     /// <summary>Even-odd point-in-polygon test on a closed outline.</summary>
-    private static bool PointInPolygon(double x, double y, IReadOnlyList<(double X, double Y)> polygon)
+    internal static bool PointInPolygon(double x, double y, IReadOnlyList<(double X, double Y)> polygon)
     {
         bool inside = false;
         for (int i = 0, j = polygon.Count - 1; i < polygon.Count; j = i++)

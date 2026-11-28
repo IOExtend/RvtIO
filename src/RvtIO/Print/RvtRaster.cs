@@ -55,6 +55,31 @@ internal static class RvtRaster
     /// symbol's type.</summary>
     internal static PdfJpegImage? FindJpeg(string path, int elementId)
     {
+        var block = FindBlock(path, elementId, 0x0890);
+        if (block == null) return null;
+        var payload = block.AsSpan(16);
+        int start = payload.IndexOf(new byte[] { 0xFF, 0xD8, 0xFF });
+        int end = payload.LastIndexOf(new byte[] { 0xFF, 0xD9 });
+        return start >= 0 && end > start ? new PdfJpegImage(payload[start..(end + 2)].ToArray()) : null;
+    }
+
+    internal static PdfRasterImage? FindImagePng(string path, int elementId)
+    {
+        var block = FindBlock(path, elementId, 0x0890);
+        if (block == null) return null;
+        var payload = block.AsSpan(16);
+        int start = payload.IndexOf(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A });
+        return start >= 0 ? DecodePng(payload[start..].ToArray()) : null;
+    }
+
+    internal static IReadOnlyList<GRepParserV2.SheetImagePlacement> FindSheetImagePlacements(string path, int symbolId)
+    {
+        var block = FindBlock(path, symbolId, 0x07D7);
+        return block == null ? [] : GRepParserV2.ReadSheetImages(block);
+    }
+
+    private static byte[]? FindBlock(string path, int elementId, int lowClass)
+    {
         try
         {
             using var root = RootStorage.OpenRead(path);
@@ -75,16 +100,8 @@ internal static class RvtRaster
                         if (eid != (uint)elementId) continue;
                         int size = BinaryPrimitives.ReadInt32LittleEndian(chunk.AsSpan(pos + 8));
                         uint classIdx = BinaryPrimitives.ReadUInt32LittleEndian(chunk.AsSpan(pos + 12));
-                        if (size <= 0 || pos + 16 + size > chunk.Length || (classIdx & 0xFFFF) != 0x0890) continue;
-                        var payload = chunk.AsSpan(pos + 16, size);
-                        int start = payload.IndexOf(new byte[] { 0xFF, 0xD8, 0xFF });
-                        if (start < 0) return null;
-                        var jpeg = payload[start..].ToArray();
-                        // The end of the JPEG is its last end-of-image marker; anything after it is padding.
-                        int end = jpeg.AsSpan().LastIndexOf(new byte[] { 0xFF, 0xD9 });
-                        if (end < 0) return null;
-                        Array.Resize(ref jpeg, end + 2);
-                        return new PdfJpegImage(jpeg);
+                        if (size <= 0 || (long)pos + 16 + size > chunk.Length || (classIdx & 0xFFFF) != lowClass) continue;
+                        return chunk.AsSpan(pos, 16 + size).ToArray();
                     }
                 }
             }
@@ -150,7 +167,7 @@ internal static class RvtRaster
         if (png.Length < 8 || png[0] != 0x89 || png[1] != 0x50 || png[2] != 0x4E || png[3] != 0x47)
             return null;
         int at = 8, width = 0, height = 0, depth = 0, colorType = 0;
-        var idat = new MemoryStream();
+        using var idat = new MemoryStream();
         byte[]? palette = null;
         byte[]? alpha = null;
         while (at + 8 <= png.Length)
@@ -158,9 +175,10 @@ internal static class RvtRaster
             int length = BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(at));
             string type = System.Text.Encoding.ASCII.GetString(png, at + 4, 4);
             int data = at + 8;
-            if (length < 0 || data + length + 4 > png.Length) return null;
+            if (length < 0 || length > png.Length - data - 4) return null;
             if (type == "IHDR")
             {
+                if (length != 13) return null;
                 width = BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(data));
                 height = BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(data + 4));
                 depth = png[data + 8];
@@ -175,16 +193,22 @@ internal static class RvtRaster
         }
         if (width <= 0 || height <= 0 || depth != 8) return null;
         int bpp = colorType switch { 2 => 3, 6 => 4, 3 => 1, 0 => 1, _ => 0 };
-        if (bpp == 0) return null;
-        idat.Position = 0;
-        byte[] pixels;
-        using (var zlib = new ZLibStream(idat, CompressionMode.Decompress))
-        using (var output = new MemoryStream())
-        {
-            zlib.CopyTo(output);
-            pixels = output.ToArray();
-        }
+        const int maxDecodedBytes = 128 * 1024 * 1024;
+        if (bpp == 0 || (long)width * bpp + 1 > maxDecodedBytes / height
+            || (long)width * height > maxDecodedBytes / 3) return null;
         int stride = width * bpp;
+        idat.Position = 0;
+        var pixels = new byte[(stride + 1) * height];
+        try
+        {
+            using var zlib = new ZLibStream(idat, CompressionMode.Decompress);
+            zlib.ReadExactly(pixels);
+            if (zlib.ReadByte() != -1) return null;
+        }
+        catch (Exception exception) when (exception is InvalidDataException or EndOfStreamException)
+        {
+            return null;
+        }
         var rows = new List<byte[]>(height);
         int pos = 0;
         byte[] previous = new byte[stride];
@@ -192,6 +216,7 @@ internal static class RvtRaster
         {
             if (pos + 1 + stride > pixels.Length) return null;
             byte filter = pixels[pos++];
+            if (filter > 4) return null;
             var row = new byte[stride];
             Array.Copy(pixels, pos, row, 0, stride);
             pos += stride;
