@@ -1073,6 +1073,18 @@ missing geometry in most places:
   therefore known to the attributes but the polygon is not: drawing the hatch needs a sketch-curve decoder for
   view-owned annotations, not another lookup. The probe was removed after the measurement.
 
+- Letting railing edges through transparent occluders does not match the reference. Exempting every transparent
+  planar face from occlusion gives A103 96.0/93.0, A104 95.9/95.0 and A105 92.6/93.2 against 95.9/93.5,
+  96.3/95.6 and 92.6/93.6, because the interiors behind the glazing then print; exempting them only for railing
+  edges gives A103 95.9/93.3, adding unmatched ink without recovering a bar. Both variants are reverted. The
+  reference's solid bars behind the balustrade are not explained by the occluder's transparency alone, and the
+  hidden-line rule that produces them is still unidentified.
+
+- The filled region's polygon is still out of reach. The region's sketch element (`m_sketchId`, e.g. `1018116`)
+  carries no decoded geometry, location or loops, and the 0x0346 curves that `state.SketchCurves` does decode have
+  no element-level link back to the sketch or the view; `FilledRegionCurveData` (1863/1864) are not root records.
+  Placing the already-known pattern needs a sketch-curve ownership decoder, not another lookup.
+
 - The frontmost-copy rule for the A103 rails is the sum of parts that were each measured. Selecting the frontmost
   copy is the echo pass already in the code (nearest of the copies that project within a millimetre, A103
   95.9/93.5%). Clipping each rail only by faces in front of that copy gives A103 96.4/92.6%, A104 96.6/93.7%,
