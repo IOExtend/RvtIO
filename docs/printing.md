@@ -1120,6 +1120,15 @@ missing geometry in most places:
   unmatched ink even though the geometry keeps them. This is the scorer's thin-stroke limit, not a missing
   hidden-line rule. Reverted; the silhouette variant was the last geometric variant tried.
 
+- Native hide controls close the A101 meander's linework lead. In view `959071` hiding terrain copy `411452` and
+  re-exporting removes exactly 15 polylines: the site outline (66, 38, 88, 81 and 1454 vertices) and contours on
+  `C-TOPO-MINR-OTLN`/`C-TOPO-MAJR-OTLN`, all open and none a small closed stepped loop; hiding `800334` produces
+  a byte-identical DXF (59,674,996 bytes). The view has no visible `OST_Lines`, `OST_SiteProperty`,
+  `OST_SitePropertyLineSegment` or `OST_SiteRegion` element - only five entourage RPC elements. The reference A101
+  study is an embedded 321 dpi raster, so the meander is a shaded-render feature of the terrain (a crease or
+  shadow edge), not exported linework. The next lead is the study's terrain crease edges (dihedral angle) in
+  `ShadedViewport`, not another element scan.
+
 - The frontmost-copy rule for the A103 rails is the sum of parts that were each measured. Selecting the frontmost
   copy is the echo pass already in the code (nearest of the copies that project within a millimetre, A103
   95.9/93.5%). Clipping each rail only by faces in front of that copy gives A103 96.4/92.6%, A104 96.6/93.7%,
