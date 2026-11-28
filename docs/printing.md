@@ -1109,6 +1109,17 @@ missing geometry in most places:
   `958303` owns only two break-line masks. Placing these four lines would put ink in a different view, so the
   A103 crosshatch is not this filled region and its source is still unidentified.
 
+- The block maps into the roof cut, and the view carries no hatch element. Inverting the placement of view
+  `958303` (scale 10, content origin 85.1/61.2 mm, min -3009/5448 mm) puts the 346-389 x 1058-1102 pt block at
+  view coordinates about (-2565, 6966) mm, inside roof element `243274` (x -2978..3381, y 5726..9198). The view
+  owns thirteen elements: three `CurveElem` roof-edge lines (`970620`, `970773`, `970942`), two break-line
+  masks, sun/sketch placeholders and help buttons, but no detail component, filled region or hatch. The hatched
+  band is therefore the roof's cut fill: the 100 mm insulation layer (`123310`) decodes with cut pattern 0, the
+  40 mm and 50 mm layers with -1, and the only patterned roof layer is the inner 12 mm gypsum (`423`, `Sand`,
+  three grids), which at 1:10 is 1.2 mm wide and invisible at the scored dpi. Reproducing the reference hatch
+  needs the missing source of the roof layer's cut pattern (material record or a filter override), not another
+  annotation scan.
+
 - The frontmost-copy rule for the A103 rails is the sum of parts that were each measured. Selecting the frontmost
   copy is the echo pass already in the code (nearest of the copies that project within a millimetre, A103
   95.9/93.5%). Clipping each rail only by faces in front of that copy gives A103 96.4/92.6%, A104 96.6/93.7%,
