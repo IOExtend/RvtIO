@@ -934,6 +934,14 @@ missing geometry in most places:
   visible side would need a signed facing, but even then the fill covers the A104 railings that the reference
   leaves as thin lines, so the rule would have to key on the rail profile, not on the view direction.
 
+- The rail profile does not separate the two either. A histogram of the railing faces flat to the East elevation
+  (normal along the view) gives four profile heights in every `SH_1100mm` railing: 1297 mm and 1050 mm panels,
+  a 50 mm rail, and strips of 0.4–2.7 mm. Element 933840 (the East guardrail) adds 416 strips of 0.4 mm, 566588
+  (the site railing) 16 strips of 2.7 mm; both carry the same 50 mm rail. The earlier "thin rails" fill already
+  tested exactly this profile: with the 10–120 mm window the only matching faces are the 50 mm rails, and that
+  run measured A103 95.8/93.0%, A104 96.3/93.6%, A105 92.5/93.0% — recall down and precision down. A narrower
+  40–60 mm window selects the same faces, so the test is already covered and the profile hypothesis is refuted.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
