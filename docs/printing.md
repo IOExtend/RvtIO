@@ -1014,6 +1014,16 @@ missing geometry in most places:
   pixels from the ink set, so the metric prefers the hard edge; the reference's penumbra is not what the score
   rewards. Reverted.
 
+- The frontmost-copy rule for the A103 rails is the sum of parts that were each measured. Selecting the frontmost
+  copy is the echo pass already in the code (nearest of the copies that project within a millimetre, A103
+  95.9/93.5%). Clipping each rail only by faces in front of that copy gives A103 96.4/92.6%, A104 96.6/93.7%,
+  A105 92.8/93.0% — the bars print, but three sheets lose precision. Adding the "drop rails whose midpoint is
+  inside a solid rail" test changes nothing at all (identical numbers): with the shells of `566588`/`566589`
+  (29 closed solids, 379 triangles) no clipped rail span has its midpoint inside a shell, because the bars are
+  separate boxes rather than rails buried in mass. The precision loss on A104 is not the solid test's to remove;
+  it is the bars that sit beside the solid mid-rail and that the reference omits. Combining the three steps
+  therefore reproduces the earlier measurement, and the rule is not committed.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
