@@ -1105,6 +1105,13 @@ missing geometry in most places:
   per-face union). Not committed. The native DXF's 45 panel lines are the ground truth for the next comparison:
   each of our spans must be matched to a DXF line, and only spans with a reference counterpart should print.
 
+- Restricting the span clip to self-occlusion collapses the sheets and is wrong. Clipping only by the covering
+  faces of the edge's own element, with the old midpoint drop for every other occluder, gives A103 80.0/92.9,
+  A104 72.9/95.6 and A105 73.2/89.5 (tone 3.6/4.0/4.5). The cause is in the gate, not in the clipping: for almost
+  every element its own faces cover its edges' midpoints, so the branch either drops the edge or clips it to
+  nothing, while unrelated covers then remove the remaining spans. Reverted. The panel spans must be compared to
+  the 45 native DXF lines offline; a runtime whitelist of those lines would not generalise and is not added.
+
 - The frontmost-copy rule for the A103 rails is the sum of parts that were each measured. Selecting the frontmost
   copy is the echo pass already in the code (nearest of the copies that project within a millimetre, A103
   95.9/93.5%). Clipping each rail only by faces in front of that copy gives A103 96.4/92.6%, A104 96.6/93.7%,
