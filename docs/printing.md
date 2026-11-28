@@ -1101,6 +1101,14 @@ missing geometry in most places:
   one `GRepParserV2` expects. Closing the block needs a decoder for curve-only GRep representations and a scan
   path that feeds them to it; neither exists in the pipeline.
 
+- The VarSketch GRep does decode, and it rules the filled-region track out for A103. Scanning element `1018116`
+  directly finds the 470-byte GRep and `GRepParserV2` walks it: four `GLine` records carry end params, origins and
+  directions and form a 0.0078 x 0.0286 rectangle (handles 3-6), but they carry no faces, so `BuildGeometry`
+  returns null and the model never sees them. The sketch belongs to filled region `1018117`, whose owner
+  `1018045` is a drafting view, not the A103 section `958303`, and its extents do not match the block; view
+  `958303` owns only two break-line masks. Placing these four lines would put ink in a different view, so the
+  A103 crosshatch is not this filled region and its source is still unidentified.
+
 - The frontmost-copy rule for the A103 rails is the sum of parts that were each measured. Selecting the frontmost
   copy is the echo pass already in the code (nearest of the copies that project within a millimetre, A103
   95.9/93.5%). Clipping each rail only by faces in front of that copy gives A103 96.4/92.6%, A104 96.6/93.7%,
