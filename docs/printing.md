@@ -1142,6 +1142,12 @@ missing geometry in most places:
   the texture, so no shadow setting can reproduce the branch gaps. This is a data gap (the RPC bitmap), not a
   tone or edge setting.
 
+- The RPC bitmap is not in the file. Scanning the decoded chunk stream for the planting families' RPC identifiers
+  (`RPC-16-G2VH-N100-5X50-0000-ST1L-LVER-AU` and the other 30 occurrences) finds them as UTF-16 parameter strings
+  in chunks 25, 31 and 198, and no PNG or JPEG magic within four kilobytes of any occurrence. The alpha texture
+  lives in the external ArchVision/RPC content, not in the project, so clipping the planting casters by the alpha
+  is impossible from this file; no shadow setting can recover the branch gaps. This closes the RPC-shadow lead.
+
 - The frontmost-copy rule for the A103 rails is the sum of parts that were each measured. Selecting the frontmost
   copy is the echo pass already in the code (nearest of the copies that project within a millimetre, A103
   95.9/93.5%). Clipping each rail only by faces in front of that copy gives A103 96.4/92.6%, A104 96.6/93.7%,
