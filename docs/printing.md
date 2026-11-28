@@ -874,6 +874,16 @@ missing geometry in most places:
   point-in-solid test against the railing's B-rep shells can drop them; the decoder has no such test today, and
   the projected-polygon approximation cannot separate a bar inside the rail from a bar beside it.
 
+- The point-in-solid test was built and answers the question. Ray casting (Möller–Trumbore, one oblique fixed
+  direction, parity counted per shell so overlapping shells cannot cancel) over the railing's B-rep shells works:
+  a shell's centre tests inside, a point 30 m away outside, and the 15 + 14 closed shells of `566588`/`566589`
+  reduce to 379 triangles. Wired into the span clip it drops **nothing**: over the whole document not one railing
+  bar span has its samples inside a railing shell, and the score equals the plain span clip (A103 96.4/92.6%,
+  A104 96.6/93.7%, A105 92.8/93.0% against the baseline 95.9/93.5%, 96.3/95.5%, 92.6/93.6%). The bars the
+  reference omits are therefore not buried in the railing's own mass — they are separate geometry the reference
+  hides by some other rule, so a solid test cannot separate them. The feature is reverted; the remaining lead is
+  to find which element those bars belong to and why the reference drops that element in the West elevation.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
