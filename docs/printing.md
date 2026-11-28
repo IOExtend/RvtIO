@@ -1050,6 +1050,17 @@ missing geometry in most places:
   3.1, while A104 and A105 stay put. The reference draws a subset of the rails (its hidden-line selection), so
   the consolidated outline is closer to the score than the full edge set. Reverted.
 
+- The 200 dpi scan of A104 and A102 attributes their largest blocks to the metric, not to missing geometry. On
+  A104 the worst blocks (0 % recall at page 907,389 and 1238,389 pt) contain four vertical board lines; a 1200 dpi
+  run-length across them gives 0.085 mm for the reference and 0.106 mm for us, so the widths agree, and a 500 dpi
+  crop of the same area with the same 0.5 mm tolerance finds nothing missing. What differs is the pixel value at
+  200 dpi: the reference page carries its linework as an embedded raster that is already dark, while our thinner
+  vector lines antialias above the 140 threshold on that grid. The two pages also differ slightly in size — the
+  reference is 839.98 × 593.98 mm against our 841 × 594 mm — but both rasterise at 7.87 px/mm, so the content does
+  not drift. On A102 the largest persistent block (690–780 × 790–850 pt) is a fixture's curved symbolic profile
+  (a basin outline) that we do not draw; the room's stipple fill around it matches. Symbolic family curves remain
+  outside the decoded subset.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
