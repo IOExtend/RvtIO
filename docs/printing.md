@@ -1071,6 +1071,15 @@ missing geometry in most places:
   100 dpi grid, where both sides alias to the same pixel scale, remains the only fair comparison; higher-dpi
   recall measures line width, not missing geometry.
 
+- The A102 block is a door's swing, not a fixture curve. The crop at 690–780 × 790–850 pt shows door 106A: the
+  reference draws the leaf and a double fan of swing arcs, our plan draws only the opening. Instrumenting
+  `CollectLevel` shows the Level 1 plan (level 311, view 312) has no open door gaps but three saved door plan
+  symbols, with 5, 5 and 9 curves and 1, 1 and 2 arcs; the third (a double door) carries the arcs the block
+  needs. The symbols are selected and `DrawDoorPlanSymbol` is called for all three, so the swing is lost inside
+  that drawing routine — it maps each arc through the symbol matrix and calls `page.DrawArc` with
+  `angle ± curve.T0/T1`. Checking that angle convention against the stored arc spans is the next step, not a new
+  decode path.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
