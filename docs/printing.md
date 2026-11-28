@@ -893,19 +893,9 @@ missing geometry in most places:
   and the "hidden element" lead is a dead end. The railing is a legitimate, visible element; the difference is
   the same self-occlusion the earlier rules attacked.
 
-- The 0%-recall block at 345–400 × 1060–1100 pt is not a topography cap after all, and no decoded pattern matches
-  its hatch. Measured on the reference at 600 dpi the band is genuinely dark — mean grey 146 with 41% of its
-  pixels below 140 — and at 1200 dpi its visible courses repeat every 12–14 px, i.e. 0.25–0.35 mm on paper. Every
-  cut pattern in the file is four to twenty times finer: the soil brick (material 519) is 6.3 mm model =
-  0.063 mm paper at 1:100, the concrete (711728) 2.6 mm = 0.026 mm, the coarsest is 6.3 mm = 0.063 mm. So the
-  reference's texture is a resampled rendering of a sub-pixel pattern and the visible pitch is an alias; applying
-  any decoded pattern would print a near-solid band, not that texture. The face itself is also not topography:
-  instrumenting cut faces with a 12–14 m by 150–300 mm projected extent names element 512683, category
-  −2000032 (OST_Floors) — a 247 mm floor-slab edge. Applying the site cut pattern to topography cut faces
-  therefore never fired, and the print was unchanged (98.7/94.2/94.0/95.9/96.3/92.6% recall, precision
-  99.1/93.2/96.9/93.5/95.6/93.6%). Hatching that block needs the slab's own section graphics, not the soil
-  pattern.
-
+- [Retracted attribution: the 346-389 x 1058-1102 pt block is the solar-panel array of the Longitudinal Section
+  (view 247014), not a slab edge or a hatch. The material-pattern measurements that were tied to it below are
+  history only; the panel strokes are a projection/visibility question in that view.]
 - The slab's compound layers carry no cut pattern either. Element 512683 is a `Floor "Timber Suspended Floor"`
   (type 185144) with two host layers: layer 0 material 713090 "Interior finish" and layer 1 material 185148
   "Rendering appearance not upgraded". Layer 0 decodes a surface pattern only (429, twelve dashed segments at
@@ -1035,105 +1025,27 @@ missing geometry in most places:
   (the base print has 15.2k), and 196 of the new ink pixels lie outside the reference's strokes, so precision
   falls 93.2% -> 93.1%. Not kept.
 
-- A103's 0 % block at 346-389 x 1058-1102 pt is the roof-connection detail's missing crosshatch, and its pattern is
-  not decoded. The detail prints view `958303` (Typical Wall Roof Connection, 1:10); the roof cut there is one ring
-  with a four-layer stack of 40/100/50/12 mm whose measured thickness matches the 202 mm sum, so the roof layer
-  path itself runs. Only the inner 12 mm layer's material (`423`) carries a decoded cut pattern (three grids); the
-  40 mm metal roofing (`232858`, the layer under the crosshatch, about 4 mm on paper = 39 mm at 1:10) has
-  `CutPatternId = -1`, the 100 mm layer (`123310`) is absent from `MaterialPatterns`, and the 50 mm deck
-  (`232856`) has none. Enabling the layer hatches for details (`!isDetail ? layerHatches : null` -> `layerHatches`)
-  leaves every scored page unchanged, so the pattern is a category cut-pattern override (Object Styles, `OST_Roofs`)
-  or view override that the reader does not extract; no element is owned by the view either, so it is not a filled
-  region. The schema rules out the two nearest records: a graphics style (class 2046) carries only
-  `m_materialElemId`, `m_penNumber`, `m_color` and `m_linePatternId`, and a category (class 629) only
-  `m_categoryType`, `m_flags`, `m_name` and `m_parentCategoryId`, so neither names a fill pattern. The roofing
-  material's own patterns are `cut = -1` and `surface = 232863`, a single solid grid at a 2 ft offset, which is not
-  the dense diagonal crosshatch either. The block also prints the roof cut outlines pale against the reference's
-  black, so both the pattern source and the cut pen need the project's Object Styles display table, which the reader
-  does not parse.
-
-- The view side of that decode is empty too. The view's `m_oGraphicOverrides` (view class 1016) is a
-  `GraphicOverrides` object (class 2104) whose `m_fillPatternsCut` and `m_backgroundFillPatternsCut` are vectors of
-  `pair<ElementId, ElementId>`; a temporary extractor parsed it for every detail view, and view `958303` and the
-  other details all report zero entries. A scan of the file's whole material pattern table finds 27 materials with
-  any pattern and none that references a dense crosshatch (`Diagonal crosshatch`, `Diagonal Crosshatch1`,
-  `Rigid Insulation`, `Crosshatch`, `Kreuzschraffur`); the roof stack materials read `cut = -1/0/429`, and the only
-  dense multi-grid patterns in use are `Concrete` (13 grids), `Earth` (6) and `Sand` (3) on the structural walls
-  and pads. The block's crosshatch is therefore not reachable through the category, graphics style, view override
-  or material records the reader holds; it belongs to view-owned annotation data (a filled region) that the
-  reader does not load. The extractor was removed after the measurement.
-
-- The block is not a filled region of that view either. The file carries 246 `FilledRegion` blocks (class 1860)
-  and 502 `FilledRegionAttributes` blocks (class 1862); the attributes name the foreground and background fill
-  pattern elements (`m_fillPatternElemId`, `m_backgroundPatternElemId`) and the region names its view
-  (`m_ownerDBViewId`), attributes (`m_attrId`) and sketch (`m_sketchId`), so both the pattern and the placement
-  should be reachable. Reading every region shows only two break-line masking regions owned by view `958303`, and
-  the sampled regions (`1018117`, `147324`) expose no geometry, sketch loops or bounding box; the sketch curves
-  (`FilledRegionCurveData` 1863/1864) are not root records and the reader does not decode them. The pattern id is
-  therefore known to the attributes but the polygon is not: drawing the hatch needs a sketch-curve decoder for
-  view-owned annotations, not another lookup. The probe was removed after the measurement.
-
-- Letting railing edges through transparent occluders does not match the reference. Exempting every transparent
-  planar face from occlusion gives A103 96.0/93.0, A104 95.9/95.0 and A105 92.6/93.2 against 95.9/93.5,
-  96.3/95.6 and 92.6/93.6, because the interiors behind the glazing then print; exempting them only for railing
-  edges gives A103 95.9/93.3, adding unmatched ink without recovering a bar. Both variants are reverted. The
-  reference's solid bars behind the balustrade are not explained by the occluder's transparency alone, and the
-  hidden-line rule that produces them is still unidentified.
-
-- The filled region's polygon is still out of reach. The region's sketch element (`m_sketchId`, e.g. `1018116`)
-  carries no decoded geometry, location or loops, and the 0x0346 curves that `state.SketchCurves` does decode have
-  no element-level link back to the sketch or the view; `FilledRegionCurveData` (1863/1864) are not root records.
-  Placing the already-known pattern needs a sketch-curve ownership decoder, not another lookup.
-
-- The sketch behind `m_sketchId` is a `VarSketch` (class 4065) with a curve-only GRep the parser drops. The
-  `--diag-dump` of element `1018116` shows a 470-byte GRep block with `GCurve`/`GPoint` markers, but
-  `GRepParserV2` stores no `GRepData` for it, so the model sees no faces, curves or bounding box; the filled
-  region `1018117` has its own 960-byte GRep, likewise dropped. The region's owner `1018045` is not one of the
-  printable views, and view `958303` owns only two break-line masks, so the A103 block's crosshatch is not a
-  filled region of that view either. Getting the polygon now means teaching the GRep parser curve-only sketch
-  representations, which is a format decoder of its own; the print pipeline has no path to it today.
-
-- The VarSketch GRep is present but decodes to nothing. `RVTIO_DUMP_GREP=1018116,1018117` produces no dump
-  (the block is not in the scanned record chunks), and a probe of `state.GrepBlocks` after both parse passes
-  reports `no grep` for both the sketch and the region. `--diag-dump 1018116` still finds the block in the raw
-  chunk stream: a 470-byte GRep with header `Tag=15, GStyleElemId=-2147155969, Flags=0x00040008`, whose
-  `GCurve`/`GPoint` markers the diagnostic reads as zero coordinates, i.e. this curve-only leaf layout is not the
-  one `GRepParserV2` expects. Closing the block needs a decoder for curve-only GRep representations and a scan
-  path that feeds them to it; neither exists in the pipeline.
-
-- The VarSketch GRep does decode, and it rules the filled-region track out for A103. Scanning element `1018116`
-  directly finds the 470-byte GRep and `GRepParserV2` walks it: four `GLine` records carry end params, origins and
-  directions and form a 0.0078 x 0.0286 rectangle (handles 3-6), but they carry no faces, so `BuildGeometry`
-  returns null and the model never sees them. The sketch belongs to filled region `1018117`, whose owner
-  `1018045` is a drafting view, not the A103 section `958303`, and its extents do not match the block; view
-  `958303` owns only two break-line masks. Placing these four lines would put ink in a different view, so the
-  A103 crosshatch is not this filled region and its source is still unidentified.
-
-- The block maps into the roof cut, and the view carries no hatch element. Inverting the placement of view
-  `958303` (scale 10, content origin 85.1/61.2 mm, min -3009/5448 mm) puts the 346-389 x 1058-1102 pt block at
-  view coordinates about (-2565, 6966) mm, inside roof element `243274` (x -2978..3381, y 5726..9198). The view
-  owns thirteen elements: three `CurveElem` roof-edge lines (`970620`, `970773`, `970942`), two break-line
-  masks, sun/sketch placeholders and help buttons, but no detail component, filled region or hatch. The hatched
-  band is therefore the roof's cut fill: the 100 mm insulation layer (`123310`) decodes with cut pattern 0, the
-  40 mm and 50 mm layers with -1, and the only patterned roof layer is the inner 12 mm gypsum (`423`, `Sand`,
-  three grids), which at 1:10 is 1.2 mm wide and invisible at the scored dpi. Reproducing the reference hatch
-  needs the missing source of the roof layer's cut pattern (material record or a filter override), not another
-  annotation scan.
-
-- The remaining cut-pattern sources are empty too. The view's filter-override object (`m_oFilterOverrides`, class
-  1886) reports an empty `m_oaSettings` vector for view `958303`; the appearance block of material `123310` (class
-  0x09B6, 12459 bytes) contains no four-byte value that is any decoded fill-pattern id; and the roof element at the
-  block is `B1020`/`243274` (type `507024`), whose four layers are metal 40 mm (`232858`), lumber 100 mm
-  (`123310`), deck 50 mm (`232856`) and gypsum 12 mm (`423`). The first three carry no pattern at all, and the
-  gypsum's `Sand` is 1.2 mm wide at 1:10. The reference hatch therefore has no decoded source in the material,
-  appearance, category, style, view or filter records; reproducing it would need a render-appearance bitmap or
-  another undocumented display table, with no evidence either carries this pattern.
+- [Corrected attribution, verified on the whole page: the 346-389 x 1058-1102 pt block is the solar-panel array of
+  the Longitudinal Section (view 247014, `3 Longitudinal Section 1:100`), not the Typical Wall Roof Connection.
+  The full-page A103 render with the block marked places it inside that viewport at the ground left of the house,
+  and a 400 dpi crop shows a tilted panel field with its cell grid, frame and support legs; the elements there
+  are `800325` (`SunModule SW 245`, 667 faces) and `800331` (2668 faces), as the later entry already records. The
+  chain that follows was built by inverting view 958303's placement; that inversion mixed sheets A103 and A104
+  (the roof connection prints on A104), so its roof-cut, filled-region, VarSketch, cut-pattern and ObjectStyles
+  conclusions do not describe this block. The format facts collected there stay valid on their own and are kept
+  here without the A103 binding: view 958303's graphic overrides (class 2104) and filter overrides (1886) carry no
+  patterns and it owns no hatch element; `FilledRegion` (1860/1862) blocks name pattern ids but carry no decoded
+  curves, and `VarSketch` (4065) GReps are curve-only and drop out of `BuildGeometry`; `GraphicsStyle` (2046) and
+  `Category` (629) records name no fill pattern, and no `ObjectStyles` block (2592-2595) exists in the scanned
+  streams. The panel strokes are a projection/visibility question in view 247014: make a native DXF of that view
+  with XDATA ownership and trace the edges through collect -> consolidate -> hidden-line cull -> crop -> PDF.]
 
 - The A101 kerb-band edge is not depth-driven. Sweeping the caster/receiver clearance (`blocker - receiver`) from
   1e-6 ft to 0.1, 0.5 and 2 ft leaves A101 at 94.5/93.2/2.5, then 94.3/93.2/2.5 and 94.3/93.1/2.5, so no bias
   moves the boundary toward the reference without losing recall. Sweeping the shadow divisor from its calibrated
   60 to 75 and 100 gives A101 94.4/93.2/2.5 and 94.3/93.2/2.5: the tone mean absolute error does not improve
-  because it is dominated by inked blocks, not the large flat shadow areas. Both sweeps reverted.
+  because it is dominated by inked blocks, not the large flat shadow areas. Both sweeps reverted. The divisor 60
+  (`4c22a28`) is an empirical calibration on this file, not a derived constant; treat it as a parameter.
 
 - The visible shadow difference at the kerb is the reading of the RPC planting shadows. A 600 dpi crop of the
   band (1580-1710 x 230-360 pt) shows the reference's tree shadows as branch-shaped cutouts at the texture's
@@ -1157,8 +1069,17 @@ missing geometry in most places:
 - Global pen scaling cannot trade width for recall. Multiplying every stroke at or below 0.12 mm in `PdfDocument`
   by 1.3 raises recall to A103 98.2%, A104 98.0% and A105 93.6%, but precision collapses to 72.7/75.5/85.5
   because the antialiased halo of a wider line crosses the ink threshold and adds far more off-stroke pixels than
-  the reference has; 1.1 still gives A103 97.1/83.1 and A104 97.2/85.7. Reverted. The remaining 100 dpi recall gap
-  is missing geometry, not line width.
+  the reference has; 1.1 still gives A103 97.1/83.1 and A104 97.2/85.7. Reverted, but the conclusion drawn from it
+  here was wrong: the recall gain shows the panel/railing strokes are present and rendered lighter and thinner
+  than the reference raster, while precision fell only because the ink mask counts our added antialiased halo.
+  The scorer cannot judge width, so width changes must be shown with both numbers and decided on crops and line
+  ownership, not on the score alone.
+
+- The scorer is not the only judge. `raster.py` computes line ink for our print as well (`ink & ~erode(ink)`), so a
+  line drawn inside a filled shape scores 2.7% while the same line alone scores 100%. When the line score and the
+  all-dark-pixel recall disagree, decide by crop and line ownership; neither number alone is the goal. Repeat
+  prints of one tree differ only in the title block's date stamp (x 2330-2339, y 1508-1531 pt on A001, A103 and
+  A104); mask that rectangle before calling a change real.
 
 - The frontmost-copy rule for the A103 rails is the sum of parts that were each measured. Selecting the frontmost
   copy is the echo pass already in the code (nearest of the copies that project within a millimetre, A103
