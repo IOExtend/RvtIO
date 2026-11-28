@@ -962,6 +962,16 @@ missing geometry in most places:
   the element behind the meander is still unidentified, and every candidate projected so far adds ink without
   covering the reference's line.
 
+- The meander is a closed stepped loop in the terrain, not a decoded boundary. With the solar-study camera
+  (view 959071: origin 53.0/−141.0/161.7 ft, right 0.8849/0.4658/0, up −0.3837/0.7290/0.5668, factor 0.610 mm per
+  foot, anchor 547.6/446.9 mm) the meander's page box 486.9–504.8 × 411.6–433.5 mm inverts to world ≈
+  (−50, −133) ft at ground height. Only the two topography elements project into that box; no other element does.
+  The property line runs through it — the site corner at (83.4, −135.5) ft projects to page (494, 399) mm — but at
+  that place the reference draws a small closed loop (about 9 × 14 mm) while the six decoded property segments
+  form the large site polygon and only a single straight segment crosses the box. So the loop belongs to the
+  toposurface display (a contour loop or a subregion border), and our renderer draws no terrain edges at all;
+  the contour sweep was measured earlier and added ink without matching. The meander remains unidentified.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
