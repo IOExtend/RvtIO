@@ -916,6 +916,17 @@ missing geometry in most places:
   closest decoded pattern would print as a near-solid band rather than reproduce that texture. No decoded
   pattern matches the visible pitch, so nothing is applied and the print is unchanged.
 
+- A105's largest zones (page y 1318–1382 pt, x 288–475 pt) are the East elevation's guardrail, not a raster
+  artifact. At the scorer's 100 dpi the band loses 54% of its reference strokes, while a 400 dpi crop with the
+  same 0.5 mm tolerance finds nothing missing: the difference is thin grey strokes whose antialiasing changes
+  with the sampling grid. The 600 dpi comparison does show one real difference: the reference draws the
+  guardrail's middle rail as a solid dark band, we draw only its two thin edges. Filling the railing's faces
+  with their material colour (Iron Gray decodes `HasShadingAppearance` with no render appearance and zero
+  transparency) was tried two ways and both lost precision: all railing faces gave A103 95.9/93.1%, A104
+  96.4/93.1%, A105 92.6/92.9% with tone correlation 0.94 on A105, and restricting the fill to the thin rails
+  (10–120 mm projected height) gave A103 95.8/93.0%, A104 96.3/93.6%, A105 92.5/93.0%. Neither raised recall, so
+  the fill is reverted.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
