@@ -826,14 +826,18 @@ missing geometry in most places:
   the reference fills it with a fine hatch. Its pitch does not match any decoded cut pattern (the site cut pattern
   is a 6.35 mm brick, the concrete cut pattern 6–11 mm, both sub-pixel at 1:100), so the pattern itself is still
   undecoded. The larger A103 gaps sit in the South elevation, where the guardrail's five horizontal bars are
-  decoded (100 mm pitch, view depth −18200) but the occlusion pass drops them. Instrumenting the pass names every
-  occluder rather than a glass pane: the railing's own near face (element 566588, −18203, 3 mm nearer), a floor
-  slab (550255, "Generic 150mm", −18202, 2 mm nearer) and a clad wall (427092, "Wall - Timber Clad", −18404).
-  Exempting the railing itself restores no bar (the slab and wall still cover it); exempting every face within
-  5 mm of the bar restores some on A104/A105 but not on A103, and costs precision. Measured for the 5 mm envelope:
-  A103 95.8/93.4% unchanged, A104 96.3/95.6% → 96.6/93.8%, A105 92.6/93.6% → 92.9/93.3%. Exempting all railing
-  categories measured A103 95.9/93.2%, A104 96.6/93.3%, A105 92.7/93.1%. All variants lost more precision than
-  they gained, so the occlusion stands.
+  decoded (100 mm pitch, view depth −18200) but the occlusion pass drops them. Instrumenting the pass with the
+  decoded polygons shows what actually covers each bar: only the railing itself (element 566588, faces 3 mm nearer
+  at −18203) and its nested symbol (566589, 14 mm nearer at −18214). The clad wall (427092, "Wall - Timber Clad")
+  does not reach the bars: its two faces span x = 13.06–13.26 m and z = −1.2…2.7 m, while the bars run at
+  x = 7.06–13.06 m. The floor slab (550255, "Generic 150mm") spans the bars' x but sits at z = −0.70…−0.55 m,
+  below them, and grazes only the bottom rail at z = −550. Exempting faces of the railing assembly
+  (categories −2000126/−2000127 within 15–20 mm of the bar) restores the bars: A103 recall 95.8% → 96.1% and
+  A001 98.6% → 98.7%, but A104 precision falls 95.6% → 93.8% for +0.3% recall and A105 falls 92.6% → 92.3% at
+  93.6% → 93.3%, so the net score drops. Restricting the exemption to horizontal bars keeps A103 at 96.1/93.4%
+  and A105 at 92.9/93.3%, yet A104 still pays 95.6% → 93.7% precision for the same +0.3% recall: the extra ink
+  is the same bars drawn where the reference hides them (e.g. around 540–620 × 324–350 pt in the West elevation,
+  where the bars of a lower railing coincide with a wall face). The occlusion stands.
 
 
 | Sheet | Printed | Still different |
