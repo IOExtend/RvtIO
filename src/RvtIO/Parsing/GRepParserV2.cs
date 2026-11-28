@@ -2733,13 +2733,25 @@ internal static partial class GRepParserV2
         // Per face handle: collect its edge UV segments (in that face's own surface frame).
         var byFace = new Dictionary<uint, List<(double U1, double V1, double U2, double V2)>>();
         var cylinderLoopEdges = new Dictionary<uint, HashSet<uint>>();
+        var curvedLoopEdges = new Dictionary<uint, HashSet<uint>>();
         var sourceEdgesByHandle = EdgesByHandle(c);
         var completeLoops = CompleteFaceLoops(c);
-        if (c.NativeWallBody)
-            foreach (var (face, indices) in completeLoops)
-                if (c.DirectSurfaceByFace.TryGetValue(face, out var sourceSurface) && sourceSurface.Kind == SurfKind.Cylinder
-                    && TryGetFaceLoopEdges(c, face, indices, sourceEdgesByHandle) is { } sourceLoopEdges)
-                    cylinderLoopEdges[face] = sourceLoopEdges.Select(edge => edge.Handle).ToHashSet();
+        // A cut leaves the edges of the former surface in the block, linked into no loop. They can repeat a whole side, which loses the
+        // face in tessellation; the body then counts as incomplete and gets a second copy from its type.
+        foreach (var (face, indices) in completeLoops)
+        {
+            if (!handleToSurf.TryGetValue(face, out var sourceSurface)) continue;
+            if ((sourceSurface.Kind != SurfKind.Plane && !c.ExactPlanarSpaceBoundary
+                    || c.NativeWallBody && sourceSurface.Kind == SurfKind.Cylinder)
+                && TryGetFaceLoopEdges(c, face, indices, sourceEdgesByHandle) is { Count: > 0 } sourceLoopEdges)
+            {
+                var loopEdgeHandles = sourceLoopEdges.Select(edge => edge.Handle).ToHashSet();
+                curvedLoopEdges[face] = loopEdgeHandles;
+                if (c.NativeWallBody && c.DirectSurfaceByFace.TryGetValue(face, out var directSurface)
+                    && directSurface.Kind == SurfKind.Cylinder)
+                    cylinderLoopEdges[face] = loopEdgeHandles;
+            }
+        }
         var sharedCylinderEdges = cylinderLoopEdges.Values.SelectMany(handles => handles).ToHashSet();
         var meshEdgeBounds = c.DirectSurfaceByFace.Values.Any(surface => surface.Kind == SurfKind.Cylinder)
             ? ReadFaceEdgeBounds(c, completeLoops, sourceEdgesByHandle) : new Dictionary<uint, double[]>();
@@ -2790,9 +2802,9 @@ internal static partial class GRepParserV2
             foreach (var e in c.Edges)
             {
                 bool firstFace = (changedFaces == null || changedFaces.Contains(e.FaceA))
-                    && (!cylinderLoopEdges.TryGetValue(e.FaceA, out var firstLoopEdges) || firstLoopEdges.Contains(e.Handle));
+                    && (!curvedLoopEdges.TryGetValue(e.FaceA, out var firstLoopEdges) || firstLoopEdges.Contains(e.Handle));
                 bool secondFace = (changedFaces == null || changedFaces.Contains(e.FaceB))
-                    && (!cylinderLoopEdges.TryGetValue(e.FaceB, out var secondLoopEdges) || secondLoopEdges.Contains(e.Handle));
+                    && (!curvedLoopEdges.TryGetValue(e.FaceB, out var secondLoopEdges) || secondLoopEdges.Contains(e.Handle));
                 if (!firstFace && !secondFace) continue;
                 var a = e.Start;
                 for (int i = 0; i <= e.Interior.Count; i++)
