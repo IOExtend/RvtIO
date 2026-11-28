@@ -1148,6 +1148,18 @@ missing geometry in most places:
   lives in the external ArchVision/RPC content, not in the project, so clipping the planting casters by the alpha
   is impossible from this file; no shadow setting can recover the branch gaps. This closes the RPC-shadow lead.
 
+- The ObjectStyles table is not in the scanned block streams. The schema names classes 2592 `ObjectStyle`, 2593
+  `ObjectStyleKey`, 2594 `ObjectStyleId` and 2595 `ObjectStyles`, but a class-gated scan of every block in the
+  record chunks reports zero of all four, and `coverage --trace` finds no root record for `ObjectStyles`,
+  `ObjectStyle` or `DisplaySettings` either. The project display table therefore lives in a document-level graph
+  the reader does not parse; there is no block to read and no field to map to a category cut pattern.
+
+- Global pen scaling cannot trade width for recall. Multiplying every stroke at or below 0.12 mm in `PdfDocument`
+  by 1.3 raises recall to A103 98.2%, A104 98.0% and A105 93.6%, but precision collapses to 72.7/75.5/85.5
+  because the antialiased halo of a wider line crosses the ink threshold and adds far more off-stroke pixels than
+  the reference has; 1.1 still gives A103 97.1/83.1 and A104 97.2/85.7. Reverted. The remaining 100 dpi recall gap
+  is missing geometry, not line width.
+
 - The frontmost-copy rule for the A103 rails is the sum of parts that were each measured. Selecting the frontmost
   copy is the echo pass already in the code (nearest of the copies that project within a millimetre, A103
   95.9/93.5%). Clipping each rail only by faces in front of that copy gives A103 96.4/92.6%, A104 96.6/93.7%,
