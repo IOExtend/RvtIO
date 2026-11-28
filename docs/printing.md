@@ -884,6 +884,15 @@ missing geometry in most places:
   hides by some other rule, so a solid test cannot separate them. The feature is reverted; the remaining lead is
   to find which element those bars belong to and why the reference drops that element in the West elevation.
 
+- The extra A104 bars belong to element 933840, `BaseRailing "SH_1100mm"` (category −2000126), one of the four
+  railings of that type in the model. Instrumenting the drawn edges in the band 930–1180 × 315–380 pt names it
+  directly: six horizontal edges at page y = 464…469 mm, one per 100 mm rail, all at the same view depth. The
+  element is neither hidden nor filtered: `ViewHiddenElements` for view 8237 ("West") is empty, its created phase
+  86961 is the view's phase, its demolished phase is −1, and the view crop is active and contains the bars. So
+  the reference omits some of the railing's rails through hidden-line geometry, not through visibility settings,
+  and the "hidden element" lead is a dead end. The railing is a legitimate, visible element; the difference is
+  the same self-occlusion the earlier rules attacked.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
