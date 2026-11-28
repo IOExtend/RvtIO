@@ -927,6 +927,13 @@ missing geometry in most places:
   (10–120 mm projected height) gave A103 95.8/93.0%, A104 96.3/93.6%, A105 92.5/93.0%. Neither raised recall, so
   the fill is reverted.
 
+- Restricting the same fill to faces flat to the view (`facing > 1 − 1e-9`) changes nothing: the renderer defines
+  `facing` as the magnitude of the normal's dot product with the view direction (`Math.Abs(...)` at line 854), so
+  front and back faces both read 1 and the test cannot tell the visible side from the hidden one. Measured A103
+  95.9/93.1%, A104 96.4/93.1%, A105 92.6/92.9% — the same numbers as the unrestricted fill. Separating the
+  visible side would need a signed facing, but even then the fill covers the A104 railings that the reference
+  leaves as thin lines, so the rule would have to key on the rail profile, not on the view direction.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
