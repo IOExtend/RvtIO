@@ -1044,7 +1044,13 @@ missing geometry in most places:
   (`232856`) has none. Enabling the layer hatches for details (`!isDetail ? layerHatches : null` -> `layerHatches`)
   leaves every scored page unchanged, so the pattern is a category cut-pattern override (Object Styles, `OST_Roofs`)
   or view override that the reader does not extract; no element is owned by the view either, so it is not a filled
-  region. Reproducing the block needs Object Styles cut-pattern decoding.
+  region. The schema rules out the two nearest records: a graphics style (class 2046) carries only
+  `m_materialElemId`, `m_penNumber`, `m_color` and `m_linePatternId`, and a category (class 629) only
+  `m_categoryType`, `m_flags`, `m_name` and `m_parentCategoryId`, so neither names a fill pattern. The roofing
+  material's own patterns are `cut = -1` and `surface = 232863`, a single solid grid at a 2 ft offset, which is not
+  the dense diagonal crosshatch either. The block also prints the roof cut outlines pale against the reference's
+  black, so both the pattern source and the cut pen need the project's Object Styles display table, which the reader
+  does not parse.
 
 - The frontmost-copy rule for the A103 rails is the sum of parts that were each measured. Selecting the frontmost
   copy is the echo pass already in the code (nearest of the copies that project within a millimetre, A103
