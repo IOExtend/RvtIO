@@ -1024,6 +1024,16 @@ missing geometry in most places:
   it is the bars that sit beside the solid mid-rail and that the reference omits. Combining the three steps
   therefore reproduces the earlier measurement, and the rule is not committed.
 
+- A103's largest 200 dpi gaps are the louvered low structure at the bottom left (page 331–374 × 1066–1080 pt,
+  recall 0–6%). At 600 dpi the reference draws fine horizontal slats with diagonal ties and a stepped outline;
+  our print draws the same polygons flat white with no texture. The face belongs to the floor
+  `512683 "Timber Suspended Floor"`; its face material `185148` decodes no pattern at all, while the compound
+  layer material `713090 "Interior finish"` carries drafting surface pattern 429 (twelve dashed segments at
+  2.0 mm). Two fixes were tried: allowing the drafting surface patterns at any scale instead of only fine
+  sections, and extending the dashed-pattern branch from walls to floors. Neither changed A103 (95.9/93.5%) —
+  A105 even lost 0.1 — because the visible face resolves to the pattern-less material. The reference's slats are
+  therefore a rendered texture of the floor assembly that the decoded face materials do not carry.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
