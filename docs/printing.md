@@ -1034,6 +1034,14 @@ missing geometry in most places:
   A105 even lost 0.1 — because the visible face resolves to the pattern-less material. The reference's slats are
   therefore a rendered texture of the floor assembly that the decoded face materials do not carry.
 
+- Binding the floor layer's pattern to the face is moot: the louvered block is not a floor. In the section basis
+  (view 247014, H = X, V = Z) the block's model box is x −14.5…−12.7 m, z 0.9…1.2 m, and the elements there are
+  the solar-panel array `800325` `SunModule SW 245 Silver Mono - 10 Deg. Angle` (667 faces) with its instance
+  group `800331` (2668 faces), plus terrain. The floor `512683` comes from a different view and area. The
+  reference's slats are the panel frames and mounting rails; binding pattern 429 to a floor edge would have hit
+  nothing, which is why the attempt printed byte-identical sheets. Drawing the panels' rails is the actual next
+  lead for this block.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
