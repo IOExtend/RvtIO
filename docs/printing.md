@@ -1093,6 +1093,14 @@ missing geometry in most places:
   filled region of that view either. Getting the polygon now means teaching the GRep parser curve-only sketch
   representations, which is a format decoder of its own; the print pipeline has no path to it today.
 
+- The VarSketch GRep is present but decodes to nothing. `RVTIO_DUMP_GREP=1018116,1018117` produces no dump
+  (the block is not in the scanned record chunks), and a probe of `state.GrepBlocks` after both parse passes
+  reports `no grep` for both the sketch and the region. `--diag-dump 1018116` still finds the block in the raw
+  chunk stream: a 470-byte GRep with header `Tag=15, GStyleElemId=-2147155969, Flags=0x00040008`, whose
+  `GCurve`/`GPoint` markers the diagnostic reads as zero coordinates, i.e. this curve-only leaf layout is not the
+  one `GRepParserV2` expects. Closing the block needs a decoder for curve-only GRep representations and a scan
+  path that feeds them to it; neither exists in the pipeline.
+
 - The frontmost-copy rule for the A103 rails is the sum of parts that were each measured. Selecting the frontmost
   copy is the echo pass already in the code (nearest of the copies that project within a millimetre, A103
   95.9/93.5%). Clipping each rail only by faces in front of that copy gives A103 96.4/92.6%, A104 96.6/93.7%,
