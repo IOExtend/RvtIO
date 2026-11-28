@@ -1420,7 +1420,8 @@ public partial class IfcExporter
         double? topArea = surfaceArea > 1e-9 ? surfaceArea : ComputedHostAreaCurrent(element) ?? profileArea;
         // A foundation without a vertical extrusion (a pile) takes the area of its cap face, and its volume from all the geometry:
         // the measured nodes, the closed shells of the solids that have no measure, and the open straight prisms of the others.
-        double? netVolume = totals?.Volume;
+        // The sum over the polygons of an open shell depends on where the model origin is; the surface integrals of the nodes do not.
+        double? netVolume = (shells.Any(shell => !shell.Closed) ? NodeSolidTotalsCurrent(element.Geometry)?.Volume : null) ?? totals?.Volume;
         if (element.CategoryId == CurrentFoundationCategoryId && prism == null)
         {
             // the cap of a node below zero, or of a cutting node (a negative measure), is not part of the foundation

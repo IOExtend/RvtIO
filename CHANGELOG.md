@@ -39,6 +39,10 @@ API between minor releases.
 ### Fixed
 
 - IFC export preserves the base of a level-constrained wall whose location line already includes its base offset when its decoded body confirms the base and top. The current profile preserves separately closed sections of a straight wall across a full-height gap.
+- A family instance whose body was cut no longer gets a second copy of its solid from the type: the edges left over from
+  the surface before the cut are ignored on curved faces. In the current IFC profile, the `NetVolume` of a slab that is
+  not a stair part and has an open polygon shell now comes from the surface integrals of its solid nodes when every node
+  has them.
 - Nest fixed MEP ports under their host with `IfcRelNests` in IFC4 and write directed port links from source to sink.
 - Avoid overflow when triangulating trimmed faces with 46,341 or more vertices after bridging.
 - Read `Global` and `Formats` streams whose last page has exactly the length of a full page and holds no segment marker at the segment position.

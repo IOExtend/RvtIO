@@ -1197,6 +1197,26 @@ public class IfcExporterBaseQuantitiesCurrentTests
         Assert.Empty(Quantities(w, "IFCQUANTITYLENGTH"));
     }
 
+    [Theory]
+    [InlineData(false, 16)] // open shell: the node's surface integrals
+    [InlineData(true, 16)] // closed shell: its own volume, not the node's
+    public void SlabNetVolume_UsesTheNodeMeasureOnlyForAnOpenPolygonShell(bool closed, double expected)
+    {
+        var (w, owner, placement) = NewWriter();
+        int slab = AddProduct(w, "IFCSLAB", "MZGD7y6S5209$mGLi_sPlj", owner, placement);
+        var geometry = Box(4, 4, 1);
+        // Away from the origin, as models are: a gap in the shell then dominates the sum over its polygons.
+        foreach (var corner in geometry.Faces.SelectMany(face => face.OuterVertices!)) corner[0] += 100;
+        if (!closed) geometry.Faces.RemoveAt(5);
+        geometry.BrepSolids = [new GeoBrepSolid { IsClosed = closed, FaceIndices = Enumerable.Range(0, geometry.Faces.Count).ToList() }];
+        foreach (var face in geometry.Faces) face.GeometryNode = 1;
+        geometry.NodeMeasures = [new(1, 48, closed ? 15 : 16)];
+
+        Apply(w, owner, new() { [21] = new Element { Id = 21, Geometry = geometry } }, new() { [slab] = 21 });
+
+        Assert.Equal(expected * CubicFeet, Quantities(w, "IFCQUANTITYVOLUME").Single(q => q.Name == "NetVolume").Value, 9);
+    }
+
     [Fact]
     public void Pass_SlabWithNoHostAreaAndNoPrism_TakesTheUpwardFacesAsItsTopSurface()
     {
