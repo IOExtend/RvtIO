@@ -972,6 +972,16 @@ missing geometry in most places:
   toposurface display (a contour loop or a subregion border), and our renderer draws no terrain edges at all;
   the contour sweep was measured earlier and added ink without matching. The meander remains unidentified.
 
+- Enumerating the toposurface display records closes that lead too. The decoded data holds contours per
+  topography element only: within 25 ft of the inverted meander position there is exactly one contour, at
+  elevation −16.4 ft, a 40-point line that follows the western site boundary (`(-81.5,-169.3) (-81.7,-169.2)
+  … (-81.6,-157.5)`), duplicated identically in both terrain copies `411452` and `800334`. That is a long open
+  boundary line, not the meander's small closed stepped loop. No topography element is hosted, so no subregion
+  boundary is decoded (`host = −1` on `411452`, `490318`, `523063`, `800334` and on the pads), and the file has no
+  view-keyed display record for the 3D view (`PlanOutlineAnnotations` has no entry for 959071). The meander's
+  source is therefore not in the decoded data; reproducing it needs a Revit-internal toposurface display record
+  that the reader does not extract.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
