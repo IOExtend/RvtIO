@@ -45,6 +45,13 @@ public class RvtReaderOptions
     /// For very large models. Off by default.</summary>
     public bool RaiseLimits { get; set; }
 
+    /// <summary>Release the decompressed partition streams before the element model is built instead of keeping them to the end of
+    /// the read, so that the model is built with less memory in use. For a caller that keeps only the result of the read, such as a
+    /// document opened with <see cref="RvtDocument.Open"/>; the model that is read is the same. It applies to a file read in the
+    /// layout the reader ships (a file of Revit 2022 or of an unknown release): a file that is read by its own class schema keeps
+    /// its streams as without the option, also when <see cref="R22Layout"/> rewrites them. Off by default.</summary>
+    public bool ReleasePartitions { get; set; }
+
     /// <summary>Collects the streams read, how much of each decoded, and the limits that cut a stream. Null to collect nothing.</summary>
     public RvtReadDiagnostics? Diagnostics { get; set; }
 

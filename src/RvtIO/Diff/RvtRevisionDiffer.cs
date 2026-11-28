@@ -1102,6 +1102,7 @@ public static partial class RvtRevisionDiffer
             PreserveWideLayout = source.PreserveWideLayout,
             ResolveCurrentCopies = source.ResolveCurrentCopies,
             RaiseLimits = source.RaiseLimits,
+            ReleasePartitions = source.ReleasePartitions,
             Diagnostics = diag,
             Progress = source.Progress,
             DiagnosticOutput = source.DiagnosticOutput,

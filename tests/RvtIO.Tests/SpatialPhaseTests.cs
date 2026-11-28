@@ -335,7 +335,7 @@ public class SpatialPhaseTests
         Assert.Equal(0, nonListedElem.Parameters.Single(p => p.Id == -1012101).Value);
     }
 
-    private static void WriteSyntheticNativeR22ModelWithPhaseZero(string rvtPath)
+    internal static void WriteSyntheticNativeR22ModelWithPhaseZero(string rvtPath)
     {
         uint[] ids = [0u, 1u, 2u, 10u, 20u, 21u];
 
