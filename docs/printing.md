@@ -1096,6 +1096,15 @@ missing geometry in most places:
   it is not committed; the remaining error is the per-span depth used for non-planar faces (`MinDepth`), which
   still over- or under-covers slivers between the array's triangles, not the midpoint rule alone.
 
+- Barycentric depth for the non-planar occluder triangles does not recover the precision. Replacing the per-span
+  cover depth with the depth interpolated from the projected triangle's vertices (fan triangulation, weights from
+  the span midpoint) gives A103 96.6/91.3, A104 96.7/93.7, A105 92.8/91.1, tone MAE 3.0/2.9/3.4 against the
+  span-clipping variant's 96.4/91.2, 96.9/93.7, 92.9/91.2. The precision loss stays 1.9-2.5 below HEAD, so
+  `MinDepth` was not the cause: clipping by the per-face covers adds spans the reference does not draw (the
+  covers are triangle-wise and leave slivers between their edges, and Revit's hidden-line selection is not a
+  per-face union). Not committed. The native DXF's 45 panel lines are the ground truth for the next comparison:
+  each of our spans must be matched to a DXF line, and only spans with a reference counterpart should print.
+
 - The frontmost-copy rule for the A103 rails is the sum of parts that were each measured. Selecting the frontmost
   copy is the echo pass already in the code (nearest of the copies that project within a millimetre, A103
   95.9/93.5%). Clipping each rail only by faces in front of that copy gives A103 96.4/92.6%, A104 96.6/93.7%,
