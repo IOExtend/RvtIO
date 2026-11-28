@@ -41,6 +41,9 @@ API between minor releases.
 - IFC export preserves the base of a level-constrained wall whose location line already includes its base offset when its decoded body confirms the base and top. The current profile preserves separately closed sections of a straight wall across a full-height gap.
 - Nest fixed MEP ports under their host with `IfcRelNests` in IFC4 and write directed port links from source to sink.
 - Avoid overflow when triangulating trimmed faces with 46,341 or more vertices after bridging.
+- A wall with no straight or arc location line, no faces or solids of its own and only a symbol placement that could not
+  be used no longer gets a solid computed from its bounding box: its `Geometry.Solids` stays empty and neither IFC
+  profile writes it, as its mesh already reports no geometry.
 - Read `Global` and `Formats` streams whose last page has exactly the length of a full page and holds no segment marker at the segment position.
 - Use the saved section plane in model millimetres to clip PDF geometry and place detail windows.
 

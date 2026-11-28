@@ -4646,7 +4646,8 @@ public partial class IfcExporter
                 elemPlacementId = w.Add("IFCLOCALPLACEMENT", $"{R(elemStoreyPlacementId)},{R(rampAxisId > 0 ? rampAxisId : axisId)}");
                 withFaces++;
             }
-            else if (ifcType is "IFCWALLSTANDARDCASE" or "IFCWALL")
+            else if (ifcType is "IFCWALLSTANDARDCASE" or "IFCWALL"
+                && !ProductRules.IsGeometrylessUnresolvedWall(elem))
             {
                 // Walls: SweptSolid with profile from bottom face or GeoSolid
                 (shapeId, elemPlacementId) = CreateWallSweptSolid(
