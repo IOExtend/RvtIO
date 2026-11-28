@@ -842,6 +842,17 @@ missing geometry in most places:
   other and keeps the nearest copy, which lifts A001 98.6% → 98.7% and A103 95.8/93.4% → 95.9/93.5% without
   touching the other sheets (see the changelog).
 
+- Why the reference shows the A103 bars but not their A104 counterparts. Instrumenting both views shows the
+  added ink splits the same way: on A103 the un-hidden bars are 2171 pixels on the reference and 2173 off it, on
+  A104 1149 against 1456; A104's off-reference ink is concentrated on the **bottom rails**, which the reference
+  hides behind the solid base band while the thinner bars between the posts stay visible. The railing's materials
+  are opaque — "Stainless Steel 1" and "Iron Gray" both decode transparency 0, so no glass pane is involved and
+  the see-through rule cannot separate the cases. An extent-based exemption (the covering face must match the
+  bar's own projected rectangle within 2 mm) leaves A103 at 95.9/93.5% and loses A001 0.1%: the covering face is
+  a panel taller than the bar, not the bar's own strip. The reference draws railing rails as symbolic elevation
+  lines, which is why its bars survive their own solid; reproducing that needs a railing-specific display rule
+  rather than an occlusion exemption.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
