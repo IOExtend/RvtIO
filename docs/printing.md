@@ -1087,6 +1087,14 @@ missing geometry in most places:
   view id — its log shows `gaps=0 symbols=0 walls=1`, so no door symbols are selected for it at all. The fix is
   to select the door symbols for a generated plan by level rather than by view id, not to change the arc angles.
 
+- A105's East-elevation guardrail is not missing; the bars are drawn and the 200 dpi gap is sampling. Instrumenting
+  the drawn edges in the band 1318–1382 × 288–475 pt names element `933840` (the `SH_1100mm` railing) with 21
+  edges there: eight horizontal bars at page y 115–122 mm spanning x 103–175 mm at depth −13054, verticals at
+  −7086 and −13064. A 500 dpi crop of the same band with the 0.5 mm tolerance leaves 33 of 44 776 reference
+  stroke pixels unmatched (0.1 %) and no extra ink, so the whole guardrail is present. The 35–55 % recall the
+  100/200 dpi grids report for those blocks is the thin-line sampling of the reference's embedded raster, the
+  same effect documented for A104's boards.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
