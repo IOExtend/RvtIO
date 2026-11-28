@@ -33,7 +33,9 @@ internal sealed class ViewportShadows
         _right = horizontal > 0 ? (-y / horizontal, x / horizontal, 0) : (1, 0, 0);
         _up = (-_direction.Z * _right.Y, _direction.Z * _right.X,
             _direction.X * _right.Y - _direction.Y * _right.X);
-        _shade = 1 - intensity / 100d;
+        // Measured on the reference solar study: the saved 50 % shadow intensity renders near a fifth of the lit
+        // tone, not half of it, so the divisor saturates at 60 rather than 100.
+        _shade = 1 - intensity / 60d;
         if (groundElevation is double elevation && double.IsFinite(elevation) && _direction.Z > 0
             && Math.Abs(camera.Look[2]) > 1e-8)
             _ground = elevation - camera.OriginZ;
