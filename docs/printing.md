@@ -951,6 +951,17 @@ missing geometry in most places:
   comparison collapses; at 200 dpi A101 still lags at 93.3%, together with A103 at 93.1%. Those two pages carry
   the real gap.
 
+- A101's largest block is not the property line. The saved property curves (`Element.SitePropertyCurve`) were
+  projected into the shaded study twice, at z = 0 and at the terrain surface (sampling the toposurface triangles
+  for the height) with the depth test. Both draw the boundary as a thin curve along the site edge — the same
+  curve the reference shows at the foot of the green area — but neither reaches the meander: A101 recall stays at
+  94.2% while precision falls from 93.2% to 92.8% (z = 0) and 92.7% (terrain height). The meander is a small
+  closed stepped polygon about 9 × 14 mm on paper, whereas the property line is a long curve around the whole
+  site. The terrain faces carry no inner loops either (`411452`, `490318`, `523063`, `800334` all report zero),
+  so it is not a hole in the surface. Pads, contours, mesh breaks and holes are now all excluded by measurement;
+  the element behind the meander is still unidentified, and every candidate projected so far adds ink without
+  covering the reference's line.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
