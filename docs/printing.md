@@ -867,6 +867,13 @@ missing geometry in most places:
   reverted; a faithful fix has to clip per span against the real 3D occluders of each bar copy, not against the
   assembly's projected faces.
 
+- Per-span clipping against every nearer face (the step above) measures A103 96.4/92.6%, A104 96.6/93.7% and
+  A105 92.8/93.0% against the baseline 95.9/93.5, 96.3/95.5 and 92.6/93.6: recall gains 1.0 point in total and
+  precision loses 3.3, so it is reverted too. The spans the reference omits are the bars that sit inside a solid
+  rail — their projection is covered but their ends, which stick out a millimetre, survive a polygon clip. Only a
+  point-in-solid test against the railing's B-rep shells can drop them; the decoder has no such test today, and
+  the projected-polygon approximation cannot separate a bar inside the rail from a bar beside it.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
