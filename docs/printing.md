@@ -1080,6 +1080,13 @@ missing geometry in most places:
   `angle ± curve.T0/T1`. Checking that angle convention against the stored arc spans is the next step, not a new
   decode path.
 
+- The swing convention is correct; the missing swing belongs to a generated plan. Instrumenting
+  `DrawDoorPlanSymbol` shows thirteen arcs drawn with sane geometry (radius 2.36–2.84 ft, angles −94…−270°), and a
+  side-by-side crop of the upper A102 plan shows the Bath and Laundry doors with the same double fan the
+  reference draws. The `106A` door sits on the deck plan, which `CollectLevel` builds for level 515270 with no
+  view id — its log shows `gaps=0 symbols=0 walls=1`, so no door symbols are selected for it at all. The fix is
+  to select the door symbols for a generated plan by level rather than by view id, not to change the arc angles.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
