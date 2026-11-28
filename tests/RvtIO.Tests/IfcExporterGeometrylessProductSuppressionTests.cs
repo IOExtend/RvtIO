@@ -1007,6 +1007,7 @@ public class IfcExporterGeometrylessProductSuppressionTests
 
         Assert.Null(wall.Geometry.Solids);
 
+        // the mesh side already reports no geometry; the IFC file has to agree with it
         var mesh = Assert.Single(ElementMeshes.Extract(RvtDocument.FromInfo(info)).Elements);
         Assert.Equal(wall.Id, mesh.ElementId);
         Assert.Equal(MeshCoverage.NoGeometry, mesh.Coverage);
@@ -1028,6 +1029,36 @@ public class IfcExporterGeometrylessProductSuppressionTests
             Assert.Contains("IFC geometry-less element products suppressed: 1 - IFCWALL=1", diagnostics.ToString());
         }
         finally { Cleanup(path); }
+    }
+
+    [Theory]
+    [InlineData("unresolved symbol", true)]
+    [InlineData("unexpanded instance", true)]
+    [InlineData("no symbol placement", false)]
+    [InlineData("line axis", false)]
+    [InlineData("arc axis", false)]
+    [InlineData("stored face", false)]
+    [InlineData("stored BRep solid", false)]
+    [InlineData("no geometry", false)]
+    public void GeometrylessUnresolvedWall_HasNothingOfItsOwnAndOnlyASymbolItCannotUse(string kind, bool expected)
+    {
+        var geometry = new GeometryData { UnresolvedSymbol = true };
+        var wall = new Element { Id = 1, Geometry = geometry };
+        switch (kind)
+        {
+            case "unexpanded instance":
+                geometry.UnresolvedSymbol = false;
+                geometry.Instances = [new GeoInstance { SymbolId = 2 }];
+                break;
+            case "no symbol placement": geometry.UnresolvedSymbol = false; break;
+            case "line axis": wall.Location = new LocationCurve { CurveType = "Line" }; break;
+            case "arc axis": wall.Location = new LocationCurve { CurveType = "Arc" }; break;
+            case "stored face": geometry.Faces = [new GeoFace()]; break;
+            case "stored BRep solid": geometry.BrepSolids = [new GeoBrepSolid()]; break;
+            case "no geometry": wall.Geometry = null; break;
+        }
+
+        Assert.Equal(expected, ProductRules.IsGeometrylessUnresolvedWall(wall));
     }
 
     private static string TempIfcPath(string tag) =>
