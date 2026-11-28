@@ -853,6 +853,20 @@ missing geometry in most places:
   lines, which is why its bars survive their own solid; reproducing that needs a railing-specific display rule
   rather than an occlusion exemption.
 
+- The railing carries no symbolic elevation data to decode. Its type (490129, `StairsRailingAttr "SH_1100mm"`)
+  stores no family and no geometry, and both railing elements (`566588 BaseRailing`, `566589 BaseRailingSym`)
+  report zero `ViewFacingLines` and zero `Edges` while their 100–106 faces are the modelled rails. 118 other
+  elements in the same file do carry view-facing lines (doors, planting), so the decoder is not the limit: the
+  railing simply has none. The rails exist as faces. What hides them in the South elevation is the midpoint test:
+  the bar runs from x = 7.06 to 13.06 m with its midpoint at 10.06 m, exactly behind the post at 10.05–10.07 m,
+  so the whole bar is dropped. Clipping the bar around the railing faces it crosses restores it between the posts
+  (the sheet now matches the reference's segmented bars) and measures A103 96.0/93.2% for the clip alone and
+  96.2/93.2% with a 2 mm filter that drops clipped spans running alongside another rail. Both variants still cost
+  A104 1.8–2.0% precision (96.6–96.7% recall against 95.6%) and A105 0.3%, because the bars that land beside a
+  solid rail (A104's mid-rail) are not within the 2 mm filter either. The net score drops, so the clipping is
+  reverted; a faithful fix has to clip per span against the real 3D occluders of each bar copy, not against the
+  assembly's projected faces.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
