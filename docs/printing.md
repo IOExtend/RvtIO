@@ -1035,6 +1035,17 @@ missing geometry in most places:
   (the base print has 15.2k), and 196 of the new ink pixels lie outside the reference's strokes, so precision
   falls 93.2% -> 93.1%. Not kept.
 
+- A103's 0 % block at 346-389 x 1058-1102 pt is the roof-connection detail's missing crosshatch, and its pattern is
+  not decoded. The detail prints view `958303` (Typical Wall Roof Connection, 1:10); the roof cut there is one ring
+  with a four-layer stack of 40/100/50/12 mm whose measured thickness matches the 202 mm sum, so the roof layer
+  path itself runs. Only the inner 12 mm layer's material (`423`) carries a decoded cut pattern (three grids); the
+  40 mm metal roofing (`232858`, the layer under the crosshatch, about 4 mm on paper = 39 mm at 1:10) has
+  `CutPatternId = -1`, the 100 mm layer (`123310`) is absent from `MaterialPatterns`, and the 50 mm deck
+  (`232856`) has none. Enabling the layer hatches for details (`!isDetail ? layerHatches : null` -> `layerHatches`)
+  leaves every scored page unchanged, so the pattern is a category cut-pattern override (Object Styles, `OST_Roofs`)
+  or view override that the reader does not extract; no element is owned by the view either, so it is not a filled
+  region. Reproducing the block needs Object Styles cut-pattern decoding.
+
 - The frontmost-copy rule for the A103 rails is the sum of parts that were each measured. Selecting the frontmost
   copy is the echo pass already in the code (nearest of the copies that project within a millimetre, A103
   95.9/93.5%). Clipping each rail only by faces in front of that copy gives A103 96.4/92.6%, A104 96.6/93.7%,
