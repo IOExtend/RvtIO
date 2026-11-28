@@ -404,14 +404,25 @@ public static partial class PlanPrinter
             // A hidden door or window leaves its opening in the wall: the opening is the wall's, and only what the
             // insert itself draws (its leaf, glass, symbol and tag) is dropped.
             bool hiddenInsert = IsHidden(insert);
+            if (Environment.GetEnvironmentVariable("RVTIO_DEBUG_DOOR") == "2" && viewId == 312)
+                Console.WriteLine($"[ins] id={insert.Id} cat={insert.CategoryId} '{insert.Name}' mark=" +
+                    $"'{insert.LookupParameter(BuiltInParameter.DOOR_NUMBER)?.Value}' host={insert.SerializedHostId} " +
+                    $"inWalls={wallById.ContainsKey(insert.SerializedHostId ?? -1)} symbols={insert.OwnDoorPlanSymbols?.Symbols.Count ?? 0} " +
+                    $"cut={cutHeight:F2}");
             bool savedDoor = false;
+            // A curtain-wall door hangs in a host the plan wall list does not carry (a curtain wall has no wall
+            // curve), so the saved symbol must not depend on the host: its own transform places it.
             if (!hiddenInsert && cutHeight is double height
-                && insert.SerializedHostId is int planHost && wallById.ContainsKey(planHost)
                 && insert.OwnDoorPlanSymbols is { } display
                 && SelectDoorPlanSymbol(display.Symbols, display.Transform, height, insert.BoundingBox) is { } symbol)
             {
                 (doorSymbols ??= []).Add((symbol, display.Transform));
                 savedDoor = true;
+                if (Environment.GetEnvironmentVariable("RVTIO_DEBUG_DOOR") == "1")
+                    Console.WriteLine($"[door] level={levelId} view={viewId} insert={insert.Id} " +
+                        $"'{insert.Name}' host={insert.SerializedHostId} bbox=({insert.BoundingBox?[0]:F1},{insert.BoundingBox?[1]:F1}) " +
+                        $"transform=({display.Transform[9]:F1},{display.Transform[10]:F1}) " +
+                        $"curves={symbol.Curves.Count} arcs={symbol.Curves.Count(c => c.R > 0)} cut={symbol.CutRange} h={cutHeight:F2}");
             }
             if (insert.OwnSingleFamilyCutout is not { } cutout || cutout.Transform is not { Length: 12 } matrix) continue;
             if (!wallById.TryGetValue(cutout.HostId, out var wall)) continue;
