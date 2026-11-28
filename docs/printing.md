@@ -1129,6 +1129,19 @@ missing geometry in most places:
   appearance, category, style, view or filter records; reproducing it would need a render-appearance bitmap or
   another undocumented display table, with no evidence either carries this pattern.
 
+- The A101 kerb-band edge is not depth-driven. Sweeping the caster/receiver clearance (`blocker - receiver`) from
+  1e-6 ft to 0.1, 0.5 and 2 ft leaves A101 at 94.5/93.2/2.5, then 94.3/93.2/2.5 and 94.3/93.1/2.5, so no bias
+  moves the boundary toward the reference without losing recall. Sweeping the shadow divisor from its calibrated
+  60 to 75 and 100 gives A101 94.4/93.2/2.5 and 94.3/93.2/2.5: the tone mean absolute error does not improve
+  because it is dominated by inked blocks, not the large flat shadow areas. Both sweeps reverted.
+
+- The visible shadow difference at the kerb is the reading of the RPC planting shadows. A 600 dpi crop of the
+  band (1580-1710 x 230-360 pt) shows the reference's tree shadows as branch-shaped cutouts at the texture's
+  alpha, while ours are the opaque billboard outline: solid black blobs with blocky edges. Revit shapes an RPC
+  shadow by the render appearance's alpha channel; the reader decodes the RPC placement and silhouette but not
+  the texture, so no shadow setting can reproduce the branch gaps. This is a data gap (the RPC bitmap), not a
+  tone or edge setting.
+
 - The frontmost-copy rule for the A103 rails is the sum of parts that were each measured. Selecting the frontmost
   copy is the echo pass already in the code (nearest of the copies that project within a millimetre, A103
   95.9/93.5%). Clipping each rail only by faces in front of that copy gives A103 96.4/92.6%, A104 96.6/93.7%,
