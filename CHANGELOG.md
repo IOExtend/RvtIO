@@ -8,6 +8,12 @@ API between minor releases.
 
 ### Fixed
 
+- A railing repeats every bar in its element and in the nested symbol it places; the copies project within a
+  millimetre of each other, so both were inked and the sheet carried a doubled line. The elevation now groups the
+  horizontal railing bars within a one-millimetre tolerance and keeps the copy nearest the viewer, leaving a
+  second bar more than 20 mm behind as its own line. Measured: raster line score A001 recall 98.6% → 98.7%,
+  A103 95.8% → 95.9% with precision 93.4% → 93.5%; A101, A102, A104 and A105 unchanged. New test:
+  `Collect_KeepsOneOfTwoCoincidentRailingBars`.
 - Clip projected wall and railing uprights behind opaque slab sides in fine sections.
 - Mask projected geometry behind closed floor cuts in fine section callouts.
 

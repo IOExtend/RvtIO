@@ -837,7 +837,10 @@ missing geometry in most places:
   93.6% → 93.3%, so the net score drops. Restricting the exemption to horizontal bars keeps A103 at 96.1/93.4%
   and A105 at 92.9/93.3%, yet A104 still pays 95.6% → 93.7% precision for the same +0.3% recall: the extra ink
   is the same bars drawn where the reference hides them (e.g. around 540–620 × 324–350 pt in the West elevation,
-  where the bars of a lower railing coincide with a wall face). The occlusion stands.
+  where the bars of a lower railing coincide with a wall face). The occlusion stands. The duplicate copies are
+  handled instead: the elevation merges the horizontal railing bars that project within a millimetre of each
+  other and keeps the nearest copy, which lifts A001 98.6% → 98.7% and A103 95.8/93.4% → 95.9/93.5% without
+  touching the other sheets (see the changelog).
 
 
 | Sheet | Printed | Still different |

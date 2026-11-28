@@ -2357,6 +2357,36 @@ public static partial class ElevationPrinter
                     isCut, categoryId, nearDepth));
             }
         }
+        // A railing repeats every bar in the element and in the nested symbol it places. The copies land within a
+        // millimetre of each other on the sheet, so the exact-key dedupe keeps them all and they ink twice. Group the
+        // horizontal bars within a one-millimetre tolerance and keep the copy nearest the viewer; a second bar more
+        // than 20 mm behind stays a line of its own.
+        var railLines = new List<(List<int> Members, double Y, double X0, double X1)>();
+        for (int e = 0; e < edges.Count; e++)
+        {
+            var edge = edges[e];
+            if (edge.IsCut || !IsRailingCategory(edge.CategoryId) || Math.Abs(edge.Y1 - edge.Y2) > 1e-6) continue;
+            double x0 = Math.Min(edge.X1, edge.X2), x1 = Math.Max(edge.X1, edge.X2);
+            int found = railLines.FindIndex(line => Math.Abs(line.Y - edge.Y1) <= 1
+                && Math.Abs(line.X0 - x0) <= 1 && Math.Abs(line.X1 - x1) <= 1);
+            if (found < 0) railLines.Add(([e], edge.Y1, x0, x1));
+            else railLines[found].Members.Add(e);
+        }
+        if (railLines.Count > 0)
+        {
+            var drop = new HashSet<int>();
+            foreach (var line in railLines)
+            {
+                double keptDepth = double.NegativeInfinity;
+                foreach (int e in line.Members.OrderBy(index => edges[index].MidDepth))
+                {
+                    if (keptDepth == double.NegativeInfinity || Math.Abs(edges[e].MidDepth - keptDepth) > 20)
+                        keptDepth = edges[e].MidDepth;
+                    else drop.Add(e);
+                }
+            }
+            if (drop.Count > 0) edges = edges.Where((_, index) => !drop.Contains(index)).ToList();
+        }
         edges.Sort((left, right) => right.Depth.CompareTo(left.Depth));
         return edges;
 

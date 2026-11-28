@@ -991,6 +991,30 @@ public class ElevationPrinterTests
         }
     }
 
+    [Fact]
+    public void Collect_KeepsOneOfTwoCoincidentRailingBars()
+    {
+        // A railing and its nested symbol repeat each bar a few millimetres apart. The copies project almost onto
+        // one line (1 mm here), so the exact-key dedupe keeps both and the sheet inks the bar twice; with the copy
+        // nearest the viewer the echo pass reduces them to one bar.
+        var view = SectionView(900, [10, 0, 0]);
+        Add(view, BuiltInParameter.VIEW_SCALE, StorageType.Integer, 20);
+        int category = (int)BuiltInCategory.OST_StairsRailing;
+        var far = QuadWall(901, [[8, 0, 1], [8, 6, 1], [8, 6, 1.1], [8, 0, 1.1]], [1, 0, 0], category);
+        var near = QuadWall(902, [[8.01, 0, 1.003], [8.01, 6, 1.003], [8.01, 6, 1.103], [8.01, 0, 1.103]],
+            [1, 0, 0], category);
+        var document = Document(far, near);
+
+        var content = Assert.IsType<ElevationPrinter.ElevationContent>(ElevationPrinter.Collect(
+            document, "section", planeView: view, isDetail: true, viewportScale: 20));
+
+        var bars = content.Edges.Where(edge => edge.CategoryId == category
+            && Math.Abs(edge.Y1 - edge.Y2) < 1e-6).ToArray();
+        // One bottom edge and one top edge: the 1 mm echo is not inked as a second bar.
+        Assert.True(bars.Length == 2,
+            $"the bar inks once per edge, drew {string.Join(" | ", bars.Select(edge => $"{edge.Y1:F1}@{edge.MidDepth:F0}"))}");
+    }
+
     [Theory]
     [InlineData(BuiltInCategory.OST_StairsRailing, -2, false, true)]
     [InlineData(BuiltInCategory.OST_StairsRailing, -2, true, true)]
