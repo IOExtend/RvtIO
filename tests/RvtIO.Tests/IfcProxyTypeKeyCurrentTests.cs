@@ -80,6 +80,23 @@ public class IfcProxyTypeKeyCurrentTests
         Assert.Single(Regex.Matches(Write(elements, currentProfile: true), "=IFCBUILDINGELEMENTPROXYTYPE\\("));
     }
 
+    [Fact]
+    public void MappedTransportElements_AreKeyedByTheirSymbolsAndOwnGeometryAsProxiesAre()
+    {
+        static int Types(Dictionary<int, Element> elements) =>
+            Regex.Matches(Write(elements, currentProfile: true, "IFCTRANSPORTELEMENT"), "=IFCTRANSPORTELEMENTTYPE\\(").Count;
+
+        // one symbol and no geometry of their own: one type
+        Assert.Equal(1, Types(Elements(mapped: true, (0, 0, 0), (6, 12, 1))));
+        // stored geometry of its own: a type of its own
+        Assert.Equal(2, Types(Elements(mapped: true, (6, 12, 1), (6, 12, 1))));
+        // different symbols under one type element: a type per symbol
+        var elements = Elements(mapped: true, (0, 0, 0), (6, 12, 1));
+        elements[2].Geometry!.ExactMappedInstances = [new GeoInstance { SymbolId = 602 }];
+        elements[602] = new() { Id = 602, Name = "Other symbol", Geometry = new GeometryData() };
+        Assert.Equal(2, Types(elements));
+    }
+
     /// <summary>Two proxies of one type element 500; with <paramref name="mapped"/> each has a GInstance of symbol 601.
     /// The first carries <paramref name="instance"/> as its stored summary, the second only a GInstance. A summary of
     /// (-1, -1, -1) leaves the node summary of the block unknown, null leaves the block without geometry.</summary>

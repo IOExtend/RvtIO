@@ -24,14 +24,14 @@ public partial class IfcExporter
         "Pset_ManufacturerTypeInformation", "Pset_MemberCommon", "Pset_PlateCommon",
         "Pset_QuantityTakeOff", "Pset_RailingCommon", "Pset_ReinforcementBarPitchOfBeam",
         "Pset_ReinforcementBarPitchOfSlab", "Pset_ReinforcementBarPitchOfWall", "Pset_SlabCommon",
-        "Pset_StairFlightCommon", "Pset_WallCommon", "Pset_WindowCommon",
+        "Pset_StairFlightCommon", "Pset_TransportElementCommon", "Pset_WallCommon", "Pset_WindowCommon",
     ];
 
     /// <summary>The element class lists of Pset_ConcreteElementGeneral that can occur as types.</summary>
     private static bool ConcreteElementGeneralAppliesToTypeCurrent(string typeClass) => typeClass is
         "IFCBEAMTYPE" or "IFCBUILDINGELEMENTPROXYTYPE" or "IFCCOLUMNTYPE" or "IFCCOVERINGTYPE"
         or "IFCCURTAINWALLTYPE" or "IFCDOORSTYLE" or "IFCMEMBERTYPE" or "IFCRAILINGTYPE"
-        or "IFCSLABTYPE" or "IFCSTAIRFLIGHTTYPE" or "IFCWALLTYPE";
+        or "IFCSLABTYPE" or "IFCSTAIRFLIGHTTYPE" or "IFCTRANSPORTELEMENTTYPE" or "IFCWALLTYPE";
 
     /// <summary>Whether property sets are created for a type object of this class. The types of stairs,
     /// MEP elements, furniture and spaces never go through the common type registration,
@@ -44,7 +44,7 @@ public partial class IfcExporter
             "IFCMEMBERTYPE" => typeElem.CategoryId is CurtainWallMullionCategoryId or StructuralFramingCategoryId,
             "IFCBEAMTYPE" or "IFCBUILDINGELEMENTPROXYTYPE" or "IFCCOLUMNTYPE" or "IFCCOVERINGTYPE"
                 or "IFCCURTAINWALLTYPE" or "IFCDOORSTYLE" or "IFCPLATETYPE" or "IFCRAILINGTYPE"
-                or "IFCSLABTYPE" or "IFCSTAIRFLIGHTTYPE" or "IFCWALLTYPE" or "IFCWINDOWSTYLE"
+                or "IFCSLABTYPE" or "IFCSTAIRFLIGHTTYPE" or "IFCTRANSPORTELEMENTTYPE" or "IFCWALLTYPE" or "IFCWINDOWSTYLE"
                 or "IFCLIGHTFIXTURETYPE" => true,
             "IFCDISTRIBUTIONELEMENTTYPE" => instanceIfcType == "IFCFLOWTERMINAL",
             _ => false,
@@ -226,6 +226,9 @@ public partial class IfcExporter
                 break;
             case "IFCSTAIRFLIGHTTYPE":
                 Add("Pset_StairFlightCommon", 1, Identifier(), NosingLength());
+                break;
+            case "IFCTRANSPORTELEMENTTYPE":
+                Add("Pset_TransportElementCommon", 1, Identifier());
                 break;
             case "IFCWALLTYPE":
                 Add("Pset_ReinforcementBarPitchOfWall", 1, Label());
@@ -458,7 +461,7 @@ public partial class IfcExporter
     private static readonly HashSet<string> ConcreteElementGeneralProductsCurrent = new(StringComparer.Ordinal)
     {
         "IFCBEAM", "IFCBUILDINGELEMENTPROXY", "IFCCOLUMN", "IFCCOVERING", "IFCCURTAINWALL", "IFCDOOR", "IFCMEMBER",
-        "IFCRAILING", "IFCROOF", "IFCSLAB", "IFCSTAIR", "IFCSTAIRFLIGHT", "IFCWALL", "IFCWALLSTANDARDCASE",
+        "IFCRAILING", "IFCROOF", "IFCSLAB", "IFCSTAIR", "IFCSTAIRFLIGHT", "IFCTRANSPORTELEMENT", "IFCWALL", "IFCWALLSTANDARDCASE",
     };
 
     /// <summary>FireRating: a product whose instance or type holds the Fire Rating parameter (empty or not)

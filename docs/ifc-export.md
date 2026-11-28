@@ -11,7 +11,7 @@ RvtIO exports BIM geometry, spatial structure, materials, openings, distribution
 
 ### Default Schema Invariance
 
-`IFC2X3` remains the default schema for both `new IfcExporter()` and `rvtio --ifc`. Exporting with `IFC2X3` and a fixed header timestamp (`IfcExporter.Timestamp` / `--ifc-timestamp`) preserves exact `IFC2X3` output across releases.
+`IFC2X3` remains the default schema for both `new IfcExporter()` and `rvtio --ifc`. Exporting with `IFC2X3` and a fixed header timestamp (`IfcExporter.Timestamp` / `--ifc-timestamp`) preserves exact `IFC2X3` output across releases, apart from the output changes and fixes listed in the [changelog](https://github.com/IOExtend/RvtIO/blob/main/CHANGELOG.md).
 
 ### Exact IFC4 Edition and Exchange Scenarios
 

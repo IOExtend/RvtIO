@@ -28,6 +28,10 @@ API between minor releases.
 
 ### Changed
 
+- The current IFC profile writes elements of the Vertical Circulation category as `IfcTransportElement` with an
+  `IfcTransportElementType` and `Pset_TransportElementCommon` instead of `IfcBuildingElementProxy`. Their body, ports
+  and `FireRating` are written as before. Elements of the category with fewer than four stored faces or without a type
+  are no longer skipped for want of an IFC class. The legacy profile is unchanged.
 - Reading reuses local family symbol geometry, builds independent elements in parallel, and reduces parameter and geometry
   allocations during decoding and post-processing. Compact JSON prepares properties in bounded batches and writes them
   in element ID order.

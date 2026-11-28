@@ -303,7 +303,7 @@ public partial class IfcExporter
     }
 
     private bool OthersCurrentDirectBodyApplies(string ifcType, Element element) =>
-        CurrentProfile && (ifcType is "IFCSLAB" or "IFCCOVERING" or "IFCBUILDINGELEMENTPROXY"
+        CurrentProfile && (ifcType is "IFCSLAB" or "IFCCOVERING" or "IFCBUILDINGELEMENTPROXY" or "IFCTRANSPORTELEMENT"
             || ifcType is "IFCCOLUMN" or "IFCPILE"
             || ifcType == "IFCROOF" && RoofIsExportedWithSlabCurrent(element));
 

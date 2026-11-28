@@ -517,6 +517,11 @@ public partial class IfcExporter
                         newArgs = args + ",.NOTDEFINED.";
                     break;
 
+                case "IFCTRANSPORTELEMENT":
+                    if (a.Length == 11)
+                        newArgs = $"{string.Join(",", a.Take(8))},.NOTDEFINED.";
+                    break;
+
                 case "IFCDOORSTYLE":
                     if (a.Length == 12)
                     {
