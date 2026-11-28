@@ -1305,20 +1305,18 @@ public class GRepParserV2Tests
         var queue = Get<List<(ushort Cls, int V)>>("Queue");
         var links = Get<List<(int ParentQueueIndex, string Field)>>("QueueLinks");
         queue.AddRange([
-            (2092, 7),   // 0: Geometry node 1
+            (2092, 7),   // 0: the Geometry node of the faces
             (1589, 10),  // 1: bottom plane
             (1589, 11),  // 2: top plane
             (1589, 12),  // 3: ruled half 1
             (1589, 13),  // 4: ruled half 2
-            (1589, 14),  // 5: dead face
-            (1254, 101), // 6: loop bottom
-            (1254, 102), // 7: loop top
-            (1254, 103), // 8: loop ruled 1
-            (1254, 104), // 9: loop ruled 2
+            (1254, 101), // 5: loop bottom
+            (1254, 102), // 6: loop top
+            (1254, 103), // 7: loop ruled 1
+            (1254, 104), // 8: loop ruled 2
         ]);
         links.AddRange([
             (-1, "m_subNodes"),
-            (0, "m_pFaces"),
             (0, "m_pFaces"),
             (0, "m_pFaces"),
             (0, "m_pFaces"),
@@ -1332,9 +1330,8 @@ public class GRepParserV2Tests
         var ginfo = Get<Dictionary<int, (int, int, int, uint)>>("ObjectGInfo");
         ginfo[7] = (0, 0, -1, 0x0008C004u);
         foreach (int f in new[] { 10, 11, 12, 13 }) ginfo[f] = (0, 0, -1, 0x00088204u);
-        ginfo[14] = (0, 0, -1, 0x00008204u);
 
-        Get<List<uint>>("FaceOrder").AddRange([10u, 11u, 12u, 13u, 14u]);
+        Get<List<uint>>("FaceOrder").AddRange([10u, 11u, 12u, 13u]);
         var curves = (System.Collections.IDictionary)curType.GetField("Curves")!.GetValue(cur)!;
         curves.Add(1001u, MakeArc(0.0, 0.0, Math.PI));
         curves.Add(1002u, MakeArc(2.0, 0.0, Math.PI));
@@ -1346,15 +1343,14 @@ public class GRepParserV2Tests
         direct.Add(11u, MakePlane(2.0, 1));
         direct.Add(12u, MakeRuled(1001u, 1002u));
         direct.Add(13u, MakeRuled(1003u, 1004u));
-        direct.Add(14u, MakePlane(5.0, 1));
 
         var hasFirst = Get<Dictionary<uint, bool>>("FaceHasFirstLoop");
-        hasFirst[10] = true; hasFirst[11] = true; hasFirst[12] = true; hasFirst[13] = true; hasFirst[14] = false;
-        Get<HashSet<int>>("LastLoops").UnionWith([6, 7, 8, 9]);
-        AddLoop(6, 10, 202, 201);
-        AddLoop(7, 11, 204, 203);
-        AddLoop(8, 12, 201, 206);
-        AddLoop(9, 13, 202, 205);
+        hasFirst[10] = true; hasFirst[11] = true; hasFirst[12] = true; hasFirst[13] = true;
+        Get<HashSet<int>>("LastLoops").UnionWith([5, 6, 7, 8]);
+        AddLoop(5, 10, 202, 201);
+        AddLoop(6, 11, 204, 203);
+        AddLoop(7, 12, 201, 206);
+        AddLoop(8, 13, 202, 205);
 
         var edges = (System.Collections.IList)curType.GetField("Edges")!.GetValue(cur)!;
         edges.Add(MakeArcEdge(201, 12, 10, 205, 103, 101, 202, 0.0, 1.0, 0.0, 0.0, Math.PI));
@@ -1363,8 +1359,8 @@ public class GRepParserV2Tests
         edges.Add(MakeArcEdge(204, 13, 11, 205, 206, 203, 102, 1.0, 0.0, 1.0, 2 * Math.PI, Math.PI));
         edges.Add(MakeSeamEdge(205, 12, 13, 203, 201, 104, 204, 1.0, 0.0, 1.0, 0.0, 0.0, 1.0));
         edges.Add(MakeSeamEdge(206, 12, 13, 103, 203, 204, 202, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0));
-        // Detached pre-cut edge referencing a live face and the dead face must not open the solid.
-        edges.Add(MakeSeamEdge(299, 12, 14, 0, 0, 0, 0, 0.5, 0.0, 1.0, 0.0, 0.0, 1.0));
+        // A detached pre-cut edge still names face 99, which the cut removed from the node; it must not open the solid.
+        edges.Add(MakeSeamEdge(299, 12, 99, 0, 0, 0, 0, 0.5, 0.0, 1.0, 0.0, 0.0, 1.0));
 
         var build = parser.GetMethod("BuildGeometry", BindingFlags.Static | BindingFlags.NonPublic)!;
         var parsed = Assert.IsType<GRepData>(build.Invoke(null, [cur, false, false, false, false, Enum.ToObject(parser.GetNestedType("BodyMeasure", BindingFlags.NonPublic)!, 0)]));

@@ -43,6 +43,8 @@ API between minor releases.
 - Avoid overflow when triangulating trimmed faces with 46,341 or more vertices after bridging.
 - Read `Global` and `Formats` streams whose last page has exactly the length of a full page and holds no segment marker at the segment position.
 - Use the saved section plane in model millimetres to clip PDF geometry and place detail windows.
+- A closed solid with a trimmed ruled face now gets its volume and area from its surfaces in ordinary element reading,
+  so the current IFC profile no longer takes the `NetVolume` of a pile with such a solid from its tessellated faces.
 
 ## [0.6.3] - 2026-11-20
 

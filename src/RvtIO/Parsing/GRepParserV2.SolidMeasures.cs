@@ -10,9 +10,7 @@ internal static partial class GRepParserV2
         var nodeByFace = ResolveGeometryNodes(c.Queue, c.QueueLinks, c.ObjectGInfo);
         if (faces.Any(face => !nodeByFace.ContainsKey(face))) return null;
         var selected = faces.ToDictionary(face => face, face => nodeByFace[face]);
-        // Edges with neither next link are detached from the saved contour after a cut.
-        var closed = ClosedNodes(c.Edges.Where(edge => edge.NextA != 0 || edge.NextB != 0)
-            .Select(edge => (edge.FaceA, edge.FaceB)), selected);
+        var closed = ClosedNodes(ContourEdges(c), selected);
         var edges = EdgesByHandle(c);
         double volume = 0, area = 0;
         int count = 0;
@@ -29,6 +27,10 @@ internal static partial class GRepParserV2
         }
         return count > 0 && double.IsFinite(volume) && double.IsFinite(area) ? (volume, area, count) : null;
     }
+
+    // Edges with neither next link are detached from the saved contour after a cut.
+    private static IEnumerable<(uint FaceA, uint FaceB)> ContourEdges(Cur c)
+        => c.Edges.Where(edge => edge.NextA != 0 || edge.NextB != 0).Select(edge => (edge.FaceA, edge.FaceB));
 
     private static (double Area, double Volume)? MeasureTrimmedRuledFace(Cur c, SurfaceRec surface, Pt3 reference,
         IReadOnlyList<FaceArea.Coedge> coedges)

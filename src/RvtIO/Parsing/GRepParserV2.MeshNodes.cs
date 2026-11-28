@@ -39,15 +39,14 @@ internal static partial class GRepParserV2
         // a geometry that carries no node ids at all (the own GRep of a railing or a wall) is the
         // one node 0
         bool withoutNodes = !bodyFaces.Any(nodeByFace.ContainsKey);
-        var closedNodes = nodeMeasures != null
-            ? ClosedNodes(c.Edges.Where(edge => edge.NextA != 0 || edge.NextB != 0).Select(edge => (edge.FaceA, edge.FaceB)), nodeByFace)
-            : [];
+        var closedNodes = nodeMeasures != null ? ClosedNodes(ContourEdges(c), nodeByFace) : [];
         foreach (var group in c.FaceOrder.Where(bodyFaces.Contains).Where(handle => withoutNodes || nodeByFace.ContainsKey(handle))
                      .GroupBy(handle => withoutNodes ? 0 : nodeByFace[handle].Node).Where(g => g.Key > 0 || withoutNodes))
         {
             bool curved = false, usable = true;
             // The surface integrals of the node. A closed node whose faces point into it (negative signed volume, a cutting body) is not a
             // solid the exporter takes: its measure keeps the negative volume, which the quantities read as "not taken"; its geometry is exported as ever.
+            // A trimmed ruled face is integrated over the coedges as saved, before the mesh refinements, so its whole node is read that way.
             bool measureRuled = !measureSourceNodes && closedNodes.Contains(group.Key)
                 && group.Any(handle => surfaces.TryGetValue(handle, out var s) && s.Kind == SurfKind.Ruled);
             var measured = MeasureAnalyticSolid(c, group, surfaces, loopsByFace, edges,
