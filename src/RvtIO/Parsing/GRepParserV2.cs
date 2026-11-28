@@ -2736,6 +2736,8 @@ internal static partial class GRepParserV2
         var curvedLoopEdges = new Dictionary<uint, HashSet<uint>>();
         var sourceEdgesByHandle = EdgesByHandle(c);
         var completeLoops = CompleteFaceLoops(c);
+        // A cut leaves the edges of the former surface in the block, linked into no loop. They can repeat a whole side, which loses the
+        // face in tessellation; the body then counts as incomplete and gets a second copy from its type.
         foreach (var (face, indices) in completeLoops)
         {
             if (!handleToSurf.TryGetValue(face, out var sourceSurface)) continue;

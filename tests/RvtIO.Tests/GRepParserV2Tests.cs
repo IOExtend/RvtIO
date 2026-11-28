@@ -1071,7 +1071,7 @@ public class GRepParserV2Tests
         }
 
         object MakeEdge(uint handle, uint faceA, uint faceB, uint nextA, uint prevA, uint nextB, uint prevB,
-            double uStart, double uEnd, double vConst, bool bottomCap)
+            double uStart, double uEnd, double vConst)
         {
             object e = Activator.CreateInstance(edgeType)!;
             Set(e, "Handle", handle);
@@ -1081,20 +1081,12 @@ public class GRepParserV2Tests
             Set(e, "Flags", (byte)6);
             Set(e, "HasEndpoints", true);
             const int segs = 4;
+            // A cap edge (FaceB 10 or 11) runs on the unit circle of that plane; the detached edge keeps its cylinder UVs.
             var pts = Enumerable.Range(0, segs + 1).Select(i =>
             {
                 double u = uStart + (uEnd - uStart) * i / segs;
-                double ub = Math.Cos(u);
-                double vb = Math.Sin(u);
-                return MakeUv(u, vConst, bottomCap ? ub : u, bottomCap ? vb : vConst);
+                return faceB is 10 or 11 ? MakeUv(u, vConst, Math.Cos(u), Math.Sin(u)) : MakeUv(u, vConst, u, vConst);
             }).ToList();
-            // For cap edges, FaceB is planar (UB=cos(u), VB=sin(u)) in all points.
-            if (faceB == 10 || faceB == 11)
-                pts = Enumerable.Range(0, segs + 1).Select(i =>
-                {
-                    double u = uStart + (uEnd - uStart) * i / segs;
-                    return MakeUv(u, vConst, Math.Cos(u), Math.Sin(u));
-                }).ToList();
             Set(e, "Start", pts[0]);
             Set(e, "EndP", pts[^1]);
             var interior = (System.Collections.IList)e.GetType().GetField("Interior")!.GetValue(e)!;
@@ -1113,6 +1105,18 @@ public class GRepParserV2Tests
             dict.Add(qIdx, loop);
         }
 
+        // A cylinder cut from height 2.5 to 2: two half faces (12, 14) between the caps (10, 11). The edges of the saved loops end at 2;
+        // the detached edges of the surface before the cut stay in the block, both whole sides among them.
+        object MakeSide(uint handle, uint faceA, uint faceB, uint nextA, uint prevA, uint nextB, uint prevB,
+            double uA, double uB, double vStart, double vEnd)
+        {
+            object e = MakeEdge(handle, faceA, faceB, nextA, prevA, nextB, prevB, uA, uA, vStart);
+            Set(e, "Start", MakeUv(uA, vStart, uB, vStart));
+            Set(e, "EndP", MakeUv(uA, vEnd, uB, vEnd));
+            ((System.Collections.IList)e.GetType().GetField("Interior")!.GetValue(e)!).Clear();
+            return e;
+        }
+
         Set(cur, "RootTightBoundingBox", new[] { -1.0, -1.0, 0.0, 1.0, 1.0, 2.0 });
         var queue = Get<List<(ushort Cls, int V)>>("Queue");
         var links = Get<List<(int ParentQueueIndex, string Field)>>("QueueLinks");
@@ -1121,12 +1125,13 @@ public class GRepParserV2Tests
             (2092, 7),   // 1: Geometry node 7
             (1589, 10),  // 2: bottom plane
             (1589, 11),  // 3: top plane
-            (1589, 12),  // 4: cylinder wall
-            (1589, 13),  // 5: dead cut-off face
-            (1254, 101), // 6: loop bottom
-            (1254, 102), // 7: loop top
-            (1254, 103), // 8: loop cyl bottom
-            (1254, 104), // 9: loop cyl top
+            (1589, 12),  // 4: cylinder half 0..pi
+            (1589, 14),  // 5: cylinder half pi..2pi
+            (1589, 13),  // 6: dead cut-off face
+            (1254, 101), // 7: loop bottom
+            (1254, 102), // 8: loop top
+            (1254, 103), // 9: loop of face 12
+            (1254, 104), // 10: loop of face 14
         ]);
         links.AddRange([
             (-1, "m_subNodes"),
@@ -1135,47 +1140,57 @@ public class GRepParserV2Tests
             (1, "m_pFaces"),
             (1, "m_pFaces"),
             (1, "m_pFaces"),
+            (1, "m_pFaces"),
             (2, "m_pFirstLoop"),
             (3, "m_pFirstLoop"),
             (4, "m_pFirstLoop"),
-            (8, "m_nextLoop"),
+            (5, "m_pFirstLoop"),
         ]);
 
         var ginfo = Get<Dictionary<int, (int, int, int, uint)>>("ObjectGInfo");
         ginfo[3] = (0, 0, -1, 0x00088004u);
         ginfo[7] = (0, 0, -1, 0x0008C004u);
-        foreach (int f in new[] { 10, 11, 12 }) ginfo[f] = (0, 0, -1, 0x00088204u);
+        foreach (int f in new[] { 10, 11, 12, 14 }) ginfo[f] = (0, 0, -1, 0x00088204u);
         ginfo[13] = (0, 0, -1, 0x00008204u);
 
-        Get<List<uint>>("FaceOrder").AddRange([10u, 11u, 12u, 13u]);
+        Get<List<uint>>("FaceOrder").AddRange([10u, 11u, 12u, 14u, 13u]);
         var direct = (System.Collections.IDictionary)curType.GetField("DirectSurfaceByFace")!.GetValue(cur)!;
         direct.Add(10u, MakeSurface("Plane", 0.0, 0.0, 0));
         direct.Add(11u, MakeSurface("Plane", 2.0, 0.0, 1));
         direct.Add(12u, MakeSurface("Cylinder", 0.0, 1.0, 1));
+        direct.Add(14u, MakeSurface("Cylinder", 0.0, 1.0, 1));
         direct.Add(13u, MakeSurface("Plane", 10.0, 0.0, 1));
 
         var hasFirst = Get<Dictionary<uint, bool>>("FaceHasFirstLoop");
-        hasFirst[10] = true; hasFirst[11] = true; hasFirst[12] = true; hasFirst[13] = false;
-        Get<HashSet<int>>("LastLoops").UnionWith([6, 7, 9]);
-        AddLoop(6, 10, 202, 201);
-        AddLoop(7, 11, 204, 203);
-        AddLoop(8, 12, 201, 202);
-        AddLoop(9, 12, 203, 204);
+        foreach (uint f in new uint[] { 10, 11, 12, 14 }) hasFirst[f] = true;
+        hasFirst[13] = false;
+        Get<HashSet<int>>("LastLoops").UnionWith([7, 8, 9, 10]);
+        AddLoop(7, 10, 202, 201);
+        AddLoop(8, 11, 204, 203);
+        AddLoop(9, 12, 201, 206);
+        AddLoop(10, 14, 202, 205);
 
         var edges = (System.Collections.IList)curType.GetField("Edges")!.GetValue(cur)!;
-        edges.Add(MakeEdge(201, 12, 10, 202, 103, 101, 202, 0, Math.PI, 0.0, true));
-        edges.Add(MakeEdge(202, 12, 10, 103, 201, 201, 101, Math.PI, 2 * Math.PI, 0.0, true));
-        edges.Add(MakeEdge(203, 12, 11, 204, 104, 102, 204, 2 * Math.PI, Math.PI, 2.0, false));
-        edges.Add(MakeEdge(204, 12, 11, 104, 203, 203, 102, Math.PI, 0.0, 2.0, false));
-        // Detached pre-cut edge referencing the cylinder face and the dead face outside tight bounds.
-        edges.Add(MakeEdge(299, 12, 13, 0, 0, 0, 0, 0, Math.PI, 10.0, false));
+        edges.Add(MakeEdge(201, 12, 10, 205, 103, 101, 202, 0, Math.PI, 0.0));
+        edges.Add(MakeEdge(202, 14, 10, 206, 104, 201, 101, Math.PI, 2 * Math.PI, 0.0));
+        edges.Add(MakeEdge(203, 14, 11, 205, 206, 102, 204, 2 * Math.PI, Math.PI, 2.0));
+        edges.Add(MakeEdge(204, 12, 11, 206, 205, 203, 102, Math.PI, 0.0, 2.0));
+        edges.Add(MakeSide(205, 12, 14, 204, 201, 104, 203, Math.PI, Math.PI, 0.0, 2.0));
+        edges.Add(MakeSide(206, 14, 12, 203, 202, 103, 204, 2 * Math.PI, 0.0, 0.0, 2.0));
+        // Before the cut: two top circles per half, the whole sides and their cut-off ends. None is linked into a loop.
+        foreach (uint handle in new uint[] { 301, 302 }) edges.Add(MakeEdge(handle, 12, 13, 0, 0, 0, 0, 0, Math.PI, 2.5));
+        foreach (uint handle in new uint[] { 303, 304 }) edges.Add(MakeEdge(handle, 14, 13, 0, 0, 0, 0, Math.PI, 2 * Math.PI, 2.5));
+        edges.Add(MakeSide(305, 12, 14, 0, 0, 0, 0, 0.0, 2 * Math.PI, 0.0, 2.5));
+        edges.Add(MakeSide(306, 12, 14, 0, 0, 0, 0, Math.PI, Math.PI, 2.5, 0.0));
+        edges.Add(MakeSide(307, 12, 14, 0, 0, 0, 0, 0.0, 2 * Math.PI, 2.0, 2.5));
+        edges.Add(MakeSide(308, 12, 14, 0, 0, 0, 0, Math.PI, Math.PI, 2.5, 2.0));
 
         var instances = (System.Collections.IList)curType.GetField("Instances")!.GetValue(cur)!;
         instances.Add(Activator.CreateInstance(instType,
             999, new[] { 1.0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0 }, 0)!);
 
         var build = parser.GetMethod("BuildGeometry", BindingFlags.Static | BindingFlags.NonPublic)!;
-        var parsed = Assert.IsType<GRepData>(build.Invoke(null, [cur, false, true, false, false, Enum.ToObject(parser.GetNestedType("BodyMeasure", BindingFlags.NonPublic)!, 0)]));
+        var parsed = Assert.IsType<GRepData>(build.Invoke(null, [cur, false, false, false, false, Enum.ToObject(parser.GetNestedType("BodyMeasure", BindingFlags.NonPublic)!, 0)]));
 
         Assert.Empty(parsed.Instances);
         Assert.NotNull(parsed.NodeMeasures);
