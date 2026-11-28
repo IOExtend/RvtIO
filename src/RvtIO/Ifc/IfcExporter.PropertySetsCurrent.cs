@@ -31,7 +31,7 @@ public partial class IfcExporter
     private static bool ConcreteElementGeneralAppliesToTypeCurrent(string typeClass) => typeClass is
         "IFCBEAMTYPE" or "IFCBUILDINGELEMENTPROXYTYPE" or "IFCCOLUMNTYPE" or "IFCCOVERINGTYPE"
         or "IFCCURTAINWALLTYPE" or "IFCDOORSTYLE" or "IFCMEMBERTYPE" or "IFCRAILINGTYPE"
-        or "IFCSLABTYPE" or "IFCSTAIRFLIGHTTYPE" or "IFCWALLTYPE";
+        or "IFCSLABTYPE" or "IFCSTAIRFLIGHTTYPE" or "IFCTRANSPORTELEMENTTYPE" or "IFCWALLTYPE";
 
     /// <summary>Whether property sets are created for a type object of this class. The types of stairs,
     /// MEP elements, furniture and spaces never go through the common type registration,
@@ -461,7 +461,7 @@ public partial class IfcExporter
     private static readonly HashSet<string> ConcreteElementGeneralProductsCurrent = new(StringComparer.Ordinal)
     {
         "IFCBEAM", "IFCBUILDINGELEMENTPROXY", "IFCCOLUMN", "IFCCOVERING", "IFCCURTAINWALL", "IFCDOOR", "IFCMEMBER",
-        "IFCRAILING", "IFCROOF", "IFCSLAB", "IFCSTAIR", "IFCSTAIRFLIGHT", "IFCWALL", "IFCWALLSTANDARDCASE",
+        "IFCRAILING", "IFCROOF", "IFCSLAB", "IFCSTAIR", "IFCSTAIRFLIGHT", "IFCTRANSPORTELEMENT", "IFCWALL", "IFCWALLSTANDARDCASE",
     };
 
     /// <summary>FireRating: a product whose instance or type holds the Fire Rating parameter (empty or not)

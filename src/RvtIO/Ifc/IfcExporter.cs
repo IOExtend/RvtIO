@@ -5024,9 +5024,9 @@ public partial class IfcExporter
                 if (quantityTakeOffReferenceValueId.HasValue
                     && ifcType == "IFCTRANSPORTELEMENT")
                 {
-                    ExportTransportElementCommonPropertySet(
-                        w, elem, elemEntityId, ownerHistId,
-                        quantityTakeOffReferenceValueId.Value);
+                    ExportCommonReferencePropertySet(
+                        w, elem, elemEntityId, ownerHistId, quantityTakeOffReferenceValueId.Value,
+                        "Pset_TransportElementCommon", "transport-element-common");
                 }
                 // The current profile has no such description (its sources never create
                 // Pset_ProvisionForVoid).
@@ -7561,7 +7561,7 @@ public partial class IfcExporter
 
         // Reused verbatim by Pset_BuildingElementProxyCommon.Reference
         // (ExportBuildingElementProxyCommonPropertySet).
-        if (ifcType is "IFCBUILDINGELEMENTPROXY" or "IFCTRANSPORTELEMENT")
+        if (ifcType == "IFCBUILDINGELEMENTPROXY")
         {
             if (element.ValidatedProxyTypeReferenceIsBlocked)
                 return null;
@@ -63310,7 +63310,7 @@ public partial class IfcExporter
         string ifcType,
         BodyRepresentationWriteOutcome bodyOutcome,
         bool hasMaterializedHostedOpeningOperand) =>
-        ifcType == "IFCBUILDINGELEMENTPROXY"
+        ifcType is "IFCBUILDINGELEMENTPROXY" or "IFCTRANSPORTELEMENT"
         && bodyOutcome.HasSurfaceModel
         && !bodyOutcome.HasClosedBrepOrSweptSolidBody
         && bodyOutcome.OpenShellCount == 1
@@ -63522,17 +63522,6 @@ public partial class IfcExporter
         ExportCommonReferencePropertySet(
             w, elem, elemEntityId, ownerHistId, referenceValueId,
             "Pset_BuildingElementProxyCommon", "building-element-proxy-common");
-
-    /// <summary>
-    /// Attaches Pset_TransportElementCommon (Reference) to an IfcTransportElement that already
-    /// emitted QTO.
-    /// </summary>
-    private static void ExportTransportElementCommonPropertySet(
-        StepWriter w, Element elem, int elemEntityId, int ownerHistId,
-        int referenceValueId) =>
-        ExportCommonReferencePropertySet(
-            w, elem, elemEntityId, ownerHistId, referenceValueId,
-            "Pset_TransportElementCommon", "transport-element-common");
 
     /// <summary>Dimensions in millimetres; null when the symbol is no box.</summary>
     internal static (double Width, double Height, double Depth)? ResolveProvisionForVoidDimensions(
@@ -67205,7 +67194,7 @@ public partial class IfcExporter
         "IFCENERGYCONVERSIONDEVICE", "IFCFLOWCONTROLLER", "IFCFLOWFITTING", "IFCFLOWMOVINGDEVICE", "IFCFLOWSEGMENT",
         "IFCFLOWSTORAGEDEVICE", "IFCFLOWTERMINAL", "IFCFLOWTREATMENTDEVICE", "IFCELECTRICDISTRIBUTIONPOINT",
         "IFCELECTRICDISTRIBUTIONBOARD", "IFCOUTLET", "IFCSWITCHINGDEVICE", "IFCSENSOR", "IFCUNITARYEQUIPMENT",
-        "IFCBUILDINGELEMENTPROXY",
+        "IFCBUILDINGELEMENTPROXY", "IFCTRANSPORTELEMENT",
     };
 
     private static void DumpConnectorGraph(
@@ -67606,7 +67595,7 @@ public partial class IfcExporter
                     && originalSymbol.Id == mappedSymbol.SymbolId)
                 {
                     originalSymbolId = originalSymbol.Id;
-                    if (product.ifcType == "IFCBUILDINGELEMENTPROXY" && (currentProfile
+                    if (product.ifcType is "IFCBUILDINGELEMENTPROXY" or "IFCTRANSPORTELEMENT" && (currentProfile
                             ? UsesInstanceGeometryOfSymbolCurrent(instElem, originalSymbol)
                             : UsesInstanceGeometry(instElem, originalSymbol)))
                         ownerId = instElem.Id;
@@ -68022,7 +68011,7 @@ public partial class IfcExporter
         if (ifcType == "IFCWINDOW" && element.CategoryId == -2000014)
             return Own(element.ValidatedWindowTypeReferenceName, element.ValidatedWindowTypeReferenceIsExplicit,
                 element.ValidatedWindowTypeReferenceIsBlocked);
-        if (ifcType is "IFCBUILDINGELEMENTPROXY" or "IFCTRANSPORTELEMENT")
+        if (ifcType == "IFCBUILDINGELEMENTPROXY")
             return Own(element.ValidatedProxyTypeReferenceName, element.ValidatedProxyTypeReferenceIsExplicit,
                 element.ValidatedProxyTypeReferenceIsBlocked);
         if ((ifcType == "IFCROOF" && element.CategoryId == -2000035)

@@ -119,8 +119,7 @@ public class IfcTransportElementTests
         Assert.Equal("$", typeArgs[8]);
         Assert.Equal(".NOTDEFINED.", typeArgs[9]);
 
-        var relType = Assert.Single(Regex.Matches(ifc, $@"^#\d+=IFCRELDEFINESBYTYPE\([^\r\n]*,\(#{elements[0].Groups[1].Value},#{elements[1].Groups[1].Value}\),#{typeEntityId}\);$", RegexOptions.Multiline));
-        Assert.True(relType.Success);
+        Assert.Single(Regex.Matches(ifc, $@"^#\d+=IFCRELDEFINESBYTYPE\([^\r\n]*,\(#{elements[0].Groups[1].Value},#{elements[1].Groups[1].Value}\),#{typeEntityId}\);$", RegexOptions.Multiline));
 
         // Type carries QTO then Pset_TransportElementCommon; both occurrences carry both sets too.
         var psetNames = Regex.Matches(ifc, @"^#(\d+)=IFCPROPERTYSET\([^,]+,[^,]+,'([^']+)',", RegexOptions.Multiline)
@@ -134,6 +133,67 @@ public class IfcTransportElementTests
             .Count(m => psetNames[m.Groups[1].Value] == "Pset_TransportElementCommon");
         Assert.Equal(2, occTransportPsets);
     }
+
+    [Fact]
+    public void VerticalCirculation_KeepsTheFireRatingTheProxyCarried()
+    {
+        var type = TypeSymbol(200, "Passenger Lift", "Lift Family");
+        type.Parameters = [TextParameter(-1001206, "FIRE_RATING", "EI90")];
+
+        string ifc = Export(Document(type, TransportInstance(101, 200, "Passenger Lift", "Lift Family")));
+
+        string property = Assert.Single(Regex.Matches(ifc, @"^(#\d+)=IFCPROPERTYSINGLEVALUE\('FireRating',[^,]*,IFCLABEL\('EI90'\),\$\);$", RegexOptions.Multiline)).Groups[1].Value;
+        var concrete = Regex.Matches(ifc, $@"^(#\d+)=IFCPROPERTYSET\([^,]+,[^,]+,'Pset_ConcreteElementGeneral',[^,]*,\({property}\)\);$", RegexOptions.Multiline)
+            .Select(match => match.Groups[1].Value).ToList();
+        Assert.Equal(2, concrete.Count);
+        // one for the occurrence, one for the type
+        string occurrence = Assert.Single(Regex.Matches(ifc, @"^(#\d+)=IFCTRANSPORTELEMENT\(", RegexOptions.Multiline)).Groups[1].Value;
+        Assert.Single(concrete, id => Regex.IsMatch(ifc, $@"IFCRELDEFINESBYPROPERTIES\([^\r\n]*,\({occurrence}\),{id}\);"));
+        var typeArgs = IfcExporter.SplitStepArguments(Assert.Single(Regex.Matches(ifc, @"=IFCTRANSPORTELEMENTTYPE\(([^\r\n]*)\);")).Groups[1].Value);
+        Assert.Single(concrete, id => typeArgs[5].Trim('(', ')').Split(',').Contains(id));
+    }
+
+    [Fact]
+    public void VerticalCirculation_KeepsTheExtrudedBodyAndThePortsTheProxyHad()
+    {
+        var lift = TransportInstance(101, 200, "Passenger Lift", "Lift Family");
+        lift.SerializedConnectorGraph = [(0, 1, [])];
+        lift.SerializedMepConnectors = [(0, 1, 16)];
+
+        string ifc = Export(Document(TypeSymbol(200, "Passenger Lift", "Lift Family"), lift));
+
+        Assert.Contains("=IFCEXTRUDEDAREASOLID(", ifc);
+        string occurrence = Assert.Single(Regex.Matches(ifc, @"^(#\d+)=IFCTRANSPORTELEMENT\(", RegexOptions.Multiline)).Groups[1].Value;
+        string port = Assert.Single(Regex.Matches(ifc, @"^(#\d+)=IFCDISTRIBUTIONPORT\(", RegexOptions.Multiline)).Groups[1].Value;
+        Assert.Matches($@"IFCRELCONNECTSPORTTOELEMENT\([^\r\n]*,{port},{occurrence}\);", ifc);
+    }
+
+    [Fact]
+    public void VerticalCirculation_AnOpenSurfaceHostedCutterIsSuppressedAsAProxyIs()
+    {
+        var openFourFaceShell = new IfcExporter.BodyRepresentationWriteOutcome(true, false, 1, 4);
+
+        Assert.True(IfcExporter.ShouldSuppressOpenSurfaceHostedCutterProxyProduct("IFCTRANSPORTELEMENT", openFourFaceShell, true));
+    }
+
+    [Theory]
+    [InlineData(null, "Passenger Lift")]
+    [InlineData("LIFT-A", "LIFT-A")]
+    public void VerticalCirculation_ReferenceIsTheExplicitParameterOrTheTypeName(string? explicitReference, string expected)
+    {
+        var type = TypeSymbol(200, "Passenger Lift", "Lift Family");
+        if (explicitReference != null) type.Parameters = [TextParameter(500, "Reference", explicitReference)];
+
+        string ifc = Export(Document(type, TransportInstance(101, 200, "Passenger Lift", "Lift Family")));
+
+        var common = Regex.Matches(ifc, @"=IFCPROPERTYSET\([^,]+,[^,]+,'Pset_TransportElementCommon',[^,]*,\((#\d+)\)\);");
+        Assert.NotEmpty(common);
+        Assert.All(common.Cast<Match>(), set => Assert.Contains(
+            $"\n{set.Groups[1].Value}=IFCPROPERTYSINGLEVALUE('Reference','',IFCIDENTIFIER('{expected}'),$);", ifc));
+    }
+
+    private static Parameter TextParameter(int id, string name, string value) =>
+        new() { Id = id, StorageType = StorageType.String, Value = value, Definition = new Definition { Id = id, Name = name } };
 
     [Fact]
     public void VerticalCirculation_LegacyProfileStaysProxy()
