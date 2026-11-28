@@ -893,6 +893,19 @@ missing geometry in most places:
   and the "hidden element" lead is a dead end. The railing is a legitimate, visible element; the difference is
   the same self-occlusion the earlier rules attacked.
 
+- The 0%-recall block at 345–400 × 1060–1100 pt is not a topography cap after all, and no decoded pattern matches
+  its hatch. Measured on the reference at 600 dpi the band is genuinely dark — mean grey 146 with 41% of its
+  pixels below 140 — and at 1200 dpi its visible courses repeat every 12–14 px, i.e. 0.25–0.35 mm on paper. Every
+  cut pattern in the file is four to twenty times finer: the soil brick (material 519) is 6.3 mm model =
+  0.063 mm paper at 1:100, the concrete (711728) 2.6 mm = 0.026 mm, the coarsest is 6.3 mm = 0.063 mm. So the
+  reference's texture is a resampled rendering of a sub-pixel pattern and the visible pitch is an alias; applying
+  any decoded pattern would print a near-solid band, not that texture. The face itself is also not topography:
+  instrumenting cut faces with a 12–14 m by 150–300 mm projected extent names element 512683, category
+  −2000032 (OST_Floors) — a 247 mm floor-slab edge. Applying the site cut pattern to topography cut faces
+  therefore never fired, and the print was unchanged (98.7/94.2/94.0/95.9/96.3/92.6% recall, precision
+  99.1/93.2/96.9/93.5/95.6/93.6%). Hatching that block needs the slab's own section graphics, not the soil
+  pattern.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
