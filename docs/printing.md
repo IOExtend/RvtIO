@@ -1063,6 +1063,16 @@ missing geometry in most places:
   or material records the reader holds; it belongs to view-owned annotation data (a filled region) that the
   reader does not load. The extractor was removed after the measurement.
 
+- The block is not a filled region of that view either. The file carries 246 `FilledRegion` blocks (class 1860)
+  and 502 `FilledRegionAttributes` blocks (class 1862); the attributes name the foreground and background fill
+  pattern elements (`m_fillPatternElemId`, `m_backgroundPatternElemId`) and the region names its view
+  (`m_ownerDBViewId`), attributes (`m_attrId`) and sketch (`m_sketchId`), so both the pattern and the placement
+  should be reachable. Reading every region shows only two break-line masking regions owned by view `958303`, and
+  the sampled regions (`1018117`, `147324`) expose no geometry, sketch loops or bounding box; the sketch curves
+  (`FilledRegionCurveData` 1863/1864) are not root records and the reader does not decode them. The pattern id is
+  therefore known to the attributes but the polygon is not: drawing the hatch needs a sketch-curve decoder for
+  view-owned annotations, not another lookup. The probe was removed after the measurement.
+
 - The frontmost-copy rule for the A103 rails is the sum of parts that were each measured. Selecting the frontmost
   copy is the echo pass already in the code (nearest of the copies that project within a millimetre, A103
   95.9/93.5%). Clipping each rail only by faces in front of that copy gives A103 96.4/92.6%, A104 96.6/93.7%,
