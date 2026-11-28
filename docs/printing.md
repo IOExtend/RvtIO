@@ -1008,6 +1008,12 @@ missing geometry in most places:
   therefore not offset; the residual is the shape and softness of the shadow itself (the reference renders a
   feathered edge, ours is hard, and the caster set only approximates the building mass). The hook is removed.
 
+- Feathering the shadow edge does not help either. A separable box feather over the cast-shadow mask, applied to
+  the same receivers, gives A101 recall 94.3% at radius 1 and 94.2% at radius 2, against 94.4% unfeathered, with
+  the tone MAE unchanged at 2.5 for all three and precision unchanged at 93.2%. The softer edge only removes
+  pixels from the ink set, so the metric prefers the hard edge; the reference's penumbra is not what the score
+  rewards. Reverted.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
