@@ -982,6 +982,16 @@ missing geometry in most places:
   source is therefore not in the decoded data; reproducing it needs a Revit-internal toposurface display record
   that the reader does not extract.
 
+- The A101 tone gap is local shadow, not a global gradient. Per 8 × 8 block at 100 dpi the largest errors sit in
+  the solar study, where the reference is far darker than us: block (1642, 288) reads 61 against our 187, block
+  (1636, 386) reads 44 against 151, and (1699, 564) 138 against 231. Those are the kerb band and terrain patches
+  that cast shadows darken in the reference. A fit over the whole study gives `ours = 0.789 · ref + 21.5`
+  (residual 34.1 against 35.5), i.e. a lifted floor and compressed contrast. Moving the ambient floor
+  (`SolarStudyOverlay.LightFloor`, 0.2 + intensity/100 · sunZ²) both ways makes the score worse: 0.1 gives A101
+  93.3/92.7% with tone MAE 2.7, 0.3 gives 93.4/92.3% at 2.7, against 94.2/93.2% at 2.6 for 0.2. The global term
+  is already at its best measured value, so the remaining tone error is the accuracy of the cast shadows
+  themselves, not the gradient.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
