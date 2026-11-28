@@ -1042,6 +1042,14 @@ missing geometry in most places:
   nothing, which is why the attempt printed byte-identical sheets. Drawing the panels' rails is the actual next
   lead for this block.
 
+- Keeping the panel edges does not help either. The panels' faces do reach the face list (5237 faces of
+  `800325`/`800331` are added with `outline = True`, `fineFace = True`, projected areas 180–13 000 mm²), so their
+  edges enter the pipeline and are then absorbed by `ConsolidateCoincident`, whose 50 mm tolerance merges the
+  rails that sit a few millimetres apart on paper. Exempting `OST_ElectricalEquipment` from that consolidation
+  inks every rail but costs the sheet: A103 recall 95.9% → 95.4%, tone correlation 0.97 → 0.96 and MAE 3.0 →
+  3.1, while A104 and A105 stay put. The reference draws a subset of the rails (its hidden-line selection), so
+  the consolidated outline is closer to the score than the full edge set. Reverted.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
