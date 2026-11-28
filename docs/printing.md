@@ -1120,6 +1120,15 @@ missing geometry in most places:
   needs the missing source of the roof layer's cut pattern (material record or a filter override), not another
   annotation scan.
 
+- The remaining cut-pattern sources are empty too. The view's filter-override object (`m_oFilterOverrides`, class
+  1886) reports an empty `m_oaSettings` vector for view `958303`; the appearance block of material `123310` (class
+  0x09B6, 12459 bytes) contains no four-byte value that is any decoded fill-pattern id; and the roof element at the
+  block is `B1020`/`243274` (type `507024`), whose four layers are metal 40 mm (`232858`), lumber 100 mm
+  (`123310`), deck 50 mm (`232856`) and gypsum 12 mm (`423`). The first three carry no pattern at all, and the
+  gypsum's `Sand` is 1.2 mm wide at 1:10. The reference hatch therefore has no decoded source in the material,
+  appearance, category, style, view or filter records; reproducing it would need a render-appearance bitmap or
+  another undocumented display table, with no evidence either carries this pattern.
+
 - The frontmost-copy rule for the A103 rails is the sum of parts that were each measured. Selecting the frontmost
   copy is the echo pass already in the code (nearest of the copies that project within a millimetre, A103
   95.9/93.5%). Clipping each rail only by faces in front of that copy gives A103 96.4/92.6%, A104 96.6/93.7%,
