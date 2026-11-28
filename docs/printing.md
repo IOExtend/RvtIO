@@ -942,6 +942,15 @@ missing geometry in most places:
   run measured A103 95.8/93.0%, A104 96.3/93.6%, A105 92.5/93.0% — recall down and precision down. A narrower
   40–60 mm window selects the same faces, so the test is already covered and the profile hypothesis is refuted.
 
+- Resolution separates the alias from the geometry. Scoring the same print at 100, 200 and 300 dpi with the
+  match radius scaled to the same 0.5 mm gives (recall/precision, A001…A105): 98.7/99.1, 94.2/93.2, 94.0/96.9,
+  95.9/93.5, 96.3/95.6, 92.6/93.6 at 100 dpi; 97.2/98.5, 93.3/98.3, 96.1/98.4, 93.1/94.5, 95.5/95.8, 97.6/97.7 at
+  200 dpi; 98.6/99.4, 27.7/97.3, 97.4/98.7, 95.5/98.0, 97.3/99.6, 98.8/99.7 at 300 dpi. A105 climbs to 97.6 and
+  then 98.8, so its 7.4% is almost entirely the resampling of thin reference strokes. A101's 300 dpi figure
+  (27.7%) is not usable: the reference page is a raster whose effective resolution caps below 300 dpi, so the
+  comparison collapses; at 200 dpi A101 still lags at 93.3%, together with A103 at 93.1%. Those two pages carry
+  the real gap.
+
 
 | Sheet | Printed | Still different |
 |---|---|---|
